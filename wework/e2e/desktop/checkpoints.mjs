@@ -68,6 +68,7 @@ export const DESKTOP_CHECKPOINTS = [
   'browser-annotation-core',
   'browser-annotation-anchors',
   'browser-annotation-design',
+  'dsh-owner-capture',
 ]
 
 export const PLUGIN_SEGMENTS = [

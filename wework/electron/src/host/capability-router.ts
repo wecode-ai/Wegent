@@ -60,6 +60,8 @@ export const HOST_CAPABILITIES = [
   'diagnostics.filePreview',
   'developer.openDevTools',
   'developer.openLogDirectory',
+  'dshCapture.capabilities',
+  'dshCapture.ownerRect',
   'e2e.capturePopoutWindow',
   'e2e.capturePrimaryView',
   'e2e.captureWorkspaceWindow',

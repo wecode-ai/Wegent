@@ -19,6 +19,7 @@ import { DeleteSiteDialog } from './DeleteSiteDialog'
 import { EditSiteDialog } from './EditSiteDialog'
 import { EnvironmentVariablesDialog } from './EnvironmentVariablesDialog'
 import { SiteCollaboratorsDialog } from './SiteCollaboratorsDialog'
+import { SiteAccessDialog } from './SiteAccessDialog'
 import { useApplicationTypeDefinitions } from './useApplicationTypeDefinitions'
 
 interface SitesWorkspaceProps {
@@ -246,6 +247,7 @@ export function SitesWorkspace({
   const [editError, setEditError] = useState<string | null>(null)
   const [pendingEnvironmentSite, setPendingEnvironmentSite] = useState<Site | null>(null)
   const [pendingCollaboratorsSite, setPendingCollaboratorsSite] = useState<Site | null>(null)
+  const [pendingAccessSite, setPendingAccessSite] = useState<Site | null>(null)
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180)
@@ -674,6 +676,7 @@ export function SitesWorkspace({
                         },
                         onConfigureEnvironment: setPendingEnvironmentSite,
                         onManageCollaborators: setPendingCollaboratorsSite,
+                        onManageAccess: setPendingAccessSite,
                         onDelete: siteToDelete => {
                           setDeleteError(null)
                           setPendingDeleteSite(siteToDelete)
@@ -747,6 +750,13 @@ export function SitesWorkspace({
           api={api}
           site={pendingCollaboratorsSite}
           onClose={() => setPendingCollaboratorsSite(null)}
+        />
+      )}
+      {pendingAccessSite && (
+        <SiteAccessDialog
+          api={api}
+          site={pendingAccessSite}
+          onClose={() => setPendingAccessSite(null)}
         />
       )}
     </main>

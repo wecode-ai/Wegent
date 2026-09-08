@@ -1490,6 +1490,32 @@ class ChatNamespace(socketio.AsyncNamespace):
                 cancel_request, device_id
             )
 
+            # When the streaming runtime is already gone (e.g. backend restart
+            # killed the SSE consumer), no callback will ever arrive. Finalize
+            # the cancellation locally instead of leaving the task stuck in
+            # CANCELLING forever.
+            from app.services.chat.operations.cancel import (
+                is_stream_alive,
+                publish_task_cancelled_events,
+            )
+
+            if not await is_stream_alive(subtask_info["task_id"], payload.subtask_id):
+                finalized_subtask_ids = await run_sync_in_executor(
+                    _finalize_stuck_cancellation, payload.subtask_id
+                )
+                if finalized_subtask_ids is not None:
+                    await publish_task_cancelled_events(
+                        subtask_info["task_id"], finalized_subtask_ids, user_id
+                    )
+                    logger.info(
+                        "[WS] chat:cancel finalized locally (stream runtime gone): "
+                        "task_id=%s, subtask_id=%s, finalized_subtasks=%s",
+                        subtask_info["task_id"],
+                        payload.subtask_id,
+                        finalized_subtask_ids,
+                    )
+                    return {"success": True, "finalized": True}
+
             if not cancel_success:
                 logger.error(
                     "[WS] chat:cancel Runtime did not acknowledge cancellation "
@@ -2265,6 +2291,17 @@ def _mark_task_and_board_cancelling(subtask_id: int) -> None:
             subtask_id=subtask.id,
             user_id=task.user_id,
         )
+
+
+def _finalize_stuck_cancellation(subtask_id: int) -> Optional[list[int]]:
+    """Finalize cancellation locally when the streaming runtime is gone."""
+    from app.services.chat.operations.cancel import finalize_stuck_cancellation
+
+    with get_db_session() as db:
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+        if not subtask:
+            return None
+        return finalize_stuck_cancellation(db, task_id=subtask.task_id)
 
 
 def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[dict]:

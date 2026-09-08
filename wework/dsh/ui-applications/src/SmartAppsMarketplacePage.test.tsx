@@ -2,14 +2,19 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
+import type { UnifiedModel } from '@/types/api'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
+const trackMock = vi.hoisted(() => vi.fn())
 const navigateTo = vi.fn()
 const queuePluginReferenceTrial = vi.fn()
 const queueSmartAppDevelopmentPreview = vi.fn()
 const ensureBundledPluginInstalled = vi.fn()
 const listInstalled = vi.fn()
 const downloadPackage = vi.fn()
+const installPackage = vi.fn()
+const previewPackage = vi.fn()
+const invokeDesktopHost = vi.fn()
 const deleteInstalled = vi.fn()
 const stopInstalled = vi.fn()
 const updateInstalled = vi.fn()
@@ -39,9 +44,23 @@ vi.mock('@/features/harness-apps/smartAppDevelopmentPreview', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   ensureBundledPluginInstalled: (name: string) => ensureBundledPluginInstalled(name),
 }))
+vi.mock('@/telemetry/client', () => ({ track: trackMock }))
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: (...args: unknown[]) => invokeDesktopHost(...args),
+}))
+
+const harnessModel: UnifiedModel = {
+  name: 'local-model:model-1',
+  type: 'runtime',
+  provider: 'local',
+  displayName: 'Local Model',
+  modelId: 'local-upstream',
+  config: { weworkModelKind: 'model-interface' },
+}
+
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    projectChat: { models: [] },
+    projectChat: { models: [harnessModel] },
     services: { localHarnessModelApi: null },
   }),
 }))
@@ -69,7 +88,8 @@ vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: {
     list: () => listInstalled(),
     download: (value: unknown) => downloadPackage(value),
-    install: vi.fn(),
+    preview: (path: string) => previewPackage(path),
+    install: (...args: unknown[]) => installPackage(...args),
     delete: (id: string) => deleteInstalled(id),
     stop: (id: string) => stopInstalled(id),
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
@@ -166,6 +186,7 @@ const importedInstallation = {
 describe('SmartAppsMarketplacePage', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/')
+    trackMock.mockReset()
     navigateTo.mockReset()
     queuePluginReferenceTrial.mockReset().mockReturnValue(true)
     queueSmartAppDevelopmentPreview.mockReset()
@@ -187,9 +208,12 @@ describe('SmartAppsMarketplacePage', () => {
       valid: true,
       archivePath: '/tmp/research.zip',
       sha256: 'a'.repeat(64),
-      manifest: null,
+      manifest: importedInstallation.manifest,
       issues: [],
     })
+    installPackage.mockReset().mockResolvedValue(importedInstallation)
+    previewPackage.mockReset()
+    invokeDesktopHost.mockReset()
     createDirectory.mockReset().mockResolvedValue({
       ...importedInstallation,
       id: 'blank-workbench',
@@ -274,6 +298,194 @@ describe('SmartAppsMarketplacePage', () => {
 
     await waitFor(() => expect(smartAppsApi.getDownload).toHaveBeenCalledWith(7))
     expect(downloadPackage).toHaveBeenCalledWith(expect.objectContaining({ smartAppId: 7 }))
+  })
+
+  test('tracks a marketplace installation only after the installation succeeds', async () => {
+    let resolveInstallation: (installation: typeof importedInstallation) => void = () => undefined
+    const installationPromise = new Promise<typeof importedInstallation>(resolve => {
+      resolveInstallation = resolve
+    })
+    installPackage.mockReturnValueOnce(installationPromise)
+    render(<SmartAppsMarketplacePage api={api()} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+    await screen.findByTestId('harness-app-install-confirm')
+    expect(trackMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('harness-app-install-confirm'))
+
+    await waitFor(() => expect(installPackage).toHaveBeenCalledOnce())
+    expect(trackMock).not.toHaveBeenCalled()
+    resolveInstallation(importedInstallation)
+    await waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('smart_app_installed', {
+        domain: 'smart_app',
+        install_source: 'marketplace',
+      })
+    )
+    expect(trackMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('tracks a marketplace update without counting it as an installation', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        id: 'market-7',
+        smartAppId: 7,
+        releaseId: 16,
+      },
+    ])
+    const updatedInstallation = {
+      ...importedInstallation,
+      id: 'market-7',
+      smartAppId: 7,
+      releaseId: 17,
+    }
+    let resolveInstallation: (installation: typeof updatedInstallation) => void = () => undefined
+    const installationPromise = new Promise<typeof updatedInstallation>(resolve => {
+      resolveInstallation = resolve
+    })
+    installPackage.mockReturnValueOnce(installationPromise)
+    render(<SmartAppsMarketplacePage api={api()} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+    fireEvent.click(await screen.findByTestId('harness-app-install-confirm'))
+
+    await waitFor(() => expect(installPackage).toHaveBeenCalledOnce())
+    expect(trackMock).not.toHaveBeenCalled()
+    resolveInstallation(updatedInstallation)
+    await waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('feature_action_completed', {
+        domain: 'smart_app',
+        action: 'update',
+      })
+    )
+    expect(trackMock).not.toHaveBeenCalledWith('smart_app_installed', expect.anything())
+  })
+
+  test('tracks a ZIP import only after preview and installation succeed', async () => {
+    invokeDesktopHost.mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/private-workbench.zip'],
+    })
+    previewPackage.mockResolvedValue({
+      valid: true,
+      archivePath: '/tmp/private-workbench.zip',
+      sha256: 'a'.repeat(64),
+      manifest: importedInstallation.manifest,
+      issues: [],
+    })
+    let resolveInstallation: (installation: typeof importedInstallation) => void = () => undefined
+    const installationPromise = new Promise<typeof importedInstallation>(resolve => {
+      resolveInstallation = resolve
+    })
+    installPackage.mockReturnValueOnce(installationPromise)
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-apps-import-button'))
+
+    await waitFor(() => expect(installPackage).toHaveBeenCalledOnce())
+    expect(trackMock).not.toHaveBeenCalled()
+    resolveInstallation(importedInstallation)
+    await waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('smart_app_installed', {
+        domain: 'smart_app',
+        install_source: 'zip_import',
+      })
+    )
+    expect(trackMock.mock.calls.flat()).not.toContain('/tmp/private-workbench.zip')
+  })
+
+  test('tracks a marketplace download failure without an installation event', async () => {
+    const smartAppsApi = api()
+    vi.mocked(smartAppsApi.getDownload).mockRejectedValue(new Error('private download failure'))
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+
+    await waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_marketplace_download',
+      })
+    )
+    expect(trackMock).not.toHaveBeenCalledWith('smart_app_installed', expect.anything())
+  })
+
+  test('tracks a marketplace installation failure without an installation event', async () => {
+    installPackage.mockRejectedValue(new Error('private installation failure'))
+    render(<SmartAppsMarketplacePage api={api()} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+    fireEvent.click(await screen.findByTestId('harness-app-install-confirm'))
+
+    await waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_marketplace_install',
+      })
+    )
+    expect(trackMock).not.toHaveBeenCalledWith('smart_app_installed', expect.anything())
+  })
+
+  test('tracks a marketplace update failure without an installation event', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        id: 'market-7',
+        smartAppId: 7,
+        releaseId: 16,
+      },
+    ])
+    installPackage.mockRejectedValue(new Error('private update failure'))
+    render(<SmartAppsMarketplacePage api={api()} />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+    fireEvent.click(await screen.findByTestId('harness-app-install-confirm'))
+
+    await waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_marketplace_update',
+      })
+    )
+    expect(trackMock).not.toHaveBeenCalledWith('smart_app_installed', expect.anything())
+  })
+
+  test('tracks an invalid ZIP import without an installation event', async () => {
+    invokeDesktopHost.mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/private-workbench.zip'],
+    })
+    previewPackage.mockResolvedValue({
+      valid: false,
+      archivePath: '/tmp/private-workbench.zip',
+      sha256: 'a'.repeat(64),
+      manifest: null,
+      issues: ['private validation detail'],
+    })
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-apps-import-button'))
+
+    await waitFor(() =>
+      expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_zip_import',
+      })
+    )
+    expect(trackMock).not.toHaveBeenCalledWith('smart_app_installed', expect.anything())
+    expect(trackMock.mock.calls.flat()).not.toContain('private validation detail')
+  })
+
+  test('does not track when ZIP selection is cancelled', async () => {
+    invokeDesktopHost.mockResolvedValue({ canceled: true, filePaths: [] })
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-apps-import-button'))
+
+    await waitFor(() => expect(invokeDesktopHost).toHaveBeenCalledOnce())
+    expect(trackMock).not.toHaveBeenCalled()
   })
 
   test('structures long marketplace details for scanning and fixed actions', async () => {

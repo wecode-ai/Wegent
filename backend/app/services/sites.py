@@ -15,6 +15,8 @@ from app.core.config import settings
 from app.schemas.site import (
     EnvironmentRevision,
     EnvironmentSnapshot,
+    SiteAccessAudience,
+    SiteAccessPolicy,
     SiteAppType,
     SiteCollaborator,
     SiteCollaboratorListResponse,
@@ -238,6 +240,46 @@ class SitesService:
             raise SitesUpstreamUnavailableError(
                 "Sites service returned an invalid collaborator list"
             ) from exc
+
+    async def get_access_policy(
+        self, siteid: str, *, username: str
+    ) -> SiteAccessPolicy:
+        payload = await self._request(
+            "GET",
+            f"/api/v1/projects/{quote(siteid, safe='')}/access",
+            params={"target": "inner"},
+            headers={"X-Wegent-Username": username},
+        )
+        return self._parse_access_policy(payload)
+
+    async def update_access_policy(
+        self,
+        siteid: str,
+        *,
+        username: str,
+        audience: SiteAccessAudience,
+        subjects: list[str],
+        idempotency_key: str,
+        request_id: str,
+    ) -> SiteAccessPolicy:
+        body: dict[str, Any] = {
+            "username": username,
+            "target": "inner",
+            "audience": audience,
+        }
+        if audience == "custom":
+            body["subjects"] = ",".join(subjects)
+        payload = await self._request(
+            "PUT",
+            f"/api/v1/projects/{quote(siteid, safe='')}/access",
+            json=body,
+            headers={
+                "X-Wegent-Username": username,
+                "Idempotency-Key": idempotency_key,
+                "X-Request-ID": request_id,
+            },
+        )
+        return self._parse_access_policy(payload)
 
     async def add_collaborator(
         self,
@@ -468,6 +510,15 @@ class SitesService:
         except ValidationError as exc:
             raise SitesUpstreamUnavailableError(
                 "Sites service returned an invalid environment snapshot"
+            ) from exc
+
+    @staticmethod
+    def _parse_access_policy(payload: Any) -> SiteAccessPolicy:
+        try:
+            return SiteAccessPolicy.model_validate(payload)
+        except ValidationError as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned an invalid access policy"
             ) from exc
 
     @staticmethod

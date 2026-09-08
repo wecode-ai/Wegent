@@ -1409,6 +1409,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'dsh-owner-capture') {
+      phase = 'dsh-owner-capture-scenario'
+      assert.ok(
+        desktopScenario,
+        'The dsh-owner-capture checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      console.log(`Wework desktop dsh-owner-capture checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
       await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)

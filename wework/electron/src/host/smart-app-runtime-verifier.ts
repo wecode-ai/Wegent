@@ -107,6 +107,7 @@ export async function verifySmartAppRuntime(
       modelBaseUrl: null,
       contextBaseUrl: null,
       contextToken: null,
+      includeElectronHostBridge: false,
       run: dependencies.runCommand,
     })
     stage = 'config'

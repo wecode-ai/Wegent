@@ -311,3 +311,147 @@ describe('DesktopRuntime lifecycle generation', () => {
     ).rejects.toThrow('Core desktop runtime is not ready')
   })
 })
+
+describe('DesktopRuntime.openWorkbenchRuntime', () => {
+  test('creates a distinct owner-scoped host pipe for each workbench tab', async () => {
+    const options: unknown[] = []
+    const corePipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'core' }) }
+    const firstPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'first' }) }
+    const secondPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'second' }) }
+    const createWorkbenchHostPipe = vi
+      .fn()
+      .mockReturnValueOnce({ hostPipe: firstPipe, principal: '@wegent/dsh-workbench' })
+      .mockReturnValueOnce({ hostPipe: secondPipe, principal: '@wegent/dsh-workbench' })
+    const runtime = new DesktopRuntime({
+      environment: {},
+      dataDirectory: '/data',
+      logDirectory: '/logs',
+      hostPipe: corePipe as never,
+      createWorkbenchHostPipe,
+    })
+    // @ts-expect-error – inject a fake workbench factory for testing
+    runtime.workbench = {
+      get: () => null,
+      open: (launch: unknown) => {
+        options.push(launch)
+        const currentLaunch = options.at(-1) as { tabId: string; url: string }
+        return Promise.resolve({
+          tabId: currentLaunch.tabId,
+          url: currentLaunch.url,
+          pid: 401,
+        })
+      },
+    }
+    // @ts-expect-error – bypass the ready check
+    runtime.started = true
+
+    const snapshot = await runtime.openWorkbenchRuntime({
+      tabId: 'tab-1',
+      url: 'http://127.0.0.1:4401',
+      command: '/runtime/dsh',
+    })
+    await runtime.openWorkbenchRuntime({
+      tabId: 'tab-2',
+      url: 'http://127.0.0.1:4402',
+      command: '/runtime/dsh',
+    })
+
+    expect(snapshot).toEqual({
+      tabId: 'tab-1',
+      url: 'http://127.0.0.1:4401',
+      pid: 401,
+    })
+    expect(createWorkbenchHostPipe).toHaveBeenNthCalledWith(1, 'tab-1')
+    expect(createWorkbenchHostPipe).toHaveBeenNthCalledWith(2, 'tab-2')
+    expect(options[0]).toMatchObject({
+      hostPipe: firstPipe,
+      hostPrincipal: '@wegent/dsh-workbench',
+    })
+    expect(options[1]).toMatchObject({
+      hostPipe: secondPipe,
+      hostPrincipal: '@wegent/dsh-workbench',
+    })
+  })
+
+  test('does not inject host pipe when a workbench host pipe factory is not configured', async () => {
+    const options: unknown[] = []
+    const hostPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'core' }) }
+    const runtime = new DesktopRuntime({
+      environment: {},
+      dataDirectory: '/data',
+      logDirectory: '/logs',
+      hostPipe: hostPipe as never,
+    })
+    // @ts-expect-error – inject a fake workbench factory for testing
+    runtime.workbench = {
+      get: () => null,
+      open: (launch: unknown) => {
+        options.push(launch)
+        return Promise.resolve({
+          tabId: 'tab-2',
+          url: 'http://127.0.0.1:4402',
+          pid: 402,
+        })
+      },
+    }
+    // @ts-expect-error – bypass the ready check
+    runtime.started = true
+
+    await runtime.openWorkbenchRuntime({
+      tabId: 'tab-2',
+      url: 'http://127.0.0.1:4402',
+      command: '/runtime/dsh',
+    })
+
+    expect(options[0]).toMatchObject({
+      tabId: 'tab-2',
+      url: 'http://127.0.0.1:4402',
+    })
+    expect(options[0]).not.toHaveProperty('hostPipe')
+    expect(options[0]).not.toHaveProperty('hostPrincipal')
+  })
+
+  test('preserves explicit host pipe from the launch', async () => {
+    const options: unknown[] = []
+    const corePipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'core' }) }
+    const scopedPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'scoped' }) }
+    const explicitPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'explicit' }) }
+    const runtime = new DesktopRuntime({
+      environment: {},
+      dataDirectory: '/data',
+      logDirectory: '/logs',
+      hostPipe: corePipe as never,
+      createWorkbenchHostPipe: () => ({
+        hostPipe: scopedPipe as never,
+        principal: '@wegent/dsh-workbench',
+      }),
+    })
+    // @ts-expect-error – inject a fake workbench factory for testing
+    runtime.workbench = {
+      get: () => null,
+      open: (launch: unknown) => {
+        options.push(launch)
+        return Promise.resolve({
+          tabId: 'tab-3',
+          url: 'http://127.0.0.1:4403',
+          pid: 403,
+        })
+      },
+    }
+    // @ts-expect-error – bypass the ready check
+    runtime.started = true
+
+    await runtime.openWorkbenchRuntime({
+      tabId: 'tab-3',
+      url: 'http://127.0.0.1:4403',
+      command: '/runtime/dsh',
+      hostPipe: explicitPipe as never,
+      hostPrincipal: '@wegent/explicit-principal',
+    })
+
+    expect(options[0]).toMatchObject({
+      hostPipe: explicitPipe,
+      hostPrincipal: '@wegent/explicit-principal',
+    })
+  })
+})

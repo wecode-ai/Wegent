@@ -55,6 +55,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
+  'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-space-mention',

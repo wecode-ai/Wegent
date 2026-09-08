@@ -813,6 +813,32 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
   await control.command('click', '[data-testid="environment-close-button"]')
 
   await control.command('clickWhenEnabled', '[data-testid="site-more-prj_e2e_product"]')
+  await control.command('clickWhenEnabled', '[data-testid="site-access-menu-item-prj_e2e_product"]')
+  await control.command('waitFor', '[data-testid="site-access-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="site-access-audience-custom"]')
+  await control.command('fill', '[data-testid="site-access-subjects"]', {
+    value: 'e2e-viewer-b, e2e-viewer-a',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="site-access-save"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('site-access-dialog') &&
+      /访问权限已保存|Access permissions saved/.test(snapshot.text),
+    'Saving Site access did not update the access dialog',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.deepEqual(
+    control.siteAccessPolicy.subjects,
+    ['e2e-viewer-a', 'e2e-viewer-b'],
+    'Saving Site access did not persist through the Backend fixture'
+  )
+  await captureVerificationScreenshot(control, 'plugins-06-site-access.png')
+  await control.command('click', '[data-testid="site-access-close"]')
+
+  await control.command('clickWhenEnabled', '[data-testid="site-more-prj_e2e_product"]')
   await control.command(
     'clickWhenEnabled',
     '[data-testid="site-collaborators-menu-item-prj_e2e_product"]'
@@ -849,7 +875,7 @@ async function verifySitesPluginAutoInstall(control, executorHome) {
     [],
     'Removing a Site collaborator did not persist through the Backend fixture'
   )
-  await captureVerificationScreenshot(control, 'plugins-06-site-collaborators.png')
+  await captureVerificationScreenshot(control, 'plugins-07-site-collaborators.png')
   await control.command('click', '[data-testid="site-collaborators-close"]')
 
   const siteInstallPath = '/api/plugins/builtin/wegent-sites/ensure-installed'

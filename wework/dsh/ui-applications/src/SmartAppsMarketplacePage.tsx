@@ -78,6 +78,7 @@ import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
+import { track } from '@/telemetry/client'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
@@ -88,6 +89,7 @@ interface SmartAppsMarketplacePageProps {
 interface PendingInstall {
   item: SmartAppMarketplaceItem
   preview: HarnessAppPreview
+  intent: 'install' | 'update'
 }
 
 type OwnedFilter = 'all' | 'created' | 'installed'
@@ -466,15 +468,20 @@ export function SmartAppsMarketplacePage({
 
   async function download(item: SmartAppMarketplaceItem) {
     if (!api) return
+    const intent = localState(item)?.update ? 'update' : 'install'
     setBusy(`download-${item.id}`)
     setError(null)
     try {
       const descriptor = await api.getDownload(item.id)
       const preview = await harnessAppsApi.download(descriptor)
-      setPendingInstall({ item, preview })
+      setPendingInstall({ item, preview, intent })
       setModelKey(localState(item)?.installation.modelKey ?? '')
       setSelected(null)
     } catch (downloadError) {
+      track('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_marketplace_download',
+      })
       setError(
         smartAppErrorMessage(
           downloadError,
@@ -508,10 +515,25 @@ export function SmartAppsMarketplacePage({
         installationId: installation.id,
         installation,
       })
+      if (pendingInstall.intent === 'update') {
+        track('feature_action_completed', { domain: 'smart_app', action: 'update' })
+      } else {
+        track('smart_app_installed', {
+          domain: 'smart_app',
+          install_source: 'marketplace',
+        })
+      }
       setPendingInstall(null)
       setModelKey('')
       await refresh()
     } catch (installError) {
+      track('operation_failed', {
+        domain: 'smart_app',
+        operation:
+          pendingInstall.intent === 'update'
+            ? 'smart_app_marketplace_update'
+            : 'smart_app_marketplace_install',
+      })
       setError(
         getErrorMessage(
           installError,
@@ -669,8 +691,16 @@ export function SmartAppsMarketplacePage({
         installationId: installation.id,
         installation,
       })
+      track('smart_app_installed', {
+        domain: 'smart_app',
+        install_source: 'zip_import',
+      })
       await refresh()
     } catch (importError) {
+      track('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_zip_import',
+      })
       setError(
         getErrorMessage(importError, t('workbench.smart_apps_import_failed', '智能工作台导入失败'))
       )
