@@ -437,20 +437,29 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
+    async fn restart_if_no_competing_work(
+        &self,
+        active_thread_id: &str,
+    ) -> Result<(), (usize, usize)> {
         let process = {
             let mut state = self.state.lock().await;
             let active_turn_count = state.active_threads.values().sum::<usize>();
             let Some(process) = state.process.as_ref() else {
-                state.thread_generations.clear();
+                state
+                    .thread_generations
+                    .retain(|thread_id, _| thread_id == active_thread_id);
                 state.idle_thread_generations.clear();
                 return Ok(());
             };
             let pending_request_count = process.pending.lock().await.len();
-            if active_turn_count > 0 || pending_request_count > 0 {
+            let current_thread_is_only_active = state.active_threads.len() == 1
+                && state.active_threads.get(active_thread_id) == Some(&1);
+            if !current_thread_is_only_active || pending_request_count > 0 {
                 return Err((active_turn_count, pending_request_count));
             }
-            state.thread_generations.clear();
+            state
+                .thread_generations
+                .retain(|thread_id, _| thread_id == active_thread_id);
             state.idle_thread_generations.clear();
             state.process.take()
         };
@@ -4929,11 +4938,15 @@ async fn request_shared_thread_id_with_provider_recovery(
     {
         return Err(provider_error);
     }
+    let active_thread_id = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "codex app-server thread/resume params missing threadId".to_owned())?;
 
     let mut fields = task_fields(task_id, subtask_id);
     fields.push(("operation", operation.to_owned()));
     fields.push(("error", provider_error.clone()));
-    match client.restart_if_idle().await {
+    match client.restart_if_no_competing_work(active_thread_id).await {
         Ok(()) => {
             log_executor_event(
                 "codex shared stale thread provider recovery restarting",
