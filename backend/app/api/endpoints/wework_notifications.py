@@ -37,7 +37,7 @@ def list_notifications(
     )
     return InboxView(
         items=[NotificationView.model_validate(row) for row in rows[:limit]],
-        unread_count=query.filter(WeworkNotification.read_at.is_(None)).count(),
+        unread_count=query.filter(WeworkNotification.is_read.is_(False)).count(),
         next_offset=offset + limit if len(rows) > limit else None,
     )
 
@@ -58,8 +58,13 @@ def read_all_notifications(
 ) -> None:
     db.query(WeworkNotification).filter(
         WeworkNotification.user_id == user.id,
-        WeworkNotification.read_at.is_(None),
-    ).update({"read_at": datetime.now(timezone.utc).replace(tzinfo=None)})
+        WeworkNotification.is_read.is_(False),
+    ).update(
+        {
+            "is_read": True,
+            "read_status_changed_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        }
+    )
     db.commit()
 
 
@@ -79,8 +84,18 @@ def read_notification(
     )
     if row is None:
         raise HTTPException(404, "Notification not found")
-    if row.read_at is None:
-        row.read_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    if not row.is_read:
+        db.query(WeworkNotification).filter(
+            WeworkNotification.id == row.id,
+            WeworkNotification.is_read.is_(False),
+        ).update(
+            {
+                "is_read": True,
+                "read_status_changed_at": datetime.now(timezone.utc).replace(
+                    tzinfo=None
+                ),
+            }
+        )
         db.commit()
         db.refresh(row)
     return row

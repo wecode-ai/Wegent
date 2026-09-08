@@ -35,6 +35,7 @@ def create_notification(
     kind: str = "message",
     payload: dict | None = None,
 ) -> WeworkNotification:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     notification = WeworkNotification(
         id=str(uuid4()),
         user_id=user_id,
@@ -45,10 +46,12 @@ def create_notification(
         url=(
             url
             if url is not None
-            else issue_url(project_id, item_id) if project_id else None
+            else issue_url(project_id, item_id) if project_id else ""
         ),
         payload=payload or {},
-        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        created_at=now,
+        is_read=False,
+        read_status_changed_at=now,
     )
     db.add(notification)
     db.info.setdefault(_PENDING, []).append(notification.id)

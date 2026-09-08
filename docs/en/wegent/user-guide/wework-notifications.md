@@ -43,3 +43,7 @@ flowchart LR
 ```
 
 Inbox reads and read-state changes are scoped to the recipient. Version conflicts roll back both the assignment and its notification. WebSocket and IM delivery happen after commit; opening the inbox, reconnecting and periodic refreshes reload its persisted state.
+
+## Database storage
+
+All notification columns are non-nullable, have comments, and use indexes with the `idx_` prefix. An empty stored URL means no navigation. `is_read` and `read_status_changed_at` store read state and its transition time. The API continues to expose `url: null` for no destination and `read_at: null` for unread entries. Migration preserves messages, destinations and actual read timestamps; repeated read requests preserve the first read time.

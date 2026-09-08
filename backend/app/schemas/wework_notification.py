@@ -46,6 +46,10 @@ class NotificationView(BaseModel):
     created_at: datetime
     read_at: datetime | None
 
+    @field_serializer("url")
+    def serialize_destination(self, value: str | None) -> str | None:
+        return value or None
+
     @field_serializer("created_at", "read_at")
     def serialize_timestamp(self, value: datetime | None) -> str | None:
         return value.replace(tzinfo=timezone.utc).isoformat() if value else None

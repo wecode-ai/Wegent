@@ -55,14 +55,30 @@ def test_send_without_project_persists_in_own_inbox(
     saved = response.json()
     assert saved["url"] == url
     assert saved["body"] == "你好"
-    assert test_db.get(WeworkNotification, saved["id"]).user_id == test_user.id
+    row = test_db.get(WeworkNotification, saved["id"])
+    assert row.user_id == test_user.id
+    assert row.url == (url or "")
+    assert row.is_read is False
+    assert row.read_status_changed_at == row.created_at
+    assert saved["read_at"] is None
     no_external_delivery.assert_called_once_with(deliver_notification, saved["id"])
     inbox = test_client.get(path, headers=headers).json()
     assert [row["id"] for row in inbox["items"]] == [saved["id"]]
     assert inbox["unread_count"] == 1
     read = test_client.post(f"{path}/{saved['id']}/read", headers=headers)
     assert read.status_code == 200
-    assert read.json()["read_at"] is not None
+    read_at = read.json()["read_at"]
+    assert read_at is not None
+    assert (
+        test_client.post(f"{path}/{saved['id']}/read", headers=headers).json()[
+            "read_at"
+        ]
+        == read_at
+    )
+    assert test_client.post(f"{path}/read-all", headers=headers).status_code == 204
+    assert (
+        test_client.get(path, headers=headers).json()["items"][0]["read_at"] == read_at
+    )
     assert test_client.get(path, headers=headers).json()["unread_count"] == 0
 
 
@@ -302,3 +318,38 @@ def test_explicit_click_target_overrides_source_link(test_db, test_user):
         ),
     )
     assert row.url == "wework://boards"
+
+
+def test_read_all_updates_only_unread_notifications_of_current_user(
+    test_client, test_db, test_user, test_token
+):
+    project = _make_project(test_db, test_user)
+    other = _make_member(test_db, project, "other-inbox", BaseRole.Developer)
+    rows = [
+        create_notification(
+            test_db,
+            user_id=recipient_id,
+            actor_user_id=test_user.id,
+            title="Read state",
+            body="Hello",
+        )
+        for recipient_id in [test_user.id, test_user.id, other.id]
+    ]
+    test_db.commit()
+    headers = {"Authorization": f"Bearer {test_token}"}
+    path = "/api/v1/wework-notifications"
+    first_read = test_client.post(f"{path}/{rows[0].id}/read", headers=headers).json()
+
+    assert test_client.post(f"{path}/read-all", headers=headers).status_code == 204
+
+    test_db.expire_all()
+    assert rows[0].is_read and rows[1].is_read
+    assert rows[1].read_at is not None
+    assert rows[2].is_read is False
+    assert rows[2].read_at is None
+    inbox = test_client.get(path, headers=headers).json()
+    assert inbox["unread_count"] == 0
+    assert (
+        next(row for row in inbox["items"] if row["id"] == rows[0].id)["read_at"]
+        == first_read["read_at"]
+    )
