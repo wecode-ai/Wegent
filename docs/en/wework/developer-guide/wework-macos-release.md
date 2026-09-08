@@ -102,6 +102,13 @@ new signing timestamp alone cannot change their component hashes. Published
 content SHA-256 values are computed from these final resources rather than
 extracting components from a newly re-signed installer.
 
+Re-signing an existing Mach-O file must preserve the entitlements from its
+previous signature. Codex and `codex-code-mode-host` require `allow-jit` and
+`allow-unsigned-executable-memory` to run V8; `codesign --verify` alone does
+not detect removed entitlements. Any signing-argument change must increment
+the signing-policy version so cached components signed under the previous
+policy are invalidated.
+
 The Codex component boundary is the complete `codex/` runtime directory, not
 the standalone `codex` executable. The component must contain
 `WEGENT_CODEX_BINARY.json`, the target architecture's `codex` and

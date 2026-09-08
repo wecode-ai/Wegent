@@ -2848,9 +2848,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 namespace=dest_namespace,
             )
 
-            # Grant the destination access to the source Skills when requested.
+            # Grant the destination access to the source Skills.
             skill_mapping: Dict[int, int] = {}
-            if copy_skills and dest_namespace != original.namespace:
+            if dest_namespace == "default":
+                skill_mapping = self._bind_bot_skills_to_personal_space(
+                    db,
+                    bot=original_bot,
+                    user_id=user_id,
+                    commit=commit,
+                )
+            elif copy_skills and dest_namespace != original.namespace:
                 skill_mapping = self._bind_bot_skills_to_namespace(
                     db,
                     bot=original_bot,
@@ -2906,7 +2913,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             namespace=dest_namespace,
                         )
                         skill_mapping: Dict[int, int] = {}
-                        if copy_skills:
+                        if dest_namespace == "default":
+                            skill_mapping = self._bind_bot_skills_to_personal_space(
+                                db,
+                                bot=bot,
+                                user_id=user_id,
+                                commit=commit,
+                            )
+                        elif copy_skills:
                             skill_mapping = self._bind_bot_skills_to_namespace(
                                 db,
                                 bot=bot,
@@ -3020,6 +3034,66 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 if not is_public and skill_id is not None:
                     result[skill_name] = skill_id
         return result
+
+    def _bind_bot_skills_to_personal_space(
+        self,
+        db: Session,
+        *,
+        bot: Kind,
+        user_id: int,
+        commit: bool = True,
+    ) -> Dict[int, int]:
+        """Grant the copier personal access to a bot's private Skills.
+
+        Cloning a bot into personal space (namespace 'default') keeps the Skill
+        references pointing at the canonical Skill assets. Those references only
+        resolve in the personal space when the Skill is public, owned by the
+        copier in the personal namespace, or bound to the copier's user defaults.
+
+        Bindings created here only affect the copier, so an agent the copier
+        already manages (own agent or group agent) can be copied into personal
+        space without the group consent dialog used for group destinations.
+        Skills the copier cannot access in any source context are left untouched,
+        so the clone-time permission check still reports the denial.
+        """
+        from app.services.skill_binding_service import skill_binding_service
+
+        private_skill_ids = self._collect_private_skill_ids(db, bot)
+        user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
+            db, user_id
+        )
+        mapping: Dict[int, int] = {}
+        for _skill_name, skill_id in private_skill_ids.items():
+            skill = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == skill_id,
+                    Kind.kind == "Skill",
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+            if not skill or skill.user_id == 0:
+                continue
+            if skill.user_id == user_id and skill.namespace == "default":
+                continue
+            if skill_id in user_default_skill_ids:
+                continue
+            if not skill_binding_service.can_user_access_skill(
+                db, skill=skill, user_id=user_id
+            ):
+                continue
+            skill_binding_service.add_user_default_skill(
+                db,
+                user_id=user_id,
+                skill_id=skill_id,
+                created_by=user_id,
+                commit=False,
+            )
+            mapping[skill_id] = skill_id
+        if commit:
+            db.commit()
+        return mapping
 
     def _bind_bot_skills_to_namespace(
         self,

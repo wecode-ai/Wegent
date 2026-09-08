@@ -36,6 +36,7 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(nextTaskTrackingStatus('in_progress', 'cancelled')).toBe('in_review')
     expect(nextTaskTrackingStatus('pending', 'failed')).toBe('in_review')
     expect(nextTaskTrackingStatus('pending', 'succeeded')).toBe('in_review')
+    expect(nextTaskTrackingStatus('in_review', 'succeeded')).toBeNull()
   })
 
   it('lists loop items with queue filters', async () => {

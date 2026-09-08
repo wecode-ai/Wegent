@@ -6,6 +6,8 @@ sidebar_position: 4
 
 本文档介绍 Wegent 项目的单元测试框架设置。
 
+推送前检查默认使用 2 个 Jest worker 运行前端完整单元测试，避免并行 JSDOM 实例争抢资源导致超时。可通过 `FRONTEND_PRE_PUSH_TEST_WORKERS` 调整并发数；该设置不改变测试范围或超时限制。
+
 ## 概述
 
 该项目为所有模块提供了全面的单元测试支持：

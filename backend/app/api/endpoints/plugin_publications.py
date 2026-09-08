@@ -47,7 +47,7 @@ def create_plugin_publication_request(
         ..., alias="Idempotency-Key", min_length=8, max_length=200
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginPublicationUploadResponse:
     user_id = current_user.id
     try:
@@ -81,7 +81,7 @@ def list_plugin_publication_requests(
     submitted_after: datetime | None = Query(default=None, alias="submittedAfter"),
     submitted_before: datetime | None = Query(default=None, alias="submittedBefore"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginPublicationRequestListResponse:
     return plugin_publication_service.list_requests(
         db,
@@ -104,7 +104,7 @@ def get_plugin_publication_request(
     request_id: int,
     revision: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginPublicationRequestDetail:
     return plugin_publication_service.get_request(
         db,
@@ -126,7 +126,7 @@ def create_plugin_publication_revision(
         ..., alias="Idempotency-Key", min_length=8, max_length=200
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginPublicationUploadResponse:
     user_id = current_user.id
     try:
@@ -207,7 +207,7 @@ def complete_plugin_publication_revision(
         ..., alias="Idempotency-Key", min_length=8, max_length=200
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginPublicationRequestDetail:
     user_id = current_user.id
     try:
@@ -243,7 +243,7 @@ def withdraw_plugin_publication_request(
         ..., alias="Idempotency-Key", min_length=8, max_length=200
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginPublicationRequestDetail:
     user_id = current_user.id
     return plugin_publication_idempotency_service.execute(
