@@ -70,10 +70,7 @@ import {
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
-import type {
-  ArchiveRuntimeConversationsResult,
-  ArchiveRuntimeTaskOptions,
-} from '@/features/workbench/workbenchContextTypes'
+import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
@@ -692,8 +689,7 @@ interface CloudTodoWorkspaceProps {
   onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
   onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   onArchiveRuntimeTasks?: (
-    addresses: RuntimeTaskAddress[],
-    options?: ArchiveRuntimeTaskOptions
+    addresses: RuntimeTaskAddress[]
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
@@ -1543,9 +1539,6 @@ export function CloudTodoWorkspace({
   const [archiveBusy, setArchiveBusy] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
   const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
-    LocatedLoopItem[] | null
-  >(null)
-  const [runtimeForceArchiveItems, setRuntimeForceArchiveItems] = useState<
     LocatedLoopItem[] | null
   >(null)
   const [runtimeConversationPreviews, setRuntimeConversationPreviews] = useState<
@@ -2486,10 +2479,7 @@ export function CloudTodoWorkspace({
     }
   }
 
-  async function archiveCompletedItems(
-    completedItems: LocatedLoopItem[],
-    options?: ArchiveRuntimeTaskOptions
-  ) {
+  async function archiveCompletedItems(completedItems: LocatedLoopItem[]) {
     if (!onArchiveRuntimeTasks || archiveBusy || completedItems.length === 0) return
     setArchiveBusy(true)
     setArchiveError(null)
@@ -2508,12 +2498,7 @@ export function CloudTodoWorkspace({
           addresses.set(runtimeConversationKey(address), address)
         }
       }
-      const runtimeResult = await onArchiveRuntimeTasks([...addresses.values()], options)
-      if (!options?.force && runtimeResult?.status === 'dirty_worktree') {
-        setRuntimeBatchArchiveItems(null)
-        setRuntimeForceArchiveItems(completedItems)
-        return
-      }
+      const runtimeResult = await onArchiveRuntimeTasks([...addresses.values()])
       if (runtimeResult?.status === 'failed') {
         failedItems.push(...completedItems)
       } else {
@@ -2543,7 +2528,6 @@ export function CloudTodoWorkspace({
         )
       }
       setRuntimeBatchArchiveItems(failedItems.length > 0 ? failedItems : null)
-      setRuntimeForceArchiveItems(null)
       if (failedItems.length > 0) {
         setArchiveError(
           t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
@@ -2554,7 +2538,6 @@ export function CloudTodoWorkspace({
     } catch (error) {
       console.error('[Wework my tasks] batch archive failed', error)
       setRuntimeBatchArchiveItems(completedItems)
-      setRuntimeForceArchiveItems(null)
       setArchiveError(
         t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
           count: completedItems.length,
@@ -5870,33 +5853,22 @@ export function CloudTodoWorkspace({
           </div>
         </Modal>
       )}
-      {(runtimeBatchArchiveItems || runtimeForceArchiveItems) && (
+      {runtimeBatchArchiveItems && (
         <Modal
-          title={
-            runtimeForceArchiveItems
-              ? t('todo.force_archive_completed_tasks_title', '强制归档已完成任务？')
-              : t('todo.archive_completed_tasks_title', '归档已完成任务？')
-          }
+          title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
           onClose={() => {
             if (archiveBusy) return
             setRuntimeBatchArchiveItems(null)
-            setRuntimeForceArchiveItems(null)
             setArchiveError(null)
           }}
         >
           <div className="px-5 pb-5 pt-4">
             <p className="text-sm leading-5 text-text-secondary">
-              {runtimeForceArchiveItems
-                ? t(
-                    'todo.force_archive_completed_tasks_description',
-                    '{{count}} 个任务的工作树包含未提交修改。强制归档会删除这些工作树目录。',
-                    { count: runtimeForceArchiveItems.length }
-                  )
-                : t(
-                    'todo.archive_completed_tasks_description',
-                    '将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。',
-                    { count: runtimeBatchArchiveItems?.length ?? 0 }
-                  )}
+              {t(
+                'todo.archive_completed_tasks_description',
+                '将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。',
+                { count: runtimeBatchArchiveItems.length }
+              )}
             </p>
             {archiveError ? (
               <p className="mt-3 text-xs text-destructive" role="alert">
@@ -5910,7 +5882,6 @@ export function CloudTodoWorkspace({
                 disabled={archiveBusy}
                 onClick={() => {
                   setRuntimeBatchArchiveItems(null)
-                  setRuntimeForceArchiveItems(null)
                   setArchiveError(null)
                 }}
                 className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
@@ -5919,25 +5890,14 @@ export function CloudTodoWorkspace({
               </button>
               <button
                 type="button"
-                data-testid={
-                  runtimeForceArchiveItems
-                    ? 'cloud-my-tasks-force-archive-completed-confirm'
-                    : 'cloud-my-tasks-archive-completed-confirm'
-                }
+                data-testid="cloud-my-tasks-archive-completed-confirm"
                 disabled={archiveBusy}
-                onClick={() =>
-                  void archiveCompletedItems(
-                    runtimeForceArchiveItems ?? runtimeBatchArchiveItems ?? [],
-                    runtimeForceArchiveItems ? { force: true } : undefined
-                  )
-                }
+                onClick={() => void archiveCompletedItems(runtimeBatchArchiveItems)}
                 className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {archiveBusy
                   ? t('todo.archiving', '归档中…')
-                  : runtimeForceArchiveItems
-                    ? t('todo.force_archive', '强制归档')
-                    : t('todo.confirm_archive', '确认归档')}
+                  : t('todo.confirm_archive', '确认归档')}
               </button>
             </div>
           </div>

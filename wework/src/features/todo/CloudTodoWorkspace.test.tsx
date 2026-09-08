@@ -4786,8 +4786,7 @@ describe('CloudTodoWorkspace', () => {
             deviceId: 'local-device',
             taskId: 'second-completed-task',
           }),
-        ]),
-        undefined
+        ])
       )
     )
     expect(workbenchServices.deliveryApi!.archiveLoopItem).not.toHaveBeenCalled()
@@ -4809,8 +4808,7 @@ describe('CloudTodoWorkspace', () => {
           deviceId: 'local-device',
           taskId: 'second-completed-task',
         }),
-      ]),
-      undefined
+      ])
     )
     expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-2')
     expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-5')
