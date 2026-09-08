@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { createZipFixture, extractSingleRootZipFixture } from '../modules/zip-fixtures.mjs'
+import {
+  createZipFixture,
+  extractSingleRootZipFixture,
+  extractZipFixture,
+} from '../modules/zip-fixtures.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
@@ -108,6 +113,48 @@ async function waitForManifestPlugin(manifestPath, pluginSpec, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 250))
   }
   throw new Error(`Smart app manifest did not include ${pluginSpec}`)
+}
+
+async function exportedPackages(downloadsPath) {
+  return new Set(
+    await readdir(downloadsPath)
+      .then(entries => entries.filter(entry => entry.endsWith('.zip')))
+      .catch(() => [])
+  )
+}
+
+async function waitForNewExport(downloadsPath, before, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const entries = await exportedPackages(downloadsPath)
+    const added = [...entries].find(entry => !before.has(entry))
+    if (added) return join(downloadsPath, added)
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Smart app export success did not create a ZIP in Downloads')
+}
+
+async function waitForMissing(control, selector, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', selector)) === 0) return
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`Timed out waiting for "${selector}" to disappear`)
+}
+
+async function assertExportedPackage({
+  archivePath,
+  expectedName,
+  expectedVersion,
+  extractionPath,
+}) {
+  assert.ok((await stat(archivePath)).size > 0, 'The exported Smart app ZIP was empty')
+  await extractZipFixture(archivePath, extractionPath)
+  const manifest = JSON.parse(await readFile(join(extractionPath, 'plugin-manifest.json'), 'utf8'))
+  assert.equal(manifest.name, expectedName)
+  assert.equal(manifest.version, expectedVersion)
+  await rm(archivePath)
 }
 
 async function createHarnessPackage(
@@ -232,14 +279,15 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
     version: '0.0.9',
   })
   const officialSource = await createOfficialSource(resultDir, packagePath)
+  const downloadsPath = join(homedir(), 'Downloads')
   let sharedSmartAppId = null
+  let ownerRequest
   return {
     requiresCloudEnvironment: true,
 
     async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
       await publishOfficialSmartApp(officialSource)
-      const ownerRequest = (pathname, options) =>
-        requestJson(backendUrl, authToken, pathname, options)
+      ownerRequest = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
       const ownerCatalog = await ownerRequest('/api/smart-apps/marketplace')
       const officialItem = ownerCatalog.items.find(
         item => item.name === INSTALLATION_ID && item.sourceType === 'official'
@@ -821,6 +869,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
+      const linkedExportsBefore = await exportedPackages(downloadsPath)
       await control.command(
         'click',
         `[data-testid="smart-app-export-package-${CREATED_INSTALLATION_ID}"]`
@@ -828,6 +877,12 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
         text: '安装包已导出到下载目录',
         timeoutMs: uiTimeoutMs,
+      })
+      await assertExportedPackage({
+        archivePath: await waitForNewExport(downloadsPath, linkedExportsBefore, uiTimeoutMs),
+        expectedName: CREATED_INSTALLATION_ID,
+        expectedVersion: '0.1.0',
+        extractionPath: join(resultDir, 'linked-export-verification'),
       })
       await captureScreenshot(control, 'harness-apps-03f-linked-exported.png', 'body')
       await control.command('click', `[data-testid="smart-app-actions-${CREATED_INSTALLATION_ID}"]`)
@@ -995,6 +1050,26 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         text: '分享范围已保存。',
         timeoutMs: uiTimeoutMs,
       })
+      assert.ok(ownerRequest, 'Smart app owner API was not prepared')
+      const privateCatalog = await ownerRequest('/api/smart-apps/marketplace?source=public')
+      assert.equal(
+        privateCatalog.items.some(item => item.id === sharedSmartAppId),
+        false,
+        'Making the Smart app private left it listed in the public marketplace'
+      )
+      await waitForMissing(control, '[data-testid="smart-app-share-dialog"]', uiTimeoutMs)
+      await control.command('click', sharedVisibilitySelector)
+      await control.command('waitFor', '[data-testid="smart-app-share-scope-private"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.match(
+        await control.command('getAttribute', '[data-testid="smart-app-share-scope-private"]', {
+          value: 'class',
+        }),
+        /\bbg-background\b.*\bshadow-sm\b/,
+        'Reopening Smart app access settings did not restore the private scope'
+      )
+      await control.command('click', '[data-testid="smart-app-share-cancel"]')
       await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
       await control.command('click', `[data-testid="smart-app-actions-${INSTALLATION_ID}"]`)
       await control.command(
@@ -1005,10 +1080,17 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
+      const installedExportsBefore = await exportedPackages(downloadsPath)
       await control.command('click', `[data-testid="smart-app-export-package-${INSTALLATION_ID}"]`)
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
         text: '安装包已导出到下载目录。',
         timeoutMs: uiTimeoutMs,
+      })
+      await assertExportedPackage({
+        archivePath: await waitForNewExport(downloadsPath, installedExportsBefore, uiTimeoutMs),
+        expectedName: INSTALLATION_ID,
+        expectedVersion: '0.1.0',
+        extractionPath: join(resultDir, 'installed-export-verification'),
       })
       await captureScreenshot(control, 'harness-apps-05a-exported.png', 'body')
 
