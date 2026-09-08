@@ -1198,6 +1198,7 @@ def test_a_running_wiki_reports_the_run_rather_than_looking_idle(
         "total_steps": 0,
         "pages_written": 0,
         "pages_total": 0,
+        "review_required": False,
     }
 
 
