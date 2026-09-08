@@ -1014,7 +1014,7 @@ jobs:
             --env E2E_DEVICE_ID \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \
-            pnpm exec playwright test --project=executor-chromium
+            pnpm exec playwright test --project=executor-chromium --workers=1
 
       - name: Stop Local ClaudeCode Executor
         if: always()
