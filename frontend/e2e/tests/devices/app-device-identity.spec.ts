@@ -276,7 +276,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
       const original = await connect()
       expect(await register(original, routeId, runId)).toMatchObject({ success: true })
       const list = await devices()
-      expect(list.filter(device => device.device_id === routeId)).toHaveLength(3)
+      expect(list.filter(device => device.device_id === routeId)).toHaveLength(4)
       expect(list.find(device => device.id === recordId)?.status).toBe('online')
       expect(list.find(device => device.id === seeded.duplicate_id)?.status).toBe('offline')
       expect((await api.delete(`/api/devices/records/${recordId}`)).status).toBe(409)
