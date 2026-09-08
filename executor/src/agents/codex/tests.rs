@@ -1757,6 +1757,9 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     assert!(launch_config
         .config_overrides
         .contains(&"features.goals=true".to_owned()));
+    assert!(!launch_config
+        .config_overrides
+        .contains(&"features.code_mode_host=true".to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&"features.apply_patch_freeform=true".to_owned()));
