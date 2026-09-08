@@ -9,6 +9,7 @@ import {
 import {
   findProjectSpaceContextForTask,
   isDefaultWorkItemProject,
+  publishProjectSpaceTaskContextChanged,
   publishProjectSpaceTaskBindingChanged,
   projectSpaceKey,
   projectSpaceRef,
@@ -313,6 +314,7 @@ export function useWorkbenchCloudProjectContext({
     []
   )
   const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
+  const taskStatusSyncKeyRef = useRef<string | null>(null)
   const runtimeTaskTitleRef = useRef(runtimeTaskTitle)
   useEffect(() => {
     runtimeTaskTitleRef.current = runtimeTaskTitle
@@ -446,6 +448,61 @@ export function useWorkbenchCloudProjectContext({
     [services?.deliveryApi, services?.projectSpaceApis?.cloud, services?.projectSpaceApis?.local]
   )
   const boundProjectSpaceApi = boundCloudProject ? projectSpaceApiFor(boundCloudProject) : undefined
+  const taskExecutionStatus = useMemo(
+    () =>
+      normalizeTaskExecutionStatus(
+        runtimeTaskExecutionStatus,
+        runtimeTaskRunning,
+        runtimeTaskExecutionKnown
+      ),
+    [runtimeTaskExecutionKnown, runtimeTaskExecutionStatus, runtimeTaskRunning]
+  )
+
+  useEffect(() => {
+    if (!contextRuntimeTask || !boundCloudProject || !boundCloudItem || !taskExecutionStatus) return
+    if (typeof boundProjectSpaceApi?.updateTaskTrackingStatus !== 'function') return
+    if (!nextTaskTrackingStatus(boundCloudItem.status, taskExecutionStatus)) return
+
+    const syncKey = [
+      contextRuntimeTask.deviceId,
+      contextRuntimeTask.taskId,
+      boundCloudProject.project_store,
+      boundCloudProject.id,
+      boundCloudItem.id,
+      boundCloudItem.status,
+      taskExecutionStatus,
+    ].join(':')
+    if (taskStatusSyncKeyRef.current === syncKey) return
+    taskStatusSyncKeyRef.current = syncKey
+
+    let active = true
+    void boundProjectSpaceApi
+      .updateTaskTrackingStatus(contextRuntimeTask, taskExecutionStatus)
+      .then(updatedItem => {
+        if (!active || !updatedItem) return
+        setBoundCloudItem(updatedItem)
+        setDeliveryItem(cloudItemAsLocalWorkItem(updatedItem, contextRuntimeTask))
+        publishProjectSpaceTaskContextChanged(contextRuntimeTask)
+      })
+      .catch(error => {
+        if (!active) return
+        taskStatusSyncKeyRef.current = null
+        console.warn('[Wework] Failed to sync project-space task status', {
+          task: contextRuntimeTask,
+          executionStatus: taskExecutionStatus,
+          error,
+        })
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    boundCloudItem,
+    boundCloudProject,
+    boundProjectSpaceApi,
+    contextRuntimeTask,
+    taskExecutionStatus,
+  ])
 
   useEffect(() => {
     let active = true
@@ -889,14 +946,9 @@ export function useWorkbenchCloudProjectContext({
             runtimeTaskDescription
           )
           linkedItem = tracked.item
-          const executionStatus = normalizeTaskExecutionStatus(
-            runtimeTaskExecutionStatus,
-            runtimeTaskRunning,
-            runtimeTaskExecutionKnown
-          )
-          if (executionStatus) {
+          if (taskExecutionStatus) {
             linkedItem =
-              (await api.updateTaskTrackingStatus(contextRuntimeTask, executionStatus)) ??
+              (await api.updateTaskTrackingStatus(contextRuntimeTask, taskExecutionStatus)) ??
               linkedItem
           }
         }
@@ -923,9 +975,7 @@ export function useWorkbenchCloudProjectContext({
       contextRuntimeTask,
       projectSpaceApiFor,
       runtimeTaskDescription,
-      runtimeTaskExecutionKnown,
-      runtimeTaskExecutionStatus,
-      runtimeTaskRunning,
+      taskExecutionStatus,
       runtimeTaskTitle,
       t,
       taskBoardAssociation,

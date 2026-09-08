@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.models.user import User
 from app.schemas.plugin_publication import (
     PluginPublicationActionEligibility,
     PluginPublicationCreateRequest,
@@ -273,6 +274,33 @@ def test_create_publication_request_replays_same_key_and_rejects_changed_payload
     assert first.json() == replay.json()
     assert conflict.status_code == 409
     assert calls == 1
+
+
+def test_executor_task_token_can_create_publication_request(
+    test_client: TestClient,
+    test_task_token: str,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    user_ids: list[int] = []
+
+    def create_request(db, **kwargs):
+        del db
+        user_ids.append(kwargs["user_id"])
+        return _upload()
+
+    monkeypatch.setattr(plugin_publication_service, "create_request", create_request)
+    response = test_client.post(
+        "/api/plugins/publication-requests",
+        headers={
+            "Authorization": f"Bearer {test_task_token}",
+            "Idempotency-Key": "publication-task-token-001",
+        },
+        json=_create_payload(),
+    )
+
+    assert response.status_code == 201
+    assert user_ids == [test_user.id]
 
 
 @pytest.mark.parametrize(

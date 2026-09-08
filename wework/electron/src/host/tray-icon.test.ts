@@ -1,6 +1,12 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { NativeImage } from 'electron'
-import { convertToTemplateBitmap, createTrayIcon, type NativeImageFactory } from './tray-icon.js'
+import {
+  convertToTemplateBitmap,
+  createTrayBootstrapIcon,
+  createTrayIcon,
+  type NativeImageFactory,
+  type TrayBootstrapImageFactory,
+} from './tray-icon.js'
 
 function image(overrides: Partial<NativeImage> = {}): NativeImage {
   return {
@@ -15,6 +21,31 @@ function image(overrides: Partial<NativeImage> = {}): NativeImage {
 }
 
 describe('tray icon', () => {
+  test('keeps the macOS tray invisible until Electron assigns its persistent identity', () => {
+    const empty = image({ isEmpty: vi.fn(() => true) })
+    const images: TrayBootstrapImageFactory = {
+      createEmpty: vi.fn(() => empty),
+      createFromPath: vi.fn(),
+      createFromBitmap: vi.fn(),
+    }
+
+    expect(createTrayBootstrapIcon(images, '/icons/128x128.png', 'darwin')).toBe(empty)
+    expect(images.createEmpty).toHaveBeenCalledOnce()
+    expect(images.createFromPath).not.toHaveBeenCalled()
+  })
+
+  test('uses the application icon immediately outside macOS', () => {
+    const source = image()
+    const images: TrayBootstrapImageFactory = {
+      createEmpty: vi.fn(),
+      createFromPath: vi.fn(() => source),
+      createFromBitmap: vi.fn(),
+    }
+
+    expect(createTrayBootstrapIcon(images, '/icons/128x128.png', 'linux')).toBe(source)
+    expect(images.createEmpty).not.toHaveBeenCalled()
+  })
+
   test('converts white pixels to transparency and colored pixels to a template mask', () => {
     const bitmap = Buffer.from([255, 255, 255, 255, 0, 120, 240, 255, 30, 20, 10, 128])
 

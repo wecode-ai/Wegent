@@ -8,6 +8,17 @@ import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 
 const execute = promisify(execFile)
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+export const SIGNED_COMPONENT_POLICY_VERSION = 2
+const SIGNED_COMPONENT_CODESIGN_FLAGS = [
+  '--timestamp',
+  '--options',
+  'runtime',
+  '--preserve-metadata=entitlements',
+]
+
+export function signedComponentCodesignArguments(identity, file) {
+  return ['--force', '--sign', identity, ...SIGNED_COMPONENT_CODESIGN_FLAGS, file]
+}
 
 export async function reuseSignedComponent({ source, cacheRoot, identity, policy, sign, verify }) {
   const inputSha256 = await hashComponentPath(source)
@@ -55,11 +66,11 @@ export async function prepareSignedComponents(environment = process.env) {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   const toolchain = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
   const policy = {
-    version: 1,
+    version: SIGNED_COMPONENT_POLICY_VERSION,
     platform: 'darwin',
     arch: environment.WEWORK_RELEASE_ARCH || process.arch,
     builder: toolchain.devDependencies['electron-builder'],
-    flags: ['--timestamp', '--options', 'runtime'],
+    flags: SIGNED_COMPONENT_CODESIGN_FLAGS,
   }
   for (const [id, component] of Object.entries(manifest.components)) {
     if (!component.path) continue
@@ -73,15 +84,7 @@ export async function prepareSignedComponents(environment = process.env) {
       policy,
       sign: async source => {
         for (const file of await machOFiles(source)) {
-          await execute('codesign', [
-            '--force',
-            '--sign',
-            identity,
-            '--timestamp',
-            '--options',
-            'runtime',
-            file,
-          ])
+          await execute('codesign', signedComponentCodesignArguments(identity, file))
         }
       },
       verify: async source => {

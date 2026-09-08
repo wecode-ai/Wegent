@@ -23,6 +23,7 @@ const managedComponentResources = [
 
 module.exports = {
   appId: identity.identifier,
+  protocols: [{ name: 'Wework', schemes: ['wework'] }],
   productName: identity.productName,
   executableName: identity.executableName,
   compression: onlineUpdateBuild ? 'store' : 'normal',

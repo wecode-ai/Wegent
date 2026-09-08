@@ -405,6 +405,19 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
   fail "Executor E2E must run Playwright from the immutable dependency image"
 fi
 
+executor_runtime_download="$(sed -n '/name: Download fork Executor E2E runtime/,/name: Restore fork Executor E2E runtime/p' "$workflow_dir/e2e-tests.yml")"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq '.github/scripts/download-actions-artifact.sh' <<<"$executor_runtime_download" ||
+  ! grep -Fq 'GITHUB_TOKEN: ${{ github.token }}' <<<"$executor_runtime_download" ||
+  ! grep -Fq 'executor-e2e-runtime' <<<"$executor_runtime_download" ||
+  ! grep -Fq '.ci-artifacts' <<<"$executor_runtime_download" ||
+  grep -Fq 'uses: actions/download-artifact@' <<<"$executor_runtime_download" ||
+  ! sed -n '/^  executor-e2e-tests:/,/^    needs:/p' "$workflow_dir/e2e-tests.yml" |
+    grep -Fq 'actions: read'; then
+  fail "Fork Executor E2E must download the complete runtime archive with Actions read permission"
+fi
+
 if grep -R -E \
   'install-playwright-(browser|system-deps)|playwright-chromium-v2-' \
   "$workflow_dir/e2e-tests.yml" "$warmup_workflow" >/dev/null; then
