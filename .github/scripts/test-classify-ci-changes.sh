@@ -921,6 +921,17 @@ if [[ "$desktop_other_job" != *"build-wework-desktop-core-e2e"* ]] ||
   printf 'Non-Core desktop E2E must consume the shared Electron package\n' >&2
   exit 1
 fi
+desktop_other_download_step="$(
+  extract_named_workflow_step_from_job \
+    "$wework_workflow" \
+    "  wework-desktop-e2e:" \
+    "  wework-e2e-summary:" \
+    "Download shared Wework desktop E2E build"
+)"
+if [[ "$desktop_other_download_step" != *"continue-on-error: true"* ]]; then
+  printf 'Non-Core desktop E2E must reach its artifact download recovery path\n' >&2
+  exit 1
+fi
 
 electron_cache_step="$(
   extract_named_workflow_step_from_job \
@@ -1016,6 +1027,17 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   printf 'Wework Cloud desktop E2E must use fifteen prebuilt serial shards\n' >&2
   exit 1
 fi
+wework_desktop_cloud_download_step="$(
+  extract_named_workflow_step_from_job \
+    "$wework_workflow" \
+    "  wework-desktop-cloud-e2e:" \
+    "  wework-desktop-e2e:" \
+    "Download shared Wework desktop E2E build"
+)"
+if [[ "$wework_desktop_cloud_download_step" != *"continue-on-error: true"* ]]; then
+  printf 'Wework Cloud desktop E2E must reach its artifact download recovery path\n' >&2
+  exit 1
+fi
 if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
   printf 'Wework Cloud desktop E2E must honor merge-group change classification\n' >&2
   exit 1
@@ -1032,6 +1054,17 @@ if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 0"* ]]; then
   printf 'Wework Core desktop E2E must use seventeen prebuilt serial shards\n' >&2
+  exit 1
+fi
+wework_desktop_core_download_step="$(
+  extract_named_workflow_step_from_job \
+    "$wework_workflow" \
+    "  wework-desktop-core-e2e:" \
+    "  build-wework-desktop-windows-core-e2e:" \
+    "Download Wework desktop Core E2E build"
+)"
+if [[ "$wework_desktop_core_download_step" != *"continue-on-error: true"* ]]; then
+  printf 'Wework Core desktop E2E must reach its artifact download recovery path\n' >&2
   exit 1
 fi
 if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then

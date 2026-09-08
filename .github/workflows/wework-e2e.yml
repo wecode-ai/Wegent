@@ -345,6 +345,7 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -700,6 +701,7 @@ jobs:
           persist-credentials: false
 
       - name: Download shared Wework desktop E2E build
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -801,6 +803,7 @@ jobs:
           filter: blob:none
 
       - name: Download shared Wework desktop E2E build
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
