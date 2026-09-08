@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { AppIframe } from '@/components/topnav/AppIframe'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -31,6 +32,23 @@ export function DshSidebarExtensionPanel({
     }),
     [scope, t, tab, visible]
   )
+  if (descriptor.mode === 'iframe') {
+    const src = tab.path ?? descriptor.url
+    if (!src) {
+      throw new Error(`Wework workspace sidebar iframe ${descriptor.id} does not declare a URL`)
+    }
+    return (
+      <AppIframe
+        active={visible}
+        appKey={`workspace-sidebar-${descriptor.id}`}
+        edgeToEdge
+        embeddedBrowserLabel={`workspace-sidebar:${scope.sessionId}:${tab.id}`}
+        src={src}
+        title={tab.title}
+        workspaceTabId={tab.id}
+      />
+    )
+  }
   return (
     <DshSlotSurface
       className="flex min-h-0 flex-1 flex-col"

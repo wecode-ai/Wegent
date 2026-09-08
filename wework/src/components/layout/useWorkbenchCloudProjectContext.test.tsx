@@ -241,6 +241,47 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
   })
 
+  test('projects current runtime status while the bound work item persistence lags', async () => {
+    const cloudProject = project('space-cloud')
+    const reviewItem = {
+      ...loopItem(cloudProject.id),
+      status: 'in_review' as const,
+    }
+    const runtimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+    }
+    const services = {
+      deliveryApi: {
+        findCloudContextForTask: vi
+          .fn()
+          .mockResolvedValue({ project: cloudProject, loop_item: reviewItem }),
+        listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+        listCloudProjects: vi.fn().mockResolvedValue({ items: [cloudProject] }),
+        listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+        listLoopItems: vi.fn().mockResolvedValue({ items: [reviewItem] }),
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: runtimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskExecutionKnown: true,
+        runtimeTaskExecutionStatus: 'running',
+        runtimeTaskRunning: true,
+        runtimeTaskTitle: 'Lifecycle task',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_progress'))
+    expect(result.current.boundCloudItemStatusOverride).toBe('in_progress')
+  })
+
   test('automatically selects the configured default project space', async () => {
     const defaultProject = project('space-default')
     const deliveryApi = {

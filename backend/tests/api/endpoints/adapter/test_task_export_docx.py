@@ -56,6 +56,7 @@ async def _call_export_docx(monkeypatch, title: str) -> StreamingResponse:
     return await tasks.export_task_docx(
         task_id=42,
         message_ids=None,
+        download_token=None,
         db=Mock(),
         current_user=SimpleNamespace(id=1),
     )

@@ -22,47 +22,26 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, update
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.user import User
 from app.schemas.device import DeviceType
 from app.services.device.display_name import (
     resolve_device_display_name,
     set_device_display_name,
 )
+from app.services.device.identity import (
+    DeviceIdentityConflictError,
+    RuntimeInstanceMismatchError,
+    find_registration_device,
+    owned_active_device,
+    validate_persistent_runtime_instance_id,
+)
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
-
-
-class RuntimeInstanceMismatchError(ValueError):
-    """Raised when a persistent device connects from a different Runtime."""
-
-
-def validate_persistent_runtime_instance_id(
-    device_json: Dict[str, Any],
-    runtime_instance_id: Optional[str],
-    *,
-    device_id: str,
-) -> None:
-    """Keep cloud and remote devices pinned to their first Runtime instance."""
-
-    spec = device_json.get("spec", {})
-    device_type = spec.get("deviceType")
-    if device_type not in {DeviceType.CLOUD.value, DeviceType.REMOTE.value}:
-        return
-
-    persisted_runtime_instance_id = spec.get("runtimeInstanceId")
-    if (
-        persisted_runtime_instance_id
-        and runtime_instance_id != persisted_runtime_instance_id
-    ):
-        raise RuntimeInstanceMismatchError(
-            "Runtime instance ID mismatch for persistent "
-            f"{device_type} device {device_id}"
-        )
 
 
 class DeviceService:
@@ -348,6 +327,7 @@ class DeviceService:
         return devices
 
     @staticmethod
+    @trace_sync("device.upsert", tracer_name="backend")
     def upsert_device_crd(
         db: Session,
         user_id: int,
@@ -359,6 +339,45 @@ class DeviceService:
         runtime_transfer_host: Optional[str] = None,
         runtime_instance_id: Optional[str] = None,
         app_device_id: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
+    ) -> Kind:
+        """Register under the owner lock without requiring a schema migration."""
+        if not device_id.strip():
+            raise DeviceIdentityConflictError("Device ID is required for registration")
+        if (
+            device_type == DeviceType.APP.value
+            and not (runtime_instance_id or "").strip()
+        ):
+            raise DeviceIdentityConflictError(
+                "App registration requires a persistent Runtime ID"
+            )
+        arguments = dict(
+            user_id=user_id,
+            device_id=device_id,
+            name=name,
+            client_ip=client_ip,
+            device_type=device_type,
+            bind_shell=bind_shell,
+            runtime_transfer_host=runtime_transfer_host,
+            runtime_instance_id=runtime_instance_id,
+            app_device_id=app_device_id,
+            capabilities=capabilities,
+        )
+        return DeviceService._upsert_device_crd(db, **arguments)
+
+    @staticmethod
+    def _upsert_device_crd(
+        db: Session,
+        user_id: int,
+        device_id: str,
+        name: str,
+        client_ip: Optional[str] = None,
+        device_type: Optional[str] = None,
+        bind_shell: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
+        app_device_id: Optional[str] = None,
+        capabilities: Optional[List[str]] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -383,28 +402,8 @@ class DeviceService:
         Returns:
             Kind model instance for the device
         """
-        # Lock an existing owner row before looking up a possibly absent device.
-        # A no-op UPDATE also serializes SQLite writers; it preserves user metadata.
-        db.execute(
-            update(User)
-            .where(User.id == user_id)
-            .values(id=User.id, updated_at=User.updated_at)
-            .execution_options(synchronize_session=False)
-        )
-        # Find device by Kind.name (which stores device_id), including soft-deleted
-        device_kind = (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                )
-            )
-            .populate_existing()
-            .with_for_update()
-            .first()
+        device_kind = find_registration_device(
+            db, user_id, device_id, runtime_instance_id, app_device_id
         )
 
         if device_kind:
@@ -416,6 +415,11 @@ class DeviceService:
                 runtime_instance_id,
                 device_id=device_id,
             )
+            persisted_app_id = device_json.get("spec", {}).get("appDeviceId")
+            if persisted_app_id and app_device_id != persisted_app_id:
+                raise DeviceIdentityConflictError(
+                    f"App device ID mismatch for device {device_id}"
+                )
             persisted_display_name = resolve_device_display_name(device_json, name)
             set_device_display_name(device_json, persisted_display_name)
             # Update device type if provided, otherwise preserve existing value
@@ -434,6 +438,8 @@ class DeviceService:
                 device_json["spec"]["runtimeInstanceId"] = runtime_instance_id
             if app_device_id is not None:
                 device_json["spec"]["appDeviceId"] = app_device_id
+            if capabilities is not None:
+                device_json["spec"]["capabilities"] = capabilities
             # Update bind_shell if provided, otherwise preserve existing value
             if bind_shell is not None:
                 device_json["spec"]["bindShell"] = bind_shell
@@ -489,7 +495,7 @@ class DeviceService:
                     "connectionMode": "websocket",
                     "bindShell": resolved_bind_shell,
                     "isDefault": is_first_device,
-                    "capabilities": None,
+                    "capabilities": capabilities,
                     "clientIp": client_ip,
                     "runtimeTransferHost": runtime_transfer_host,
                     "runtimeInstanceId": runtime_instance_id,
@@ -550,8 +556,11 @@ class DeviceService:
 
         found = False
         target_type = None
+        selected = owned_active_device(db, user_id, device_id)
+        if selected is None:
+            return False
         for device_kind in devices:
-            if device_kind.name == device_id:
+            if device_kind.id == selected.id:
                 target_type = device_kind.json.get("spec", {}).get(
                     "deviceType", DeviceType.LOCAL.value
                 )
@@ -563,7 +572,7 @@ class DeviceService:
                 "deviceType", DeviceType.LOCAL.value
             )
 
-            if device_kind.name == device_id:
+            if device_kind.id == selected.id:
                 device_json["spec"]["isDefault"] = True
                 found = True
             elif target_type and device_type == target_type:
@@ -582,44 +591,6 @@ class DeviceService:
         return found
 
     @staticmethod
-    def delete_device(
-        db: Session,
-        user_id: int,
-        device_id: str,
-    ) -> bool:
-        """Delete a device CRD (soft delete).
-
-        Args:
-            db: Database session
-            user_id: Device owner user ID
-            device_id: Device unique identifier (stored in Kind.name)
-
-        Returns:
-            True if device was found and deleted
-        """
-        device_kind = (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active == True,
-                )
-            )
-            .first()
-        )
-
-        if device_kind:
-            device_kind.is_active = False
-            db.commit()
-            logger.info(f"Deleted device CRD: user_id={user_id}, device_id={device_id}")
-            return True
-
-        return False
-
-    @staticmethod
     def get_device_by_device_id(
         db: Session,
         user_id: int,
@@ -635,19 +606,7 @@ class DeviceService:
         Returns:
             Kind model instance or None if not found
         """
-        return (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active == True,
-                )
-            )
-            .first()
-        )
+        return owned_active_device(db, user_id, device_id)
 
     @staticmethod
     def get_default_device_for_type(
@@ -707,19 +666,7 @@ class DeviceService:
         Returns:
             True if device was found and updated
         """
-        device_kind = (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active == True,
-                )
-            )
-            .first()
-        )
+        device_kind = owned_active_device(db, user_id, device_id)
 
         if not device_kind:
             return False

@@ -110,6 +110,7 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   findRuntimeTask,
   hydrateRuntimeTaskAddress,
@@ -507,6 +508,33 @@ type BoardReadResult = {
   members?: CloudProjectMember[]
   agents?: ProjectChatAgent[]
   page_cursors?: Record<string, string | null>
+}
+
+function projectActiveRuntimeTaskStatuses(
+  items: LocatedLoopItem[],
+  bindings: LoopItemTaskBinding[],
+  lifecycleSnapshot: RuntimeTaskLifecycleStoreSnapshot | undefined
+): LocatedLoopItem[] {
+  if (!lifecycleSnapshot) return items
+  const runningItemIds = new Set<string>()
+  for (const binding of bindings) {
+    if (!binding.loop_item_id) continue
+    const lifecycle = lifecycleSnapshot.tasks.get(
+      getRuntimeTaskLifecycleKey({
+        deviceId: binding.device_id,
+        taskId: binding.task_id,
+      })
+    )
+    if (lifecycle && runtimeTaskTrackingExecutionStatus(lifecycle) === 'running') {
+      runningItemIds.add(binding.loop_item_id)
+    }
+  }
+  if (runningItemIds.size === 0) return items
+  return items.map(item =>
+    runningItemIds.has(item.id) && item.status !== 'in_progress'
+      ? { ...item, status: 'in_progress' }
+      : item
+  )
 }
 
 function modelSelectionFromExecutionConfig(
@@ -1670,7 +1698,13 @@ export function CloudTodoWorkspace({
     }
     return result
   }, [runtimeWork])
-  const runtimeTaskKeys = useMemo(() => new Set(runtimeTasksByKey.keys()), [runtimeTasksByKey])
+  const runtimeTaskKeys = useMemo(() => {
+    const keys = new Set(runtimeTasksByKey.keys())
+    for (const lifecycle of runtimeTaskLifecycle?.tasks.values() ?? []) {
+      keys.add(runtimeConversationKey(lifecycle.address))
+    }
+    return keys
+  }, [runtimeTaskLifecycle, runtimeTasksByKey])
   const runtimeAddressesByWorkItem = useMemo(() => {
     const result = new Map<string, RuntimeTaskAddress[]>()
     const workspaces = [
@@ -2771,9 +2805,14 @@ export function CloudTodoWorkspace({
         const activeItemIds = new Set(
           activeBindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
         )
+        const activeItems = selectedItems.filter(item => activeItemIds.has(item.id))
         return {
           ...selectedResponse,
-          items: selectedItems.filter(item => activeItemIds.has(item.id)),
+          items: projectActiveRuntimeTaskStatuses(
+            activeItems,
+            activeBindings,
+            runtimeTaskLifecycle
+          ),
           task_bindings: activeBindings,
         }
       }
@@ -2932,6 +2971,7 @@ export function CloudTodoWorkspace({
     selectedProjectId,
     selectedProjectKey,
     locateItems,
+    runtimeTaskLifecycle,
     runtimeTaskStatusSignature,
     runtimeTaskKeys,
     services.aitableApi,
@@ -4130,7 +4170,7 @@ export function CloudTodoWorkspace({
           {!embedded && sidebarCollapsed && (
             <div
               data-testid="cloud-todo-collapsed-chrome-controls"
-              className="absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
+              className="electron-titlebar-interactive-region pointer-events-auto absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
             >
               <DesktopWindowControls
                 sidebarCollapsed
@@ -4244,7 +4284,12 @@ export function CloudTodoWorkspace({
                 )}
               >
                 {!embedded && (
-                  <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+                  <MacOSTitleBarDragRegion
+                    className={cn(
+                      'absolute right-0 top-0 z-0 h-full',
+                      sidebarCollapsed ? 'left-12' : 'left-0'
+                    )}
+                  />
                 )}
                 <div
                   ref={projectHeaderContentRef}

@@ -1,0 +1,9 @@
+{
+  "name": "invalid-module-loader",
+  "displayName": "Invalid Module Loader",
+  "version": "1.0.0",
+  "type": "deepseek-harness-plugin-bundle",
+  "description": "Invalid module loader fixture",
+  "entry": { "installPackage": "package", "profile": "web" },
+  "requirements": { "dsh": "0.1.0-rc.8", "node": ">=22" }
+}

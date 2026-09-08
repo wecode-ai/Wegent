@@ -1437,6 +1437,97 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledTimes(5)
   })
 
+  test('allows an explicit refresh to supersede an in-flight environment load', async () => {
+    let resolveInitialPullRequests: (value: {
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }) => void = () => {}
+    const initialPullRequests = new Promise<{
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }>(resolve => {
+      resolveInitialPullRequests = resolve
+    })
+    let pullRequestLookupCount = 0
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'fix/environment-refresh\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        pullRequestLookupCount += 1
+        if (pullRequestLookupCount === 1) return initialPullRequests
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'gh: command not found',
+          error: 'Command failed',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const api = { executeCommand }
+    const target = {
+      deviceId: 'local-device',
+      path: '/workspace/environment-refresh',
+    }
+
+    const initialLoad = loadProjectEnvironment(api, null, target)
+    await vi.waitFor(() => {
+      expect(pullRequestLookupCount).toBe(1)
+    })
+
+    const refreshedInfo = await loadProjectEnvironment(api, null, target, {
+      force: true,
+      shareInflight: false,
+    })
+
+    expect(refreshedInfo.changeRequest).toEqual({
+      provider: 'github',
+      state: 'unavailable',
+    })
+    expect(pullRequestLookupCount).toBe(2)
+
+    resolveInitialPullRequests({
+      success: true,
+      stdout: [
+        {
+          number: 2877,
+          url: 'https://github.com/wecode-ai/Wegent/pull/2877',
+          title: 'Superseded pull request',
+          state: 'OPEN',
+          isDraft: false,
+          statusCheckRollup: [],
+        },
+      ],
+      stderr: '',
+    })
+    await initialLoad
+
+    await expect(loadProjectEnvironment(api, null, target)).resolves.toMatchObject({
+      changeRequest: {
+        provider: 'github',
+        state: 'unavailable',
+      },
+    })
+  })
+
   test('publishes pull request status before a slow branch diff finishes', async () => {
     let resolveShortStat: (value: {
       success: boolean

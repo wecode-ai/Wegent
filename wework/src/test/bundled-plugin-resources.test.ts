@@ -199,7 +199,7 @@ describe('bundled plugin resources', () => {
     ).toBe(false)
   })
 
-  test('packages Smart apps on Windows without evaluating path text', () => {
+  test('delegates Smart App verification and packaging to the Wework host', () => {
     const script = readFileSync(
       resolve(
         process.cwd(),
@@ -209,12 +209,26 @@ describe('bundled plugin resources', () => {
       ),
       'utf8'
     )
+    const skill = readFileSync(
+      resolve(
+        process.cwd(),
+        'resources',
+        bundledSmartAppBuilderDirectory,
+        'skills/create-smart-app/SKILL.md'
+      ),
+      'utf8'
+    )
 
-    expect(script).toMatch(/execFileSync\(\s*'tar\.exe'/)
-    expect(script).not.toMatch(/execFileSync\(\s*'powershell\.exe'/)
-    expect(script).toContain("'--exclude=node_modules'")
-    expect(script).toContain("'--exclude=.git'")
-    expect(script).toContain("'--exclude=test-results'")
+    expect(script).toContain("spawnSync('wework'")
+    expect(script).toContain("['smart-app', command, '--project', root, '--format', 'json']")
+    expect(script).toContain("case 'inspect'")
+    expect(script).toContain("case 'verify'")
+    expect(script).toContain("case 'pack'")
+    expect(script).not.toContain('function validate(')
+    expect(script).not.toContain('function pack(')
+    expect(script).not.toContain('execFileSync')
+    expect(skill).toContain('inspect → contract → doctor → verify → preview → pack')
+    expect(skill).toContain('structured error code')
   })
 
   test('uses the Electron release builder and publishes both updater protocols', () => {
@@ -318,9 +332,14 @@ describe('bundled plugin resources', () => {
     )
 
     expect(workflow).toContain('macos-14')
-    expect(workflow).toContain('macos-15-intel')
+    expect(workflow).not.toContain('macos-15-intel')
     expect(workflow).not.toContain('Install Rosetta 2')
     expect(workflow).not.toContain('node_arch')
+    expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
+    expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"')
+    expect(workflow).toContain(
+      '--parallel-segments release-package-startup,component-update,app-update-differential'
+    )
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

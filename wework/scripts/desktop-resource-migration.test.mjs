@@ -123,6 +123,7 @@ describe('desktop resource migration', () => {
     expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
+    expect(prepareElectron).toContain("WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true'")
     expect(packageApp).toContain('await releaseToolchainLock()')
     const noAsar = packageApp.indexOf('process.noAsar = true')
     const outputCleanup = packageApp.indexOf('rm(output')
@@ -186,6 +187,10 @@ describe('desktop resource migration', () => {
     expect(source).toContain("process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'")
     expect(source).toContain("configured === 'debug' || configured === 'release'")
     expect(source).toContain("profile === 'release' ? ['--release'] : []")
+    expect(source).toContain('resolveExecutorPackageTargetDirectory(process.env, executorRoot)')
+    expect(source).toContain('CARGO_TARGET_DIR: targetDirectory')
+    expect(source).toContain('executorPackageBinaryPath(targetDirectory, target, profile)')
+    expect(source).not.toContain("'metadata',")
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
@@ -210,6 +215,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('version: weworkRuntimeVersion')
     expect(source).toContain('sourceSha,')
     expect(source).toContain('path: `bin/${dwsName}`')
+    expect(source).toContain("path: 'codex'")
+    expect(source).toContain('sha256: await hashComponentPath(codexResources)')
+    expect(source).not.toContain('path: `codex/${codexRuntime.binaryPath}`')
     expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('execution-runtime-node-dev')
@@ -236,6 +244,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
     expect(source).toContain("WEWORK_ONLINE_UPDATE_BUILD: 'true'")
+    expect(source).toContain('WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS')
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {
@@ -247,20 +256,21 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
     )
+    expect(source).toContain(
+      "const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'"
+    )
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
-  test('creates macOS component archives from the requested packaged application', async () => {
+  test('creates component archives from immutable prepared resources', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
 
     expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
-    expect(source).toContain(
-      "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
-    )
+    expect(source).toContain('const packagedComponentResourcesRoot = componentResourcesRoot')
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
     expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')

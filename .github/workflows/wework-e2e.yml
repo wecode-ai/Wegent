@@ -254,6 +254,7 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build
@@ -374,6 +375,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
@@ -462,8 +464,8 @@ jobs:
 
       - name: Build Windows Wework Electron E2E application
         env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
           CI: true
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build
@@ -742,6 +744,7 @@ jobs:
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
+          WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
@@ -835,6 +838,7 @@ jobs:
       - name: Run Wework desktop ${{ matrix.name }} E2E
         env:
           CI: true
+          WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           E2E_COMMAND: ${{ matrix.command }}
           E2E_SEGMENT: ${{ matrix.segment }}
@@ -1054,6 +1058,7 @@ jobs:
 
       - name: Build Wework Electron E2E application
         env:
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build

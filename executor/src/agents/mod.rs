@@ -42,7 +42,7 @@ pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
     codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, replace_config,
-    select_wework_codex_user_instructions, wework_codex_home,
+    select_wework_codex_user_instructions, start_codex_app_server_thread, wework_codex_home,
     CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
     CODEX_WORKSPACE_PERMISSION_PROFILE,
 };

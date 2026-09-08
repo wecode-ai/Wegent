@@ -261,17 +261,18 @@ export default function ExportSelectModal({
       .map(msg => msg.messageId)
       .filter((id): id is number => typeof id === 'number')
 
-    const blob = await taskApis.exportTaskDocx(taskId, messageIds)
+    const url = await taskApis.getTaskDocxExportUrl(taskId, messageIds)
 
-    // Trigger download
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${taskName || 'Chat_Export'}_${new Date().toISOString().split('T')[0]}.docx`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    // Download through a hidden iframe so the browser (including Safari, which
+    // ignores client-side blob download filenames) applies the server-provided
+    // Content-Disposition filename without navigating the current page away.
+    const iframe = document.createElement('iframe')
+    iframe.style.display = 'none'
+    iframe.src = url
+    document.body.appendChild(iframe)
+    // Keep the iframe alive beyond the download token lifetime (5 minutes) so
+    // slow DOCX generation cannot be aborted by removing the download target.
+    setTimeout(() => iframe.remove(), 330_000)
   }
 
   /**

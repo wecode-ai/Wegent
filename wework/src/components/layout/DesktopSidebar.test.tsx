@@ -36,6 +36,7 @@ import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
+import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -1988,6 +1989,37 @@ describe('DesktopSidebar', () => {
     expect(window.location.pathname).toBe('/sites')
   })
 
+  test('opens a contributed workspace sidebar tab without changing the current route', async () => {
+    const runtime = window.__WEWORK_DSH_UI__
+    expect(runtime).toBeDefined()
+    const openTab = vi.spyOn(rightWorkspaceDshSidebar, 'openTab').mockImplementation(() => {})
+    const navigation = [
+      ...runtime!.getEntries(WEWORK_DSH_SLOTS.sidebarNavigation),
+      {
+        id: 'reference-website.navigation',
+        label: 'Reference website',
+        icon: 'globe',
+        workspaceSidebarTab: 'reference-website',
+        testId: 'reference-website-button',
+      },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      ...runtime!,
+      getEntries: slotName =>
+        slotName === WEWORK_DSH_SLOTS.sidebarNavigation
+          ? navigation
+          : runtime!.getEntries(slotName),
+    }
+    window.history.replaceState({}, '', '/')
+
+    renderSidebar()
+    await userEvent.click(screen.getByTestId('reference-website-button'))
+
+    expect(openTab).toHaveBeenCalledWith({ type: 'reference-website' })
+    expect(window.location.pathname).toBe('/')
+    openTab.mockRestore()
+  })
+
   test('keeps a dynamic DSH navigation icon mounted across unrelated sidebar rerenders', async () => {
     const runtime = window.__WEWORK_DSH_UI__
     expect(runtime).toBeDefined()
@@ -2062,17 +2094,11 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
-  test('shows Sites only while experimental features are enabled', async () => {
+  test('shows Applications while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
-    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
   test('shows Automations when experimental features are disabled', () => {

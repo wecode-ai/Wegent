@@ -8,6 +8,7 @@ import { useEffect, useRef } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { resolveDeviceSelectionId } from '@/features/devices/utils/execution-target'
 
 /**
  * Sync the deviceId URL parameter to DeviceContext.
@@ -61,8 +62,16 @@ export default function DeviceParamSync() {
     // Wait for devices to load, then validate and select
     if (devices.length === 0) return
 
-    const deviceExists = devices.some(d => d.device_id === deviceId)
+    const resolvedDeviceId = resolveDeviceSelectionId(devices, deviceId)
+    const deviceExists = devices.some(d => d.device_id === resolvedDeviceId)
     if (deviceExists) {
+      setSelectedDeviceId(resolvedDeviceId)
+      syncedParamRef.current = deviceId
+      return
+    }
+
+    // Preserve an ambiguous historical target; never launch on a different device.
+    if (devices.some(device => device.registered_device_id === deviceId)) {
       setSelectedDeviceId(deviceId)
       syncedParamRef.current = deviceId
       return

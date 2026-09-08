@@ -60,11 +60,7 @@ import type {
   RuntimePaneGuidanceResult,
   SendCurrentInputOptions,
 } from './workbenchContextTypes'
-import {
-  DEVICE_STATUS_LABELS,
-  getRuntimeTaskChatScopeKey,
-  normalizeGuidanceError,
-} from './workbenchProviderHelpers'
+import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   EMPTY_MESSAGE_TASK_TITLE,
@@ -1251,11 +1247,6 @@ export function useWorkbenchRuntimeMessaging({
           message: options.optimisticUserMessage,
         })
       }
-      modelSelection.setSelectionForScope?.(
-        getRuntimeTaskChatScopeKey(optimisticAddress),
-        selectedModel,
-        selectedModelOptions
-      )
       const optimisticWorkspacePath = requestedManagedWorkspace
         ? undefined
         : (sourceWorkspacePath ?? selectedProjectWorkspace?.workspacePath)
@@ -1439,11 +1430,6 @@ export function useWorkbenchRuntimeMessaging({
         }
         if (!resolvedSameIdentity) {
           lifecycleStore.rename(optimisticAddress, address)
-          modelSelection.setSelectionForScope?.(
-            getRuntimeTaskChatScopeKey(address),
-            selectedModel,
-            selectedModelOptions
-          )
           debugRuntimeCreateFlow('create-final-open', {
             taskId: address.taskId,
             runtime,

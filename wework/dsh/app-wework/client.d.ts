@@ -161,6 +161,7 @@ export interface WeworkContributionMap {
   readonly 'wework.route': WeworkContribution
   readonly 'wework.runtime-profile.workspace-policy': WeworkContribution
   readonly 'wework.settings.page': WeworkContribution
+  readonly 'wework.settings.section': WeworkContribution
   readonly 'wework.sidebar.navigation': WeworkContribution
   readonly 'wework.shell.after': WeworkContribution
   readonly 'wework.shell.before': WeworkContribution
@@ -425,6 +426,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     }
     'wework.runtime-profile.workspace-policy': { kind: 'list'; scope: 'root' }
     'wework.settings.page': {
+      kind: 'list'
+      scope: 'root'
+      owner: Readonly<Record<string, unknown>>
+    }
+    'wework.settings.section': {
       kind: 'list'
       scope: 'root'
       owner: Readonly<Record<string, unknown>>

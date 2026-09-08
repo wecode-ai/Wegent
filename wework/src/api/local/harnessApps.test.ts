@@ -44,4 +44,39 @@ describe('harnessAppsApi', () => {
       installationId: 'research-desk',
     })
   })
+
+  test('passes the selected capability template when creating a Smart App', async () => {
+    mocks.desktopInvoke.mockResolvedValue({})
+
+    await harnessAppsApi.createDirectory({
+      parentPath: '/tmp',
+      name: 'contract-app',
+      displayName: 'Contract App',
+      description: 'Generic app',
+      template: 'web-host-remote',
+    })
+
+    expect(mocks.desktopInvoke).toHaveBeenCalledWith('smartApps.createDirectory', {
+      parentPath: '/tmp',
+      name: 'contract-app',
+      displayName: 'Contract App',
+      description: 'Generic app',
+      template: 'web-host-remote',
+    })
+  })
+
+  test('uses the dedicated verification capabilities for linked Smart Apps', async () => {
+    const report = { status: 'passed' }
+    mocks.desktopInvoke.mockResolvedValue(report)
+
+    await expect(harnessAppsApi.inspectVerification('contract-app')).resolves.toBe(report)
+    await expect(harnessAppsApi.verify('contract-app')).resolves.toBe(report)
+
+    expect(mocks.desktopInvoke).toHaveBeenNthCalledWith(1, 'smartApps.inspectVerification', {
+      installationId: 'contract-app',
+    })
+    expect(mocks.desktopInvoke).toHaveBeenNthCalledWith(2, 'smartApps.verify', {
+      installationId: 'contract-app',
+    })
+  })
 })

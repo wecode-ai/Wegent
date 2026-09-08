@@ -5,6 +5,7 @@ import type { AppPreferences } from '@/desktop/appPreferences'
 import { ContextSettingsPage } from './ContextSettingsPage'
 
 const defaultPreferences: AppPreferences = {
+  workbenchMode: 'developer',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   systemDragEnabled: true,
@@ -42,6 +43,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 
 vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
+    workbenchMode: 'developer',
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     systemDragEnabled: true,

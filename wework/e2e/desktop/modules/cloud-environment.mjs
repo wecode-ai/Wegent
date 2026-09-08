@@ -34,6 +34,7 @@ import {
   spawn,
   stopProcess,
   stopProcessGroup,
+  waitForLogPattern,
   waitForUrl,
   weworkDir,
   writeFile,
@@ -170,6 +171,7 @@ class RealCloudEnvironment {
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
       ...remoteDeviceE2EExtension.backendEnv,
+      TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
       DB_AUTO_MIGRATE: 'false',
@@ -186,6 +188,21 @@ class RealCloudEnvironment {
       cwd: backendDirectory,
       env: backendEnv,
     })
+    await this.launchBackend()
+
+    const password = `wework-desktop-e2e-${process.pid}`
+    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    this.authToken = setup.access_token
+    assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
+    await this.seedCloudProtocolModels()
+    await this.seedCloudVisionSidecarModels()
+  }
+
+  async launchBackend() {
     this.backend = spawn(
       'uv',
       [
@@ -201,9 +218,10 @@ class RealCloudEnvironment {
         String(this.backendPort),
       ],
       {
-        cwd: backendDirectory,
-        env: backendEnv,
+        cwd: join(repoDir, 'backend'),
+        env: this.backendEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
       }
     )
     await Promise.all([
@@ -214,17 +232,26 @@ class RealCloudEnvironment {
       `${this.backendUrl}/api/docs`,
       `Real cloud backend did not start; see ${this.backendLogPath}`
     )
+  }
 
-    const password = `wework-desktop-e2e-${process.pid}`
-    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    })
-    this.authToken = setup.access_token
-    assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
-    await this.seedCloudProtocolModels()
-    await this.seedCloudVisionSidecarModels()
+  async restartBackendWithTerminalProtocolV2(enabled) {
+    assert.equal(typeof enabled, 'boolean')
+    assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
+    await stopProcessGroup(this.backend)
+    const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
+    this.backendEnv = {
+      ...this.backendEnv,
+      TERMINAL_PROTOCOL_V2_ENABLED: String(enabled),
+    }
+    await this.launchBackend()
+    await waitForLogPattern(
+      this.backendLogPath,
+      new RegExp(
+        `\\[Device WS\\] Device registered: user=\\d+, device=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`
+      ),
+      { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
+    await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
   }
 
   async publishOfficialSmartApp(sourcePath) {
@@ -264,7 +291,7 @@ class RealCloudEnvironment {
     }
   }
 
-  async publishPluginRelease({ slug, version, packageRoot: providedRoot, prebuilt }) {
+  async publishPluginRelease({ slug, version, packageRoot: providedRoot, prebuilt, skills = {} }) {
     const packageRoot =
       providedRoot ?? join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
     if (!providedRoot && !prebuilt) {
@@ -272,9 +299,27 @@ class RealCloudEnvironment {
       await mkdir(manifestDir, { recursive: true })
       await writeFile(
         join(manifestDir, 'plugin.json'),
-        `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
+        `${JSON.stringify(
+          {
+            name: slug,
+            version,
+            description: `Desktop E2E ${slug}`,
+            ...(Object.keys(skills).length ? { skills: './skills/' } : {}),
+          },
+          null,
+          2
+        )}\n`,
         'utf8'
       )
+      for (const [name, description] of Object.entries(skills)) {
+        const skillDir = join(packageRoot, 'skills', name)
+        await mkdir(skillDir, { recursive: true })
+        await writeFile(
+          join(skillDir, 'SKILL.md'),
+          `---\nname: ${name}\ndescription: ${description}\n---\n\n${description}\n`,
+          'utf8'
+        )
+      }
     }
     const output = await commandOutputAsync(
       'uv',
@@ -1129,7 +1174,7 @@ class RealCloudEnvironment {
     await stopProcessGroup(this.remoteExecutor)
     await stopProcessGroup(this.remoteDockerExecutor)
     await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
-    await stopProcess(this.backend)
+    await stopProcessGroup(this.backend)
     await this.pluginObjectStorage?.stop()
     await stopProcess(this.redis)
   }

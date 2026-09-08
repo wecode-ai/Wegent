@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -125,6 +127,12 @@ const SCROLL_BUTTON_APPENDED_TEXT = `\n\n${Array.from({ length: 24 }, (_, index)
     ? `${SCROLL_BUTTON_APPEND_MARKER}: content keeps growing after the user clicks the jump-to-bottom button.`
     : `Scroll button growth paragraph ${index + 1}: the click must continue following the virtualized conversation bottom.`
 ).join('\n\n')}`
+
+async function openNewChatWithE2EModel(control, timeoutMs) {
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
+}
 const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}${SCROLL_BUTTON_APPENDED_TEXT}\n\nCOMPLETE`
 
 function sse(events) {
@@ -875,8 +883,7 @@ export function createDesktopScenario({
 
   const verifyLongCodeTerminalBurst = async control => {
     await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
     await control.command('fill', COMPOSER_SELECTOR, { value: LONG_CODE_PROMPT })
     await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
@@ -967,8 +974,7 @@ export function createDesktopScenario({
   }
 
   const verifyWindowsDriveLinkRendering = async control => {
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
     await control.command('fill', COMPOSER_SELECTOR, { value: WINDOWS_LINK_PROMPT })
     await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', ASSISTANT_MARKDOWN_LINK_SELECTOR, {
@@ -984,8 +990,7 @@ export function createDesktopScenario({
   }
 
   const verifyStoppedTurnOrder = async control => {
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
     const knownOrderTaskRows = new Set(
       JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
         testId.startsWith('runtime-local-task-row-')
@@ -1379,9 +1384,14 @@ export function createDesktopScenario({
       if (standalone) {
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       } else {
-        await control.command('click', '[data-testid="new-chat-button"]')
-        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+        await openNewChatWithE2EModel(control, uiTimeoutMs)
       }
+      await selectE2EModel(
+        control,
+        DEFAULT_MODEL_ID,
+        DEFAULT_MODEL_LABEL,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
       if (process.env.WEWORK_E2E_MESSAGE_ORDER_ONLY === 'true') {
         await verifyStoppedTurnOrder(control)
         active = false
@@ -1436,8 +1446,7 @@ export function createDesktopScenario({
         return
       }
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: GENERATED_IMAGE_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="generated-image"]', {
@@ -1481,8 +1490,7 @@ export function createDesktopScenario({
       await verifyLongCodeTerminalBurst(control)
       await verifyWindowsDriveLinkRendering(control)
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       const knownLegacyTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
@@ -1564,8 +1572,7 @@ export function createDesktopScenario({
         return
       }
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       try {
@@ -1687,8 +1694,7 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-05-short-control-composer-docked.png')
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       const knownTimerTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
@@ -1751,8 +1757,7 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-09-tool-duration-restored.png')
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await openNewChatWithE2EModel(control, uiTimeoutMs)
       const knownTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
