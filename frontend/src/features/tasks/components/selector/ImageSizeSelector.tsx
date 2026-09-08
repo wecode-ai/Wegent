@@ -23,6 +23,7 @@ export interface ImageSizeSelectorProps {
   availableSizes?: ImageSizeOption[]
   disabled?: boolean
   compact?: boolean
+  inline?: boolean
 }
 
 const DEFAULT_IMAGE_SIZES: ImageSizeOption[] = [
@@ -81,6 +82,7 @@ export function ImageSizeSelector({
   availableSizes = DEFAULT_IMAGE_SIZES,
   disabled = false,
   compact = false,
+  inline = false,
 }: ImageSizeSelectorProps) {
   const { t } = useTranslation('chat')
   const [isOpen, setIsOpen] = useState(false)
@@ -109,6 +111,80 @@ export function ImageSizeSelector({
     .filter(Boolean)
     .join(' · ')
 
+  const settingsContent = (
+    <div className="space-y-4">
+      <section>
+        <h4 className="mb-2 text-sm font-medium text-text-primary">{t('image.ratio_section')}</h4>
+        <div className="flex flex-wrap gap-1 rounded bg-surface p-1">
+          {ratios.map(ratio => (
+            <button
+              key={ratio}
+              type="button"
+              data-testid={`image-ratio-${ratio.replace(':', '-')}`}
+              onClick={() => selectPreset(ratio, selectedResolution)}
+              disabled={disabled}
+              className={cn(
+                'flex min-w-[52px] flex-col items-center justify-center gap-1 rounded px-2 py-1.5',
+                'text-xs transition-colors',
+                selectedRatio === ratio
+                  ? 'bg-primary/10 text-text-primary'
+                  : 'text-text-secondary hover:bg-base',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+            >
+              <RatioIcon ratio={ratio} selected={selectedRatio === ratio} />
+              <span>{ratio}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h4 className="mb-2 text-sm font-medium text-text-primary">
+          {t('image.resolution_section')}
+        </h4>
+        <div className="flex gap-1 rounded bg-surface p-1">
+          {resolutions.map(resolution => (
+            <button
+              key={resolution}
+              type="button"
+              data-testid={`image-resolution-${resolution.toLowerCase()}`}
+              onClick={() => selectPreset(selectedRatio, resolution)}
+              disabled={disabled}
+              className={cn(
+                'flex-1 rounded py-1.5 text-sm transition-colors',
+                selectedResolution === resolution
+                  ? 'bg-primary/10 text-text-primary'
+                  : 'text-text-secondary hover:bg-base',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+            >
+              {resolution}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h4 className="mb-2 text-sm font-medium text-text-primary">{t('image.size_section')}</h4>
+        <div
+          className="rounded bg-surface px-3 py-2 text-sm text-text-secondary"
+          data-testid="image-size-value"
+        >
+          {selectedOption?.value ?? selectedSize}
+        </div>
+      </section>
+    </div>
+  )
+
+  if (inline) {
+    return (
+      <div className="p-4" data-testid="image-size-selector-inline">
+        {settingsContent}
+      </div>
+    )
+  }
+
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger asChild>
@@ -133,69 +209,7 @@ export function ImageSizeSelector({
         align="start"
         sideOffset={4}
       >
-        <div className="space-y-4">
-          <section>
-            <h4 className="mb-2 text-sm font-medium text-text-primary">
-              {t('image.ratio_section')}
-            </h4>
-            <div className="flex flex-wrap gap-1 rounded bg-surface p-1">
-              {ratios.map(ratio => (
-                <button
-                  key={ratio}
-                  type="button"
-                  data-testid={`image-ratio-${ratio.replace(':', '-')}`}
-                  onClick={() => selectPreset(ratio, selectedResolution)}
-                  className={cn(
-                    'flex min-w-[52px] flex-col items-center justify-center gap-1 rounded px-2 py-1.5',
-                    'text-xs transition-colors',
-                    selectedRatio === ratio
-                      ? 'bg-primary/10 text-text-primary'
-                      : 'text-text-secondary hover:bg-base'
-                  )}
-                >
-                  <RatioIcon ratio={ratio} selected={selectedRatio === ratio} />
-                  <span>{ratio}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h4 className="mb-2 text-sm font-medium text-text-primary">
-              {t('image.resolution_section')}
-            </h4>
-            <div className="flex gap-1 rounded bg-surface p-1">
-              {resolutions.map(resolution => (
-                <button
-                  key={resolution}
-                  type="button"
-                  data-testid={`image-resolution-${resolution.toLowerCase()}`}
-                  onClick={() => selectPreset(selectedRatio, resolution)}
-                  className={cn(
-                    'flex-1 rounded py-1.5 text-sm transition-colors',
-                    selectedResolution === resolution
-                      ? 'bg-primary/10 text-text-primary'
-                      : 'text-text-secondary hover:bg-base'
-                  )}
-                >
-                  {resolution}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h4 className="mb-2 text-sm font-medium text-text-primary">
-              {t('image.size_section')}
-            </h4>
-            <div
-              className="rounded bg-surface px-3 py-2 text-sm text-text-secondary"
-              data-testid="image-size-value"
-            >
-              {selectedOption?.value ?? selectedSize}
-            </div>
-          </section>
-        </div>
+        {settingsContent}
       </PopoverContent>
     </Popover>
   )

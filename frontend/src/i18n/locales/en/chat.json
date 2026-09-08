@@ -773,6 +773,7 @@
   },
   "image": {
     "title": "Image Generation",
+    "settings_title": "Image settings",
     "model_selector": "Select Image Model",
     "search_model": "Search image models...",
     "size_selector": "Select Size",
