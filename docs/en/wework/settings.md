@@ -16,6 +16,17 @@ indicator. Hover to see the active mode, or click to choose **Read only**, **Wor
 **Full access**. After selecting a project space, the composer chip shows only the board name;
 its hover text still explains that sending creates a task on that board.
 
+Under **Settings → General → General**, choose the Wework feature mode:
+
+- **Focus mode** hides the Code hosting and Worktrees entries and disables Wework's built-in Git
+  plugin. Use it when local code-development features are not needed.
+- **Developer mode** enables Wework's built-in Git plugin and shows the complete coding navigation.
+  This is the default mode.
+
+The preference stays on the current device. Switching modes automatically restarts the managed
+Core DSH runtime so the plugin state takes effect immediately. Mode controls the Git plugin, so it
+cannot be enabled or disabled separately from the plugin management page.
+
 Under **Settings → General → Basic**, set **Default page** to **Tasks**, **Project spaces**, or
 **Agent**. This device-local preference activates the matching top-level tab when the Wework main
 window opens or reloads at the root page. If every tab of that type has been closed, Wework creates

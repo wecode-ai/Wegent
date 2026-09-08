@@ -8,6 +8,7 @@ patchedDependencies:
   '@trycua/cua-driver@0.22.1':
     hash: 1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd
     path: patches/@trycua__cua-driver@0.22.1.patch
+  electron-updater@6.8.9: a896d1e9a4bccd10cec2882a466a545425fd2cbfbd85400c3a8e86ac1f933a71
 
 importers:
 
@@ -21,7 +22,7 @@ importers:
         version: 8.0.0
       electron-updater:
         specifier: 6.8.9
-        version: 6.8.9
+        version: 6.8.9(patch_hash=a896d1e9a4bccd10cec2882a466a545425fd2cbfbd85400c3a8e86ac1f933a71)
       extract-zip:
         specifier: 2.0.1
         version: 2.0.1
@@ -2756,7 +2757,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron-updater@6.8.9:
+  electron-updater@6.8.9(patch_hash=a896d1e9a4bccd10cec2882a466a545425fd2cbfbd85400c3a8e86ac1f933a71):
     dependencies:
       builder-util-runtime: 9.7.0
       fs-extra: 10.1.0

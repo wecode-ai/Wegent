@@ -203,12 +203,12 @@ export default function DevicesPage() {
             {/* Device sections - hide when showing setup guide */}
             {sortedDevices.length > 0 && !showSetupGuide && (
               <div className="space-y-6">
-                {/* Local Devices */}
+                {/* Local Devices, including Wework app devices */}
                 <DeviceSection
                   title={t('local_devices_section')}
                   icon={Monitor}
                   devices={visibleDevices}
-                  type="local"
+                  type={['local', 'app']}
                   emptyMessage={t('no_local_devices')}
                 >
                   {device => (

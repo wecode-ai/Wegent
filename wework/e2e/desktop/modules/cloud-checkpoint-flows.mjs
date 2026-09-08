@@ -1,4 +1,5 @@
 import { access } from 'node:fs/promises'
+import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { basename } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
@@ -597,6 +598,7 @@ async function verifyCloudCheckpoint({
   }
 
   if (checkpoint === 'plugin-auto-update') {
+    await verifyPluginUpgrade({ cloudEnvironment, control, codexHome, setPhase })
     setPhase('cloud-plugin-auto-update-disable-codex-rpc')
     await cloudEnvironment.restartCloudExecutorWithoutCodexPluginRpc()
     setPhase('cloud-plugin-auto-update-fixtures')

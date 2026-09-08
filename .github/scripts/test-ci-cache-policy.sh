@@ -236,12 +236,17 @@ sccache_action="$action_dir/setup-sccache/action.yml"
 # Environment variables are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
+  ! grep -Fq 'continue-on-error: true' "$sccache_action" ||
+  [[ "$(grep -Fc "if: steps.install.outcome == 'success'" \
+    "$sccache_action")" -ne 2 ]] ||
+  ! grep -Fq "if: steps.install.outcome != 'success'" "$sccache_action" ||
+  ! grep -Fq 'continuing without Rust compiler caching' "$sccache_action" ||
   ! grep -Fq 'GitHub Actions cache credentials are unavailable for sccache' \
     "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_VERSION=wegent-sccache-v1-' "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_RW_MODE=READ_ONLY' "$sccache_action" ||
   ! grep -Fq 'refs/heads/main' "$sccache_action"; then
-  fail "sccache must normalize paths and allow writes only from main"
+  fail "sccache must degrade safely and allow cache writes only from main"
 fi
 
 macos_warmup_section="$(

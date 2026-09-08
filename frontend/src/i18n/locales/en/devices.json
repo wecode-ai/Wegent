@@ -1,4 +1,8 @@
 {
+  "device_actions": "Device actions",
+  "delete_confirm_title": "Remove offline device?",
+  "delete_confirm_description": "Remove {{name}} from this list? Conversation history and local files will be kept. The device will appear again if it reconnects.",
+  "delete_cancel": "Cancel",
   "title": "AI Devices",
   "beta": "Beta",
   "my_devices": "AI Devices",
@@ -120,6 +124,7 @@
   "cloud_devices_section": "Cloud Devices",
   "remote_devices_section": "Remote Devices",
   "local_device_prefix": "Personal: ",
+  "wework_device_prefix": "Wework: ",
   "cloud_device_prefix": "Cloud: ",
   "no_local_devices": "No personal devices connected. Add a device using the button above.",
   "no_remote_devices": "No remote devices connected. Generate a Docker command using the button above.",
@@ -161,5 +166,6 @@
     "updateAvailable": "Update Available",
     "clickToUpgrade": "Click to upgrade",
     "openclawNotSupported": "OpenClaw devices do not support auto-upgrade"
-  }
+  },
+  "wework_device_badge": "Wework"
 }
