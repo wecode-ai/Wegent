@@ -39,6 +39,9 @@ use wegent_executor::{
 
 const TEST_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 
+#[path = "support/terminal_protocol_compatibility.rs"]
+mod terminal_protocol_compatibility;
+
 struct EnvLockGuard {
     _guard: MutexGuard<'static, ()>,
 }
@@ -101,6 +104,7 @@ async fn local_backend_registers_all_python_local_device_events() {
         "device:start_terminal_session",
         "device:start_code_server_session",
         "terminal:attach",
+        "terminal:ack",
         "terminal:input",
         "terminal:resize",
         "terminal:close",
@@ -403,29 +407,62 @@ async fn session_events_start_terminal_and_route_terminal_controls() {
     assert_eq!(ack["type"], "terminal");
     assert_eq!(ack["transport"], "socketio");
 
+    let invalid_attach = transport.handler("terminal:attach").unwrap()(json!({
+        "protocol_version": 2,
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
+        "last_acked_sequence": "0"
+    }))
+    .await
+    .unwrap();
     let attach = transport.handler("terminal:attach").unwrap()(json!({
-        "session_id": "terminal-1"
+        "protocol_version": 2,
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
+        "last_acked_sequence": 0
+    }))
+    .await
+    .unwrap();
+    let invalid_terminal_ack = transport.handler("terminal:ack").unwrap()(json!({
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
+        "sequence": "1"
     }))
     .await
     .unwrap();
     let input = transport.handler("terminal:input").unwrap()(json!({
         "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
         "data": "pwd\r"
     }))
     .await
     .unwrap();
     let resize = transport.handler("terminal:resize").unwrap()(json!({
         "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
         "rows": 24,
         "cols": 100
     }))
     .await
     .unwrap();
-    let close = transport.handler("terminal:close").unwrap()(json!({"session_id": "terminal-1"}))
-        .await
-        .unwrap();
+    let close = transport.handler("terminal:close").unwrap()(json!({
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1"
+    }))
+    .await
+    .unwrap();
 
+    assert_eq!(invalid_attach["success"], false);
+    assert_eq!(
+        invalid_attach["error"],
+        "last_acked_sequence must be a non-negative JSON integer"
+    );
     assert_eq!(attach["success"], true);
+    assert_eq!(invalid_terminal_ack["success"], false);
+    assert_eq!(
+        invalid_terminal_ack["error"],
+        "sequence must be a positive JSON integer"
+    );
     assert_eq!(input["success"], true);
     assert_eq!(resize["success"], true);
     assert_eq!(close["success"], true);
@@ -469,14 +506,17 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
     tokio::time::sleep(Duration::from_millis(75)).await;
     assert!(
         transport
-            .emits()
+            .calls()
             .iter()
             .all(|emit| emit.event != "terminal:output" && emit.event != "terminal:exit"),
         "PTY output must remain buffered until the browser attaches"
     );
 
     let attach = transport.handler("terminal:attach").unwrap()(json!({
-        "session_id": "terminal-relay"
+        "protocol_version": 2,
+        "session_id": "terminal-relay",
+        "consumer_id": "consumer-1",
+        "last_acked_sequence": 0
     }))
     .await
     .unwrap();
@@ -484,30 +524,60 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
 
     wait_until(|| {
         transport
-            .emits()
+            .calls()
             .iter()
-            .filter(|emit| emit.event == "terminal:output" || emit.event == "terminal:exit")
-            .count()
-            >= 2
+            .any(|emit| emit.event == "terminal:output")
+    })
+    .await;
+
+    let output = transport
+        .calls()
+        .into_iter()
+        .find(|emit| emit.event == "terminal:output")
+        .unwrap();
+    assert_eq!(
+        output.payload,
+        json!({
+            "session_id": "terminal-relay",
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "remote prompt$ ",
+        })
+    );
+    let terminal_ack = transport.handler("terminal:ack").unwrap()(json!({
+        "session_id": "terminal-relay",
+        "consumer_id": "consumer-1",
+        "sequence": 1
+    }))
+    .await
+    .unwrap();
+    assert_eq!(terminal_ack["success"], true, "{terminal_ack}");
+
+    wait_until(|| {
+        transport
+            .calls()
+            .iter()
+            .any(|emit| emit.event == "terminal:exit")
     })
     .await;
     runner_task.abort();
     let _ = runner_task.await;
 
-    let emits = transport
-        .emits()
+    let calls = transport
+        .calls()
         .into_iter()
         .filter(|emit| emit.event == "terminal:output" || emit.event == "terminal:exit")
         .collect::<Vec<_>>();
-    assert_eq!(emits[0].event, "terminal:output");
+    assert_eq!(calls[0].event, "terminal:output");
+    assert_eq!(calls[0].payload, output.payload);
+    assert_eq!(calls[1].event, "terminal:exit");
     assert_eq!(
-        emits[0].payload,
-        json!({"session_id": "terminal-relay", "data": "remote prompt$ "})
-    );
-    assert_eq!(emits[1].event, "terminal:exit");
-    assert_eq!(
-        emits[1].payload,
-        json!({"session_id": "terminal-relay", "exit_code": 0})
+        calls[1].payload,
+        json!({
+            "session_id": "terminal-relay",
+            "consumer_id": "consumer-1",
+            "exit_code": 0
+        })
     );
     assert!(terminal.lock().unwrap().closed);
 }
@@ -995,6 +1065,9 @@ struct RecordingTransport {
     emits: Arc<Mutex<Vec<RecordedCall>>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
+    terminal_responses: Arc<Mutex<VecDeque<Result<Value, String>>>>,
+    terminal_completion_count: Arc<Mutex<usize>>,
+    terminal_call_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
 }
 
 impl RecordingTransport {
@@ -1046,6 +1119,20 @@ impl LocalBackendTransport for RecordingTransport {
                 event: event.to_owned(),
                 payload,
             });
+            if event == "terminal:output" || event == "terminal:exit" {
+                let gate = self.terminal_call_gate.lock().unwrap().clone();
+                if let Some(gate) = gate {
+                    gate.notified().await;
+                }
+                let response = self
+                    .terminal_responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or_else(|| Ok(json!({"success": true})));
+                *self.terminal_completion_count.lock().unwrap() += 1;
+                return response;
+            }
             Ok(self
                 .responses
                 .lock()

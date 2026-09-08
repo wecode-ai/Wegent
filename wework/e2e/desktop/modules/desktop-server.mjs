@@ -431,6 +431,16 @@ class DesktopE2EServer {
     this.siteEnvironmentRevision = 0
     this.siteEnvironmentVariables = []
     this.siteCollaborators = []
+    this.siteAccessPolicy = {
+      id: 'pol_e2e_1',
+      project_id: 'prj_e2e_product',
+      target: 'inner',
+      audience: 'owner',
+      subjects: [],
+      revision_number: 2,
+      created_by: 'wework-desktop-e2e-cloud-user',
+      created_at: '2026-09-08T00:00:00Z',
+    }
     this.miniProgramPluginInstalled = false
     this.miniProgramPluginDeviceId = null
     this.sitesConnectionBootstrapRequests = 0
@@ -1269,7 +1279,14 @@ class DesktopE2EServer {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'edit', 'delete', 'configure_environment'],
+            capabilities: [
+              'create',
+              'publish',
+              'edit',
+              'delete',
+              'configure_environment',
+              'manage_access',
+            ],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',
@@ -1408,6 +1425,31 @@ class DesktopE2EServer {
         created_by: 'wework-desktop-e2e-cloud-user',
         created_at: '2026-09-03T00:00:00Z',
       })
+      return
+    }
+
+    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'GET') {
+      json(response, 200, this.siteAccessPolicy)
+      return
+    }
+    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'PUT') {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Updating Site access did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.ok(['all', 'login', 'owner', 'custom'].includes(body.audience))
+      assert.ok(Array.isArray(body.subjects))
+      this.siteAccessPolicy = {
+        ...this.siteAccessPolicy,
+        id: 'pol_e2e_2',
+        audience: body.audience,
+        subjects: body.subjects,
+        revision_number: this.siteAccessPolicy.revision_number + 1,
+        created_at: '2026-09-08T00:01:00Z',
+      }
+      json(response, 200, this.siteAccessPolicy)
       return
     }
 

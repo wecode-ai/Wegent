@@ -496,8 +496,45 @@ async function verifyProjectAiSettings({
     'A new local project did not initially follow the global model'
   )
   await captureVerificationScreenshot(control, 'project-ai-settings-01-defaults.png')
+  await saveProjectAiSettings(control)
+
+  setPhase('project-ai-settings-follow-global-model-memory')
+  control.setScenario('checkpoint_task')
+  await selectRememberedTaskModel(control)
+  const inheritedConversationRequest = await sendProjectAiCheckpointPrompt(
+    control,
+    composerSelector,
+    { createsConversation: true }
+  )
+  assert.equal(
+    inheritedConversationRequest.body.model,
+    REMEMBERED_TASK_MODEL_ID,
+    'The follow-global project did not use the selected global model'
+  )
+  assert.equal(
+    inheritedConversationRequest.body.reasoning?.effort,
+    REMEMBERED_TASK_REASONING,
+    'The follow-global project did not use the selected global reasoning effort'
+  )
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await control.command('click', '[data-testid="model-selector-button"]')
+  assert.match(
+    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    /High|高/,
+    'The follow-global project did not remember the selected model and reasoning effort'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await captureVerificationScreenshot(
+    control,
+    'project-ai-settings-01-follow-global-model-remembered.png'
+  )
 
   setPhase('project-ai-settings-configure')
+  await openProjectAiSettings(control, projectId)
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
@@ -1369,6 +1406,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'dsh-owner-capture') {
+      phase = 'dsh-owner-capture-scenario'
+      assert.ok(
+        desktopScenario,
+        'The dsh-owner-capture checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      console.log(`Wework desktop dsh-owner-capture checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 

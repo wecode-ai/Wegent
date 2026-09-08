@@ -40,12 +40,15 @@ manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
 Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
-and NSIS installer. `electron-updater` compares the previous cached package with
-the old and new blockmaps and downloads only changed blocks. It falls back to
-the full installer only for a first update, a cleared cache, or a differential
-download failure. The release workflow must fail when any required blockmap is
-missing. Differential plans, transferred sizes, and fallback reasons are
-written to `app-update.log` in the application log directory.
+and NSIS installer. On macOS, Wework atomically stores every successful full or
+differential download as a verified baseline containing the ZIP, blockmap,
+version, architecture, URL, and SHA-512. Later updates use only this local
+baseline and never guess the previous blockmap URL from the new artifact name.
+A first update or an incomplete or invalid baseline downloads the full package
+and establishes a new baseline. A failed differential verification performs
+only one full-download recovery. The release workflow must fail when any
+required blockmap is missing. Differential plans, cumulative transferred bytes,
+and fallback reasons are written to `app-update.log`.
 
 The same release also emits signed manifests and artifacts for the legacy Tauri
 updater so installed Tauri builds can migrate through the existing Update UI:
@@ -90,10 +93,23 @@ application itself continues to update through `electron-updater`; the other
 seven components use independent
 `components-<channel>-<platform>-<arch>.json` manifests.
 
-The content SHA-256 values in a published component manifest must be computed
-from the final application resources after Electron Builder finishes signing.
-macOS code signing can rewrite nested executables, so publication must not
-reuse the pre-package content hashes from `components.json`.
+For macOS, publication locates immutable signed components by their unsigned
+content, certificate identity, architecture, signing policy, and build-tool
+version. When those inputs are unchanged, the installer and online component
+reuse exactly the same signed bytes. A changed input is signed and verified
+again. Electron Builder skips those already processed managed resources so a
+new signing timestamp alone cannot change their component hashes. Published
+content SHA-256 values are computed from these final resources rather than
+extracting components from a newly re-signed installer.
+
+The Codex component boundary is the complete `codex/` runtime directory, not
+the standalone `codex` executable. The component must contain
+`WEGENT_CODEX_BINARY.json`, the target architecture's `codex` and
+`codex-code-mode-host` binaries, the `codex-path` tools, and legal resources.
+The client resolves the main executable from the runtime descriptor's
+`binaryPath` and verifies the sibling code-mode host before activation.
+Release scripts must not point the Codex entry in `components.json` at the main
+executable or archive that executable alone.
 
 Component archives are named by their archive SHA-256 and stored as immutable
 assets. Repository-built Wework core plugin/UI, application static asset,
@@ -193,6 +209,16 @@ start successfully. A failed startup, or a process exit before confirmation,
 rolls back to the previous set on the next launch. Packaged resources remain
 the final fallback.
 
+The main process owns one application-update task. Automatic downloads, manual
+downloads, and repeated checks for the same version and channel share that
+task, and a check cannot clear an active download. Missing components download
+with at most three workers; Wework writes the `pending` set only after every
+archive passes size, archive-hash, and extracted-content verification. Progress
+covers component downloads, host download, verification, and installation
+readiness, and includes bytes transferred before a failed differential attempt.
+The local Squirrel.Mac handoff of the cached ZIP is not counted as network
+traffic.
+
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it
 to `PATH`, points `WEWORK_NODE_PATH`, `NODE`, and `npm_node_execpath` at
@@ -233,7 +259,7 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
-The current pin is Codex `0.152.1`. Codex `0.152` disables
+The current pin is Codex `0.153.3`. Codex `0.152` disables
 `tools.update_plan.enabled` by default, while Wework consumes the corresponding
 plan events to render plan blocks, so the Executor must enable the tool
 explicitly when launching Codex. Desktop E2E verifies the lockfile binary by

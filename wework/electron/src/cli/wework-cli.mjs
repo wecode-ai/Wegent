@@ -19,6 +19,9 @@ function usage() {
   wework desktop wait [--selector CSS] [--text TEXT] [--timeout MS] [--instance ID]
   wework desktop screenshot --output PATH [--instance ID]
   wework desktop focus [--instance ID] [--project PATH]
+  wework smart-app inspect --project ABSOLUTE_PATH [--instance ID] [--format human|json]
+  wework smart-app verify --project ABSOLUTE_PATH [--instance ID] [--format human|json]
+  wework smart-app pack --project ABSOLUTE_PATH --output ABSOLUTE_PATH.zip [--instance ID] [--format human|json]
 
 Instance selection:
   --instance ID    Select an exact running Wework instance.
@@ -185,18 +188,73 @@ function actionRequest(command, options) {
   return base
 }
 
+export function smartAppRequest(command, options) {
+  if (!['inspect', 'verify', 'pack'].includes(command)) {
+    throw new Error(`Unknown smart-app command: ${command}`)
+  }
+  const allowed = new Set([
+    'project',
+    'instance',
+    'format',
+    ...(command === 'pack' ? ['output'] : []),
+  ])
+  const unknown = Object.keys(options).find(option => !allowed.has(option))
+  if (unknown) throw new Error(`Unknown smart-app option: --${unknown}`)
+  if (!options.project) throw new Error('--project is required for smart-app commands')
+  if (!isAbsolute(options.project)) throw new Error('--project must be an absolute path')
+  const format = options.format ?? 'human'
+  if (format !== 'human' && format !== 'json') throw new Error('--format must be "human" or "json"')
+  const request = { action: command, projectRoot: resolve(options.project), format }
+  if (command !== 'pack') return request
+  if (!options.output) throw new Error('--output is required for smart-app pack')
+  if (!isAbsolute(options.output)) throw new Error('--output must be an absolute path')
+  if (!options.output.toLowerCase().endsWith('.zip')) {
+    throw new Error('--output must end with .zip')
+  }
+  return { ...request, outputPath: resolve(options.output) }
+}
+
+export function summarizeSmartAppResult(result) {
+  const report = result?.report ?? result
+  const status = typeof report?.status === 'string' ? report.status : 'unavailable'
+  const stages = Array.isArray(report?.stages) ? report.stages : []
+  const runtime = stages.find(stage => stage?.stage === 'runtime')
+  const issue = Array.isArray(report?.issues) ? report.issues[0] : null
+  return [
+    `Smart App verification: ${status}`,
+    runtime ? `Runtime: ${runtime.status}` : null,
+    typeof issue?.code === 'string' ? issue.code : null,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 async function main() {
   const { namespace, command, options } = parseCliArgs(process.argv.slice(2))
-  if (namespace === 'desktop' && (['-h', '--help'].includes(command) || options.help === true)) {
+  if (
+    ['desktop', 'smart-app'].includes(namespace) &&
+    (['-h', '--help'].includes(command) || options.help === true)
+  ) {
     usage()
     return
   }
-  if (namespace !== 'desktop' || !command) {
+  if (!['desktop', 'smart-app'].includes(namespace) || !command) {
     usage()
     process.exitCode = 2
     return
   }
   const instances = await runningInstances()
+  if (namespace === 'smart-app') {
+    const input = smartAppRequest(command, options)
+    const instance = selectInstance(instances, options)
+    const { format, ...body } = input
+    const result = await request(instance, '/smart-app', body)
+    if (input.format === 'json') console.log(JSON.stringify(result, null, 2))
+    else console.log(summarizeSmartAppResult(result))
+    const report = result?.report ?? result
+    if (report?.status !== 'passed') process.exitCode = 1
+    return
+  }
   if (command === 'instances') {
     console.log(
       JSON.stringify(

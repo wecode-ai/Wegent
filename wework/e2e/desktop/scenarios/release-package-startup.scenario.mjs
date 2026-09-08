@@ -201,7 +201,20 @@ async function assertReleasePackageResources() {
     assert.equal(typeof component.version, 'string')
     if ('path' in component) assert.match(component.sha256, /^[0-9a-f]{64}$/)
   }
-  await readFile(join(resourcesRoot, components.components.codex.path))
+  const codexRoot = join(resourcesRoot, components.components.codex.path)
+  const codexRuntime = JSON.parse(
+    await readFile(join(codexRoot, 'WEGENT_CODEX_BINARY.json'), 'utf8')
+  )
+  const codexBinary = join(codexRoot, codexRuntime.binaryPath)
+  await Promise.all([
+    readFile(codexBinary),
+    readFile(
+      join(
+        dirname(codexBinary),
+        process.platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
+      )
+    ),
+  ])
 }
 
 export async function createDesktopScenario({

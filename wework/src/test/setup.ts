@@ -9,6 +9,18 @@ import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime
 
 expect.extend(matchers)
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+Object.defineProperty(globalThis, 'ResizeObserver', {
+  configurable: true,
+  value: ResizeObserverMock,
+  writable: true,
+})
+
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
 let testAppPreferences: Record<string, unknown> = {}
@@ -81,7 +93,6 @@ const testSidebarNavigation = [
   {
     id: 'applications.navigation',
     activeItem: 'sites',
-    experimental: true,
     icon: 'applications',
     labelKey: 'workbench.sites',
     label: '应用',
@@ -239,6 +250,7 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.projectWorkSection, []],
     [WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy, []],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
+    [WEWORK_DSH_SLOTS.settingsSection, []],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
     [WEWORK_DSH_SLOTS.shellAfter, []],

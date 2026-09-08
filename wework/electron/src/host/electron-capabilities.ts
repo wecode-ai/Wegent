@@ -13,12 +13,14 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat } from 'node:fs/promises'
-import { cpus, freemem, totalmem } from 'node:os'
+import { cpus } from 'node:os'
+import { availableMemoryRatio } from './maintenance-memory.js'
 import { join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
   HostCapabilityError,
   HostCapabilityRouter,
+  type HostCapability,
 } from './capability-router.js'
 import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
@@ -51,6 +53,7 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
+export const WEWORK_WORKBENCH_PRINCIPAL = '@wegent/dsh-workbench'
 
 export function e2eOpenDialogOverride(
   environment: NodeJS.ProcessEnv = process.env
@@ -59,6 +62,31 @@ export function e2eOpenDialogOverride(
   const selectedPath = environment.WEWORK_E2E_OPEN_DIALOG_PATH?.trim()
   if (!controlUrl || !selectedPath) return null
   return { canceled: false, filePaths: [resolve(selectedPath)] }
+}
+
+/** Owner-view region capture limits (8K frame envelope). */
+const MAX_CAPTURE_WIDTH = 7680
+const MAX_CAPTURE_HEIGHT = 4320
+const MAX_CAPTURE_PIXELS = MAX_CAPTURE_WIDTH * MAX_CAPTURE_HEIGHT
+
+/**
+ * Capabilities owned by the scoped workbench host pipe. They stay in
+ * HOST_CAPABILITIES so they are recognised as invokable name, but must never be
+ * granted to the core app principal — otherwise the core router advertises
+ * capabilities that only the owner-scoped router implements.
+ */
+const WORKBENCH_ONLY_CAPABILITIES = ['dshCapture.capabilities', 'dshCapture.ownerRect'] as const
+
+/**
+ * The capability set granted to the core app principal. Equivalent to the
+ * global allowlist minus the workbench-only capabilities, so the core router
+ * never advertises scoped capture that only the owner-scoped router implements.
+ */
+export function coreGrantedCapabilities(
+  capabilities: readonly HostCapability[] = HOST_CAPABILITIES
+): readonly HostCapability[] {
+  const workbenchOnly = new Set<string>(WORKBENCH_ONLY_CAPABILITIES)
+  return capabilities.filter(capability => !workbenchOnly.has(capability))
 }
 
 export interface ElectronDesktopServices {
@@ -73,6 +101,12 @@ export interface ElectronDesktopServices {
   pluginDevelopment: () => PluginDevelopmentService | null
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  weworkSyncRequest?: (request: {
+    apiBaseUrl: string
+    path: string
+    method: 'GET' | 'POST' | 'PUT'
+    body?: unknown
+  }) => Promise<unknown>
 }
 
 interface ElectronNotificationHandle {
@@ -235,7 +269,7 @@ export function createElectronCapabilityRouter(
     maxBytes: 2 * 1024 * 1024,
     retainedFiles: 2,
   })
-  router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
+  router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
@@ -626,6 +660,22 @@ export function createElectronCapabilityRouter(
     }
     return updated
   })
+  router.register('weworkSync.request', params => {
+    if (!desktopServices.weworkSyncRequest) {
+      throw new HostCapabilityError(
+        'capability_unavailable',
+        'Wework cloud synchronization is unavailable'
+      )
+    }
+    const method = optionalStringParam(params, 'method') ?? 'GET'
+    if (!['GET', 'POST', 'PUT'].includes(method)) invalidParam('method')
+    return desktopServices.weworkSyncRequest({
+      apiBaseUrl: stringParam(params, 'apiBaseUrl'),
+      path: stringParam(params, 'path'),
+      method: method as 'GET' | 'POST' | 'PUT',
+      ...(Object.hasOwn(params, 'body') ? { body: params.body } : {}),
+    })
+  })
   registerRendererStorageCapabilities(router, rendererStorage)
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
@@ -691,6 +741,7 @@ export function createElectronCapabilityRouter(
       name: stringParam(params, 'name'),
       displayName: stringParam(params, 'displayName'),
       description: stringParam(params, 'description'),
+      template: stringParam(params, 'template'),
     })
   )
   router.register('smartApps.linkDirectory', params =>
@@ -759,11 +810,17 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.exportToDownloads', params =>
     requiredSmartApps(smartApps).exportToDownloads(stringParam(params, 'installationId'))
   )
+  router.register('smartApps.inspectVerification', params =>
+    requiredSmartApps(smartApps).inspectVerification(stringParam(params, 'installationId'))
+  )
   router.register('smartApps.upload', params =>
     requiredSmartApps(smartApps).upload(
       stringParam(params, 'archivePath'),
       stringParam(params, 'uploadUrl')
     )
+  )
+  router.register('smartApps.verify', params =>
+    requiredSmartApps(smartApps).verify(stringParam(params, 'installationId'))
   )
   router.register('systemDrag.complete', params =>
     e2eHost.completeSystemDragDrop(systemDragPayload(params))
@@ -894,6 +951,40 @@ export function registerBrowserAnnotationCapabilities(
   )
 }
 
+export function createWorkbenchCapabilityRouter(
+  browser: Pick<EmbeddedBrowserManager, 'capture' | 'has' | 'state'> | null,
+  ownerLabel: string | null
+): HostCapabilityRouter {
+  const router = new HostCapabilityRouter()
+  router.register('dshCapture.capabilities', () => ({
+    available: Boolean(
+      browser && ownerLabel && browser.has(ownerLabel) && browser.state(ownerLabel).visible
+    ),
+  }))
+  router.register('dshCapture.ownerRect', async params => {
+    if (!browser || !ownerLabel || !browser.has(ownerLabel)) {
+      throw unavailableOwnerCapture()
+    }
+    if (!browser.state(ownerLabel).visible) {
+      throw new HostCapabilityError(
+        'owner_view_hidden',
+        'The Smart App view is not visible for capture'
+      )
+    }
+    const rect = ownerCaptureRectParam(params)
+    return { dataUrl: await browser.capture(ownerLabel, rect) }
+  })
+  router.grant(WEWORK_WORKBENCH_PRINCIPAL, WORKBENCH_ONLY_CAPABILITIES)
+  return router
+}
+
+function unavailableOwnerCapture(): HostCapabilityError {
+  return new HostCapabilityError(
+    'capability_unavailable',
+    'Smart App owner-view capture is unavailable in this environment'
+  )
+}
+
 interface CpuTimeSample {
   idle: number
   total: number
@@ -930,10 +1021,9 @@ export async function systemPressureSnapshot(): Promise<{
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()
-  const totalMemory = totalmem()
   return {
     cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
-    freeMemoryRatio: totalMemory > 0 ? freemem() / totalMemory : 0,
+    freeMemoryRatio: availableMemoryRatio(process.getSystemMemoryInfo(), process.platform),
     userIdleSeconds: powerMonitor.getSystemIdleTime(),
   }
 }
@@ -1294,6 +1384,30 @@ function browserBoundsParam(params: Record<string, unknown>): BrowserBounds {
     width: numberParam(record, 'width'),
     height: numberParam(record, 'height'),
   }
+}
+
+function ownerCaptureRectParam(params: Record<string, unknown>): BrowserBounds {
+  const input = {
+    x: numberParam(params, 'x'),
+    y: numberParam(params, 'y'),
+    width: numberParam(params, 'width'),
+    height: numberParam(params, 'height'),
+  }
+  if (input.x < 0 || input.y < 0 || input.width < 1 || input.height < 1) {
+    invalidParam('capture rect')
+  }
+  const x = Math.floor(input.x)
+  const y = Math.floor(input.y)
+  const width = Math.ceil(input.x + input.width) - x
+  const height = Math.ceil(input.y + input.height) - y
+  if (
+    width > MAX_CAPTURE_WIDTH ||
+    height > MAX_CAPTURE_HEIGHT ||
+    width * height > MAX_CAPTURE_PIXELS
+  ) {
+    invalidParam('capture rect')
+  }
+  return { x, y, width, height }
 }
 
 function systemDragPayload(params: Record<string, unknown>): {

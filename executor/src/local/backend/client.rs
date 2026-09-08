@@ -195,6 +195,23 @@ where
         self.transport.emit(event, payload).await
     }
 
+    pub async fn call_raw_event(
+        &self,
+        event: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let response = self.transport.call(event, payload, timeout).await?;
+        if ack_success(&response) {
+            return Ok(());
+        }
+        Err(ack_payload(&response)
+            .and_then(|value| value.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("Backend rejected executor event")
+            .to_owned())
+    }
+
     pub fn set_running_task_ids<I>(&self, task_ids: I)
     where
         I: IntoIterator<Item = String>,

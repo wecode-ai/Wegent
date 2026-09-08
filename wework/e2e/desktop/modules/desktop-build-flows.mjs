@@ -91,6 +91,10 @@ import {
 
 import { waitForTaskRowByText } from './task-state-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
+import {
+  verifyRemoteTerminalRemainsResponsiveAfterOutputBurst,
+  verifyTerminalWireCompatibility,
+} from './terminal-compatibility-flows.mjs'
 
 import {
   captureVerificationScreenshot,
@@ -130,6 +134,44 @@ async function verifyRemoteTerminalUsesPanelWidth(control) {
   throw new Error(
     `The remote PTY did not reach the fitted panel width; last size: ${lastReportedSize}; terminal: ${terminalText.slice(-2000)}`
   )
+}
+
+async function closeRemoteTerminal(control) {
+  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('workspace-tool-launcher') &&
+      !value.testIds.includes('workspace-terminal-window'),
+    'The cloud task terminal and bottom panel did not close cleanly',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+async function verifyCloudTerminalCompatibility(control, cloudEnvironment) {
+  for (const requestedVersion of [undefined, 1, 2]) {
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion,
+      expectedVersion: requestedVersion ?? 1,
+      name: `wire-request-${requestedVersion ?? 'absent'}`,
+    })
+  }
+  try {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(false)
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion: 2,
+      expectedVersion: 1,
+      name: 'wire-v2-disabled',
+    })
+    await openBottomWorkspaceTerminal(control, 'The cloud task with terminal v2 disabled')
+    await verifyRemoteTerminalUsesPanelWidth(control)
+    await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v1')
+    await captureVerificationScreenshot(control, 'cloud-04c-legacy-terminal-rendered.png')
+    await closeRemoteTerminal(control)
+  } finally {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(true)
+  }
 }
 
 async function waitForSingleProjectByTitle(
@@ -1011,17 +1053,10 @@ async function verifyCloudProjectFlow(
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await verifyRemoteTerminalUsesPanelWidth(control)
+  await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v2')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
-  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
-  await waitForSnapshot(
-    control,
-    value =>
-      !value.testIds.includes('workspace-tool-launcher') &&
-      !value.testIds.includes('workspace-terminal-window'),
-    'The new cloud task terminal and bottom panel did not close cleanly',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await closeRemoteTerminal(control)
+  await verifyCloudTerminalCompatibility(control, cloudEnvironment)
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)

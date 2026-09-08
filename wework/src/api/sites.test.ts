@@ -318,4 +318,50 @@ describe('createSitesApi', () => {
       }
     )
   })
+
+  test('loads and updates internal access through Wegent Backend', async () => {
+    const existing = {
+      id: 'policy-1',
+      project_id: 'site/1',
+      target: 'inner',
+      audience: 'owner',
+      subjects: [],
+      revision_number: 2,
+      created_by: 'owner',
+      created_at: '2026-09-08T08:00:00Z',
+    }
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => existing })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ...existing,
+          audience: 'custom',
+          subjects: ['member-a'],
+          revision_number: 3,
+        }),
+      })
+
+    const api = createSitesApi('/api/')
+    await expect(api.getSiteAccess('site/1')).resolves.toEqual(existing)
+    await api.updateSiteAccess(
+      'site/1',
+      { audience: 'custom', subjects: ['member-a'] },
+      'site-access-12345678'
+    )
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/sites/site%2F1/access', {
+      method: 'GET',
+      headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/sites/site%2F1/access', {
+      method: 'PUT',
+      body: JSON.stringify({ audience: 'custom', subjects: ['member-a'] }),
+      headers: expect.objectContaining({
+        Authorization: 'Bearer wegent-secret',
+        'Idempotency-Key': 'site-access-12345678',
+      }),
+    })
+  })
 })
