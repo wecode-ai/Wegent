@@ -4481,5 +4481,23 @@
     "minutes": "minutes",
     "hours": "hours",
     "days": "days"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "refresh": "Refresh",
+    "read_all": "Mark all read",
+    "invalid_link": "This notification link is invalid",
+    "failed": "Could not update notifications. Try again.",
+    "loading": "Loading…",
+    "empty": "No notifications yet",
+    "assignment_title": "Issue assigned to you",
+    "assignment_body": "{{assigner}} assigned “{{item}}” on the “{{project}}” board to you",
+    "unread": "Unread",
+    "more": "Load more",
+    "ask_title": "Notify the assignee?",
+    "ask_body": "When you save this assignment, send an in-app notification and push to their connected IM.",
+    "without_notification": "Do not notify",
+    "with_notification": "Notify",
+    "connect": "Connect to the cloud to view notifications"
   }
 }

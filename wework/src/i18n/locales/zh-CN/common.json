@@ -4478,5 +4478,23 @@
     "minutes": "分钟",
     "hours": "小时",
     "days": "天"
+  },
+  "notifications": {
+    "title": "通知",
+    "refresh": "刷新",
+    "read_all": "全部已读",
+    "invalid_link": "通知链接无效",
+    "failed": "更新通知失败，请重试。",
+    "loading": "加载中…",
+    "empty": "暂无通知",
+    "assignment_title": "你有新的看板任务",
+    "assignment_body": "{{assigner}} 将「{{project}}」看板的「{{item}}」分配给了你",
+    "unread": "未读",
+    "more": "加载更多",
+    "ask_title": "是否通知对方？",
+    "ask_body": "保存分配后，将发送站内通知，并推送到对方已连接的 IM。",
+    "without_notification": "不通知",
+    "with_notification": "通知对方",
+    "connect": "连接云端后查看通知"
   }
 }

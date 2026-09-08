@@ -6,6 +6,8 @@ sidebar_position: 4
 
 This document describes the unit testing framework setup for the Wegent project.
 
+Pre-push checks run the complete frontend unit suite with two Jest workers by default to prevent concurrent JSDOM instances from causing resource-contention timeouts. Set `FRONTEND_PRE_PUSH_TEST_WORKERS` to adjust concurrency; this does not change test scope or timeout limits.
+
 ## Overview
 
 The project includes comprehensive unit testing support across all modules:

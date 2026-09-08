@@ -688,6 +688,46 @@ describe('CloudTodoWorkspace', () => {
     localStorage.clear()
   })
 
+  it('opens the requested Issue after a parent rerender cancels the pending focus effect', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id) }],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: [{ ...item, cloud_project_id: String(project.id) }],
+    })
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: workbenchServices,
+      embedded: true,
+      activeProjectRef: { projectStore: 'backend' as const, projectId: String(project.id) },
+    }
+    const view = render(<CloudTodoWorkspace {...props} />)
+    await screen.findByTestId(`cloud-todo-card-${item.id}`)
+
+    const pending: VoidFunction[] = []
+    const microtasks = vi.spyOn(globalThis, 'queueMicrotask').mockImplementation(callback => {
+      pending.push(callback)
+    })
+    const staleHandled = vi.fn()
+    const handled = vi.fn()
+    view.rerender(
+      <CloudTodoWorkspace {...props} focusedItemId={item.id} onFocusedItemHandled={staleHandled} />
+    )
+    view.rerender(
+      <CloudTodoWorkspace {...props} focusedItemId={item.id} onFocusedItemHandled={handled} />
+    )
+    microtasks.mockRestore()
+    await act(async () => {
+      pending.forEach(callback => callback())
+    })
+
+    expect(staleHandled).not.toHaveBeenCalled()
+    expect(handled).toHaveBeenCalledTimes(1)
+    expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(item.title)
+  })
+
   it('renders only the board content shell when embedded in the workbench', async () => {
     const workbenchServices = services()
     vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({

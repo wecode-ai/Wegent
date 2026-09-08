@@ -99,8 +99,11 @@ describe('ChromeTitlebar', () => {
     expect(nativeDragRegion).toHaveClass('electron-titlebar-drag-region')
 
     const fixedActions = screen.getByTestId('titlebar-fixed-actions')
-    expect(fixedActions).toHaveStyle({ width: '6.75rem' })
+    expect(fixedActions).toHaveStyle({ width: '9rem' })
     expect(screen.getByTestId('titlebar-actions').nextElementSibling).toBe(
+      screen.getByTestId('titlebar-notifications')
+    )
+    expect(screen.getByTestId('titlebar-notifications').nextElementSibling).toBe(
       screen.getByTestId('titlebar-feedback')
     )
     expect(screen.getByTestId('titlebar-feedback')).toContainElement(
@@ -114,7 +117,9 @@ describe('ChromeTitlebar', () => {
 
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
     expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('titlebar-feedback')).toContainElement(
+      screen.getByTestId('topnav-feedback-button')
+    )
   })
 
   test('uses the Electron macOS traffic-light layout', () => {
@@ -124,7 +129,7 @@ describe('ChromeTitlebar', () => {
 
     expect(screen.getByTestId('macos-traffic-light-spacer')).toHaveClass('w-[92px]', 'self-stretch')
     expect(screen.getByTestId('titlebar-fixed-actions')).toHaveStyle({
-      width: '6.75rem',
+      width: '9rem',
     })
     expect(screen.getByTestId('titlebar-right-panel-drag-region')).toBeInTheDocument()
   })
@@ -144,7 +149,7 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('workspace-tab-strip')).toBeInTheDocument()
     expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
     expect(screen.queryByTestId('titlebar-right-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('titlebar-fixed-actions')).toHaveStyle({ width: '1.75rem' })
+    expect(screen.getByTestId('titlebar-fixed-actions')).toHaveStyle({ width: '4rem' })
     expect(screen.getByTestId('titlebar-feedback')).toBeEmptyDOMElement()
   })
 })
