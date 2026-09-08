@@ -52,7 +52,7 @@ async fn active_thread_tracking_counts_each_thread_independently() {
     client.mark_thread_active("thread-1").await;
     client.mark_thread_active("thread-1").await;
     client.mark_thread_active("thread-2").await;
-    client.mark_thread_idle("thread-1").await;
+    assert_eq!(client.mark_thread_idle("thread-1", true).await, None);
 
     {
         let state = client.state.lock().await;
@@ -60,9 +60,59 @@ async fn active_thread_tracking_counts_each_thread_independently() {
         assert_eq!(state.active_threads.get("thread-2"), Some(&1));
     }
 
-    client.mark_thread_idle("thread-1").await;
-    client.mark_thread_idle("thread-2").await;
+    assert!(client.mark_thread_idle("thread-1", true).await.is_some());
+    assert!(client.mark_thread_idle("thread-2", true).await.is_some());
     assert!(client.state.lock().await.active_threads.is_empty());
+}
+
+#[tokio::test]
+async fn idle_thread_tracking_evicts_the_oldest_subscription_over_capacity() {
+    let client = CodexAppServerClient::new("codex-idle-capacity-test");
+
+    for index in 1..=MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS {
+        let thread_id = format!("thread-{index}");
+        client.mark_thread_active(&thread_id).await;
+        let (_, overflow) = client
+            .mark_thread_idle(&thread_id, true)
+            .await
+            .expect("thread should become idle");
+        assert!(overflow.is_empty());
+    }
+
+    client.mark_thread_active("thread-5").await;
+    let (_, overflow) = client
+        .mark_thread_idle("thread-5", true)
+        .await
+        .expect("thread should become idle");
+
+    assert_eq!(overflow.len(), 1);
+    assert_eq!(overflow[0].0, "thread-1");
+    let state = client.state.lock().await;
+    assert_eq!(
+        state.idle_thread_generations.len(),
+        MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS
+    );
+    assert!(!state.idle_thread_generations.contains_key("thread-1"));
+    assert!(state.idle_thread_generations.contains_key("thread-5"));
+}
+
+#[tokio::test]
+async fn reactivating_idle_thread_invalidates_its_previous_generation() {
+    let client = CodexAppServerClient::new("codex-idle-reactivation-test");
+
+    client.mark_thread_active("thread-1").await;
+    let (idle_generation, _) = client
+        .mark_thread_idle("thread-1", true)
+        .await
+        .expect("thread should become idle");
+    client.mark_thread_active("thread-1").await;
+
+    let state = client.state.lock().await;
+    assert_ne!(
+        state.thread_generations.get("thread-1"),
+        Some(&idle_generation)
+    );
+    assert!(!state.idle_thread_generations.contains_key("thread-1"));
 }
 
 #[tokio::test]
