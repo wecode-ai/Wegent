@@ -79,9 +79,10 @@ async fn idle_thread_tracking_evicts_the_oldest_subscription_over_capacity() {
         assert!(overflow.is_empty());
     }
 
-    client.mark_thread_active("thread-5").await;
+    let overflow_thread_id = format!("thread-{}", MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS + 1);
+    client.mark_thread_active(&overflow_thread_id).await;
     let (_, overflow) = client
-        .mark_thread_idle("thread-5", true)
+        .mark_thread_idle(&overflow_thread_id, true)
         .await
         .expect("thread should become idle");
 
@@ -93,7 +94,9 @@ async fn idle_thread_tracking_evicts_the_oldest_subscription_over_capacity() {
         MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS
     );
     assert!(!state.idle_thread_generations.contains_key("thread-1"));
-    assert!(state.idle_thread_generations.contains_key("thread-5"));
+    assert!(state
+        .idle_thread_generations
+        .contains_key(&overflow_thread_id));
 }
 
 #[tokio::test]

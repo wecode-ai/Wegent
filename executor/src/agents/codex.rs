@@ -73,6 +73,7 @@ const CODEX_THREAD_NOTIFICATION_CAPACITY: usize = 2048;
 const MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS: usize = 4;
 const IDLE_CODEX_THREAD_SUBSCRIPTION_TTL: Duration = Duration::from_secs(30 * 60);
 const IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRY_DELAY: Duration = Duration::from_secs(15);
+const MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES: u8 = 3;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
 Everything before this boundary is inherited history from the parent thread. It is reference context only. It is not your current task.
@@ -793,6 +794,7 @@ impl CodexAppServerClient {
         generation: u64,
         delay: Duration,
         reason: &'static str,
+        remaining_retries: u8,
     ) {
         let client = self.clone();
         tokio::spawn(async move {
@@ -804,12 +806,13 @@ impl CodexAppServerClient {
                 .request_thread_unsubscribe_if_idle(&thread_id, generation)
                 .await;
             observation.finish(&result);
-            if result.is_err() {
+            if result.is_err() && remaining_retries > 0 {
                 client.unsubscribe_thread_in_background(
                     thread_id,
                     generation,
                     IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRY_DELAY,
                     "retry",
+                    remaining_retries - 1,
                 );
             }
         });
@@ -1720,6 +1723,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                     generation,
                     IDLE_CODEX_THREAD_SUBSCRIPTION_TTL,
                     "ttl",
+                    MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES,
                 );
                 for (overflow_thread_id, overflow_generation) in overflow {
                     client.unsubscribe_thread_in_background(
@@ -1727,6 +1731,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                         overflow_generation,
                         Duration::ZERO,
                         "capacity",
+                        MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES,
                     );
                 }
             }
