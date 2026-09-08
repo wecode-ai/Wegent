@@ -4,6 +4,7 @@
 """End-to-end loop routing over webhook and polling delivery, plus catch-up."""
 
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -34,7 +35,18 @@ from app.services.project_event_polling_service import (
 from app.services.project_incoming_hooks import project_incoming_hook_service
 
 
-def _definition() -> ProjectWorkflowDefinition:
+def _definition(
+    *,
+    collection_mode: Literal["webhook", "poll"],
+    subscription_id: str | None = None,
+) -> ProjectWorkflowDefinition:
+    event_wait: dict[str, object] = {
+        "source_type": "github",
+        "collection_mode": collection_mode,
+    }
+    if collection_mode == "webhook":
+        event_wait["subscription_id"] = subscription_id
+
     return ProjectWorkflowDefinition(
         version=1,
         stage_mode="dag",
@@ -72,10 +84,7 @@ def _definition() -> ProjectWorkflowDefinition:
                 node_type="branch",
                 loop_id="loop1",
                 depends_on=["ls"],
-                event_wait={
-                    "source_type": "github",
-                    "collection_mode": "webhook",
-                },
+                event_wait=event_wait,
                 branch_conditions=[
                     {
                         "event_type": "change_request.checks_failed",
@@ -120,8 +129,20 @@ def _project(test_db, key: str) -> CloudProject:
     return project
 
 
-def _item(test_db, project: CloudProject, *, armed: bool = True) -> LoopItem:
-    instance = instantiate_workflow(_definition())
+def _item(
+    test_db,
+    project: CloudProject,
+    *,
+    collection_mode: Literal["webhook", "poll"],
+    subscription_id: str | None = None,
+    armed: bool = True,
+) -> LoopItem:
+    instance = instantiate_workflow(
+        _definition(
+            collection_mode=collection_mode,
+            subscription_id=subscription_id,
+        )
+    )
     if not armed:
         for node in instance.nodes:
             if node.node_type == "branch":
@@ -237,7 +258,12 @@ def _check_failure_payload() -> dict:
 async def test_webhook_event_routes_to_armed_loop(test_db, monkeypatch):
     project = _project(test_db, "WLOOP")
     subscription = _github_subscription(test_db, project)
-    item = _item(test_db, project)
+    item = _item(
+        test_db,
+        project,
+        collection_mode="webhook",
+        subscription_id=str(subscription.id),
+    )
     run_for_workflow_node = AsyncMock(return_value={"id": "run-fix"})
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_service.run_for_workflow_node",
@@ -307,7 +333,7 @@ async def test_polled_event_routes_to_armed_loop(test_db, test_user, monkeypatch
     )
     test_db.add(hook)
     test_db.flush()
-    item = _item(test_db, project)
+    item = _item(test_db, project, collection_mode="poll")
     _connect_github(test_db)
     run_for_workflow_node = AsyncMock(return_value={"id": "run-fix"})
     monkeypatch.setattr(
@@ -422,7 +448,15 @@ def test_loop_catches_up_events_received_before_arming(test_db, collection_mode)
     )
     test_db.add(subscription)
     test_db.flush()
-    item = _item(test_db, project, armed=False)
+    item = _item(
+        test_db,
+        project,
+        collection_mode=collection_mode,
+        subscription_id=(
+            str(subscription.id) if collection_mode == "webhook" else None
+        ),
+        armed=False,
+    )
     _persisted_event(
         test_db,
         project,
