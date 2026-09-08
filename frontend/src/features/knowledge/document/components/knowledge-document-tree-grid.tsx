@@ -528,7 +528,7 @@ export function KnowledgeDocumentTreeGrid({
           }
           const document = node.document
           if (document.source_type === 'external') {
-            return <ExternalDocumentBadge />
+            return <ExternalDocumentBadge document={document} />
           }
           if (document.source_type === 'table') {
             return (

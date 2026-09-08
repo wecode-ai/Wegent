@@ -57,7 +57,6 @@ export function KnowledgeSourcePreview({
     setRenderError(null)
 
     fetchAttachmentFile(document.attachment_id, {
-      filename: document.name,
       signal: controller.signal,
     })
       .then(setFile)
@@ -70,7 +69,7 @@ export function KnowledgeSourcePreview({
       })
 
     return () => controller.abort()
-  }, [active, document.attachment_id, document.id, document.name, retryKey, tooLarge])
+  }, [active, document.attachment_id, document.id, retryKey, tooLarge])
 
   let content: ReactNode
   if (tooLarge) {

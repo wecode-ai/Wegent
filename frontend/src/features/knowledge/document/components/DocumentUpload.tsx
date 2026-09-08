@@ -75,7 +75,7 @@ function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
 type UploadMode = 'file' | 'text' | 'web' | 'dingtalk'
 
 const SOURCE_HEIGHT: Record<UploadMode, string> = {
-  file: 'h-[540px] md:h-[480px]',
+  file: 'h-auto',
   web: 'h-[440px] md:h-[344px]',
   text: 'h-[580px]',
   dingtalk: 'h-[720px]',
@@ -511,6 +511,9 @@ function DocumentUploadSession({
             className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
             hidden={uploadMode !== 'file'}
           >
+            {validationError && (
+              <div className="shrink-0 px-5 pt-3">{errorMessage(validationError)}</div>
+            )}
             <div className="min-h-0 flex-1 overflow-y-auto p-5">
               <div
                 className={cn(
@@ -567,7 +570,6 @@ function DocumentUploadSession({
                   }}
                 />
               </div>
-              {validationError && <div className="mt-3">{errorMessage(validationError)}</div>}
               {state.files.length > 0 && (
                 <div className="mt-4 space-y-3">
                   <div className="flex items-center justify-between">

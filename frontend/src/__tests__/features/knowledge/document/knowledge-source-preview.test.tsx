@@ -75,7 +75,6 @@ describe('KnowledgeSourcePreview', () => {
     await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
     expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
     expect(fetchAttachmentFile).toHaveBeenCalledWith(3, {
-      filename: 'report.docx',
       signal: expect.any(AbortSignal),
     })
   })
@@ -100,6 +99,46 @@ describe('KnowledgeSourcePreview', () => {
     expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument()
     expect(fetchAttachmentFile).toHaveBeenCalledTimes(1)
   })
+
+  it.each([
+    ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+    ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ])(
+    'preserves the downloaded %s filename when the document title has no extension',
+    async (extension, mimeType) => {
+      const filename = `原始资料.${extension}`
+      jest
+        .mocked(fetchAttachmentFile)
+        .mockImplementation(jest.requireActual('@/apis/attachments').fetchAttachmentFile)
+      const originalFetch = global.fetch
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        headers: new Headers({
+          'Content-Type': mimeType,
+          'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        }),
+        blob: async () => new Blob(['office'], { type: mimeType }),
+      } as Response)
+      try {
+        render(
+          <KnowledgeSourcePreview
+            document={{
+              ...document,
+              name: '重命名后的资料',
+              source_type: 'external',
+              file_extension: extension,
+            }}
+            active
+            onDownload={onDownload}
+          />
+        )
+
+        expect(await screen.findByTestId('mock-file-preview')).toHaveTextContent(filename)
+      } finally {
+        global.fetch = originalFetch
+      }
+    }
+  )
 
   it('clears the loaded file when deactivated and fetches it again after reactivation', async () => {
     const { rerender } = render(

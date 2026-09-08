@@ -27,7 +27,17 @@ describe('source preview rules', () => {
     }
   )
 
-  it('requires a file source and attachment', () => {
+  it.each(['pptx', 'xlsx'])('supports imported external %s attachments', fileExtension => {
+    expect(
+      isKnowledgeSourcePreviewSupported({
+        source_type: 'external',
+        attachment_id: 10,
+        file_extension: fileExtension,
+      })
+    ).toBe(true)
+  })
+
+  it('requires a supported source and attachment', () => {
     expect(
       isKnowledgeSourcePreviewSupported({
         source_type: 'text',
@@ -55,6 +65,29 @@ describe('source preview rules', () => {
       ).toBe(false)
     }
   })
+
+  it.each([null, 0])('rejects external placeholders without an attachment (%s)', attachmentId => {
+    expect(
+      isKnowledgeSourcePreviewSupported({
+        source_type: 'external',
+        attachment_id: attachmentId,
+        file_extension: 'xlsx',
+      })
+    ).toBe(false)
+  })
+
+  it.each(['md', 'ppt', ''])(
+    'keeps external %s content out of the Office preview',
+    fileExtension => {
+      expect(
+        isKnowledgeSourcePreviewSupported({
+          source_type: 'external',
+          attachment_id: 10,
+          file_extension: fileExtension,
+        })
+      ).toBe(false)
+    }
+  )
 
   it.each([null, undefined])('rejects a missing extension (%s)', fileExtension => {
     expect(
