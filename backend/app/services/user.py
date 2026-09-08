@@ -502,13 +502,17 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         return user_list
 
     def decrypt_user_git_info(self, user: User) -> User:
-        """Return a decrypted view of *user* without touching session state.
+        """Return a decrypted read view of *user* without touching session state.
 
-        Decrypted tokens must never land on the session-attached ORM object:
-        a getter that mutates tracked state leaves plaintext in the identity
-        map, one refactor away from being persisted by an unrelated commit.
-        The plaintext view is therefore built on a detached copy of the row;
-        the session-attached instance keeps ciphertext.
+        Decrypted tokens must never land on the session-attached ORM object: a
+        getter that mutates tracked state leaves plaintext in the identity map,
+        one refactor away from being persisted by an unrelated commit. The view
+        is therefore a transient copy of the row (never re-attach or commit
+        it); the session-attached instance keeps ciphertext and stays clean.
+
+        The copy is returned for every git_info shape (None, empty list,
+        encrypted, plaintext legacy, missing token key), so this read path can
+        never hand out the original session-attached instance.
 
         Callers only read attributes (user.id, user.git_info values), so the
         copy is transparent to them. Nobody may re-attach or commit the
@@ -517,23 +521,22 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if user is None:
             return user
 
-        if user.git_info is None:
-            return user
-
-        decrypted_items = []
-        for git_item in user.git_info:
-            token = git_item.get("git_token")
-            if token and is_token_encrypted(token):
-                decrypted_items.append(
-                    {**git_item, "git_token": decrypt_git_token(token)}
-                )
-            else:
-                decrypted_items.append(dict(git_item))
-
         plain_view = User()
         for column in user.__table__.columns:
             setattr(plain_view, column.name, getattr(user, column.name))
-        plain_view.git_info = decrypted_items
+
+        if user.git_info is not None:
+            decrypted_items = []
+            for git_item in user.git_info:
+                token = git_item.get("git_token")
+                if token and is_token_encrypted(token):
+                    decrypted_items.append(
+                        {**git_item, "git_token": decrypt_git_token(token)}
+                    )
+                else:
+                    decrypted_items.append(dict(git_item))
+            plain_view.git_info = decrypted_items
+
         return plain_view
 
 
