@@ -559,7 +559,7 @@ class SubscriptionTaskCompletionHandler:
             if execution.status == BackgroundExecutionStatus.FAILED.value:
                 notification_summary = (
                     event.error or ""
-                ).strip() or "执行失败，未提供错误信息"
+                ).strip() or "Execution failed; no error details were provided."
 
             # Dispatch follower notifications (via Messager channels)
             await subscription_notification_dispatcher.dispatch_execution_notifications(
