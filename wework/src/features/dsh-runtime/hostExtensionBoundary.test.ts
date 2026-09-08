@@ -8,6 +8,7 @@ const hostFiles = [
   'src/components/settings/MobileSettingsPage.tsx',
   'src/components/settings/RuntimeSettingsPage.tsx',
   'src/features/dsh-runtime/dshUiSlots.ts',
+  'src/components/layout/DesktopEmptyTaskLauncher.tsx',
   'src/features/dsh-runtime/useDshSlotAvailable.ts',
 ]
 

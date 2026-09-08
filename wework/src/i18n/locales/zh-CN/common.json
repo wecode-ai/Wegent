@@ -1063,6 +1063,25 @@
     "project_empty_title_suffix": "中做些什么？",
     "change_project": "更改项目",
     "project_select_placeholder": "请选择项目",
+    "focus_suggestions": {
+      "description": "从一个常见任务开始，或直接描述你的目标",
+      "research": {
+        "label": "整理和总结资料",
+        "prompt": "帮我整理并总结以下资料："
+      },
+      "writing": {
+        "label": "撰写或润色内容",
+        "prompt": "帮我撰写或润色以下内容："
+      },
+      "analysis": {
+        "label": "分析问题并给出建议",
+        "prompt": "帮我分析这个问题并给出可执行建议："
+      },
+      "planning": {
+        "label": "制定计划和拆解任务",
+        "prompt": "帮我制定计划并拆解以下任务："
+      }
+    },
     "task_suggestions": {
       "back": "返回全部建议",
       "explore": {

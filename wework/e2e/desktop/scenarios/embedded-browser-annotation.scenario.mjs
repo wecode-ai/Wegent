@@ -675,19 +675,6 @@ async function pageValue(bridge, expression) {
   return result.value
 }
 
-async function pageValueWithRuntimeDiagnostics(control, bridge, expression, previousRevision) {
-  try {
-    return await pageValue(bridge, expression)
-  } catch (error) {
-    const actualRevision = await browserAnnotationRuntimeRevision(control).catch(() => null)
-    throw new Error(
-      `${
-        error instanceof Error ? error.message : String(error)
-      }; annotationRuntimeRevision=${previousRevision}->${String(actualRevision)}`
-    )
-  }
-}
-
 async function waitForPageValue(bridge, expression, expected, timeoutMs, message) {
   const startedAt = Date.now()
   let actual = null

@@ -268,6 +268,23 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoHome({ heading, onSelectSuggestion }) {
+      return createElement(
+        'section',
+        { 'data-testid': 'dsh-extension-demo-home' },
+        heading,
+        createElement(
+          'button',
+          {
+            'data-testid': 'dsh-extension-demo-home-suggestion',
+            onClick: () => onSelectSuggestion('Describe the work you want to complete'),
+            type: 'button',
+          },
+          'Start with a suggestion'
+        )
+      )
+    }
+
     const contributions = [
       {
         slot: 'wework.action',
@@ -310,6 +327,14 @@ window.__ModuleLoader__.load({
           order: 90,
         },
         component: DemoBoardCardStatus,
+      },
+      {
+        slot: 'wework.home',
+        descriptor: {
+          id: 'dsh-extension-demo.home',
+          order: 90,
+        },
+        component: DemoHome,
       },
       {
         slot: 'wework.workspace.menu.section',
