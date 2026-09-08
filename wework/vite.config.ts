@@ -122,6 +122,8 @@ export default defineConfig({
           'dsh/ui-core-settings/src/settings-page.tsx'
         ),
         'wework-ui-core-apps': path.resolve(__dirname, 'dsh/ui-core-apps/src/app-surface.tsx'),
+        'wework-ui-home-developer': path.resolve(__dirname, 'dsh/ui-home-developer/src/home.tsx'),
+        'wework-ui-home-focus': path.resolve(__dirname, 'dsh/ui-home-focus/src/home.tsx'),
         'wework-ui-git-board-card-status': path.resolve(
           __dirname,
           'dsh/ui-git/src/board-card-status.tsx'
