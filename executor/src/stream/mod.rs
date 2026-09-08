@@ -484,14 +484,9 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
         return None;
     }
 
-    let message = value
-        .get("result")
-        .or_else(|| value.get("message"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Claude execution failed")
-        .to_owned();
+    let message = extract_result_error_message(value)
+        .map(str::to_owned)
+        .unwrap_or_else(|| "Claude execution failed".to_owned());
 
     if is_interruption_message(&message)
         || value
@@ -503,6 +498,36 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
     } else {
         Some(ExecutionOutcome::Failed { message })
     }
+}
+
+/// Extract the best available error message from a Claude `result` event.
+///
+/// Claude may report failures in `result`, `message`, or the `errors` array. This
+/// function prefers non-empty `result`, then `message`, then the first non-empty
+/// string in `errors`.
+fn extract_result_error_message(value: &Value) -> Option<&str> {
+    let result = value
+        .get("result")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let errors = value.get("errors").and_then(Value::as_array);
+
+    result.or(message).or_else(|| {
+        errors.and_then(|errors| {
+            errors.iter().find_map(|error| {
+                error
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+        })
+    })
 }
 
 fn claude_task_started_tool_use_id(value: &Value) -> Option<String> {
