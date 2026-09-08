@@ -341,6 +341,7 @@
     "copy_name_failed": "Failed to copy team name",
     "copy_success": "Team duplicated successfully",
     "copy_failed": "Failed to duplicate team",
+    "copy_skill_permission_denied": "You do not have permission for the skill {{skill}} that this agent depends on. Grant access to it first, then copy again.",
     "copy_skills_dialog_title": "Copy Skills to Group",
     "copy_skills_dialog_desc": "The following skills belong to your personal space. Copy them to the group too?",
     "copy_skills_with": "Copy Skills",
