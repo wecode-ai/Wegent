@@ -201,9 +201,6 @@ function RunRow({
             onEscapeKeyDown={event => {
               if (working) event.preventDefault()
             }}
-            onPointerDownOutside={event => {
-              if (working) event.preventDefault()
-            }}
           >
             <AlertDialogHeader>
               <AlertDialogTitle>

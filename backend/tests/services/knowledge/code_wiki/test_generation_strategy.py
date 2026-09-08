@@ -25,11 +25,14 @@ from app.services.knowledge.code_wiki.generation_strategy import (
 )
 
 
-def test_default_policy_preserves_single_team_behaviour(monkeypatch) -> None:
+def test_default_policy_uses_adaptive_collaboration_for_new_wikis(monkeypatch) -> None:
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_GENERATION_POLICY", None)
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_TEAM_NAME", "configured-wiki-team")
 
-    assert strategy_for_new_wiki() == LEGACY
+    assert strategy_for_new_wiki() == COORDINATOR_ADAPTIVE
+
+    adaptive = strategy_for_run(COORDINATOR_ADAPTIVE)
+    assert adaptive.team_ref.name == "configured-wiki-team"
 
     legacy = strategy_for_run(None)
     assert legacy.strategy_id == LEGACY

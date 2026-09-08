@@ -48,13 +48,14 @@ class CodeWikiGenerationPolicy(BaseModel):
 
 
 def default_code_wiki_generation_policy(team_name: str) -> CodeWikiGenerationPolicy:
-    """Preserve the existing single-Team deployment until policy is configured."""
+    """Use adaptive collaboration for new wikis before an admin policy is saved."""
 
     team_ref = CodeWikiTeamRef(name=team_name, namespace="default")
     return CodeWikiGenerationPolicy(
-        defaultStrategy="legacy",
+        defaultStrategy="coordinator_adaptive",
         legacyFallbackStrategy="legacy",
         strategies={
+            "coordinator_adaptive": CodeWikiStrategyBinding(teamRef=team_ref),
             "coordinator_reviewed": CodeWikiStrategyBinding(teamRef=team_ref),
             "legacy": CodeWikiStrategyBinding(teamRef=team_ref),
         },

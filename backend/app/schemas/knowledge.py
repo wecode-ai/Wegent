@@ -675,6 +675,9 @@ class CodeWikiRunProgress(BaseModel):
     total_steps: int = Field(0, ge=0)
     pages_written: int = Field(0, ge=0)
     pages_total: int = Field(0, ge=0)
+    # The same three visible phases serve reviewed and no-review runs. This tells the
+    # client whether the completed planning phase was a quality-gated review.
+    review_required: bool = False
 
 
 class CodeWikiRunStatus(BaseModel):

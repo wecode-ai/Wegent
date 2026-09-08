@@ -177,8 +177,10 @@ export interface CodeWikiRunProgress {
   total_steps: number
   /** Candidate pages written so far. Existing published pages are not counted. */
   pages_written: number
-  /** Planned page count once the Plan handoff exists. */
+  /** Planned page count once the review handoff or no-review plan exists. */
   pages_total: number
+  /** Whether planning was blocked on a Reviewer verdict for this run. */
+  review_required?: boolean
 }
 
 /**

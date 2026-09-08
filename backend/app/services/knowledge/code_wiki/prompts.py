@@ -130,6 +130,10 @@ state owners, integration boundaries, and representative tests without deeply re
 every planned scope. Build one ordered page plan. For every page record its path,
 purpose, concrete `Must explain` questions, seed paths, related or prerequisite pages,
 and exactly one author: `coordinator` or `writer:<work-package-id>`.
+Before writing or delegating any page, record its complete current order with
+`node wiki_submit.js plan --generation-id {context.generation_id} --structure-order ...`.
+If exploration changes the page set, run `plan` again with the full revised order. This
+is reader-facing progress only, not a review or a publishing gate.
 
 Choose authorship early. Write a page yourself when you already have enough evidence,
 especially `index`, `quickstart`, compact local topics, and final cross-page assembly.
@@ -189,6 +193,10 @@ First build one ordered page plan. For every page record its path, purpose, conc
 needed to answer those questions and write every page yourself. Work through related
 areas in a dependency-aware order so that later pages reuse facts established in
 earlier pages instead of rediscovering them.
+Before writing the first page, record the complete order with
+`node wiki_submit.js plan --generation-id {context.generation_id} --structure-order ...`.
+If the plan changes, rerun `plan` with the full revised order. This is reader-facing
+progress only, not a review or a publishing gate.
 
 Before writing each page, reread that page's purpose, `Must explain` questions, seed
 paths, and prerequisite pages. Every page must meet the same engineering contract:

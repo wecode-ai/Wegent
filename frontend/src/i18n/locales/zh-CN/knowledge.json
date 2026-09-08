@@ -1260,6 +1260,8 @@
         "plan": "规划评审",
         "planPassed_one": "规划评审通过（{{count}} 个页面）",
         "planPassed_other": "规划评审通过（{{count}} 个页面）",
+        "planCompleted_one": "页面规划完成（{{count}} 个页面）",
+        "planCompleted_other": "页面规划完成（{{count}} 个页面）",
         "writing": "写入页面",
         "writingActive": "正在写入页面（{{current}} / {{total}}）",
         "writingCompleted_one": "页面写入完成（{{count}} 个页面）",

@@ -80,7 +80,7 @@ backend 定义一个有类型的 `CodeWikiGenerationPolicy`，作为部署中唯
 
 ```json
 {
-  "defaultStrategy": "coordinator_reviewed",
+  "defaultStrategy": "coordinator_adaptive",
   "legacyFallbackStrategy": "legacy",
   "strategies": {
     "coordinator_adaptive": {
@@ -109,17 +109,19 @@ prompt、状态机或任意工作流定义。策略行为仍由代码中的 regi
 
 `legacy` 是不可选择、不会出现在 UI 的内部策略，只为兼容尚未迁移到新 Policy 的部署，保留升级前
 “是否评审由 Team collaborationModel 决定”的行为。完成 Policy 迁移后，新 Wiki 必须固化正式策略 ID。
-上例是三种正式策略全部落地后的目标配置；PR-1 的默认 Policy 只启用
-`coordinator_reviewed` 与内部 `legacy`，其余策略随对应协议实现再启用。
+上例是三种正式策略全部落地后的目标配置。未显式保存系统 Policy 的部署也使用
+`coordinator_adaptive` 作为新建 Wiki 默认，并复用既有 `code-wiki-team`；历史 Wiki
+仍通过内部 `legacy` 策略保持兼容行为。
 
 Policy 首版放在 backend 的 Code Wiki 配置中，通过一个结构化配置项加载；默认值与
 `backend/init_data/02-public-resources.yaml` 中的内建 Team 对齐。不要分别用三个散落的 Team 环境变量，
 也不要让前端维护策略到 Team 的映射。backend 提供只读 capabilities API，前端只展示当前启用且 Team
 校验通过的策略。
 
-兼容期内，未配置 Policy 的部署由现有 `WIKI_CODE_WIKI_TEAM_NAME` 自动构造只含
-`coordinator_reviewed` 与内部 `legacy` 的 Policy，其新旧 Wiki 都使用 `legacy`，从而严格保持升级前行为。
-显式配置 Policy 后，新 Wiki 固化其正式默认策略，旧 Team 配置不再参与解析。
+兼容期内，未配置 Policy 的部署由现有 `WIKI_CODE_WIKI_TEAM_NAME` 自动构造包含
+`coordinator_adaptive`、`coordinator_reviewed` 与内部 `legacy` 的 Policy；新 Wiki 固化
+自适应协作策略，旧 Wiki 仍使用 `legacyFallbackStrategy`。显式配置 Policy 后，新 Wiki 固化
+管理员选择的正式默认策略，旧 Team 配置不再参与解析。
 
 每个新 Wiki 把最终选择写入 `spec.generationStrategy`。这才是“当前 Wiki 用哪一种”的权威来源；全局
 `defaultStrategy` 只是创建默认值。这样可以让不同 Wiki 同时跑不同策略，而不因全局配置调整影响全部
@@ -269,12 +271,11 @@ PR-1 不改 prompt，先建立选择、持久化和回放边界。PR-2 只做最
 - 不用更长 handoff 代替源码证据，也不要求 Coordinator 预读所有 Writer 范围；
 - 不因新策略上线而删除旧策略、旧 Team 或 Reviewer 能力。
 
-## 待实现前确认的两项产品决策
+## 已确认的产品决策
 
-1. 新建 Code Wiki 默认先保持 `coordinator_reviewed`，还是灰度使用
-   `coordinator_adaptive`；本文建议先保持旧默认，完成同仓对比后切换。
-2. 普通用户是否能选择所有已启用策略，还是只有管理员可改变 Wiki 默认、普通用户只能做单次覆盖；
-   这不影响 registry 和 generation 快照，可在 PR-3 前决定。
+1. 同仓测试后，新建 Code Wiki 默认使用 `coordinator_adaptive`；系统管理员仍可通过
+   Generation Policy 为其部署选择另一个默认策略。
+2. 普通用户可在创建或 Wiki 高级设置中选择已启用策略；运行始终使用 Wiki 已保存的选择。
 
 ## English Summary
 

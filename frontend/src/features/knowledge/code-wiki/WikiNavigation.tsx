@@ -116,6 +116,19 @@ export function WikiNavigation({ pages, activePath, onSelect }: WikiNavigationPr
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   useEffect(() => {
+    // The first level below the wiki overview is the useful reading map. Keep it
+    // open when a freshly fetched version arrives, without disturbing choices made
+    // in the current tree.
+    setExpanded(current => {
+      const next = new Set(current)
+      for (const page of pages) {
+        if (page.children.length > 0) next.add(page.path)
+      }
+      return next
+    })
+  }, [pages])
+
+  useEffect(() => {
     // Follows the active page rather than replacing the set, so a section the
     // reader opened by hand stays open when they move elsewhere.
     if (!activePath) return

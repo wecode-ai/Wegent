@@ -1260,6 +1260,8 @@
         "plan": "Plan review",
         "planPassed_one": "Plan review passed ({{count}} page)",
         "planPassed_other": "Plan review passed ({{count}} pages)",
+        "planCompleted_one": "Page plan complete ({{count}} page)",
+        "planCompleted_other": "Page plan complete ({{count}} pages)",
         "writing": "Write pages",
         "writingActive": "Writing pages ({{current}} / {{total}})",
         "writingCompleted_one": "Page writing complete ({{count}} page)",
