@@ -111,10 +111,11 @@ async fn reactivating_idle_thread_invalidates_its_previous_generation() {
     client.mark_thread_active("thread-1").await;
 
     let state = client.state.lock().await;
-    assert_ne!(
-        state.thread_generations.get("thread-1"),
-        Some(&idle_generation)
-    );
+    let active_generation = state
+        .thread_generations
+        .get("thread-1")
+        .expect("reactivated thread should have a generation");
+    assert_ne!(*active_generation, idle_generation);
     assert!(!state.idle_thread_generations.contains_key("thread-1"));
 }
 
@@ -135,7 +136,13 @@ async fn lifecycle_gate_blocks_reactivation_until_idle_cleanup_finishes() {
             client.mark_thread_active("thread-1").await;
         })
     };
-    tokio::task::yield_now().await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while Arc::strong_count(&lifecycle_gate) == 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("reactivation should reach the lifecycle gate");
 
     {
         let state = client.state.lock().await;
@@ -150,10 +157,11 @@ async fn lifecycle_gate_blocks_reactivation_until_idle_cleanup_finishes() {
     reactivation.await.expect("reactivation should finish");
     let state = client.state.lock().await;
     assert_eq!(state.active_threads.get("thread-1"), Some(&1));
-    assert_ne!(
-        state.thread_generations.get("thread-1"),
-        Some(&idle_generation)
-    );
+    let active_generation = state
+        .thread_generations
+        .get("thread-1")
+        .expect("reactivated thread should have a generation");
+    assert_ne!(*active_generation, idle_generation);
     assert!(!state.idle_thread_generations.contains_key("thread-1"));
 }
 
