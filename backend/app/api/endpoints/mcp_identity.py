@@ -20,7 +20,7 @@ from app.services.auth import (
     verify_mcp_identity_token,
 )
 
-router = APIRouter(prefix="/mcp-identity", tags=["mcp-identity"])
+router = APIRouter(prefix="/external/mcp-identity", tags=["mcp-identity"])
 
 limiter = get_limiter()
 

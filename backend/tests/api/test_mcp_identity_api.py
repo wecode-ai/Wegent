@@ -37,7 +37,7 @@ def test_get_mcp_identity_user_returns_basic_info(
     token = _mcp_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
-        "/api/mcp-identity/userinfo",
+        "/api/external/mcp-identity/userinfo",
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -56,7 +56,7 @@ def test_get_mcp_identity_user_accepts_x_wegent_token_header(
     token = _mcp_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
-        "/api/mcp-identity/userinfo",
+        "/api/external/mcp-identity/userinfo",
         headers={"X-Wegent-Token": token},
     )
 
@@ -71,7 +71,7 @@ def test_get_mcp_identity_user_never_exposes_git_credentials(
     token = _mcp_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
-        "/api/mcp-identity/userinfo",
+        "/api/external/mcp-identity/userinfo",
         headers={"Authorization": f"Bearer {token}"},
     )
 
@@ -81,14 +81,14 @@ def test_get_mcp_identity_user_never_exposes_git_credentials(
 
 
 def test_get_mcp_identity_user_rejects_missing_token(test_client) -> None:
-    response = test_client.get("/api/mcp-identity/userinfo")
+    response = test_client.get("/api/external/mcp-identity/userinfo")
 
     assert response.status_code == 401
 
 
 def test_get_mcp_identity_user_rejects_invalid_token(test_client) -> None:
     response = test_client.get(
-        "/api/mcp-identity/userinfo",
+        "/api/external/mcp-identity/userinfo",
         headers={"Authorization": "Bearer not-a-valid-jwt"},
     )
 
@@ -102,7 +102,7 @@ def test_get_mcp_identity_user_rejects_non_mcp_token_type(
     token = _skill_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
-        "/api/mcp-identity/userinfo",
+        "/api/external/mcp-identity/userinfo",
         headers={"Authorization": f"Bearer {token}"},
     )
 

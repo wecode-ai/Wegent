@@ -88,7 +88,7 @@ spec:
 The option is enabled per server (opt-in) so the token is never leaked to
 servers that do not need it. The business side can validate the token by
 calling
-`GET /api/mcp-identity/userinfo`, which returns the current user's basic
+`GET /api/external/mcp-identity/userinfo`, which returns the current user's basic
 information (`id`, `user_name`, `email`) and never exposes git credentials.
 The token can be passed back either as the `X-Wegent-Token` header or as
 `Authorization: Bearer <token>`.

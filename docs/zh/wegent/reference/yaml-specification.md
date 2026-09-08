@@ -87,7 +87,7 @@ spec:
 
 该选项按 server 逐个开启（opt-in），避免把 token 扩散给未配置的服务器。
 业务方收到请求后，可用 `X-Wegent-Token` 头里的 token 调用
-`GET /api/mcp-identity/userinfo` 校验并获取当前用户基本信息（`id`、
+`GET /api/external/mcp-identity/userinfo` 校验并获取当前用户基本信息（`id`、
 `user_name`、`email`）；回调时 token 可用 `X-Wegent-Token` 或
 `Authorization: Bearer` 任一方式携带。该接口不会返回 git 凭据。
 token 有效期与 Skill
