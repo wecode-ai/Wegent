@@ -501,21 +501,28 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
 }
 
 fn extract_result_error_message(value: &Value) -> Option<&str> {
-    value
+    let result = value
         .get("result")
-        .or_else(|| value.get("message"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            value
-                .get("errors")
-                .and_then(Value::as_array)
-                .and_then(|errors| errors.first())
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty());
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let errors = value.get("errors").and_then(Value::as_array);
+
+    result.or(message).or_else(|| {
+        errors.and_then(|errors| {
+            errors.iter().find_map(|error| {
+                error
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
         })
+    })
 }
 
 fn claude_task_started_tool_use_id(value: &Value) -> Option<String> {

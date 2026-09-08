@@ -484,14 +484,33 @@ impl AgentEngine for StreamProcessEngine {
                     }
                 }
                 CommandOutcome::Failure { stderr, stdout, .. } => {
-                    maybe_recover_stale_claude_session(
-                        &request,
-                        spec.clone(),
-                        stderr,
-                        stdout,
-                        timeout_seconds,
-                    )
-                    .await
+                    let stderr_text = decode_output(stderr.clone().into_bytes());
+                    let stdout_text = decode_output(stdout.clone().into_bytes());
+                    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        claude_session::delete_saved_session_files(&request);
+                        let retry_spec = claude_spec_without_resume(&spec);
+                        match run_command_output(retry_spec, timeout_seconds).await {
+                            CommandOutcome::Success { stdout } => {
+                                let summary = collect_claude_stream_summary(&stdout);
+                                if let Some(session_id) = &summary.session_id {
+                                    claude_session::save_session_id(&request, session_id);
+                                }
+                                summary.outcome
+                            }
+                            CommandOutcome::Failure { stderr, stdout, .. } => {
+                                ExecutionOutcome::Failed {
+                                    message: failure_message(
+                                        stderr.into_bytes(),
+                                        stdout.into_bytes(),
+                                    ),
+                                }
+                            }
+                        }
+                    } else {
+                        ExecutionOutcome::Failed {
+                            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                        }
+                    }
                 }
             }
         })
@@ -552,48 +571,61 @@ impl AgentEngine for StreamProcessEngine {
                     }
                 }
                 CommandOutcome::Failure { stderr, stdout, .. } => {
-                    maybe_recover_stale_claude_session(
-                        &request,
-                        spec.clone(),
-                        stderr,
-                        stdout,
-                        timeout_seconds,
-                    )
-                    .await
+                    let stderr_text = decode_output(stderr.clone().into_bytes());
+                    let stdout_text = decode_output(stdout.clone().into_bytes());
+                    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        claude_session::delete_saved_session_files(&request);
+                        let retry_spec = claude_spec_without_resume(&spec);
+                        let runner = FollowUpCommandRunner::Streaming {
+                            sink: sink.clone(),
+                            builder: Box::new(builder.clone()),
+                            task_id: request.task_id.clone(),
+                            subtask_id: request.subtask_id.clone(),
+                        };
+                        match runner.run(retry_spec, timeout_seconds).await {
+                            CommandOutcome::Success { stdout } => {
+                                let summary = collect_claude_stream_summary(&stdout);
+                                if let Some(session_id) = &summary.session_id {
+                                    claude_session::save_session_id(&request, session_id);
+                                }
+                                let summary = handle_retryable_api_errors(
+                                    spec.clone(),
+                                    &request,
+                                    summary,
+                                    timeout_seconds,
+                                    runner.clone(),
+                                )
+                                .await;
+                                if summary.deferred_tool_use.is_some() {
+                                    handle_deferred_mcp_loop(
+                                        spec,
+                                        request,
+                                        summary,
+                                        timeout_seconds,
+                                        runner,
+                                    )
+                                    .await
+                                } else {
+                                    summary.outcome
+                                }
+                            }
+                            CommandOutcome::Failure { stderr, stdout, .. } => {
+                                ExecutionOutcome::Failed {
+                                    message: failure_message(
+                                        stderr.into_bytes(),
+                                        stdout.into_bytes(),
+                                    ),
+                                }
+                            }
+                        }
+                    } else {
+                        ExecutionOutcome::Failed {
+                            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                        }
+                    }
                 }
             }
         })
-    }
-}
-
-async fn maybe_recover_stale_claude_session(
-    request: &ExecutionRequest,
-    spec: CommandSpec,
-    stderr: String,
-    stdout: String,
-    timeout_seconds: u64,
-) -> ExecutionOutcome {
-    let stderr_text = decode_output(stderr.clone().into_bytes());
-    let stdout_text = decode_output(stdout.clone().into_bytes());
-    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
-        claude_session::delete_saved_session_files(request);
-        let retry_spec = claude_spec_without_resume(&spec);
-        match run_command_output(retry_spec, timeout_seconds).await {
-            CommandOutcome::Success { stdout } => {
-                let summary = collect_claude_stream_summary(&stdout);
-                if let Some(session_id) = &summary.session_id {
-                    claude_session::save_session_id(request, session_id);
-                }
-                summary.outcome
-            }
-            CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
-                message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-            },
-        }
-    } else {
-        ExecutionOutcome::Failed {
-            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-        }
     }
 }
 
