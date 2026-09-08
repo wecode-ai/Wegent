@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 
-import { CLOUD_DEVICE_ID, processIsAlive } from '../modules/shared.mjs'
+import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, processIsAlive } from '../modules/shared.mjs'
 import {
   assistantMessage,
   functionCall,
@@ -478,9 +478,12 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       )
       assert.notEqual(await marker(transferReceipt), abortedId)
       await assert.rejects(readFile(transferSource), { code: 'ENOENT' })
+      // Device grants also advance the revision; settle both grants before
+      // using a revision change as proof that the source credential changed.
       const mail = await waitForValue(
         () => connectionFor('mail'),
-        item => item?.device_ids.includes(CLOUD_DEVICE_ID),
+        item =>
+          [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].every(id => item?.device_ids.includes(id)),
         workbenchReadyTimeoutMs,
         'Local login did not automatically reach cloud'
       )

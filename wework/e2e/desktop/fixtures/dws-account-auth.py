@@ -28,7 +28,27 @@ def build(output: Path, source_archive: Path | None) -> None:
                     "name": "dingtalk",
                     "version": "1.0.0",
                     "description": "Isolated real DWS native business regression",
-                    "connectors": [{"slug": "dingtalk", "authPolicy": "optional"}],
+                    "connectors": [
+                        {
+                            "slug": "dingtalk",
+                            "authPolicy": "optional",
+                            "accountAuth": {
+                                "protocolVersion": 1,
+                                "credentialType": "oauth2",
+                                "adapter": "scripts/account-auth.py",
+                                "oauth2": ["refresh", "revoke"],
+                                "exportMode": "exclusive",
+                                "localEnvironment": {
+                                    "DWS_CONFIG_DIR": {"type": "directory"},
+                                    "DWS_KEYCHAIN_DIR": {"type": "directory"},
+                                    "DWS_DISABLE_KEYCHAIN": {
+                                        "type": "enum",
+                                        "values": ["1"],
+                                    },
+                                },
+                            },
+                        }
+                    ],
                 }
             )
         )
@@ -39,6 +59,15 @@ def build(output: Path, source_archive: Path | None) -> None:
             "result = delegate_cloud_command(Path(__file__).resolve().parents[1], "
             "'dingtalk', sys.argv[1:])\n"
             "assert result is not None\nraise SystemExit(result)\n"
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                str(REPOSITORY / "sdk/plugin-auth/tool.py"),
+                "vendor",
+                str(plugin),
+            ],
+            check=True,
         )
         assemble(plugin, output, source_archive)
 
