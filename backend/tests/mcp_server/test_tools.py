@@ -296,8 +296,6 @@ class TestKnowledgeTool:
         token_info = TaskTokenInfo(
             task_id=1, subtask_id=2, user_id=3, user_name="alice"
         )
-        mock_session = MagicMock()
-        user = SimpleNamespace(id=3)
 
         async def fake_retrieve(**kwargs):
             return {
@@ -308,11 +306,12 @@ class TestKnowledgeTool:
             }
 
         with (
-            patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=user),
             patch.object(
-                module.KnowledgeFolderService,
-                "resolve_document_ids_for_scope",
+                module, "_resolve_read_user_identity", return_value=(3, "alice")
+            ),
+            patch.object(
+                module,
+                "_resolve_document_scope",
                 return_value=[11, 12],
             ) as mock_resolve,
             patch.object(
@@ -332,7 +331,6 @@ class TestKnowledgeTool:
             )
 
         mock_resolve.assert_called_once_with(
-            db=mock_session,
             knowledge_base_id=7,
             user_id=3,
             folder_ids=[5],
