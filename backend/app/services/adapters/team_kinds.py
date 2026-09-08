@@ -3059,7 +3059,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     Kind.id == skill_id,
                     Kind.kind == "Skill",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )

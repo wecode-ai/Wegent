@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Dict
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -814,7 +816,7 @@ class TestCopyTeamToPersonalSpaceWithSkills:
         owner: User,
         group: Namespace,
         skill_name: str,
-    ):
+    ) -> Dict[str, Kind]:
         """Create a solo Team inside a group whose bot references a group Skill."""
         skill = _create_skill_with_binary(
             test_db,
@@ -854,7 +856,7 @@ class TestCopyTeamToPersonalSpaceWithSkills:
                 Kind.kind == "Bot",
                 Kind.namespace == "default",
                 Kind.user_id == user_id,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -892,7 +894,7 @@ class TestCopyTeamToPersonalSpaceWithSkills:
                 Kind.kind == "Ghost",
                 Kind.name == ghost_ref.get("name"),
                 Kind.namespace == "default",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -1053,6 +1055,12 @@ class TestCopyTeamToPersonalSpaceWithSkills:
             bot_ids=[bot.id],
         )
 
+        skills_before = (
+            test_db.query(Kind.id)
+            .filter(Kind.kind == "Skill", Kind.user_id == admin.id)
+            .count()
+        )
+
         with pytest.raises(HTTPException) as exc_info:
             team_kinds_service.copy_team(
                 test_db,
@@ -1062,6 +1070,12 @@ class TestCopyTeamToPersonalSpaceWithSkills:
             )
 
         assert exc_info.value.status_code == 403
+        skills_after = (
+            test_db.query(Kind.id)
+            .filter(Kind.kind == "Skill", Kind.user_id == admin.id)
+            .count()
+        )
+        assert skills_after == skills_before
         assert (
             test_db.query(Kind)
             .filter(
@@ -1069,7 +1083,7 @@ class TestCopyTeamToPersonalSpaceWithSkills:
                 Kind.name == "owner-private-skill",
                 Kind.namespace == "default",
                 Kind.user_id == admin.id,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
             is None
@@ -1077,3 +1091,49 @@ class TestCopyTeamToPersonalSpaceWithSkills:
         assert skill.id not in skill_binding_service.list_user_default_skill_ids(
             test_db, admin.id
         )
+
+    def test_group_reporter_cannot_copy_agent_with_owners_personal_skill(
+        self, test_db: Session
+    ):
+        """Reporter group members remain denied when copying an agent with an unauthorized Skill."""
+        from fastapi import HTTPException
+
+        owner = _create_user(test_db, "skill_owner4", "skill-owner4@test.com")
+        reporter = _create_user(test_db, "group_reporter2", "reporter2@test.com")
+        group = _create_group(test_db, owner, "weather-group-6")
+        _add_group_member(test_db, group, reporter, "Reporter")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+        skill = _create_skill_with_binary(
+            test_db, user_id=owner.id, name="reporter-owner-private-skill"
+        )
+        bot = _create_bot(
+            test_db,
+            user_id=owner.id,
+            name="reporter-private-skill-agent-bot",
+            namespace=group.name,
+        )
+        _create_ghost(
+            test_db,
+            user_id=owner.id,
+            name="ghost-reporter-private-skill-agent-bot",
+            namespace=group.name,
+        )
+        _attach_skill_to_bot(test_db, bot=bot, skill=skill)
+        team = _create_team(
+            test_db,
+            user_id=owner.id,
+            name="reporter-private-skill-agent",
+            namespace=group.name,
+            collaboration_model="solo",
+            bot_ids=[bot.id],
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            team_kinds_service.copy_team(
+                test_db,
+                team_id=team.id,
+                user_id=reporter.id,
+                target_namespace="default",
+            )
+
+        assert exc_info.value.status_code == 403
