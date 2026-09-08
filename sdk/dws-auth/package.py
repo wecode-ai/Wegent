@@ -44,7 +44,9 @@ def assemble(plugin: Path, output: Path, source_archive: Path | None) -> None:
                 raise ValueError(
                     "Plugin source must not contain links or private state"
                 )
-        manifest = json.loads((staged / ".codex-plugin/plugin.json").read_text())
+        manifest = json.loads(
+            (staged / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
+        )
         if (
             manifest.get("name") != "dingtalk"
             or not (staged / "scripts/account-auth.py").is_file()
@@ -121,7 +123,7 @@ def assemble(plugin: Path, output: Path, source_archive: Path | None) -> None:
         shutil.copyfile(candidate, output)
         checksum = hashlib.sha256(candidate.read_bytes()).hexdigest()
         output.with_name(output.name + ".sha256").write_text(
-            checksum + "  " + output.name + "\n"
+            checksum + "  " + output.name + "\n", encoding="utf-8"
         )
         print(
             json.dumps(

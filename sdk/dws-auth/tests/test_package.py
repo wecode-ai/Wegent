@@ -26,11 +26,14 @@ class PackageTests(unittest.TestCase):
             json.dumps(
                 {
                     "name": "dingtalk",
+                    "description": "钉钉认证打包",
                     "connectors": [
                         {"slug": "dingtalk", "accountAuth": {"exportMode": "exclusive"}}
                     ],
-                }
-            )
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
         )
         (self.plugin / "scripts/account-auth.py").write_bytes(
             (package.ROOT / "entry.py").read_bytes()
@@ -87,6 +90,22 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(
                     sum(name.startswith(prefix) for name in archive.namelist()), 4
                 )
+
+    def test_utf8_manifest_does_not_depend_on_the_windows_code_page(self):
+        read_text = Path.read_text
+
+        def legacy_read(path, *args, **kwargs):
+            return read_text(path, *args, **{"encoding": "cp1252", **kwargs})
+
+        with (
+            patch.object(Path, "read_text", autospec=True, side_effect=legacy_read),
+            patch.object(package.subprocess, "run", side_effect=self.fake_build),
+            patch.object(package, "verify_native_entry"),
+        ):
+            package.assemble(self.plugin, self.output, None)
+        with zipfile.ZipFile(self.output) as archive:
+            manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
+            self.assertEqual(manifest["description"], "钉钉认证打包")
 
     def test_symlinks_are_rejected_without_following_the_target(self):
         (self.plugin / "scripts/external").symlink_to(

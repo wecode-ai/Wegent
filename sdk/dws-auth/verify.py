@@ -21,7 +21,7 @@ def verify_artifacts(plugin: Path, targets: tuple[str, ...]) -> None:
             else "dws-account-auth"
         )
         metadata = json.loads(
-            executable.with_name(executable.name + ".json").read_text()
+            executable.with_name(executable.name + ".json").read_text(encoding="utf-8")
         )
         if (
             metadata.get("target") != target
