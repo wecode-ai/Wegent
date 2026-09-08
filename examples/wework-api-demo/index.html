@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wework · API 测试台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.mjs"></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="brand">
+        <span class="mark">W</span>
+        <div>
+          <strong>Wework <span class="muted">/ API 测试台</span></strong>
+          <p>RESPONSES API · LOCAL DEMO</p>
+        </div>
+      </div>
+      <span class="pill">7 个接口，一处测试</span>
+    </header>
+    <main>
+      <section class="intro">
+        <div>
+          <span class="eyebrow">从一个请求开始</span>
+          <h1>连接设备，看见执行。</h1>
+          <p>选好机器和模型，发送任务，直接检查结果与实时事件。</p>
+        </div>
+        <div class="protocol">/api/v1<span>统一接口 · 个人 API Key</span></div>
+      </section>
+      <section class="card connection">
+        <div class="section-title">
+          <h2><span class="step">01</span>连接配置</h2>
+          <span id="connection-status" class="muted">尚未连接</span>
+        </div>
+        <div class="connection-grid">
+          <label
+            >API 地址<input
+              id="base"
+              data-testid="api-base"
+              value="http://localhost:8000/api/v1"
+              spellcheck="false"
+              placeholder="https://wegent.example.com/api/v1"
+          /></label>
+          <label
+            >个人 API Key<input
+              id="key"
+              data-testid="api-key"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="wg-…"
+          /></label>
+          <label
+            >鉴权方式<select id="auth" data-testid="auth-type">
+              <option value="bearer">Authorization: Bearer</option>
+              <option value="key">X-API-Key</option>
+            </select></label
+          >
+          <button id="connect" data-testid="connect" class="primary">
+            加载设备和模型 <span>↗</span>
+          </button>
+        </div>
+        <p class="hint">
+          API Key 仅保留在当前页面内存中，刷新后需要重新填写。地址应以 /api/v1 结尾。
+        </p>
+      </section>
+      <div id="notice" role="status" aria-live="polite" hidden></div>
+      <div class="workspace">
+        <aside>
+          <section class="card">
+            <div class="section-title">
+              <h2><span class="step">02</span>执行设备</h2>
+              <span id="device-count" class="count">0</span>
+            </div>
+            <div id="devices" class="device-list">
+              <p class="empty">连接后在这里选择执行机器。<br />离线设备也会显示。</p>
+            </div>
+            <label class="spaced"
+              >模型<select id="model" data-testid="model-select">
+                <option value="">请先加载模型</option>
+              </select></label
+            >
+          </section>
+          <section class="card">
+            <div class="section-title">
+              <h2>会话列表</h2>
+              <button
+                id="refresh-conversations"
+                data-testid="refresh-conversations"
+                class="text-button"
+              >
+                刷新
+              </button>
+            </div>
+            <label class="check"
+              ><input
+                id="filter-device"
+                data-testid="filter-device"
+                type="checkbox"
+              />只看选中设备</label
+            >
+            <div id="conversations">
+              <p class="empty">点击刷新查看已有独立会话。</p>
+            </div>
+            <button
+              id="more-conversations"
+              data-testid="more-conversations"
+              class="secondary full"
+              hidden
+            >
+              加载更多会话
+            </button>
+          </section>
+        </aside>
+        <div class="main-column">
+          <section class="card composer">
+            <div class="section-title">
+              <h2><span class="step">03</span>发送任务</h2>
+              <span id="target-label" class="pill">新建独立会话</span>
+            </div>
+            <div class="row">
+              <label
+                >操作<select id="intent" data-testid="intent">
+                  <option value="new">新建会话</option>
+                  <option value="conversation">继续指定会话</option>
+                  <option value="previous">接着指定轮次执行</option>
+                </select></label
+              ><label
+                >返回方式<select id="mode" data-testid="mode">
+                  <option value="stream">实时输出 · SSE</option>
+                  <option value="background">异步提交 · 立即返回 ID</option>
+                  <option value="sync">同步等待 · 返回完整结果</option>
+                </select></label
+              >
+            </div>
+            <label id="title-label"
+              >会话标题<input
+                id="title"
+                data-testid="conversation-title"
+                value="API 测试"
+                maxlength="255"
+            /></label>
+            <label
+              >任务内容<textarea id="prompt" data-testid="prompt" rows="4">
+你好，请介绍一下你能做什么。</textarea
+              >
+            </label>
+            <div class="action-row">
+              <p id="selected-device" class="hint">尚未选择设备</p>
+              <button id="send" data-testid="send" class="primary">
+                发送任务 <span>↑</span>
+              </button>
+            </div>
+          </section>
+          <section class="card">
+            <div class="section-title">
+              <h2>任务与会话</h2>
+              <span id="run-status" class="pill">等待请求</span>
+            </div>
+            <label
+              >Response ID<input
+                id="response-id"
+                data-testid="response-id"
+                class="mono"
+                placeholder="提交后自动填入，也可粘贴已有 ID"
+                spellcheck="false"
+            /></label>
+            <div class="button-group">
+              <button
+                id="query-response"
+                data-testid="query-response"
+                class="secondary"
+              >
+                查询状态 / 输出</button
+              ><button id="subscribe" data-testid="subscribe" class="secondary">
+                订阅新输出</button
+              ><button id="cancel" data-testid="cancel" class="danger">停止任务</button
+              ><button
+                id="disconnect"
+                data-testid="disconnect"
+                class="text-button"
+                disabled
+              >
+                断开输出连接
+              </button>
+            </div>
+            <label class="spaced"
+              >Conversation ID<input
+                id="conversation-id"
+                data-testid="conversation-id"
+                class="mono"
+                placeholder="提交或选择会话后自动填入"
+                spellcheck="false"
+            /></label>
+            <div class="button-group">
+              <button
+                id="query-conversation"
+                data-testid="query-conversation"
+                class="secondary"
+              >
+                查看会话</button
+              ><button
+                id="older-messages"
+                data-testid="older-messages"
+                class="secondary"
+                disabled
+              >
+                加载更早消息</button
+              ><span id="latest" class="hint"></span>
+            </div>
+            <p class="hint">
+              断开连接不会停止任务。重新订阅只接收新事件；已有文本可通过“查询状态 /
+              输出”读取。
+            </p>
+          </section>
+          <section class="card output-card">
+            <div class="section-title">
+              <h2><span class="live-dot" id="live-dot"></span>执行输出</h2>
+              <span id="heartbeat" class="hint">尚未收到事件</span>
+            </div>
+            <div class="tabs" role="tablist" aria-label="结果视图">
+              <button
+                data-tab="answer"
+                data-testid="tab-answer"
+                class="active"
+                role="tab"
+                aria-selected="true"
+              >
+                回答</button
+              ><button
+                data-tab="history"
+                data-testid="tab-history"
+                role="tab"
+                aria-selected="false"
+              >
+                会话消息</button
+              ><button
+                data-tab="events"
+                data-testid="tab-events"
+                role="tab"
+                aria-selected="false"
+              >
+                SSE 事件 <span id="event-count">0</span></button
+              ><button
+                data-tab="json"
+                data-testid="tab-json"
+                role="tab"
+                aria-selected="false"
+              >
+                JSON
+              </button>
+            </div>
+            <div id="answer" class="output-panel">
+              <p class="empty">
+                任务输出会显示在这里。<br />心跳表示连接仍在，不代表模型已生成文本。
+              </p>
+            </div>
+            <div id="history" class="output-panel" hidden></div>
+            <div id="events" class="output-panel" hidden></div>
+            <pre id="json" class="output-panel" hidden>{}</pre>
+          </section>
+          <section class="card requests">
+            <div class="section-title">
+              <h2>请求记录</h2>
+              <button id="clear-log" data-testid="clear-log" class="text-button">
+                清空
+              </button>
+            </div>
+            <div id="request-log">
+              <p class="empty compact">
+                展示请求路径、HTTP 状态和耗时，不记录 API Key。
+              </p>
+            </div>
+          </section>
+        </div>
+      </div>
+      <footer>Wegent / Wework · API 实验台<span>本地运行，无外部页面依赖</span></footer>
+    </main>
+  </body>
+</html>
