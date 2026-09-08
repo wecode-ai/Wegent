@@ -2666,10 +2666,9 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
+fn codex_thread_developer_instructions(user_instructions: &str) -> String {
     [
         user_instructions.trim(),
-        task_instructions.trim(),
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
         WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
@@ -4836,7 +4835,8 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
-    insert_codex_developer_instructions(&mut params, request, launch_config);
+    insert_codex_base_instructions(&mut params, request);
+    insert_codex_developer_instructions(&mut params, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
@@ -4868,7 +4868,8 @@ fn thread_fork_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
-    insert_codex_developer_instructions(&mut params, request, launch_config);
+    insert_codex_base_instructions(&mut params, request);
+    insert_codex_developer_instructions(&mut params, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
@@ -4933,7 +4934,8 @@ fn thread_resume_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
-    insert_codex_developer_instructions(&mut params, request, launch_config);
+    insert_codex_base_instructions(&mut params, request);
+    insert_codex_developer_instructions(&mut params, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
@@ -4947,15 +4949,25 @@ fn thread_resume_params(
     Value::Object(params)
 }
 
-fn insert_codex_developer_instructions(
+fn insert_codex_base_instructions(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
+) {
+    let instructions = request.system_prompt.trim();
+    if !instructions.is_empty() {
+        params.insert(
+            "baseInstructions".to_owned(),
+            Value::String(instructions.to_owned()),
+        );
+    }
+}
+
+fn insert_codex_developer_instructions(
+    params: &mut serde_json::Map<String, Value>,
     launch_config: &CodexLaunchConfig,
 ) {
-    let instructions = codex_thread_developer_instructions(
-        &launch_config.user_developer_instructions,
-        &request.system_prompt,
-    );
+    let instructions =
+        codex_thread_developer_instructions(&launch_config.user_developer_instructions);
     params.insert(
         "developerInstructions".to_owned(),
         Value::String(instructions),

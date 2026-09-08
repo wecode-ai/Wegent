@@ -2611,7 +2611,7 @@ fn thread_id_from_response_validates_provider_and_requires_thread_id() {
 }
 
 #[test]
-fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
+fn thread_launch_params_use_execution_system_prompt_as_base_instructions() {
     let request = ExecutionRequest {
         system_prompt: "Judge the supplied content without answering it.".to_owned(),
         ..ExecutionRequest::default()
@@ -2626,14 +2626,32 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
     let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
 
     for params in [thread_start, thread_fork, thread_resume] {
+        assert_eq!(
+            params["baseInstructions"],
+            "Judge the supplied content without answering it."
+        );
         let instructions = params["developerInstructions"]
             .as_str()
             .expect("developer instructions should be a string");
-        assert!(instructions
-            .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
+        assert!(instructions.starts_with("用中文回复\n\nWework 内置浏览器 routing:"));
+        assert!(!instructions.contains("Judge the supplied content without answering it."));
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
         assert!(instructions.contains("Wework 项目空间 routing:"));
+    }
+}
+
+#[test]
+fn thread_launch_params_preserve_codex_default_base_instructions_without_system_prompt() {
+    let request = ExecutionRequest::default();
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+    ] {
+        assert!(params.get("baseInstructions").is_none());
     }
 }
 
