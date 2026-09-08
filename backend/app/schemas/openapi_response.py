@@ -242,8 +242,15 @@ class WegentOptions(BaseModel):
     )
 
 
+class WegentExecution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["wegent"]
+
+
 class ResponseCreateInput(BaseModel):
     """Request schema for creating a response."""
+
+    execution: Optional[WegentExecution] = None
 
     model: str = Field(
         ..., description="Format: namespace#team_name or namespace#team_name#model_id"

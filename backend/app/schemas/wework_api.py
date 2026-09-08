@@ -3,12 +3,12 @@
 
 """The text Responses contract and explicit native-runtime extensions."""
 
-from typing import Literal
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, model_validator
 
 from app.schemas.device import DeviceStatusEnum, DeviceType
-from app.schemas.openapi_response import ResponseObject
+from app.schemas.openapi_response import ResponseCreateInput, ResponseObject
 
 
 class WeworkDevice(BaseModel):
@@ -37,8 +37,9 @@ class InputMessage(BaseModel):
     content: str | list[InputText]
 
 
-class WeworkOptions(BaseModel):
+class WeworkExecution(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    type: Literal["wework"]
     device_id: str | None = Field(default=None, min_length=1)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     model_type: Literal["public", "user", "group", "runtime"] | None = None
@@ -53,7 +54,7 @@ class WeworkResponseCreate(BaseModel):
     previous_response_id: str | None = None
     stream: bool = False
     background: bool = False
-    wework_options: WeworkOptions = Field(default_factory=WeworkOptions)
+    execution: WeworkExecution | None = None
 
     def input_text(self) -> str:
         if isinstance(self.input, str):
@@ -76,11 +77,11 @@ class WeworkResponseCreate(BaseModel):
                 "conversation and previous_response_id are mutually exclusive"
             )
         if not self.conversation and not self.previous_response_id:
-            if not self.wework_options.device_id:
+            if not self.execution or not self.execution.device_id:
                 raise ValueError(
-                    "wework_options.device_id is required for a new conversation"
+                    "execution.device_id is required for a new conversation"
                 )
-        elif self.wework_options.device_id or self.wework_options.title:
+        elif self.execution and (self.execution.device_id or self.execution.title):
             raise ValueError(
                 "device_id and title can only be set on a new conversation"
             )
@@ -91,3 +92,35 @@ class WeworkResponseObject(ResponseObject):
     conversation: dict[str, str]
     cancellation_requested: bool = False
     is_latest: bool = True
+
+
+def is_wework_response_id(identifier: str | None) -> bool:
+    # Native IDs encode a JSON array, whose base64url prefix is always "Wy".
+    # Preserve legacy validation for every other resp_ value, including bad IDs.
+    return isinstance(identifier, str) and identifier.startswith("resp_Wy")
+
+
+def response_execution_type(value: Any) -> str:
+    if isinstance(value, WeworkResponseCreate):
+        return "wework"
+    if isinstance(value, ResponseCreateInput):
+        return "wegent"
+    if not isinstance(value, dict):
+        return "invalid"
+    execution = value.get("execution") or {}
+    if not isinstance(execution, dict):
+        return "invalid"
+    if value.get("conversation") or is_wework_response_id(
+        value.get("previous_response_id")
+    ):
+        return "wework"
+    return execution.get("type", "wegent")
+
+
+UnifiedResponseCreate = Annotated[
+    Union[
+        Annotated[WeworkResponseCreate, Tag("wework")],
+        Annotated[ResponseCreateInput, Tag("wegent")],
+    ],
+    Discriminator(response_execution_type),
+]

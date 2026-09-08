@@ -14,7 +14,15 @@ Create a **personal API key** in Wegent and send:
 Authorization: Bearer wg-...
 ```
 
-The base path is `/v1/api/wework`, mounted directly on Backend without an additional `/api` prefix. Reverse proxies must forward this prefix to Backend and disable SSE buffering. Expired/revoked keys and inactive users receive 401 on subsequent requests. Login JWTs and service keys are not accepted.
+The base path is `/api/v1`, shared with the existing Wegent Responses endpoint. Reverse proxies must forward this prefix to Backend and disable SSE buffering. Expired/revoked keys and inactive users receive 401 on subsequent requests. Login JWTs and service keys are not accepted.
+
+## Existing Wegent API compatibility
+
+Existing requests remain unchanged: `model: "namespace#team_name"` without `execution` uses the original agent pipeline, tools, authentication, and numeric response IDs. New Wework conversations explicitly use `execution: {"type": "wework", "device_id": "..."}`, with `model` selected from the Wework model catalog.
+
+Wework accepts personal keys through `X-API-Key` or `Authorization: Bearer`. Conversation and model discovery currently serve Wework data and accept `execution=wework`; other values are rejected. Conversations can be filtered by `device_id`. Existing `/api/tasks`, `/api/models`, and other endpoints stay unchanged. Existing DELETE response behavior is preserved; Wework deletion is unsupported.
+
+Set the OpenAI SDK `base_url` to `https://example.com/api/v1` and pass the target through `extra_body={"execution": {"type": "wework", "device_id": "..."}}`. Pass `model`, `input`, `stream`, and `background` normally. Wework supports the text subset; agent tools, attachments, and generation options are rejected with 422.
 
 ## Endpoints
 
@@ -52,17 +60,18 @@ Call `/devices` to select a device, then `/models` to get a model `id`. The devi
 }
 ```
 
-`status` is `online`, `offline`, or `busy`; `data` is empty when no devices exist. Pass the selected `device_id` as `wework_options.device_id` for a new conversation. `is_default` is informational and does not select a device automatically. Online status does not guarantee task acceptance; execution still validates remote control permission and Runtime capabilities.
+`status` is `online`, `offline`, or `busy`; `data` is empty when no devices exist. Pass the selected `device_id` as `execution.device_id` for a new conversation. `is_default` is informational and does not select a device automatically. Online status does not guarantee task acceptance; execution still validates remote control permission and Runtime capabilities.
 
 ```bash
-curl -N 'https://example.com/v1/api/wework/responses' \
+curl -N 'https://example.com/api/v1/responses' \
   -H "Authorization: Bearer $WEGENT_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "public:default:0:my-model",
     "input": "Inspect the workspace and explain the project",
     "stream": true,
-    "wework_options": {
+    "execution": {
+      "type": "wework",
       "device_id": "your-device-id",
       "title": "API conversation"
     }
@@ -74,7 +83,7 @@ curl -N 'https://example.com/v1/api/wework/responses' \
 - Both false: wait for the turn to finish and return its response object.
 - `input` accepts text or an array of user text messages with `input_text` content blocks.
 - Creation and continuation currently use Codex Runtime. Runtime owns tool configuration. Client-defined function tools, tool-output submission, and injected assistant history are not supported.
-- `wework_options.model_type` can disambiguate model sources; prefer the full ID from `/models`. `model_options` passes existing Runtime model options. Resource identity always comes from the authorized server catalog.
+- `execution.model_type` can disambiguate model sources; prefer the full ID from `/models`. `model_options` passes existing Runtime model options. Resource identity always comes from the authorized server catalog.
 
 Continue with `conversation`, omitting device and title:
 
@@ -105,7 +114,9 @@ The owning device must be online and allow remote control. Offline device conver
 flowchart LR
     Client[API Client] --> Auth[Personal API key authentication]
     Auth --> Devices[Device list / existing device service]
-    Auth --> Adapter[Responses adapter]
+    Auth --> Routing[Execution / resource ID routing]
+    Routing --> Wegent[Existing Wegent execution]
+    Routing --> Adapter[Responses adapter]
     Adapter --> RPC[Existing Runtime RPC]
     RPC --> Runtime[Device Runtime conversations and transcripts]
     Runtime --> Relay[Device event ingress]

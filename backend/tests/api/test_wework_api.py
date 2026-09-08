@@ -15,13 +15,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_db
-from app.api.endpoints import wework_api
+from app.api.endpoints import openapi_responses, wework_api
 from app.models.api_key import APIKey
 from app.schemas.runtime_work import RuntimeTranscriptResponse, RuntimeWorkListResponse
 from app.services.wework_api import events, models, native, service
 from app.services.wework_api.identity import ResponseIdentity, conversation_id
 
-PREFIX = "/v1/api/wework"
+PREFIX = "/api/v1"
 
 
 class FakeSubscription:
@@ -52,9 +52,10 @@ def api(test_db, test_user, monkeypatch):
     test_db.add(key)
     test_db.commit()
     app = FastAPI()
-    app.include_router(wework_api.router)
+    app.include_router(wework_api.router, prefix="/api")
+    app.include_router(openapi_responses.router, prefix=f"{PREFIX}/responses")
     app.dependency_overrides[get_db] = lambda: test_db
-    monkeypatch.setattr(wework_api.limiter, "enabled", False)
+    monkeypatch.setattr(openapi_responses.limiter, "enabled", False)
     monkeypatch.setattr(
         models,
         "catalog",
@@ -184,7 +185,7 @@ def submit(api, **options):
             "model": "model-1",
             "input": "hello",
             "background": True,
-            "wework_options": {"device_id": "device-1"},
+            "execution": {"type": "wework", "device_id": "device-1"},
             **options,
         },
     )
@@ -269,7 +270,7 @@ def test_rejects_unusable_personal_keys(api, change, endpoint):
 def test_query_is_turn_scoped_and_old_response_cannot_cancel_new_turn(api):
     first = submit(api).json()
     finish(api, first["id"], "first reply")
-    second = submit(api, previous_response_id=first["id"], wework_options={}).json()
+    second = submit(api, previous_response_id=first["id"], execution=None).json()
     assert first["id"] != second["id"]
     assert first["conversation"] == second["conversation"]
     old = api.client.get(f"{PREFIX}/responses/{first['id']}").json()
@@ -278,8 +279,7 @@ def test_query_is_turn_scoped_and_old_response_cannot_cancel_new_turn(api):
     api.client.post(f"{PREFIX}/responses/{first['id']}/cancel")
     service.runtime.cancel_runtime_task.assert_not_awaited()
     assert (
-        submit(api, previous_response_id=first["id"], wework_options={}).status_code
-        == 409
+        submit(api, previous_response_id=first["id"], execution=None).status_code == 409
     )
 
 
@@ -318,7 +318,7 @@ def test_conversation_paging_always_exposes_latest_turn(api):
     first = submit(api).json()
     finish(api, first["id"])
     second = submit(
-        api, conversation=first["conversation"]["id"], wework_options={}
+        api, conversation=first["conversation"]["id"], execution=None
     ).json()
     detail = api.client.get(
         f"{PREFIX}/conversations/{first['conversation']['id']}?limit=1&before=2"
@@ -391,7 +391,11 @@ def test_completed_response_streams_native_snapshot_without_live_events(api):
         {"tools": [{"type": "function"}]},
         {"input": [{"role": "assistant", "content": "fake history"}]},
         {"conversation": "conv_x", "previous_response_id": "resp_x"},
-        {"wework_options": {}},
+        {
+            "execution": {
+                "type": "wework",
+            }
+        },
     ],
 )
 def test_unsupported_or_invalid_input_fails_before_dispatch(api, fields):
@@ -408,7 +412,7 @@ def test_actual_backend_registers_exact_public_prefix(test_app):
     paths = {route.path for route in test_app.routes if hasattr(route, "path")}
     assert f"{PREFIX}/responses" in paths
     assert f"{PREFIX}/conversations" in paths
-    assert "/api/v1/api/wework/responses" not in paths
+    assert "/v1/api/wework/responses" not in paths
 
 
 def test_live_reattachment_filters_other_turns_and_returns_complete_result(
@@ -580,3 +584,115 @@ async def test_runtime_work_filters_devices_before_rpc(monkeypatch):
     listing.assert_awaited_once_with(
         user_id=1, devices=[{"device_id": "target", "status": "online"}]
     )
+
+
+@pytest.mark.parametrize("header", ["Authorization", "X-API-Key"])
+def test_unified_endpoint_accepts_personal_key_headers(api, header):
+    token = api.client.headers.pop("Authorization").split(" ", 1)[1]
+    api.client.headers[header] = (
+        f"Bearer {token}" if header == "Authorization" else token
+    )
+    result = submit(api)
+    assert result.status_code == 200, result.text
+    assert (
+        api.client.get(f"{PREFIX}/responses/{result.json()['id']}").status_code == 200
+    )
+
+
+@pytest.mark.parametrize("execution", [{"type": "typo"}, "wework", ["wework"]])
+def test_invalid_execution_does_not_fall_through_to_wegent(api, execution):
+    result = submit(api, execution=execution)
+    assert result.status_code == 422
+    assert not api.calls
+
+
+def test_legacy_requests_reach_existing_team_lookup(api, monkeypatch):
+    lookup = AsyncMock()
+    monkeypatch.setattr(service, "create_response", lookup)
+    result = api.client.post(
+        f"{PREFIX}/responses",
+        json={
+            "model": "default#missing-agent",
+            "input": "hello",
+            "tools": [{"type": "wegent_chat_bot"}],
+            "stream": True,
+        },
+    )
+    assert result.status_code == 404, result.text
+    assert "Team" in result.json()["detail"]
+    lookup.assert_not_awaited()
+
+
+def test_legacy_response_ids_use_existing_lookup(api, monkeypatch):
+    getter = AsyncMock()
+    monkeypatch.setattr(service, "get_response", getter)
+    result = api.client.get(f"{PREFIX}/responses/resp_99999999")
+    assert result.status_code == 404
+    getter.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"tools": [{"type": "wegent_chat_bot"}]},
+        {"attachment_ids": [1]},
+        {"wegent_options": {"include_task_context": True}},
+        {"wework_options": {"device_id": "device-1"}},
+    ],
+)
+def test_wework_rejects_unsupported_or_removed_extensions(api, options):
+    assert submit(api, **options).status_code == 422
+    assert not api.calls
+
+
+def test_sdk_extra_body_uses_unified_endpoint(api):
+    import httpx
+    from openai import OpenAI
+
+    def dispatch(request):
+        result = api.client.request(
+            request.method,
+            request.url.path,
+            headers=dict(request.headers),
+            content=request.content,
+        )
+        return httpx.Response(
+            result.status_code, headers=result.headers, content=result.content
+        )
+
+    token = api.client.headers["Authorization"].split(" ", 1)[1]
+    with OpenAI(
+        base_url=f"http://testserver{PREFIX}",
+        api_key=token,
+        http_client=httpx.Client(transport=httpx.MockTransport(dispatch)),
+    ) as client:
+        result = client.responses.create(
+            model="model-1",
+            input="hello",
+            background=True,
+            extra_body={"execution": {"type": "wework", "device_id": "device-1"}},
+        )
+    assert result.status == "queued"
+    assert ResponseIdentity.parse(result.id).device_id == "device-1"
+
+
+def test_unified_openapi_has_one_responses_route(api):
+    routes = [
+        route
+        for route in api.client.app.routes
+        if getattr(route, "path", "") == f"{PREFIX}/responses"
+    ]
+    assert len(routes) == 1
+    schema = api.client.app.openapi()
+    body = schema["paths"][f"{PREFIX}/responses"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    assert {item["$ref"].split("/")[-1] for item in body["oneOf"]} == {
+        "WeworkResponseCreate",
+        "ResponseCreateInput",
+    }
+
+
+@pytest.mark.parametrize("path", ["models", "conversations"])
+def test_discovery_rejects_unimplemented_execution_types(api, path):
+    assert api.client.get(f"{PREFIX}/{path}?execution=wegent").status_code == 422

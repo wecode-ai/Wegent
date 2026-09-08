@@ -14,7 +14,15 @@ sidebar_position: 12
 Authorization: Bearer wg-...
 ```
 
-API 前缀为 `/v1/api/wework`，直接挂载在 backend 根路径，不再附加 `/api`。反向代理需要将这个前缀转发到 backend，并关闭 SSE 响应缓冲。API Key 过期、撤销或所属用户停用后，后续请求返回 401；不接受登录 JWT 或服务密钥。
+API 前缀为 `/api/v1`，与线上 Wegent Responses 共用入口。反向代理需要将这个前缀转发到 backend，并关闭 SSE 响应缓冲。API Key 过期、撤销或所属用户停用后，后续请求返回 401；不接受登录 JWT 或服务密钥。
+
+## 与线上 Wegent API 的关系
+
+已有 Wegent 请求保持不变：`model: "namespace#team_name"`，不传 `execution` 即走原有智能体链路，原有工具、鉴权和数字 response ID 行为保持不变。新建 Wework 会话显式传 `execution: {"type": "wework", "device_id": "..."}`，此时 `model` 使用 Wework 模型目录返回的 ID。
+
+Wework 支持 `X-API-Key` 和 `Authorization: Bearer`，都要求个人 API Key。会话及模型发现接口目前提供 Wework 数据，支持 `execution=wework`；其他值会被拒绝。会话列表支持 `device_id` 筛选。原有 `/api/tasks`、`/api/models` 等接口保持不变。`DELETE /responses/{id}` 保留线上行为，Wework 暂不提供删除操作。
+
+OpenAI SDK 的 `base_url` 设置为 `https://example.com/api/v1`，通过 `extra_body={"execution": {"type": "wework", "device_id": "..."}}` 传执行目标。标准 `model`、`input`、`stream`、`background` 参数正常传入。仅支持 Responses 的文本子集，不接受智能体专用工具、附件或生成参数，非法组合返回 422。
 
 ## 接口
 
@@ -52,17 +60,18 @@ PC、手机版创建的会话也可查询。会话详情中的 `latest_response.
 }
 ```
 
-`status` 为 `online`、`offline` 或 `busy`；无设备时 `data` 为空数组。新建会话将选中的 `device_id` 放入 `wework_options.device_id`。`is_default` 仅供参考，不会自动选择设备。设备在线不代表一定能接受任务，执行时仍会校验远程控制权限和 Runtime 能力。
+`status` 为 `online`、`offline` 或 `busy`；无设备时 `data` 为空数组。新建会话将选中的 `device_id` 放入 `execution.device_id`。`is_default` 仅供参考，不会自动选择设备。设备在线不代表一定能接受任务，执行时仍会校验远程控制权限和 Runtime 能力。
 
 ```bash
-curl -N 'https://example.com/v1/api/wework/responses' \
+curl -N 'https://example.com/api/v1/responses' \
   -H "Authorization: Bearer $WEGENT_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "public:default:0:my-model",
     "input": "检查工作区并介绍当前项目",
     "stream": true,
-    "wework_options": {
+    "execution": {
+      "type": "wework",
       "device_id": "your-device-id",
       "title": "API 独立对话"
     }
@@ -74,7 +83,7 @@ curl -N 'https://example.com/v1/api/wework/responses' \
 - 两者均为 false：等待该轮结束后返回 response 对象。
 - `input` 支持字符串或 `role: "user"` 的文本消息数组；内容块类型为 `input_text`。
 - 创建和续写目前使用 Codex Runtime。工具执行由 Runtime 自身配置；本接口不接受客户端 function tool 定义或 tool output 回传，不支持客户端注入 assistant 历史。
-- `wework_options.model_type` 可消除模型来源歧义；推荐直接使用 `/models` 返回的完整 ID。`model_options` 传递现有 Runtime 的模型选项，资源身份始终由服务端模型目录决定。
+- `execution.model_type` 可消除模型来源歧义；推荐直接使用 `/models` 返回的完整 ID。`model_options` 传递现有 Runtime 的模型选项，资源身份始终由服务端模型目录决定。
 
 继续对话时传 `conversation`，不再传设备和标题：
 
@@ -105,7 +114,9 @@ curl -N 'https://example.com/v1/api/wework/responses' \
 flowchart LR
     Client[API Client] --> Auth[个人 API Key 鉴权]
     Auth --> Devices[Device list / existing device service]
-    Auth --> Adapter[Responses 协议适配]
+    Auth --> Routing[Execution / resource ID routing]
+    Routing --> Wegent[Existing Wegent execution]
+    Routing --> Adapter[Responses 协议适配]
     Adapter --> RPC[现有 Runtime RPC]
     RPC --> Runtime[设备 Runtime 会话与消息]
     Runtime --> Relay[设备事件入口]

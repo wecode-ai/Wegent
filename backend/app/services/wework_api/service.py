@@ -67,11 +67,9 @@ async def _target(
                 422, "Creating responses currently requires a Codex conversation"
             )
         return item["_address"], False
-    await native.ensure_device_online(user_id, body.wework_options.device_id)
+    await native.ensure_device_online(user_id, body.execution.device_id)
     return (
-        RuntimeTaskAddress(
-            deviceId=body.wework_options.device_id, taskId=str(uuid.uuid4())
-        ),
+        RuntimeTaskAddress(deviceId=body.execution.device_id, taskId=str(uuid.uuid4())),
         True,
     )
 
@@ -95,7 +93,7 @@ async def _dispatch(
                 runtime="codex",
                 standalone_chat_workspace=True,
                 message=body.input_text(),
-                title=body.wework_options.title,
+                title=body.execution.title,
                 client_user_message_id=identity.message_id,
                 model_selection=selection,
                 model_id=selection.model_name,

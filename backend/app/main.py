@@ -30,7 +30,6 @@ from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
-from app.api.endpoints.wework_api import router as wework_api_router
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -875,7 +874,6 @@ def create_app():
     # Include API routes
     app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
-    app.include_router(wework_api_router)
 
     # Mount MCP Server endpoints
     # These provide system-level tools (silent_exit) and knowledge base tools

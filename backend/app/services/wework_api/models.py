@@ -56,8 +56,9 @@ def selection(
         for model in catalog(db, user)
         if body.model in {model_identifier(model), model["name"]}
         and (
-            not body.wework_options.model_type
-            or model["type"] == body.wework_options.model_type
+            not body.execution
+            or not body.execution.model_type
+            or model["type"] == body.execution.model_type
         )
     ]
     if len(matches) != 1:
@@ -65,7 +66,7 @@ def selection(
             422, "Model unavailable or ambiguous; use an id from GET /models"
         )
     model = matches[0]
-    options = dict(body.wework_options.model_options)
+    options = dict(body.execution.model_options) if body.execution else {}
     options[runtime.CLOUD_MODEL_NAMESPACE_OPTION] = model.get("namespace", "default")
     options[runtime.CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = model.get(
         "resourceUserId", 0

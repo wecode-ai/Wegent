@@ -3,37 +3,39 @@
 
 """Personal API key access to Wework independent conversations."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 from app.api.dependencies import get_db
 from app.core.auth_utils import verify_api_key
-from app.core.config import settings
-from app.core.rate_limit import get_limiter
+from app.core.security import get_api_key_from_header
 from app.models.user import User
 from app.schemas.wework_api import (
     WeworkDevice,
     WeworkDeviceList,
     WeworkResponseCreate,
-    WeworkResponseObject,
 )
 from app.services.device_service import device_service
 from app.services.wework_api import models, native, service
 from shared.telemetry.decorators import trace_async
 
-router = APIRouter(prefix="/v1/api/wework", tags=["wework-api"])
-bearer = HTTPBearer(auto_error=False)
-limiter = get_limiter()
+router = APIRouter(prefix="/v1", tags=["wework-api"])
 
 
 def current_api_user(
-    credentials: HTTPAuthorizationCredentials | None = Security(bearer),
+    request: Request,
     db: Session = Depends(get_db),
 ) -> User:
-    user = verify_api_key(db, credentials.credentials) if credentials else None
+    token = get_api_key_from_header(
+        authorization=request.headers.get("Authorization", ""),
+        x_api_key=request.headers.get("X-API-Key", ""),
+        wegent_source="",
+    )
+    user = verify_api_key(db, token) if token else None
     if user is None:
         raise HTTPException(
             401,
@@ -66,10 +68,14 @@ async def list_devices(
 async def list_conversations(
     limit: int = Query(20, ge=1, le=100),
     after: str | None = None,
+    execution: Literal["wework"] = "wework",
+    device_id: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(current_api_user),
 ):
-    items = await native.conversations(db, user.id)
+    if device_id is not None:
+        await native.ensure_device_online(user.id, device_id)
+    items = await native.conversations(db, user.id, device_id)
     if after:
         index = next(
             (index for index, item in enumerate(items) if item["id"] == after), None
@@ -98,13 +104,11 @@ async def get_conversation(
     return await native.conversation_detail(db, user.id, conversation_id, limit, before)
 
 
-@router.post("/responses", response_model=WeworkResponseObject)
-@limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 async def create_response(
     request: Request,
     body: WeworkResponseCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_api_user),
+    db: Session,
+    user: User,
 ):
     response = await service.create_response(db, user, body)
     db.rollback()
@@ -115,13 +119,12 @@ async def create_response(
     return await service.wait_response(response)
 
 
-@router.get("/responses/{response_id}", response_model=WeworkResponseObject)
 async def get_response(
     response_id: str,
-    stream: bool = False,
-    starting_after: int | None = None,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_api_user),
+    stream: bool,
+    starting_after: int | None,
+    db: Session,
+    user: User,
 ):
     if starting_after is not None:
         raise HTTPException(
@@ -133,15 +136,18 @@ async def get_response(
     return _stream(response) if isinstance(response, service.LiveResponse) else response
 
 
-@router.post("/responses/{response_id}/cancel", response_model=WeworkResponseObject)
 async def cancel_response(
     response_id: str,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_api_user),
+    db: Session,
+    user: User,
 ):
     return await service.cancel_response(db, user.id, response_id)
 
 
 @router.get("/models")
-def list_models(db: Session = Depends(get_db), user: User = Depends(current_api_user)):
+def list_models(
+    execution: Literal["wework"] = "wework",
+    db: Session = Depends(get_db),
+    user: User = Depends(current_api_user),
+):
     return models.list_models(db, user)
