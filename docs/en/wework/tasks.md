@@ -69,6 +69,8 @@ bash executor/scripts/dev-cloud-device.sh stop     # stop
 
 The model provides the AI capability; the device determines where files and commands run. Local models run on the local device. Cloud models and devices require a Wegent connection.
 
+The composer uses one execution selector for Codex, cloud Agents, and enabled local coding tools. After you select a cloud Agent, the model selected in the composer overrides the default model of its Bots. When no model is selected explicitly, the Bots continue to use their own configured models.
+
 When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
 
 Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:

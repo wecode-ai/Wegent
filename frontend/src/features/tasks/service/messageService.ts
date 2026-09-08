@@ -47,28 +47,26 @@ export function canUseChatContexts(taskType: TaskType | undefined, team: Team | 
     return true
   }
 
-  return isChatShell(team) || isClaudeCode(team)
+  return isChatShell(team) || isCodeRuntime(team)
 }
 
 /**
- * Check if a team uses ClaudeCode Shell type.
- * ClaudeCode tasks do not allow skill modification after task creation.
+ * Check if a team uses a local code runtime Shell.
  *
  * @param team - Team to check
- * @returns true if the team uses ClaudeCode Shell
+ * @returns true if the team uses ClaudeCode or Codex
  */
-export function isClaudeCode(team: Team | null): boolean {
+export function isCodeRuntime(team: Team | null): boolean {
   if (!team) return false
 
-  // Primary check: agent_type field (case-insensitive)
-  if (team.agent_type?.toLowerCase() === 'claudecode') {
+  const codeRuntimeTypes = new Set(['claudecode', 'codex'])
+  if (codeRuntimeTypes.has(team.agent_type?.toLowerCase() ?? '')) {
     return true
   }
 
-  // Fallback: check first bot's shell_type (for task detail teams where agent_type may be null)
   if (team.bots && team.bots.length > 0) {
     const firstBot = team.bots[0]
-    if (firstBot.bot?.shell_type?.toLowerCase() === 'claudecode') {
+    if (codeRuntimeTypes.has(firstBot.bot?.shell_type?.toLowerCase() ?? '')) {
       return true
     }
   }
@@ -79,11 +77,11 @@ export function isClaudeCode(team: Team | null): boolean {
 /**
  * Check whether the model selector should stay enabled after a task has messages.
  *
- * Chat Shell already supports per-message model switching. ClaudeCode receives the selected
+ * Chat Shell already supports per-message model switching. Code runtimes receive the selected
  * model through the existing task override path and executor model configuration.
  */
 export function canSwitchModelAfterMessages(team: Team | null): boolean {
-  return isChatShell(team) || isClaudeCode(team)
+  return isChatShell(team) || isCodeRuntime(team)
 }
 
 /**

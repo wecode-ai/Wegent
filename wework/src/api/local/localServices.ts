@@ -1114,6 +1114,7 @@ function localRuntimeModelConfig(
       tool_profile: 'custom',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
+      responses_url: `${cloudModelGateway.baseUrl.replace(/\/+$/, '')}/responses`,
       api_key: cloudModelGateway.apiKey,
       default_headers: {
         'X-Wegent-Model-Type': modelType,
@@ -1749,6 +1750,7 @@ async function createLocalRuntimeTaskPayload(
   } as Record<string, unknown>
   delete payload.wegentTeamId
   delete payload.newSession
+  if (materialized) delete payload.modelConfig
   const initialSupervisor = normalizedData.initialSupervisor
   if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
     payload.initialSupervisor = {

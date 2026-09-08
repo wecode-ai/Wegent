@@ -4395,6 +4395,9 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert payload is not None
     model_config = payload["executionRequest"]["model_config"]
     assert "llm-responses-proxy" in model_config["base_url"]
+    assert model_config["responses_url"].endswith(
+        "/api/runtime-work/llm-responses-proxy/responses"
+    )
     assert model_config["api_key"]
     headers = model_config["default_headers"]
     assert headers["X-Wegent-Model-Type"] == "public"

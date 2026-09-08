@@ -142,7 +142,14 @@ def wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind:
     return team
 
 
-def runnable_wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind:
+def runnable_wegent_team(
+    db: Session,
+    user_id: int,
+    team_id: int | None,
+    *,
+    override_model_name: str | None = None,
+    force_override: bool = False,
+) -> Kind:
     """Resolve an accessible Team and prove its execution dependencies exist."""
 
     team = wegent_team(db, user_id, team_id)
@@ -151,6 +158,8 @@ def runnable_wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind
             db,
             team=team,
             execution_user_id=user_id,
+            override_model_name=override_model_name,
+            force_override=force_override,
         )
     except ValueError as exc:
         raise HTTPException(

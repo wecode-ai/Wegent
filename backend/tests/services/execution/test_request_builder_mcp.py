@@ -12,6 +12,8 @@ filtering work correctly when preparing MCP servers for Claude Code executor.
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
 from shared.models.openai_converter import OpenAIRequestConverter
@@ -500,8 +502,8 @@ def test_generic_wegent_task_does_not_auto_inject_board_mcp():
     assert TaskRequestBuilder._is_board_wegent_task(task) is False
 
 
-class TestPrepareMcpForClaudeCode:
-    """Integration tests for _prepare_mcp_for_claude_code."""
+class TestPrepareMcpForCodeRuntime:
+    """Integration tests for code-runtime MCP preparation."""
 
     @patch.object(
         TaskRequestBuilder,
@@ -532,7 +534,7 @@ class TestPrepareMcpForClaudeCode:
             }
         ]
 
-        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+        builder._prepare_mcp_for_code_runtime(bot_config, skill_configs)
 
         mcp = bot_config["mcp_servers"]
         assert len(mcp) == 2
@@ -563,7 +565,7 @@ class TestPrepareMcpForClaudeCode:
             }
         ]
 
-        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+        builder._prepare_mcp_for_code_runtime(bot_config, skill_configs)
 
         assert len(bot_config["mcp_servers"]) == 1
         assert bot_config["mcp_servers"][0]["name"] == "my-skill_server1"
@@ -587,7 +589,7 @@ class TestPrepareMcpForClaudeCode:
             ],
         }
 
-        builder._prepare_mcp_for_claude_code(bot_config, [])
+        builder._prepare_mcp_for_code_runtime(bot_config, [])
 
         assert bot_config["mcp_servers"] == []
 
@@ -609,13 +611,60 @@ class TestPrepareMcpForClaudeCode:
             }
         ]
 
-        builder._prepare_mcp_for_claude_code(bot_config, skill_configs)
+        builder._prepare_mcp_for_code_runtime(bot_config, skill_configs)
 
         assert bot_config["mcp_servers"] == [
             {
                 "name": "dingtalk-docs",
                 "type": "http",
                 "url": "${{task_data.user_mcps.dingtalk.services.docs.credentials.url}}",
+            }
+        ]
+
+    def test_authenticated_http_skill_mcp_is_rejected(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        bot_config = {"shell_type": "Codex", "mcp_servers": []}
+        skill_configs = [
+            {
+                "name": "insecure-skill",
+                "mcpServers": {
+                    "privateServer": {
+                        "type": "streamable-http",
+                        "url": "http://mcp.example.com/private",
+                        "headers": {"Authorization": "Bearer secret"},
+                    }
+                },
+            }
+        ]
+
+        builder._prepare_mcp_for_code_runtime(bot_config, skill_configs)
+
+        assert bot_config["mcp_servers"] == []
+
+    def test_authenticated_https_skill_mcp_is_preserved(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        bot_config = {"shell_type": "Codex", "mcp_servers": []}
+        skill_configs = [
+            {
+                "name": "secure-skill",
+                "mcpServers": {
+                    "privateServer": {
+                        "type": "streamable-http",
+                        "url": "https://mcp.example.com/private",
+                        "headers": {"Authorization": "Bearer secret"},
+                    }
+                },
+            }
+        ]
+
+        builder._prepare_mcp_for_code_runtime(bot_config, skill_configs)
+
+        assert bot_config["mcp_servers"] == [
+            {
+                "name": "secure-skill_privateServer",
+                "type": "http",
+                "url": "https://mcp.example.com/private",
+                "headers": {"Authorization": "Bearer secret"},
             }
         ]
 
@@ -637,7 +686,7 @@ class TestPrepareMcpForClaudeCode:
             ],
         }
 
-        builder._prepare_mcp_for_claude_code(bot_config, [])
+        builder._prepare_mcp_for_code_runtime(bot_config, [])
 
         assert len(bot_config["mcp_servers"]) == 1
         assert bot_config["mcp_servers"][0]["name"] == "ghost-server"
@@ -651,7 +700,10 @@ class TestResolveRequestPreloadSkills:
         "_check_mcp_server_reachable",
         return_value=True,
     )
-    def test_inherited_kb_skill_resolves_into_request_and_claude_mcp(self, mock_check):
+    @pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
+    def test_inherited_kb_skill_resolves_into_request_and_code_runtime_mcp(
+        self, mock_check, shell_type: str
+    ):
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         request = ExecutionRequest(
             task_id=1273,
@@ -664,7 +716,7 @@ class TestResolveRequestPreloadSkills:
             user_selected_skills=["wegent-knowledge"],
             bot=[
                 {
-                    "shell_type": "ClaudeCode",
+                    "shell_type": shell_type,
                     "skills": ["browser"],
                     "mcp_servers": [],
                 }

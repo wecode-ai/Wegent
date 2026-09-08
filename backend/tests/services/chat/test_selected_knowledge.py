@@ -1023,7 +1023,7 @@ def test_workbench_request_whole_scope_replaces_persisted_scope() -> None:
     assert refs[0].resources == ()
 
 
-@pytest.mark.parametrize("shell_type", ["Agno", "Dify", "Codex"])
+@pytest.mark.parametrize("shell_type", ["Agno", "Dify"])
 def test_apply_selected_knowledge_context_keeps_legacy_path_for_unsupported_shells(
     shell_type: str,
 ) -> None:
@@ -1136,7 +1136,7 @@ def test_activate_provider_native_knowledge_requires_skill_mcp() -> None:
     assert request.provider_native_knowledge is False
 
 
-@pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode"])
+@pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode", "Codex"])
 def test_activate_provider_native_knowledge_allows_user_config_guidance(
     shell_type: str,
 ) -> None:
@@ -1184,9 +1184,12 @@ def test_activate_provider_native_knowledge_enables_chat_after_validation(
     assert request.provider_native_knowledge is True
 
 
-def test_activate_provider_native_knowledge_requires_claude_mcp_mount() -> None:
+@pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
+def test_activate_provider_native_knowledge_requires_code_runtime_mcp_mount(
+    shell_type: str,
+) -> None:
     request = ExecutionRequest(
-        bot=[{"shell_type": "ClaudeCode", "mcp_servers": []}],
+        bot=[{"shell_type": shell_type, "mcp_servers": []}],
         skill_names=["dingtalk-docs"],
         skill_configs=[
             {
@@ -1202,7 +1205,7 @@ def test_activate_provider_native_knowledge_requires_claude_mcp_mount() -> None:
         activate_provider_native_knowledge(request, ["dingtalk-docs"])
 
     assert exc_info.value.status_code == 503
-    assert "unavailable to ClaudeCode" in exc_info.value.detail
+    assert f"unavailable to {shell_type}" in exc_info.value.detail
     assert request.provider_native_knowledge is False
 
 

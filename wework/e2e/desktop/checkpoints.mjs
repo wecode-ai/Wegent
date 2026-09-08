@@ -57,6 +57,7 @@ export const DESKTOP_CHECKPOINTS = [
   'workspace-attachments',
   'rendering-extensions',
   'change-request-status',
+  'agent-runtime',
   'claude-runtime',
   'local-file-preview',
   'local-harness',

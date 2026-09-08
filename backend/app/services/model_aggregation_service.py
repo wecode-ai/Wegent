@@ -363,14 +363,18 @@ class ModelAggregationService:
         shell_provider_map = {
             "Agno": ["openai", "claude", "gemini"],
             "ClaudeCode": ["claude", "openai"],
+            "Codex": ["openai"],
         }
 
         if support_model:
             if provider not in support_model:
                 return False
 
-        if shell_type == "ClaudeCode" and provider == "openai":
+        if shell_type == "Codex":
             return self._is_codex_compatible_model_config(config or {})
+
+        if shell_type == "ClaudeCode" and provider == "openai":
+            return self._is_openai_responses_model_config(config or {})
 
         if support_model:
             return True
@@ -388,7 +392,35 @@ class ModelAggregationService:
 
     @staticmethod
     def _is_codex_compatible_model_config(config: Dict[str, Any]) -> bool:
-        """Return whether an OpenAI model config can run through CodeXAgent."""
+        """Return whether a model declares a Codex proxy upstream protocol."""
+        configured_format = str(
+            config.get("upstream_api_format")
+            or config.get("upstreamApiFormat")
+            or config.get("apiFormat")
+            or config.get("api_format")
+            or config.get("wire_api")
+            or config.get("protocol")
+            or ""
+        )
+        canonical_format = {
+            "responses": "openai-responses",
+            "openai-responses": "openai-responses",
+            "chat/completions": "openai-chat-completions",
+            "openai": "openai-chat-completions",
+            "openai-chat-completions": "openai-chat-completions",
+            "messages": "anthropic-messages",
+            "claude": "anthropic-messages",
+            "anthropic-messages": "anthropic-messages",
+        }.get(configured_format.strip().lower())
+        return canonical_format in {
+            "openai-responses",
+            "openai-chat-completions",
+            "anthropic-messages",
+        }
+
+    @staticmethod
+    def _is_openai_responses_model_config(config: Dict[str, Any]) -> bool:
+        """Return whether a model uses the OpenAI Responses wire protocol."""
         api_format = str(config.get("apiFormat") or config.get("api_format") or "")
         protocol = str(config.get("protocol") or "")
         wire_api = str(config.get("wire_api") or "")

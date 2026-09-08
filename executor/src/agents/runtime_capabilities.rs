@@ -406,17 +406,23 @@ pub async fn prepare_claude_runtime(
     Ok(spec)
 }
 
-pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
-    let task_dir = request
-        .cwd()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join(&request.task_id));
+pub async fn prepare_codex_runtime(request: &mut ExecutionRequest) {
+    let task_dir = bind_codex_task_dir(request, &workspace_root());
     let codex_skills_dir = codex_skills_dir(&task_dir);
     if let Err(error) = deploy_request_skills(request, &codex_skills_dir).await {
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         push_error_fields(&mut fields, error);
         log_executor_event("codex Skill deployment failed", &fields);
     }
+}
+
+fn bind_codex_task_dir(request: &mut ExecutionRequest, default_root: &Path) -> PathBuf {
+    if let Some(cwd) = request.cwd() {
+        return PathBuf::from(cwd);
+    }
+    let task_dir = default_root.join(&request.task_id);
+    request.project_workspace_path = Some(task_dir.display().to_string());
+    task_dir
 }
 
 pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
@@ -2370,6 +2376,23 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn codex_runtime_binds_default_task_directory_as_workspace() {
+        let mut request = ExecutionRequest {
+            task_id: "task-42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let root = PathBuf::from("/runtime/workspaces");
+
+        let task_dir = bind_codex_task_dir(&mut request, &root);
+
+        assert_eq!(task_dir, root.join("task-42"));
+        assert_eq!(
+            request.project_workspace_path.as_deref(),
+            Some("/runtime/workspaces/task-42")
+        );
+    }
 
     #[test]
     fn attachment_filenames_are_disambiguated_on_collision() {

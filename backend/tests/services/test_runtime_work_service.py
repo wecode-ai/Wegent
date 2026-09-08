@@ -2691,12 +2691,23 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     monkeypatch.setattr(
         project_automation_domain,
         "runnable_wegent_team",
-        lambda db, user_id, team_id: team,
+        readiness := MagicMock(return_value=team),
     )
     execution_request = SimpleNamespace(workspace={})
     builder = MagicMock()
     builder.build.return_value = execution_request
     monkeypatch.setattr(execution, "TaskRequestBuilder", lambda db: builder)
+    runtime_model_config = {
+        "model": "openai",
+        "model_id": "composer-model",
+        "api_key": "test-key",
+    }
+    model_override = MagicMock(return_value=(runtime_model_config, None, False))
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_runtime_model_override",
+        model_override,
+    )
     target = runtime_work_service.RuntimeTaskTarget(
         device_id="cloud-device-1",
         workspace_path="/srv/workspaces/Wegent",
@@ -2715,14 +2726,27 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
             taskId="runtime-team-1",
             runtime="codex",
             message="Review the implementation",
+            modelId="composer-model",
+            modelType="runtime",
         ),
         target=target,
     )
 
     assert result is execution_request
+    model_override.assert_called_once()
+    readiness.assert_called_once_with(
+        test_db,
+        test_user.id,
+        42,
+        override_model_name="composer-model",
+        force_override=True,
+    )
     build_kwargs = builder.build.call_args.kwargs
     assert build_kwargs["team"] is team
     assert build_kwargs["new_session"] is True
+    assert build_kwargs["override_model_name"] is None
+    assert build_kwargs["force_override"] is False
+    assert build_kwargs["runtime_model_config"] == runtime_model_config
     assert build_kwargs["task"].json["spec"]["teamRef"] == {
         "name": "review-team",
         "namespace": "engineering",
@@ -2737,6 +2761,8 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     assert test_db.query(TaskResource).count() == 0
 
     builder.reset_mock()
+    readiness.reset_mock()
+    model_override.reset_mock()
     runtime_work_service._build_runtime_execution_request(
         db=test_db,
         user_id=test_user.id,
@@ -2749,11 +2775,20 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
             taskId="runtime-team-1",
             runtime="codex",
             message="Continue the review",
+            modelId="composer-model",
+            modelType="runtime",
         ),
         target=target,
     )
 
     assert builder.build.call_args.kwargs["new_session"] is False
+    readiness.assert_called_once_with(
+        test_db,
+        test_user.id,
+        42,
+        override_model_name="composer-model",
+        force_override=True,
+    )
 
 
 def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
@@ -4841,6 +4876,9 @@ def test_build_runtime_send_execution_request_preserves_selected_model_and_catal
     assert execution_request.model_config["model_id"] == "selected-gpt"
     assert execution_request.model_config["base_url"].endswith(
         "/api/runtime-work/llm-responses-proxy"
+    )
+    assert execution_request.model_config["responses_url"].endswith(
+        "/api/runtime-work/llm-responses-proxy/responses"
     )
     assert execution_request.model_config["default_headers"] == {
         "X-Wegent-Model-Type": "public",

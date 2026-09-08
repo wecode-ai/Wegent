@@ -277,7 +277,7 @@ def bulk_create_models(
 
 @router.get("/compatible")
 def get_compatible_models(
-    shell_type: str = Query(..., description="Shell type (Agno or ClaudeCode)"),
+    shell_type: str = Query(..., description="Shell type (Agno, ClaudeCode, or Codex)"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -285,7 +285,7 @@ def get_compatible_models(
     Get models compatible with a specific shell type
 
     Parameters:
-    - shell_type: "Agno" or "ClaudeCode"
+    - shell_type: "Agno", "ClaudeCode", or "Codex"
 
     Response:
     {
@@ -339,6 +339,12 @@ def get_compatible_models(
                 elif shell_type == "ClaudeCode" and (
                     model_type == "claude"
                     or (model_type == "openai" and is_codex_compatible)
+                ):
+                    compatible_models.append({"name": model_kind.name})
+                elif (
+                    shell_type == "Codex"
+                    and model_type == "openai"
+                    and is_codex_compatible
                 ):
                     compatible_models.append({"name": model_kind.name})
         except Exception as e:

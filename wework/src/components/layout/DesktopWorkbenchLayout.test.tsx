@@ -2722,7 +2722,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-runtime-selector')).not.toBeInTheDocument()
   })
 
   test('hides cloud project space entries in the @ menu while experimental features are disabled', async () => {
@@ -4071,14 +4071,14 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
     expect(screen.queryByTestId('workbench-harness-experimental-badge')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('workbench-harness-selector'))
-    const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
+    fireEvent.click(screen.getByTestId('workbench-runtime-selector'))
+    const openCodeOption = screen.getByTestId('workbench-runtime-option-opencode')
     await waitFor(() => expect(openCodeOption).not.toBeDisabled())
     expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
     fireEvent.click(openCodeOption)
-    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('OpenCode')
+    expect(screen.getByTestId('workbench-runtime-selector')).toHaveTextContent('OpenCode')
     expect(screen.getByTestId('project-work-bar')).toContainElement(
-      screen.getByTestId('workbench-harness-selector')
+      screen.getByTestId('workbench-runtime-selector')
     )
     fireEvent.click(screen.getByTestId('workbench-harness-model-selector'))
     fireEvent.click(screen.getByTestId('workbench-harness-model-option-opencode-1'))
@@ -4277,8 +4277,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
-    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
-    await userEvent.click(screen.getByTestId('workbench-harness-option-opencode'))
+    await userEvent.click(screen.getByTestId('workbench-runtime-selector'))
+    await userEvent.click(screen.getByTestId('workbench-runtime-option-opencode'))
 
     const input = screen.getByTestId('chat-message-input')
     const form = input.closest('form')
@@ -4747,11 +4747,11 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
-    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
-    const claudeCodeOption = screen.getByTestId('workbench-harness-option-claude_code')
+    await userEvent.click(screen.getByTestId('workbench-runtime-selector'))
+    const claudeCodeOption = screen.getByTestId('workbench-runtime-option-claude_code')
     await waitFor(() => expect(claudeCodeOption).not.toBeDisabled())
     await userEvent.click(claudeCodeOption)
-    expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('Claude Code')
+    expect(screen.getByTestId('workbench-runtime-selector')).toHaveTextContent('Claude Code')
     expect(screen.getByTestId('workbench-harness-model-selector')).toHaveTextContent('不指定模型')
 
     const input = screen.getByTestId('chat-message-input')
@@ -4796,8 +4796,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
-    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
-    const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
+    await userEvent.click(screen.getByTestId('workbench-runtime-selector'))
+    const openCodeOption = screen.getByTestId('workbench-runtime-option-opencode')
     await waitFor(() => expect(openCodeOption).not.toBeDisabled())
     await userEvent.click(openCodeOption)
 

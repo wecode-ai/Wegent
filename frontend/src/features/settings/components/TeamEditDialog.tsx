@@ -62,10 +62,10 @@ import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
 import {
-  bindModeRequiresClaudeCode,
+  bindModeRequiresCodeRuntime,
   getDefaultSimpleBindMode,
   getModelCategoryTypeForBindMode,
-  isClaudeCodeShell,
+  isCodeRuntimeShell,
   normalizeExecutorForBindMode,
   resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
@@ -463,13 +463,15 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   const simpleMcpAgentType = useMemo<McpAgentType | undefined>(() => {
     const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
-    return shellType === 'ClaudeCode' || shellType === 'Agno' ? shellType : undefined
+    return shellType === 'ClaudeCode' || shellType === 'Codex' || shellType === 'Agno'
+      ? shellType
+      : undefined
   }, [selectedSimpleShell])
   const simpleSupportsPreloadSkills = useMemo(() => {
     return shellSupportsPreloadSkills(selectedSimpleShell)
   }, [selectedSimpleShell])
 
-  const simpleExecutorNeedsComplex = bindModeRequiresClaudeCode(bindMode)
+  const simpleExecutorNeedsComplex = bindModeRequiresCodeRuntime(bindMode)
   const simpleExecutorHelperText = simpleExecutorNeedsComplex
     ? t('settings:team.simple.executor.requires_complex_hint')
     : null
@@ -952,7 +954,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return
     }
 
-    if (bindModeRequiresClaudeCode(bindMode) && !isClaudeCodeShell(selectedShell)) {
+    if (bindModeRequiresCodeRuntime(bindMode) && !isCodeRuntimeShell(selectedShell)) {
       toast({
         variant: 'destructive',
         title: t('settings:team.simple.executor.requires_complex_hint'),

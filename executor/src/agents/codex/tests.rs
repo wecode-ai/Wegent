@@ -31,6 +31,38 @@ async fn codex_request_preparation_stops_when_cancelled() {
     ));
 }
 
+#[tokio::test]
+async fn codex_request_preparation_injects_selected_knowledge_prompt() {
+    let request = ExecutionRequest {
+        prompt: json!("Read the selected document."),
+        extra: serde_json::Map::from_iter([(
+            "selected_knowledge_prompt".to_owned(),
+            json!(
+                "<selected_knowledge_sources><source provider=\"wegent\" /></selected_knowledge_sources>"
+            ),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let prepared = prepare_codex_execution_request(request, None)
+        .await
+        .expect("Codex request should be prepared");
+    let prompt = prepared
+        .request
+        .prompt
+        .as_str()
+        .expect("prepared prompt should remain text");
+
+    assert!(
+        prompt.starts_with("<selected_knowledge_sources>"),
+        "prepared prompt: {prompt}"
+    );
+    assert!(
+        prompt.ends_with("Read the selected document."),
+        "prepared prompt: {prompt}"
+    );
+}
+
 #[test]
 fn codex_turn_start_rejects_completed_cancellation() {
     let (cancel_tx, cancellation) = oneshot::channel();
@@ -309,6 +341,19 @@ fn vision_sidecar_thread_start_forwards_selected_reasoning_effort() {
 
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let skills_override = launch_config
+        .config_overrides
+        .iter()
+        .find(|value| value.starts_with("skills.config="))
+        .expect("skills.config override should be present");
+    let skills_value = skills_override
+        .split_once('=')
+        .map(|(_, value)| value)
+        .expect("skills.config override should contain a value");
+    let parsed_override = format!("value={skills_value}")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("skills.config override must be valid TOML");
+    assert!(parsed_override["value"].is_array());
     let params = thread_start_params(&request, &launch_config);
 
     assert_eq!(
@@ -2171,6 +2216,101 @@ fn codex_run_state_keeps_completed_plan_out_of_final_content() {
 }
 
 #[test]
+fn codex_callback_tool_maps_mcp_start_and_completed_output() {
+    let started = json!({
+        "item": {
+            "id": "mcp-1",
+            "type": "mcpToolCall",
+            "server": "wegent-knowledge",
+            "tool": "wegent_kb_read_document_content",
+            "status": "inProgress",
+            "arguments": { "document_id": 61 }
+        }
+    });
+    let completed = json!({
+        "item": {
+            "id": "mcp-1",
+            "type": "mcpToolCall",
+            "server": "wegent-knowledge",
+            "tool": "wegent_kb_read_document_content",
+            "status": "completed",
+            "arguments": { "document_id": 61 },
+            "result": {
+                "content": [{ "type": "text", "text": "WEGENT-A1-NEW-2026" }]
+            },
+            "error": null
+        }
+    });
+
+    let tool = codex_callback_tool(&started).expect("MCP tool start should map");
+    assert_eq!(tool.id, "mcp-1");
+    assert_eq!(
+        tool.name,
+        "wegent-knowledge__wegent_kb_read_document_content"
+    );
+    assert_eq!(tool.input, json!({ "document_id": 61 }));
+
+    let completed_item = completed["item"].clone();
+    assert!(!codex_callback_tool_failed(&completed_item));
+    assert!(codex_callback_tool_output(&completed_item)
+        .expect("MCP result should map")
+        .contains("WEGENT-A1-NEW-2026"));
+}
+
+#[test]
+fn codex_callback_tool_maps_file_changes_and_status() {
+    let started = json!({
+        "item": {
+            "id": "patch-call",
+            "type": "fileChange",
+            "changes": [
+                {
+                    "path": "/workspace/README.md",
+                    "kind": "add",
+                    "diff": "new line\n"
+                }
+            ],
+            "status": "inProgress"
+        }
+    });
+    let completed_item = json!({
+        "id": "patch-call",
+        "type": "fileChange",
+        "changes": [],
+        "status": "completed"
+    });
+
+    let tool = codex_callback_tool(&started).expect("file change start should map");
+    assert_eq!(tool.id, "patch-call");
+    assert_eq!(tool.name, "apply_patch");
+    assert_eq!(
+        tool.input,
+        json!({
+            "changes": [
+                {
+                    "path": "/workspace/README.md",
+                    "kind": "add",
+                    "diff": "new line\n"
+                }
+            ]
+        })
+    );
+    assert_eq!(
+        codex_callback_tool_output(&completed_item).as_deref(),
+        Some("completed")
+    );
+    assert!(!codex_callback_tool_failed(&completed_item));
+}
+
+#[test]
+fn codex_callback_tool_marks_declined_file_change_as_failed() {
+    assert!(codex_callback_tool_failed(&json!({
+        "type": "fileChange",
+        "status": "declined"
+    })));
+}
+
+#[test]
 fn codex_run_state_routes_item_id_deltas_by_started_phase() {
     let mut state = CodexRunState::default();
 
@@ -2646,7 +2786,7 @@ fn thread_id_from_response_validates_provider_and_requires_thread_id() {
 }
 
 #[test]
-fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
+fn thread_launch_params_use_execution_system_prompt_as_base_instructions() {
     let request = ExecutionRequest {
         system_prompt: "Judge the supplied content without answering it.".to_owned(),
         ..ExecutionRequest::default()
@@ -2661,14 +2801,32 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
     let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
 
     for params in [thread_start, thread_fork, thread_resume] {
+        assert_eq!(
+            params["baseInstructions"],
+            "Judge the supplied content without answering it."
+        );
         let instructions = params["developerInstructions"]
             .as_str()
             .expect("developer instructions should be a string");
-        assert!(instructions
-            .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
+        assert!(instructions.starts_with("用中文回复\n\nWework 内置浏览器 routing:"));
+        assert!(!instructions.contains("Judge the supplied content without answering it."));
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
         assert!(instructions.contains("Wework 项目空间 routing:"));
+    }
+}
+
+#[test]
+fn thread_launch_params_preserve_codex_default_base_instructions_without_system_prompt() {
+    let request = ExecutionRequest::default();
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+    ] {
+        assert!(params.get("baseInstructions").is_none());
     }
 }
 

@@ -202,22 +202,26 @@ fn canonical_upstream_api_format(api_format: &str) -> String {
 pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalModelProxyUpstream> {
     let base_url = non_empty_string(model_config, "base_url")
         .or_else(|| non_empty_string(model_config, "baseUrl"))?;
+    let base_url = base_url.trim_end_matches('/').to_owned();
     let api_key = non_empty_string(model_config, "api_key")
         .or_else(|| non_empty_string(model_config, "apiKey"))
         .or_else(|| non_empty_string(model_config, "auth_token"))
         .unwrap_or_default();
+    let api_format = canonical_upstream_api_format(
+        &non_empty_string(model_config, "upstream_api_format")
+            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+            .or_else(|| non_empty_string(model_config, "api_format"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+    );
+    let request_url = non_empty_string(model_config, "responses_url")
+        .or_else(|| non_empty_string(model_config, "responsesUrl"))
+        .or_else(|| non_empty_string(model_config, "request_url"))
+        .or_else(|| non_empty_string(model_config, "requestUrl"))
+        .unwrap_or_else(|| default_upstream_request_url(&base_url, &api_format));
     Some(LocalModelProxyUpstream {
-        base_url: base_url.trim_end_matches('/').to_owned(),
-        request_url: non_empty_string(model_config, "responses_url")
-            .or_else(|| non_empty_string(model_config, "responsesUrl"))
-            .or_else(|| non_empty_string(model_config, "request_url"))
-            .or_else(|| non_empty_string(model_config, "requestUrl")),
-        api_format: canonical_upstream_api_format(
-            &non_empty_string(model_config, "upstream_api_format")
-                .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
-                .or_else(|| non_empty_string(model_config, "api_format"))
-                .unwrap_or_else(|| "openai-responses".to_owned()),
-        ),
+        base_url,
+        request_url: Some(request_url),
+        api_format,
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
@@ -244,6 +248,15 @@ pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalMo
             .and_then(Value::as_u64)
             .filter(|value| *value > 0),
     })
+}
+
+fn default_upstream_request_url(base_url: &str, api_format: &str) -> String {
+    let request_path = match api_format {
+        "openai-chat-completions" => "/chat/completions",
+        "anthropic-messages" => "/messages",
+        _ => "/responses",
+    };
+    format!("{}{request_path}", base_url.trim_end_matches('/'))
 }
 
 fn non_empty_string(value: &Value, key: &str) -> Option<String> {
@@ -2380,19 +2393,47 @@ mod tests {
 
     #[test]
     fn normalizes_provider_api_format_aliases_before_proxy_registration() {
-        for (configured, expected) in [
-            ("responses", "openai-responses"),
-            ("chat/completions", "openai-chat-completions"),
-            ("messages", "anthropic-messages"),
+        for (configured, expected_format, expected_url) in [
+            (
+                "responses",
+                "openai-responses",
+                "https://example.com/v1/responses",
+            ),
+            (
+                "chat/completions",
+                "openai-chat-completions",
+                "https://example.com/v1/chat/completions",
+            ),
+            (
+                "messages",
+                "anthropic-messages",
+                "https://example.com/v1/messages",
+            ),
         ] {
             let upstream = upstream_from_model_config(&json!({
-                "base_url": "https://example.com",
+                "base_url": "https://example.com/v1/",
                 "upstream_api_format": configured
             }))
             .expect("model config should produce an upstream");
 
-            assert_eq!(upstream.api_format, expected);
+            assert_eq!(upstream.api_format, expected_format);
+            assert_eq!(upstream.request_url.as_deref(), Some(expected_url));
         }
+    }
+
+    #[test]
+    fn preserves_explicit_provider_request_url() {
+        let upstream = upstream_from_model_config(&json!({
+            "base_url": "https://gateway.example/api/runtime-work/llm-responses-proxy",
+            "responses_url": "https://gateway.example/api/runtime-work/llm-responses-proxy/responses",
+            "upstream_api_format": "anthropic-messages"
+        }))
+        .expect("model config should produce an upstream");
+
+        assert_eq!(
+            upstream.request_url.as_deref(),
+            Some("https://gateway.example/api/runtime-work/llm-responses-proxy/responses")
+        );
     }
     use std::{
         env, fs,

@@ -4102,6 +4102,34 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
 }
 
 #[tokio::test]
+async fn create_task_ignores_null_initial_supervisor() {
+    let index_path = temp_runtime_work_index_path("create-task-null-initial-supervisor");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-null-supervisor",
+                "workspacePath": "/tmp/project",
+                "title": "No supervisor",
+                "initialSupervisor": null,
+                "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
+            }
+        }))
+        .await
+        .expect("runtime task should be created without a supervisor");
+
+    let link = handler
+        .local_task_link("local-task-null-supervisor")
+        .expect("created task should be stored");
+    assert!(link.supervisor.is_none());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
 async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
     let index_path = temp_runtime_work_index_path("create-board-comment-task");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

@@ -391,18 +391,21 @@ async function startHarness({
   expectedAssistantText = 'Local harness CLI reply',
   responseTimeoutMs = timeoutMs,
 }) {
-  await control.command(
-    'click',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
+  const executionSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-runtime-selector"]`
+  assert.equal(
+    Number(await control.command('getElementCount', executionSelector)),
+    1,
+    'The workbench must expose exactly one execution selector'
   )
-  await control.command('waitFor', `[data-testid="workbench-harness-option-${harnessId}"]`, {
+  await control.command('click', executionSelector)
+  await control.command('waitFor', `[data-testid="workbench-runtime-option-${harnessId}"]`, {
     visible: true,
     timeoutMs,
   })
   await capturePage(control, runtimeMenuScreenshot)
   await control.command(
     'clickWhenEnabled',
-    `[data-testid="workbench-harness-option-${harnessId}"]`,
+    `[data-testid="workbench-runtime-option-${harnessId}"]`,
     { timeoutMs }
   )
   await control.command(

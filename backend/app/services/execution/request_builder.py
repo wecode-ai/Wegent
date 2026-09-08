@@ -13,6 +13,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 import json
 import logging
 from typing import Any, List, Optional, Union
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -404,10 +405,10 @@ class TaskRequestBuilder:
                     if server.get("name") not in managed_names
                 ] + managed_bot_servers
 
-        # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
+        # Code runtimes consume Skill-defined MCP servers directly.
         if bot_config:
             shell_type = bot_config[0].get("shell_type", "")
-            if shell_type == "ClaudeCode":
+            if shell_type in {"ClaudeCode", "Codex"}:
                 if collaboration_model == "coordinate":
                     self._extend_resolved_skills_from_bot_configs(
                         bot_configs=bot_config,
@@ -417,7 +418,7 @@ class TaskRequestBuilder:
                         user=user,
                     )
                     self._merge_coordinate_capabilities_into_leader(bot_config)
-                self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
+                self._prepare_mcp_for_code_runtime(bot_config[0], resolved_skills)
 
         # Build MCP servers configuration (with auto-injection for subscription tasks)
         mcp_servers = self._build_mcp_servers(
@@ -772,14 +773,14 @@ class TaskRequestBuilder:
                 existing_bot_skills.add(skill_name)
         self._sync_skill_refs_to_bot_configs(request.bot, skill_refs)
 
-        if bot_config.get("shell_type") == "ClaudeCode":
+        if bot_config.get("shell_type") in {"ClaudeCode", "Codex"}:
             new_skill_configs = [
                 skill_config
                 for skill_config in resolved_skills
                 if skill_config.get("name") in missing_skill_names
             ]
             if new_skill_configs:
-                self._prepare_mcp_for_claude_code(bot_config, new_skill_configs)
+                self._prepare_mcp_for_code_runtime(bot_config, new_skill_configs)
 
         logger.info(
             "[TaskRequestBuilder] Resolved request preload skills: added=%s, total_skills=%s",
@@ -2425,18 +2426,18 @@ Response template:
         return merged_preload_skills
 
     # =========================================================================
-    # Claude Code MCP Processing
+    # Code Runtime MCP Processing
     # =========================================================================
 
-    def _prepare_mcp_for_claude_code(
+    def _prepare_mcp_for_code_runtime(
         self, bot_config: dict, skill_configs: list
     ) -> None:
-        """Prepare MCP servers for Claude Code executor.
+        """Prepare MCP servers for local code runtimes.
 
-        For ClaudeCode shell type, this method:
+        For Claude Code and Codex shell types, this method:
         1. Extracts skill MCP servers and merges into bot mcp_servers
-        2. Normalizes types (streamable-http -> http) for Claude Code SDK
-        3. Filters out unreachable servers to prevent SDK initialization timeout
+        2. Normalizes transport types for the code runtime adapters
+        3. Filters out unreachable servers to prevent runtime initialization timeout
 
         Modifies bot_config in-place.
 
@@ -2445,11 +2446,15 @@ Response template:
             skill_configs: List of resolved skill config dicts
         """
         # Step 1: Extract skill MCP servers and merge
-        skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
+        skill_mcp = [
+            server
+            for server in self._extract_skill_mcp_to_list(skill_configs)
+            if self._is_secure_skill_mcp_server(server)
+        ]
         if skill_mcp:
             bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
             logger.info(
-                "[MCP-CLAUDE] Merged %d skill MCP server(s): %s",
+                "[MCP-CODE-RUNTIME] Merged %d skill MCP server(s): %s",
                 len(skill_mcp),
                 [s.get("name", "?") for s in skill_mcp],
             )
@@ -2464,7 +2469,7 @@ Response template:
         # Step 3: Filter out unreachable servers
         bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
         if not bot_config["mcp_servers"]:
-            logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
+            logger.warning("[MCP-CODE-RUNTIME] All MCP servers unreachable, removed")
 
     @staticmethod
     def _merge_coordinate_capabilities_into_leader(bot_configs: list[dict]) -> None:
@@ -2566,6 +2571,34 @@ Response template:
                 entry.get("type", "?"),
             )
         return result
+
+    @staticmethod
+    def _is_secure_skill_mcp_server(server: dict) -> bool:
+        """Reject credentialed remote MCP servers that use cleartext HTTP."""
+        server_type = str(server.get("type") or "").lower()
+        if server_type == "stdio":
+            return True
+
+        url = str(server.get("url") or "")
+        if not url or ("${{" in url and "}}" in url):
+            return True
+
+        parsed_url = urlsplit(url)
+        has_url_credentials = bool(parsed_url.username or parsed_url.password)
+        credential_fields = ("headers", "auth", "server_auth", "credentials")
+        has_configured_credentials = any(
+            bool(server.get(field)) for field in credential_fields
+        )
+        if parsed_url.scheme.lower() == "http" and (
+            has_url_credentials or has_configured_credentials
+        ):
+            logger.warning(
+                "[SKILL-MCP] Rejected credentialed non-HTTPS server: %s",
+                server.get("name", "?"),
+            )
+            return False
+
+        return True
 
     @staticmethod
     def _normalize_mcp_types_for_claude_code(mcp_servers: list) -> None:

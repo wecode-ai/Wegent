@@ -146,6 +146,23 @@ fn checks_for_shell(shell_type: &str) -> Option<Vec<ValidationCheck>> {
                 min_version: Some("3.12.0"),
             },
         ]),
+        "Codex" => Some(vec![
+            ValidationCheck {
+                name: "node",
+                command: "node --version",
+                min_version: Some("20.0.0"),
+            },
+            ValidationCheck {
+                name: "codex",
+                command: "codex --version 2>/dev/null || echo 'not found'",
+                min_version: None,
+            },
+            ValidationCheck {
+                name: "python",
+                command: "python3 --version",
+                min_version: Some("3.12.0"),
+            },
+        ]),
         "Agno" => Some(vec![
             ValidationCheck {
                 name: "python",
@@ -210,4 +227,17 @@ fn parse_semver(value: &str) -> (u64, u64, u64) {
         parts.next().unwrap_or(0),
         parts.next().unwrap_or(0),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checks_for_shell;
+
+    #[test]
+    fn codex_image_validation_requires_codex_cli() {
+        let checks = checks_for_shell("Codex").expect("Codex checks should exist");
+        let names = checks.iter().map(|check| check.name).collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["node", "codex", "python"]);
+    }
 }

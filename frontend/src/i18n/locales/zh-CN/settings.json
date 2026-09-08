@@ -301,7 +301,7 @@
       "executor": {
         "title": "执行器",
         "required": "请选择一个可用执行器",
-        "requires_complex_hint": "编码和设备模式需要 Claude Code 能力，已优先使用复杂执行器。",
+        "requires_complex_hint": "编码和设备模式需要 Claude Code 或 Codex 等代码运行时。",
         "custom_shell_placeholder": "选择自定义执行器",
         "no_custom_shells": "暂无自定义执行器",
         "manage_custom_shells_hint": "可前往资源库 - 执行器管理自定义执行器。",

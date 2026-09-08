@@ -48,6 +48,7 @@ core_segments=(
   workspace-attachments
   rendering-extensions
   change-request-status
+  agent-runtime
   claude-runtime
   local-file-preview
   local-harness
@@ -130,7 +131,7 @@ core_shards=(
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
-  claude-runtime,workspace-tabs,task-attachments
+  agent-runtime,claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
   project-automation
@@ -633,11 +634,14 @@ classify_wework_path() {
       wework/src/lib/local-harness* | \
       wework/src/lib/local-terminal* | \
       wework/src/components/layout/CentralHarnessTerminal* | \
-      wework/src/components/layout/WorkbenchHarnessSelector* | \
+      wework/src/components/layout/WorkbenchAgentSelector* | \
+      wework/src/components/layout/WorkbenchRuntimeSelector* | \
       wework/src/components/layout/localHarnessWorkbench* | \
       wework/src/components/settings/HarnessSettingsPage* | \
+      wework/e2e/desktop/scenarios/agent-runtime.scenario.mjs | \
       wework/e2e/desktop/scenarios/claude-runtime.scenario.mjs | \
       wework/e2e/desktop/scenarios/local-terminal.scenario.mjs)
+      select_target "core:agent-runtime"
       select_target "core:claude-runtime"
       select_target "core:local-harness"
       return

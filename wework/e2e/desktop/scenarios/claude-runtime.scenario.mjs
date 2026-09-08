@@ -297,11 +297,11 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
 async function selectClaudeRuntime(control, modelLabel, timeoutMs) {
   await control.command(
     'click',
-    `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
+    `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="workbench-runtime-selector"]`
   )
   await control.command(
     'clickWhenEnabled',
-    '[data-testid="workbench-harness-option-claude_code"]',
+    '[data-testid="workbench-runtime-option-claude_code"]',
     {
       timeoutMs,
     }

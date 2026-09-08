@@ -42,6 +42,8 @@ def _team_graph(
     include_shell: bool = True,
     include_model: bool = True,
     bot_active: bool = True,
+    bot_model_ref: bool = True,
+    allowed_models: list[str] | None = None,
     members: bool = True,
 ) -> Kind:
     model_name = "readiness-model"
@@ -87,17 +89,26 @@ def _team_graph(
             )
         )
     if include_bot:
+        bot_spec = {
+            "ghostRef": {"name": ghost_name, "namespace": "default"},
+            "shellRef": {"name": shell_name, "namespace": "default"},
+        }
+        if bot_model_ref:
+            bot_spec["modelRef"] = {
+                "name": model_name,
+                "namespace": "default",
+            }
+        if allowed_models is not None:
+            bot_spec["agent_config"] = {
+                "allowed_models": [{"name": name} for name in allowed_models]
+            }
         resources.append(
             _resource(
                 user_id=user_id,
                 kind="Bot",
                 name=bot_name,
                 is_active=bot_active,
-                spec={
-                    "ghostRef": {"name": ghost_name, "namespace": "default"},
-                    "shellRef": {"name": shell_name, "namespace": "default"},
-                    "modelRef": {"name": model_name, "namespace": "default"},
-                },
+                spec=bot_spec,
             )
         )
     team = _resource(
@@ -133,6 +144,66 @@ def test_team_readiness_accepts_complete_execution_graph(
     )
 
 
+def test_team_readiness_accepts_explicit_model_for_bot_without_model(
+    test_db: Session,
+    test_user,
+) -> None:
+    team = _team_graph(
+        test_db,
+        user_id=test_user.id,
+        bot_model_ref=False,
+    )
+
+    validate_team_execution_readiness(
+        test_db,
+        team=team,
+        execution_user_id=test_user.id,
+        override_model_name="readiness-model",
+        force_override=True,
+    )
+
+
+def test_team_readiness_rejects_missing_explicit_model(
+    test_db: Session,
+    test_user,
+) -> None:
+    team = _team_graph(
+        test_db,
+        user_id=test_user.id,
+        bot_model_ref=False,
+    )
+
+    with pytest.raises(ValueError, match="Model missing-model not found"):
+        validate_team_execution_readiness(
+            test_db,
+            team=team,
+            execution_user_id=test_user.id,
+            override_model_name="missing-model",
+            force_override=True,
+        )
+
+
+def test_team_readiness_enforces_allowed_models_for_explicit_model(
+    test_db: Session,
+    test_user,
+) -> None:
+    team = _team_graph(
+        test_db,
+        user_id=test_user.id,
+        bot_model_ref=False,
+        allowed_models=["other-model"],
+    )
+
+    with pytest.raises(ValueError, match="is not in the allowed models list"):
+        validate_team_execution_readiness(
+            test_db,
+            team=team,
+            execution_user_id=test_user.id,
+            override_model_name="readiness-model",
+            force_override=True,
+        )
+
+
 @pytest.mark.parametrize(
     ("graph_options", "error"),
     [
@@ -144,6 +215,10 @@ def test_team_readiness_accepts_complete_execution_graph(
         (
             {"include_model": False},
             "Bot readiness-bot has no model|Model readiness-model not found",
+        ),
+        (
+            {"include_model": False, "bot_model_ref": False},
+            "Bot readiness-bot has no model configured",
         ),
     ],
 )

@@ -44,6 +44,31 @@ async def test_validate_image_schedules_background_submission(mocker):
 
 
 @pytest.mark.asyncio
+async def test_validate_image_accepts_codex_shell(mocker):
+    request = routers.ValidateImageRequest(
+        image="ghcr.io/wecode-ai/wegent-executor:test",
+        shell_type="Codex",
+        user_name="tester",
+        shell_name="codex-shell",
+        validation_id="vid-codex",
+    )
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+
+    mocked_bg = mocker.patch.object(
+        routers, "_run_validation_task_in_background", new_callable=mocker.AsyncMock
+    )
+    mocker.patch.object(
+        routers.asyncio, "create_task", side_effect=_close_background_coroutine
+    )
+
+    result = await routers.validate_image(request, http_request)
+
+    assert result["status"] == "submitted"
+    validation_task = mocked_bg.call_args.args[0]
+    assert validation_task["metadata"]["validation_params"]["shell_type"] == "Codex"
+
+
+@pytest.mark.asyncio
 async def test_validate_image_preserves_https_callback_scheme(mocker):
     request = routers.ValidateImageRequest(
         image="ghcr.io/wecode-ai/wegent-executor:test",

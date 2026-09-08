@@ -18,6 +18,8 @@ def validate_team_execution_readiness(
     *,
     team: Kind,
     execution_user_id: int,
+    override_model_name: str | None = None,
+    force_override: bool = False,
 ) -> None:
     """Validate every Team member dependency used by ``TaskRequestBuilder``.
 
@@ -45,6 +47,8 @@ def validate_team_execution_readiness(
             team=team,
             member=member,
             execution_user_id=execution_user_id,
+            override_model_name=override_model_name,
+            force_override=force_override,
         )
 
 
@@ -54,6 +58,8 @@ def _validate_team_member(
     team: Kind,
     member: TeamMember,
     execution_user_id: int,
+    override_model_name: str | None,
+    force_override: bool,
 ) -> None:
     bot_ref = member.botRef
     bot_label = f"{bot_ref.namespace}/{bot_ref.name}"
@@ -79,6 +85,8 @@ def _validate_team_member(
         bot=bot,
         bot_label=bot_label,
         execution_user_id=execution_user_id,
+        override_model_name=override_model_name,
+        force_override=force_override,
     )
 
 
@@ -139,8 +147,16 @@ def _validate_model(
     bot: Kind,
     bot_label: str,
     execution_user_id: int,
+    override_model_name: str | None,
+    force_override: bool,
 ) -> None:
     try:
-        get_model_config_for_bot(db, bot, execution_user_id)
+        get_model_config_for_bot(
+            db,
+            bot,
+            execution_user_id,
+            override_model_name=override_model_name,
+            force_override=force_override,
+        )
     except ValueError as exc:
         raise ValueError(f"Bot '{bot_label}' model is unavailable: {exc}") from exc

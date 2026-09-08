@@ -22,7 +22,7 @@ import {
 import { type ProjectChatControls, type ProjectWorkControls } from '@/components/chat/ChatInput'
 import { AttachmentBadges } from '@/components/chat/composer/AttachmentBadges'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
-import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
+import { WorkbenchRuntimeSelector } from '@/components/layout/WorkbenchRuntimeSelector'
 import { Tooltip } from '@/components/ui/tooltip'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -633,7 +633,7 @@ export function IssueComposer({
         }
         projectWorkBarTrailingContext={
           creationMode === 'task' ? (
-            <WorkbenchHarnessSelector
+            <WorkbenchRuntimeSelector
               runtime="codex"
               harnesses={[]}
               enabledHarnesses={[]}

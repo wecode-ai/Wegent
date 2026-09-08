@@ -2,12 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
 from app.core.config import settings
 from app.services.execution.router import CommunicationMode, ExecutionRouter
 from shared.models import ExecutionRequest
 
 
-def test_standalone_executor_shell_routes_to_rust_local_executor(monkeypatch):
+@pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
+def test_standalone_executor_shell_routes_to_rust_local_executor(
+    monkeypatch, shell_type: str
+):
     monkeypatch.setattr(
         settings,
         "STANDALONE_EXECUTOR_DEVICE_ID",
@@ -21,7 +26,7 @@ def test_standalone_executor_shell_routes_to_rust_local_executor(monkeypatch):
     target = router.route(
         ExecutionRequest(
             user={"id": 1},
-            bot=[{"shell_type": "ClaudeCode"}],
+            bot=[{"shell_type": shell_type}],
         )
     )
 

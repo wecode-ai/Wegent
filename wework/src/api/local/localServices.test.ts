@@ -256,6 +256,10 @@ describe('createLocalAppServices', () => {
         title: input.title ?? input.taskId,
         taskId: input.taskId,
         workspacePath: input.workspacePath,
+        modelConfig: {
+          model_id: 'team-model',
+          api_format: 'responses',
+        },
         executionRequest: {
           task_id: input.taskId,
           team_id: 7,
@@ -309,6 +313,7 @@ describe('createLocalAppServices', () => {
 
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload).not.toHaveProperty('wegentTeamId')
+    expect(payload).not.toHaveProperty('modelConfig')
     expect(materializeRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         schemaVersion: 3,
@@ -2334,6 +2339,8 @@ describe('createLocalAppServices', () => {
             model_id: 'shared-model',
             codex_catalog_model_id: 'wework-gpt-5.6-sol',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+            responses_url:
+              'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
             api_key: 'cloud-login-token',
             default_headers: {
               'X-Wegent-Model-Type': 'user',

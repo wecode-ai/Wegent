@@ -44,6 +44,13 @@ const shells: UnifiedShell[] = [
     namespace: 'dev-group',
   },
   {
+    name: 'custom-codex',
+    type: 'group',
+    displayName: 'Custom Codex',
+    shellType: 'Codex',
+    namespace: 'dev-group',
+  },
+  {
     name: 'custom-agno',
     type: 'group',
     displayName: 'Custom Agno',
@@ -104,6 +111,19 @@ describe('simple team edit utils', () => {
     expect(resolveShellForExecutor(shells, 'complex')?.name).toBe('ClaudeCode')
   })
 
+  it('resolves complex executor to Codex when ClaudeCode is unavailable', () => {
+    const codexOnlyShells: UnifiedShell[] = [
+      {
+        name: 'Codex',
+        type: 'public',
+        displayName: 'Codex',
+        shellType: 'Codex',
+      },
+    ]
+
+    expect(resolveShellForExecutor(codexOnlyShells, 'complex')?.name).toBe('Codex')
+  })
+
   it('resolves custom executor by selected custom shell name', () => {
     expect(resolveShellForExecutor(shells, 'custom', 'custom-code')?.name).toBe('custom-code')
   })
@@ -125,6 +145,16 @@ describe('simple team edit utils', () => {
       mode: 'complex',
       customShellName: '',
     })
+    expect(
+      resolveSimpleExecutorFromBot({
+        ...bot,
+        shell_name: 'Codex',
+        shell_type: 'Codex',
+      })
+    ).toEqual({
+      mode: 'complex',
+      customShellName: '',
+    })
   })
 
   it('keeps custom ClaudeCode shell selected as a custom executor', () => {
@@ -141,7 +171,11 @@ describe('simple team edit utils', () => {
   })
 
   it('excludes Agno custom shells from custom executor choices', () => {
-    expect(getCustomShells(shells).map(shell => shell.name)).toEqual(['custom-chat', 'custom-code'])
+    expect(getCustomShells(shells).map(shell => shell.name)).toEqual([
+      'custom-chat',
+      'custom-code',
+      'custom-codex',
+    ])
   })
 
   it('does not resolve custom executor without a selected shell', () => {
@@ -153,7 +187,7 @@ describe('simple team edit utils', () => {
 
     expect(normalizeExecutorForBindMode('simple', bindMode, shells)).toEqual({
       mode: 'complex',
-      reason: 'requires_claude_code',
+      reason: 'requires_code_runtime',
     })
   })
 
@@ -161,6 +195,15 @@ describe('simple team edit utils', () => {
     const bindMode = ['task'] as TaskType[]
 
     expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-code')).toEqual({
+      mode: 'custom',
+      reason: null,
+    })
+  })
+
+  it('keeps custom executor when its selected shell is Codex-compatible', () => {
+    const bindMode = ['task'] as TaskType[]
+
+    expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-codex')).toEqual({
       mode: 'custom',
       reason: null,
     })

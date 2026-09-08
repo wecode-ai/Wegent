@@ -5,7 +5,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { localHarnessLabel, type LocalHarnessId } from '@/lib/local-harness'
 import type { LocalHarnessDescriptor } from '@/lib/local-terminal'
 
-interface WorkbenchHarnessSelectorProps {
+interface WorkbenchRuntimeSelectorProps {
   runtime: 'codex' | LocalHarnessId
   harnesses: LocalHarnessDescriptor[]
   enabledHarnesses: LocalHarnessId[]
@@ -14,22 +14,22 @@ interface WorkbenchHarnessSelectorProps {
   onRuntimeChange: (runtime: 'codex' | LocalHarnessId) => void
 }
 
-export function WorkbenchHarnessSelector({
+export function WorkbenchRuntimeSelector({
   runtime,
   harnesses,
   enabledHarnesses,
   loading,
   detectionFailed,
   onRuntimeChange,
-}: WorkbenchHarnessSelectorProps) {
+}: WorkbenchRuntimeSelectorProps) {
   const { t } = useTranslation('common')
   const selectedLabel = runtime === 'codex' ? 'Codex' : localHarnessLabel(runtime)
   const conversationRuntime = runtime === 'codex' || runtime === 'claude_code'
 
   return (
     <ActionMenu
-      ariaLabel={t('workbench.harness_selector', '选择编码工具')}
-      testId="workbench-harness-selector"
+      ariaLabel={t('workbench.runtime_selector', '选择运行时')}
+      testId="workbench-runtime-selector"
       icon={conversationRuntime ? Bot : SquareTerminal}
       triggerLabel={
         <span className="flex min-w-0 items-center gap-1.5">
@@ -45,7 +45,8 @@ export function WorkbenchHarnessSelector({
         {
           label: 'Codex',
           icon: Bot,
-          testId: 'workbench-harness-option-codex',
+          testId: 'workbench-runtime-option-codex',
+          checked: runtime === 'codex',
           onSelect: () => onRuntimeChange('codex'),
         },
         ...enabledHarnesses.map(harnessId => {
@@ -76,7 +77,8 @@ export function WorkbenchHarnessSelector({
               </>
             ),
             icon: harnessId === 'claude_code' ? Bot : SquareTerminal,
-            testId: `workbench-harness-option-${harnessId}`,
+            testId: `workbench-runtime-option-${harnessId}`,
+            checked: runtime === harnessId,
             disabled: loading || detectionFailed || !installed,
             onSelect: () => onRuntimeChange(harnessId),
           }
