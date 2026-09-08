@@ -106,7 +106,7 @@ fn inherited_session_id(request: &ExecutionRequest) -> Option<String> {
     })
 }
 
-fn delete_saved_session_files(request: &ExecutionRequest) {
+pub(crate) fn delete_saved_session_files(request: &ExecutionRequest) {
     for path in removable_session_file_candidates(request) {
         let _ = fs::remove_file(path);
     }

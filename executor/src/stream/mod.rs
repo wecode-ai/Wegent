@@ -434,14 +434,9 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
         return None;
     }
 
-    let message = value
-        .get("result")
-        .or_else(|| value.get("message"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Claude execution failed")
-        .to_owned();
+    let message = extract_result_error_message(value)
+        .map(str::to_owned)
+        .unwrap_or_else(|| "Claude execution failed".to_owned());
 
     if is_interruption_message(&message)
         || value
@@ -453,6 +448,24 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
     } else {
         Some(ExecutionOutcome::Failed { message })
     }
+}
+
+fn extract_result_error_message(value: &Value) -> Option<&str> {
+    value
+        .get("result")
+        .or_else(|| value.get("message"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            value
+                .get("errors")
+                .and_then(Value::as_array)
+                .and_then(|errors| errors.first())
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
 }
 
 fn claude_task_started_tool_use_id(value: &Value) -> Option<String> {
@@ -826,5 +839,61 @@ fn preview_stdout_line(value: &str) -> String {
         format!("{preview}...")
     } else {
         preview
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_result_outcome_uses_errors_when_result_missing() {
+        let value = serde_json::json!({
+            "type": "result",
+            "is_error": true,
+            "errors": ["No conversation found with session ID: abc-123"],
+            "subtype": "error_during_execution"
+        });
+
+        assert_eq!(
+            extract_result_outcome(&value),
+            Some(ExecutionOutcome::Failed {
+                message: "No conversation found with session ID: abc-123".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn extract_result_outcome_keeps_result_over_errors() {
+        let value = serde_json::json!({
+            "type": "result",
+            "is_error": true,
+            "result": "Invalid model ID",
+            "errors": ["other error"],
+            "subtype": "error_during_execution"
+        });
+
+        assert_eq!(
+            extract_result_outcome(&value),
+            Some(ExecutionOutcome::Failed {
+                message: "Invalid model ID".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn extract_result_outcome_falls_back_to_default_when_no_message() {
+        let value = serde_json::json!({
+            "type": "result",
+            "is_error": true,
+            "subtype": "error_during_execution"
+        });
+
+        assert_eq!(
+            extract_result_outcome(&value),
+            Some(ExecutionOutcome::Failed {
+                message: "Claude execution failed".to_owned()
+            })
+        );
     }
 }

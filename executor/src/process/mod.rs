@@ -483,9 +483,16 @@ impl AgentEngine for StreamProcessEngine {
                         summary.outcome
                     }
                 }
-                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
-                    message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-                },
+                CommandOutcome::Failure { stderr, stdout, .. } => {
+                    maybe_recover_stale_claude_session(
+                        &request,
+                        spec.clone(),
+                        stderr,
+                        stdout,
+                        timeout_seconds,
+                    )
+                    .await
+                }
             }
         })
     }
@@ -544,11 +551,49 @@ impl AgentEngine for StreamProcessEngine {
                         summary.outcome
                     }
                 }
-                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
-                    message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-                },
+                CommandOutcome::Failure { stderr, stdout, .. } => {
+                    maybe_recover_stale_claude_session(
+                        &request,
+                        spec.clone(),
+                        stderr,
+                        stdout,
+                        timeout_seconds,
+                    )
+                    .await
+                }
             }
         })
+    }
+}
+
+async fn maybe_recover_stale_claude_session(
+    request: &ExecutionRequest,
+    spec: CommandSpec,
+    stderr: String,
+    stdout: String,
+    timeout_seconds: u64,
+) -> ExecutionOutcome {
+    let stderr_text = decode_output(stderr.clone().into_bytes());
+    let stdout_text = decode_output(stdout.clone().into_bytes());
+    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+        claude_session::delete_saved_session_files(request);
+        let retry_spec = claude_spec_without_resume(&spec);
+        match run_command_output(retry_spec, timeout_seconds).await {
+            CommandOutcome::Success { stdout } => {
+                let summary = collect_claude_stream_summary(&stdout);
+                if let Some(session_id) = &summary.session_id {
+                    claude_session::save_session_id(request, session_id);
+                }
+                summary.outcome
+            }
+            CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
+                message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+            },
+        }
+    } else {
+        ExecutionOutcome::Failed {
+            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+        }
     }
 }
 
@@ -775,6 +820,31 @@ fn claude_follow_up_resume_spec(
         }
     }
     spec
+}
+
+fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
+    let mut spec = CommandSpec::new(base_spec.program.clone());
+    spec.env = base_spec.env.clone();
+    spec.cwd = base_spec.cwd.clone();
+    spec.stdin = base_spec.stdin.clone();
+    let mut skip_next = false;
+    for arg in &base_spec.args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--resume" || arg == "--input-format" {
+            skip_next = true;
+            continue;
+        }
+        spec.args.push(arg.clone());
+    }
+    spec
+}
+
+fn is_stale_claude_session_failure(stderr: &str, stdout: &str) -> bool {
+    stderr.contains("No conversation found with session ID")
+        || stdout.contains("No conversation found with session ID")
 }
 
 fn mcp_servers_from_spec(spec: &CommandSpec) -> Option<Value> {
@@ -1977,5 +2047,29 @@ mod tests {
             failure_message(b"startup hook warning".to_vec(), stdout),
             "Invalid model ID"
         );
+    }
+
+    #[test]
+    fn is_stale_claude_session_failure_matches_stderr() {
+        assert!(is_stale_claude_session_failure(
+            "No conversation found with session ID: abc-123",
+            ""
+        ));
+    }
+
+    #[test]
+    fn is_stale_claude_session_failure_matches_stdout() {
+        assert!(is_stale_claude_session_failure(
+            "",
+            r#"{"type":"result","is_error":true,"errors":["No conversation found with session ID: abc-123"]}"#
+        ));
+    }
+
+    #[test]
+    fn is_stale_claude_session_failure_ignores_other_errors() {
+        assert!(!is_stale_claude_session_failure(
+            "command timed out after 300s",
+            "some other failure"
+        ));
     }
 }
