@@ -505,10 +505,15 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(resume["params"]["threadId"], "thread-1");
     assert_eq!(resume["params"]["cwd"], "/tmp/project");
     assert_eq!(resume["params"]["model"], "gpt-4.1");
-    assert!(resume["params"]["developerInstructions"]
+    assert_eq!(
+        resume["params"]["baseInstructions"],
+        "Run focused project tests."
+    );
+    let developer_instructions = resume["params"]["developerInstructions"]
         .as_str()
-        .expect("developer instructions should be present")
-        .contains("Run focused project tests."));
+        .expect("developer instructions should be present");
+    assert!(developer_instructions.contains("Wework 项目空间 routing:"));
+    assert!(!developer_instructions.contains("Run focused project tests."));
     assert_eq!(
         resume["params"]["config"]["model_reasoning_effort"],
         "xhigh"
