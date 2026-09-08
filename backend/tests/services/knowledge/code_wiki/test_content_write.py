@@ -338,7 +338,7 @@ def test_a_payload_with_nothing_in_it_is_still_refused(
 
 def test_a_page_plan_is_persisted_without_finishing_the_generation(
     test_db: Session, generation: WikiGeneration
-):
+) -> None:
     WikiService().save_generation_contents(
         test_db,
         WikiContentWriteRequest(

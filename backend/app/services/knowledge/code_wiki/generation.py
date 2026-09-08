@@ -22,7 +22,7 @@ which is what makes the next scheduled run pick the work up again rather than sk
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -189,6 +189,7 @@ def start_generation(
     total_source_files: Optional[int] = None,
     project_id: int = 0,
     team_id: int = 0,
+    team_id_for_mode: Optional[Callable[[RunMode], int]] = None,
     task_id: int = 0,
     policy: Optional[RunModePolicy] = None,
     now: Optional[datetime] = None,
@@ -207,6 +208,7 @@ def start_generation(
         project_id: Registry row this version belongs to. A real foreign key, so a
             version cannot be written without one.
         team_id: Team the generation task belongs to.
+        team_id_for_mode: Lazily resolves the Team after the run mode is known.
         task_id: Task driving the run, when one exists yet.
         policy: Thresholds promoting an incremental run to a full one.
         now: Reference time, for tests.
@@ -294,7 +296,9 @@ def start_generation(
         kind_id=knowledge_base.id,
         user_id=user.id,
         task_id=task_id,
-        team_id=team_id,
+        team_id=(
+            team_id_for_mode(RunMode(decision.mode)) if team_id_for_mode else team_id
+        ),
         generation_type=(
             WikiGenerationType.FULL
             if RunMode(decision.mode) == RunMode.FULL

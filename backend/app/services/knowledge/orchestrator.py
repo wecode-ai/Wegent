@@ -1113,14 +1113,14 @@ class KnowledgeOrchestrator:
         if show_generation_task is not None:
             update_fields["show_generation_task"] = show_generation_task
         if generation_strategy_is_set:
-            from app.services.knowledge.code_wiki.generation_strategy import (
-                strategy_for_new_wiki,
+            from app.services.knowledge.code_wiki.generation_policy import (
+                ready_strategy_for_new_wiki,
             )
 
             if generation_strategy is None:
                 raise ValueError("A code wiki generation strategy cannot be cleared")
-            update_fields["generation_strategy"] = strategy_for_new_wiki(
-                generation_strategy, db=db
+            update_fields["generation_strategy"] = ready_strategy_for_new_wiki(
+                db, user=user, requested_id=generation_strategy
             )
         if guided_questions is not None:
             update_fields["guided_questions"] = guided_questions
@@ -1443,12 +1443,14 @@ class KnowledgeOrchestrator:
         the repository, are decided by the endpoint: they are about who is asking,
         not about what a code wiki is.
         """
-        from app.services.knowledge.code_wiki.generation_strategy import (
-            strategy_for_new_wiki,
+        from app.services.knowledge.code_wiki.generation_policy import (
+            ready_strategy_for_new_wiki,
         )
         from app.services.knowledge.code_wiki.registry import claim_repository
 
-        generation_strategy = strategy_for_new_wiki(generation_strategy, db=db)
+        generation_strategy = ready_strategy_for_new_wiki(
+            db, user=user, requested_id=generation_strategy
+        )
 
         kb_id = self._create(
             db,

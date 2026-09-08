@@ -68,9 +68,11 @@ from app.services.knowledge.code_wiki.generation import (
     current_run_state,
     run_history,
 )
+from app.services.knowledge.code_wiki.generation_policy import (
+    ready_selectable_strategies,
+)
 from app.services.knowledge.code_wiki.generation_strategy import (
     configured_policy,
-    selectable_strategies,
 )
 from app.services.knowledge.code_wiki.navigation import page_tree
 from app.services.knowledge.code_wiki.publisher import (
@@ -91,7 +93,6 @@ from app.services.knowledge.code_wiki.runner import (
     republish_generation,
     start_first_run,
     start_run,
-    strategy_team_readiness,
 )
 from app.services.knowledge.code_wiki.source import (
     SourceAccessDenied,
@@ -114,15 +115,16 @@ router = APIRouter()
 def get_code_wiki_generation_strategies(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> CodeWikiGenerationStrategyCapabilities:
     """Choices enabled by deployment policy and runnable by this caller.
 
     Team names are intentionally not returned. They are deployment wiring, while this
     small interface is all a create or settings form needs to render a safe choice.
     """
+    strategies, readiness = ready_selectable_strategies(db, user=current_user)
     options = []
-    for strategy in selectable_strategies(db):
-        reason = strategy_team_readiness(db, current_user, strategy)
+    for strategy in strategies:
+        reason = readiness[strategy.strategy_id]
         if reason:
             logger.warning(
                 "[code_wiki] hiding unavailable generation strategy %s for user %s: %s",
@@ -140,8 +142,13 @@ def get_code_wiki_generation_strategies(
             )
         )
 
+    default_strategy = configured_policy(db).default_strategy
     return CodeWikiGenerationStrategyCapabilities(
-        default_strategy=configured_policy(db).default_strategy,
+        default_strategy=(
+            default_strategy
+            if any(option.id == default_strategy for option in options)
+            else None
+        ),
         strategies=options,
     )
 

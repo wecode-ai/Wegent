@@ -36,8 +36,8 @@ export interface CodeWikiGenerationStrategyOption {
 }
 
 export interface CodeWikiGenerationStrategyCapabilities {
-  /** The configured global default, including the legacy compatibility fallback. */
-  default_strategy: string
+  /** Null when the configured global default is not currently runnable. */
+  default_strategy: string | null
   strategies: CodeWikiGenerationStrategyOption[]
 }
 

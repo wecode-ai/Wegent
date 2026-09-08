@@ -47,12 +47,9 @@ class WikiRunContext:
     strategy_id: str = ""
 
 
-def build_full_prompt(context: WikiRunContext) -> str:
-    """Instructions for rebuilding a wiki from nothing."""
-    if context.strategy_id == COORDINATOR_ADAPTIVE:
-        return _build_adaptive_full_prompt(context)
-    if context.strategy_id == COORDINATOR_SOLO:
-        return _build_solo_full_prompt(context)
+def _full_rebuild_intro(context: WikiRunContext, *, strategy_id: str = "") -> str:
+    """The run facts and empty-version contract shared by every full strategy."""
+    strategy = f"\n- Strategy: `{strategy_id}`" if strategy_id else ""
     return f"""\
 Document the repository **{context.project_name}**, from scratch.
 
@@ -60,12 +57,22 @@ Document the repository **{context.project_name}**, from scratch.
 
 - Generation: `{context.generation_id}`
 - Commit: `{context.head_commit or "current HEAD"}`
-- Language: {context.language}
+- Language: {context.language}{strategy}
 - This is a **full rebuild**: the wiki is being written from scratch.
 
 Your version begins empty. A page you do not write is not in the wiki, so write every
 page the wiki should contain, including the ones an earlier run already covered.
-Declaring a removal does nothing here, because there is nothing to remove from.
+Declaring a removal does nothing here, because there is nothing to remove from."""
+
+
+def build_full_prompt(context: WikiRunContext) -> str:
+    """Instructions for rebuilding a wiki from nothing."""
+    if context.strategy_id == COORDINATOR_ADAPTIVE:
+        return _build_adaptive_full_prompt(context)
+    if context.strategy_id == COORDINATOR_SOLO:
+        return _build_solo_full_prompt(context)
+    return f"""\
+{_full_rebuild_intro(context)}
 
 ## Required Writer/Reviewer quality loop
 
@@ -106,19 +113,7 @@ Incremental-only shortcuts do not apply to this run.\
 def _build_adaptive_full_prompt(context: WikiRunContext) -> str:
     """A full rebuild whose Coordinator chooses page authorship by source scope."""
     return f"""\
-Document the repository **{context.project_name}**, from scratch.
-
-## This run
-
-- Generation: `{context.generation_id}`
-- Commit: `{context.head_commit or "current HEAD"}`
-- Language: {context.language}
-- Strategy: `coordinator_adaptive`
-- This is a **full rebuild**: the wiki is being written from scratch.
-
-Your version begins empty. A page nobody writes is not in the wiki, so account for
-every planned page, including pages an earlier run already covered. Declaring a
-removal does nothing here, because there is nothing to remove from.
+{_full_rebuild_intro(context, strategy_id=COORDINATOR_ADAPTIVE)}
 
 ## Adaptive Coordinator protocol
 
@@ -168,25 +163,13 @@ feedback rules. Incremental-only shortcuts do not apply to this run.\
 def _build_solo_full_prompt(context: WikiRunContext) -> str:
     """A full rebuild whose Coordinator is the only researcher and author."""
     return f"""\
-Document the repository **{context.project_name}**, from scratch.
-
-## This run
-
-- Generation: `{context.generation_id}`
-- Commit: `{context.head_commit or "current HEAD"}`
-- Language: {context.language}
-- Strategy: `coordinator_solo`
-- This is a **full rebuild**: the wiki is being written from scratch.
-
-Your version begins empty. You are the sole author, so write every planned page,
-including pages an earlier run already covered. Declaring a removal does nothing here,
-because there is nothing to remove from.
+{_full_rebuild_intro(context, strategy_id=COORDINATOR_SOLO)}
 
 ## Solo Coordinator protocol
 
 Do not call the Claude Code `Task` or `Agent` tool and do not delegate research,
 writing, review, or QA. Do not open Plan, QA, Recheck, or other Reviewer phases. This
-strategy deliberately has no subagent or review loop.
+strategy deliberately has no subagent or review loop: you are the sole author.
 
 First build one ordered page plan. For every page record its path, purpose, concrete
 `Must explain` questions, seed paths, and prerequisite pages. Then inspect the source

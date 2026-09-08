@@ -1205,6 +1205,7 @@
       "loading": "Loading available strategies…",
       "loadFailed": "Could not load strategies. Try again later.",
       "noneAvailable": "No generation strategies are available",
+      "selectRequired": "Select an available generation strategy",
       "systemRecommended": "System default: {{strategy}}",
       "systemRecommendedDescription": "The system uses {{strategy}} by default. You can override it in Advanced settings.",
       "legacyTitle": "Legacy compatibility mode",

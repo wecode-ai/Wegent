@@ -138,23 +138,25 @@ def test_generation_strategy_capabilities_hide_unready_deployment_wiring(
     )
     with (
         patch(
-            "app.api.endpoints.knowledge_code_wiki.selectable_strategies",
-            return_value=(adaptive, reviewed),
+            "app.api.endpoints.knowledge_code_wiki.ready_selectable_strategies",
+            return_value=(
+                (adaptive, reviewed),
+                {
+                    "coordinator_adaptive": "Writer is missing",
+                    "coordinator_reviewed": "",
+                },
+            ),
         ),
         patch(
             "app.api.endpoints.knowledge_code_wiki.configured_policy",
             return_value=SimpleNamespace(default_strategy="coordinator_adaptive"),
-        ),
-        patch(
-            "app.api.endpoints.knowledge_code_wiki.strategy_team_readiness",
-            side_effect=("Writer is missing", ""),
         ),
     ):
         response = test_client.get(STRATEGIES_URL, headers=auth_headers)
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "default_strategy": "coordinator_adaptive",
+        "default_strategy": None,
         "strategies": [
             {
                 "id": "coordinator_reviewed",
@@ -1654,7 +1656,7 @@ def test_a_code_wiki_and_its_registry_row_are_created_together(
     rows = test_db.query(WikiProject).filter(WikiProject.kind_id == result.id).all()
     assert len(rows) == 1
     wiki = test_db.get(Kind, result.id)
-    assert wiki.json["spec"]["generationStrategy"] == "legacy"
+    assert wiki.json["spec"]["generationStrategy"] == "coordinator_adaptive"
     # Compared against the resolved source rather than the URL that was typed: how a
     # URL is normalised is settled elsewhere, and restating it here would make this
     # test fail for a reason that has nothing to do with what it is asserting.
@@ -1837,10 +1839,15 @@ def test_code_wiki_model_update_reaches_the_stored_spec(
 def test_code_wiki_strategy_update_reaches_the_stored_spec(
     test_db: Session,
     test_user: User,
+    monkeypatch,
 ) -> None:
     from app.services.knowledge.orchestrator import knowledge_orchestrator
 
     wiki = _stored_code_wiki(test_db, test_user, "strategy-wiki")
+    monkeypatch.setattr(
+        "app.services.knowledge.code_wiki.generation_policy.strategy_team_readiness_many",
+        lambda _db, _user, _strategies: {"coordinator_reviewed": ""},
+    )
 
     result = knowledge_orchestrator.update_knowledge_base(
         db=test_db,

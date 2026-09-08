@@ -37,7 +37,7 @@ const pages = [
 
 describe('wiki navigation expansion', () => {
   it('opens the first directory level by default without reopening a manual collapse', () => {
-    render(<WikiNavigation pages={pages} activePath="" onSelect={jest.fn()} />)
+    const { rerender } = render(<WikiNavigation pages={pages} activePath="" onSelect={jest.fn()} />)
 
     const architecture = screen.getByTestId('wiki-nav-toggle-architecture')
     expect(architecture).toHaveAttribute('aria-expanded', 'true')
@@ -48,6 +48,10 @@ describe('wiki navigation expansion', () => {
 
     expect(architecture).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('wiki-nav-page-architecture/backend')).not.toBeInTheDocument()
+
+    rerender(<WikiNavigation pages={[...pages]} activePath="" onSelect={jest.fn()} />)
+
+    expect(architecture).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('still opens deeper ancestors for the active page', () => {

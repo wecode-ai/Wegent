@@ -407,7 +407,6 @@ export function EditKnowledgeBaseDialog({
                               setGenerationStrategy(strategy)
                               setGenerationStrategyTouched(true)
                             }}
-                            emptyOption="deployment"
                             testId="code-wiki-generation-strategy"
                           />
                         </SimpleConfigRow>

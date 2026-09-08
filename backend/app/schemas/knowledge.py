@@ -758,9 +758,9 @@ class CodeWikiGenerationStrategyOption(BaseModel):
 class CodeWikiGenerationStrategyCapabilities(BaseModel):
     """Deployment policy projected into the choices a Code Wiki UI needs."""
 
-    # This may be the internal ``legacy`` compatibility strategy. It remains
-    # non-selectable, but callers still need it to explain the actual default.
-    default_strategy: str
+    # Empty means the configured default is currently unavailable, so a form must
+    # require the caller to choose one of the runnable strategies explicitly.
+    default_strategy: Optional[str] = None
     strategies: List[CodeWikiGenerationStrategyOption] = Field(default_factory=list)
 
 

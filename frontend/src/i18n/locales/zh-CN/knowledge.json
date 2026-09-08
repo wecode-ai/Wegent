@@ -1205,6 +1205,7 @@
       "loading": "正在加载可用策略…",
       "loadFailed": "加载策略失败，请稍后重试",
       "noneAvailable": "当前没有可用的生成策略",
+      "selectRequired": "请选择一个可用的生成策略",
       "systemRecommended": "系统默认：{{strategy}}",
       "systemRecommendedDescription": "系统默认使用 {{strategy}}；可在高级设置中单独调整。",
       "legacyTitle": "历史兼容方式",

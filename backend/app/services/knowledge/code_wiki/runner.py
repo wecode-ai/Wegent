@@ -179,12 +179,29 @@ def start_run(
         GENERATION_STRATEGY_SPEC_KEY
     )
     try:
-        strategy = strategy_for_run(stored_strategy, db=db)
+        legacy_strategy = strategy_for_run(None, db=db)
     except ValueError as error:
         raise CodeWikiRunError(str(error)) from error
+    # Strategy protocols currently describe full rebuilds only. The legacy Team is
+    # therefore deliberately used to make the run-mode decision and to execute an
+    # incremental update, preserving the pre-strategy behaviour until incremental
+    # protocols are explicitly designed.
     team, task_user = _resolve_execution_context(
-        db, knowledge_base, user, strategy=strategy
+        db, knowledge_base, user, strategy=legacy_strategy
     )
+    execution = {"strategy": legacy_strategy, "team": team}
+
+    def execution_team_id(mode: RunMode) -> int:
+        if mode is RunMode.FULL:
+            try:
+                strategy = strategy_for_run(stored_strategy, db=db)
+            except ValueError as error:
+                raise CodeWikiRunError(str(error)) from error
+            selected_team, _ = _resolve_execution_context(
+                db, knowledge_base, user, strategy=strategy
+            )
+            execution.update(strategy=strategy, team=selected_team)
+        return execution["team"].id
 
     previous_commit = published_commit(db, knowledge_base)
     # Read on every run, including the first.
@@ -232,22 +249,25 @@ def start_run(
         # so a zero passes every test and fails every deployment.
         project_id=_project_id(db, knowledge_base),
         team_id=team.id,
+        team_id_for_mode=execution_team_id,
     )
     if not started.started:
         return StartedRun(
             generation=None,
             reason=started.decision.reason,
             mode=started.decision.mode,
-            strategy_id=strategy.strategy_id,
-            strategy_revision=strategy.revision,
+            strategy_id=legacy_strategy.strategy_id,
+            strategy_revision=legacy_strategy.revision,
         )
 
     generation = started.generation
+    full = RunMode(started.decision.mode) is RunMode.FULL
+    strategy = execution["strategy"]
+    team = execution["team"]
     generation.ext = {
         **(generation.ext or {}),
         GENERATION_STRATEGY_EXT_KEY: strategy.snapshot(),
     }
-    full = RunMode(started.decision.mode) is RunMode.FULL
     reviewer_agent_type = ""
     section_writer_agent_type = ""
     collaboration_model = str(
@@ -441,6 +461,31 @@ def _resolve_execution_context(
     return team, task_user
 
 
+def strategy_team_readiness_many(
+    db: Session,
+    user: User,
+    strategies: Sequence[ResolvedGenerationStrategy],
+) -> Dict[str, str]:
+    """Check several strategy bindings while resolving each Team only once."""
+    from app.services.adapters.team_kinds import team_kinds_service
+
+    teams: Dict[tuple[str, str], Optional[Kind]] = {}
+    readiness: Dict[str, str] = {}
+    for strategy in strategies:
+        team_key = (strategy.team_ref.namespace, strategy.team_ref.name)
+        if team_key not in teams:
+            teams[team_key] = team_kinds_service.get_team_by_name_and_namespace(
+                db=db,
+                team_name=strategy.team_ref.name,
+                team_namespace=strategy.team_ref.namespace,
+                user_id=user.id,
+            )
+        readiness[strategy.strategy_id] = _strategy_team_readiness(
+            db, strategy, teams[team_key]
+        )
+    return readiness
+
+
 def strategy_team_readiness(
     db: Session, user: User, strategy: ResolvedGenerationStrategy
 ) -> str:
@@ -450,21 +495,22 @@ def strategy_team_readiness(
     still resolves independently because deployment resources can change after a form
     opened.
     """
-    from app.services.adapters.team_kinds import team_kinds_service
+    return strategy_team_readiness_many(db, user, (strategy,))[strategy.strategy_id]
 
-    team = team_kinds_service.get_team_by_name_and_namespace(
-        db=db,
-        team_name=strategy.team_ref.name,
-        team_namespace=strategy.team_ref.namespace,
-        user_id=user.id,
-    )
+
+def _strategy_team_readiness(
+    db: Session, strategy: ResolvedGenerationStrategy, team: Optional[Kind]
+) -> str:
     if team is None:
         return (
             f"Team '{strategy.team_ref.namespace}/{strategy.team_ref.name}' is not "
             "available"
         )
     try:
-        if strategy.requires_plan_review(collaboration_model=""):
+        collaboration_model = str(
+            ((team.json or {}).get("spec") or {}).get("collaborationModel", "")
+        )
+        if strategy.requires_plan_review(collaboration_model=collaboration_model):
             _reviewer_agent_type(db, team)
         if strategy.requires_section_writer:
             _required_member_agent_type(db, team, "writer", "Section Writer")

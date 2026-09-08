@@ -68,7 +68,8 @@ export function GenerationStrategySelect({
   }, [])
 
   const choices = capabilities?.strategies ?? []
-  const selected = value || (emptyOption ? DEFAULT_OPTION : '')
+  const hasRunnableDefault = Boolean(capabilities?.default_strategy)
+  const selected = value || (emptyOption && hasRunnableDefault ? DEFAULT_OPTION : '')
   const legacy = Boolean(value && !choices.some(item => item.id === value))
   const disabled = loadState !== 'ready' || choices.length === 0
   const optionFor = (id: string) => choices.find(item => item.id === id)
@@ -76,7 +77,7 @@ export function GenerationStrategySelect({
     BUILTIN_STRATEGY_IDS.has(id) ? t(`codeWiki.strategy.options.${id}.title`) : fallback
   const description = (id: string, fallback: string) =>
     BUILTIN_STRATEGY_IDS.has(id) ? t(`codeWiki.strategy.options.${id}.description`) : fallback
-  const defaultId = capabilities?.default_strategy ?? 'legacy'
+  const defaultId = capabilities?.default_strategy ?? ''
   const defaultOption = optionFor(defaultId)
   const defaultName =
     defaultId === 'legacy'
@@ -100,7 +101,7 @@ export function GenerationStrategySelect({
                       ? 'codeWiki.strategy.legacyTitle'
                       : 'codeWiki.strategy.unavailable'
                   )
-                : t('codeWiki.strategy.systemRecommended', { strategy: defaultName })
+                : t('codeWiki.strategy.selectRequired')
 
   return (
     <div className="space-y-1.5">
@@ -117,7 +118,7 @@ export function GenerationStrategySelect({
           <SelectValue>{triggerLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent>
-          {emptyOption && (
+          {emptyOption && hasRunnableDefault && (
             <SelectItem value={DEFAULT_OPTION}>
               {t('codeWiki.strategy.systemRecommended', { strategy: defaultName })}
             </SelectItem>
@@ -138,7 +139,7 @@ export function GenerationStrategySelect({
           ))}
         </SelectContent>
       </Select>
-      {emptyOption && selected === DEFAULT_OPTION ? (
+      {emptyOption && hasRunnableDefault && selected === DEFAULT_OPTION ? (
         <p className="text-xs text-text-muted">
           {defaultId === 'legacy'
             ? t('codeWiki.strategy.legacyDescription')

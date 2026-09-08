@@ -37,6 +37,8 @@ class CodeWikiGenerationPolicy(BaseModel):
 
     @model_validator(mode="after")
     def defaults_are_enabled(self) -> "CodeWikiGenerationPolicy":
+        if self.legacy_fallback_strategy != "legacy":
+            raise ValueError("legacyFallbackStrategy must be 'legacy'")
         for field_name, strategy_id in (
             ("defaultStrategy", self.default_strategy),
             ("legacyFallbackStrategy", self.legacy_fallback_strategy),

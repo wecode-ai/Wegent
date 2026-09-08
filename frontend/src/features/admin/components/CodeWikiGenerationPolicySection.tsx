@@ -148,6 +148,7 @@ export function CodeWikiGenerationPolicySection() {
                       checked={strategy.enabled}
                       onCheckedChange={enabled => updateStrategy(strategy.id, { enabled })}
                       aria-label={strategyName(strategy, t)}
+                      data-testid={`code-wiki-generation-policy-enabled-${strategy.id}`}
                     />
                   </div>
                   <Select
@@ -163,7 +164,10 @@ export function CodeWikiGenerationPolicySection() {
                     }}
                     disabled={!strategy.enabled || teams.length === 0}
                   >
-                    <SelectTrigger className="bg-base">
+                    <SelectTrigger
+                      className="bg-base"
+                      data-testid={`code-wiki-generation-policy-team-${strategy.id}`}
+                    >
                       <SelectValue
                         placeholder={t(
                           'system_config.code_wiki_generation_policy_team_placeholder'
@@ -193,7 +197,7 @@ export function CodeWikiGenerationPolicySection() {
               }
               disabled={loadState !== 'ready' || enabledStrategies.length === 0}
             >
-              <SelectTrigger className="bg-base">
+              <SelectTrigger className="bg-base" data-testid="code-wiki-generation-policy-default">
                 <SelectValue
                   placeholder={t('system_config.code_wiki_generation_policy_default_placeholder')}
                 />

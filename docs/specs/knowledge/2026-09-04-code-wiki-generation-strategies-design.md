@@ -38,7 +38,7 @@ Planner + Section Writer 方案在一次真实仓库生成中带来了明确收�
 | 策略 ID                | 写作方式                                                 | Reviewer / QA | 定位                     |
 | ---------------------- | -------------------------------------------------------- | ------------- | ------------------------ |
 | `coordinator_adaptive` | Coordinator 按范围决定自己写或委派 Writer                | 无            | 新的默认候选             |
-| `coordinator_reviewed` | Coordinator + Section Writer，保留原 Coordinate 评审流程 | 有            | 质量基线与回归对照       |
+| `coordinator_reviewed` | Coordinator + 可选 Section Writer，保留原 Coordinate 评审流程 | 有            | 质量基线与回归对照       |
 | `coordinator_solo`     | Coordinator 自己研究并写完全部页面，不启动子 agent       | 无            | 写作规范改进的单人基线   |
 | `planner_writer`       | Planner 不写页，全部交给 Writer                          | 无            | 09-03 方案的参考实现，暂未注册为可选策略 |
 
@@ -65,7 +65,7 @@ Wiki 的策略在创建或其高级设置中保存；定时、自动与手动 ge
   "generationStrategy": {
     "id": "coordinator_adaptive",
     "revision": 1,
-    "teamName": "code-wiki-adaptive-team"
+    "teamRef": { "namespace": "default", "name": "code-wiki-team" }
   }
 }
 ```

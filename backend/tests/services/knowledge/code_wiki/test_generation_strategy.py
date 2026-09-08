@@ -166,6 +166,33 @@ def test_a_run_always_uses_the_stored_choice(monkeypatch) -> None:
     assert resolved.strategy_id == LEGACY
 
 
+def test_a_new_wiki_rejects_an_internal_default(monkeypatch) -> None:
+    policy = CodeWikiGenerationPolicy(
+        defaultStrategy=LEGACY,
+        legacyFallbackStrategy=LEGACY,
+        strategies={
+            LEGACY: CodeWikiStrategyBinding(teamRef=CodeWikiTeamRef(name="old-team")),
+        },
+    )
+    monkeypatch.setattr(wiki_settings, "CODE_WIKI_GENERATION_POLICY", policy)
+
+    with pytest.raises(ValueError, match="internal"):
+        strategy_for_new_wiki()
+
+
+def test_legacy_fallback_cannot_name_a_selectable_strategy() -> None:
+    with pytest.raises(ValueError, match="legacyFallbackStrategy"):
+        CodeWikiGenerationPolicy(
+            defaultStrategy=COORDINATOR_ADAPTIVE,
+            legacyFallbackStrategy=COORDINATOR_ADAPTIVE,
+            strategies={
+                COORDINATOR_ADAPTIVE: CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        )
+
+
 def test_policy_defaults_must_name_enabled_bindings() -> None:
     with pytest.raises(ValueError, match="defaultStrategy"):
         CodeWikiGenerationPolicy(

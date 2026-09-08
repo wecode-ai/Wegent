@@ -146,7 +146,7 @@ def strategy_for_new_wiki(
     policy = configured_policy(db)
     strategy_id = (requested_id or policy.default_strategy).strip()
     resolved = _resolve(policy, strategy_id)
-    if requested_id and not resolved.definition.selectable:
+    if not resolved.definition.selectable:
         raise ValueError(f"Code Wiki generation strategy '{strategy_id}' is internal")
     return resolved.strategy_id
 
