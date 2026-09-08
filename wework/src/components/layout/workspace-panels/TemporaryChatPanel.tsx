@@ -138,7 +138,11 @@ export function TemporaryChatPanel({
   const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
   const globalSelectedModelOptions =
     projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-  const taskModelIdentityPending = Boolean(address && !taskModelSelection?.taskSelection)
+  const taskModelIdentityPending = Boolean(
+    address &&
+    !taskModelSelection?.taskSelection &&
+    (state.isBootstrapping || state.runtimeWork === null)
+  )
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,

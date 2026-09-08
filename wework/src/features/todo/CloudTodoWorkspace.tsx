@@ -553,6 +553,8 @@ function boardTaskModelSelection(
   binding: CloudTodoBoardTaskBinding,
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): ModelSelectionConfig | null {
+  if (binding.modelSelection) return binding.modelSelection
+
   const runtimeSelection = findRuntimeTask(runtimeWork, {
     deviceId: binding.device_id,
     taskId: binding.task_id,
@@ -1790,6 +1792,7 @@ export function CloudTodoWorkspace({
               task_id: binding.task_id,
               task_title: binding.task_title,
               workflow_node_id: binding.workflow_node_id,
+              modelSelection: binding.modelSelection,
               running: runtimeTaskRunningByAddress.get(addressKey) ?? false,
               changeRequestTarget: runtimeTask
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
