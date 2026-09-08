@@ -53,6 +53,10 @@ for cmd in cargo uv black isort pytest npm npx pnpm; do
 done
 
 export CALL_LOG
+export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Wegent Push Gate Test}"
+export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-push-gate-test@localhost}"
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 
 # This historical range changes only backend Python files. It exercises the
 # Python module branch without pulling frontend or executor checks into the
@@ -241,15 +245,15 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT
 refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 2$' "$CALL_LOG"; then
     echo "Expected full renderer tests to exclude Electron-owned test files."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
 fi
 
-if ! grep -qE 'Running full renderer unit tests with 1 worker' "$WEWORK_FULL_TEST_OUT"; then
-    echo "Expected full Wework renderer tests to use one worker by default."
+if ! grep -qE 'Running full renderer unit tests with 2 workers' "$WEWORK_FULL_TEST_OUT"; then
+    echo "Expected full Wework renderer tests to use two workers by default."
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi

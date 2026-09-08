@@ -197,7 +197,7 @@ run_wework_unit_tests() {
 
     if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
         if [ "$WEWORK_RENDERER_FULL_TESTS" -eq 1 ]; then
-            test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-1}"
+            test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
             echo -e "   Running full renderer unit tests with $(format_worker_count "$test_workers")..."
             if ! pnpm --filter wework exec vitest run --dir src --pool=threads \
                 --maxWorkers "$test_workers" \

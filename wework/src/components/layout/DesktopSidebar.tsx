@@ -1494,6 +1494,7 @@ function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
   const queuePosition =
@@ -1875,14 +1876,31 @@ function RuntimeTaskRow({
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
-                    title={t('workbench.runtime_task_running')}
-                    aria-label={t('workbench.runtime_task_running')}
+                    title={
+                      hasActiveGoal
+                        ? t('workbench.runtime_task_running_with_goal')
+                        : t('workbench.runtime_task_running')
+                    }
+                    aria-label={
+                      hasActiveGoal
+                        ? t('workbench.runtime_task_running_with_goal')
+                        : t('workbench.runtime_task_running')
+                    }
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <CompositedSpinner
-                      icon={Loader2}
-                      className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
-                    />
+                    <span className="relative flex h-4 w-4 items-center justify-center">
+                      <CompositedSpinner
+                        icon={Loader2}
+                        className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
+                      />
+                      {hasActiveGoal ? (
+                        <span
+                          data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
+                          aria-hidden="true"
+                          className="absolute h-1.5 w-1.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                    </span>
                   </span>
                 ) : priorityReason === 'waiting' ? (
                   <span
