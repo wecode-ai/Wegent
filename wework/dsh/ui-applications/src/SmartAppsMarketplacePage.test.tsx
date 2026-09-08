@@ -713,6 +713,11 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.change(screen.getByTestId('smart-app-development-parent-path'), {
       target: { value: '/tmp' },
     })
+    expect(screen.getByTestId('smart-app-development-template-web')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('smart-app-development-template-web-host-remote'))
     fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
 
     await waitFor(() =>
@@ -729,6 +734,9 @@ describe('SmartAppsMarketplacePage', () => {
           path: '/tmp/blank-workbench',
         },
       })
+    )
+    expect(createDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({ template: 'web-host-remote' })
     )
     expect(navigateTo).toHaveBeenCalledWith('/')
   })
