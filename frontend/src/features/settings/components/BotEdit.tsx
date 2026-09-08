@@ -286,10 +286,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const primaryModelIsVideo = selectedModelObject?.modelCategoryType === 'video'
   const videoPrimaryRequired = modelCategoryType === 'video'
   const showVideoPrimaryControls = videoPrimaryRequired || primaryModelIsVideo
-  const selectedShellType = useMemo(() => {
-    const selectedShell = shells.find(shell => shell.name === agentName)
-    return selectedShell?.shellType || agentName
-  }, [agentName, shells])
+  const resolveShellType = useCallback(
+    (shellName: string) => shells.find(shell => shell.name === shellName)?.shellType || shellName,
+    [shells]
+  )
+  const selectedShellType = useMemo(
+    () => resolveShellType(agentName),
+    [agentName, resolveShellType]
+  )
   const selectableAllowedModels = useMemo(
     () =>
       primaryModels.filter(model => !allowedModels.some(allowed => allowed.name === model.name)),
@@ -327,11 +331,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         if (mcpConfig.trim()) {
           try {
             const currentMcpConfig = JSON.parse(mcpConfig)
-            if (isMcpCapableShellType(value)) {
-              const adaptedConfig = adaptMcpConfigForShell(currentMcpConfig, value)
+            const shellType = resolveShellType(value)
+            if (isMcpCapableShellType(shellType)) {
+              const adaptedConfig = adaptMcpConfigForShell(currentMcpConfig, shellType)
               setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
             } else {
-              console.warn(`Unknown agent type "${value}", skipping MCP config adaptation`)
+              console.warn(`Unknown agent type "${shellType}", skipping MCP config adaptation`)
             }
           } catch (error) {
             console.warn('Failed to adapt MCP config on agent change:', error)
@@ -340,7 +345,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
       setAgentName(value)
     },
-    [agentName, mcpConfig, resetAgentDependentConfig]
+    [agentName, mcpConfig, resetAgentDependentConfig, resolveShellType]
   )
 
   // Documentation handlers
@@ -835,8 +840,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     let parsedMcpConfig: Record<string, unknown> = {}
     if (!isDifyAgent && mcpConfig.trim()) {
       parsedMcpConfig = JSON.parse(mcpConfig)
-      if (parsedMcpConfig && agentName && isMcpCapableShellType(agentName)) {
-        parsedMcpConfig = adaptMcpConfigForShell(parsedMcpConfig, agentName)
+      if (parsedMcpConfig && selectedShellType && isMcpCapableShellType(selectedShellType)) {
+        parsedMcpConfig = adaptMcpConfigForShell(parsedMcpConfig, selectedShellType)
       }
     }
 
@@ -877,6 +882,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     selectedModelType,
     mcpConfig,
     agentName,
+    selectedShellType,
     botName,
     defaultKnowledgeBaseRefs,
     prompt,
@@ -1055,11 +1061,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       try {
         parsedMcpConfig = JSON.parse(mcpConfig)
         // Adapt MCP config types based on selected agent
-        if (parsedMcpConfig && agentName) {
-          if (isMcpCapableShellType(agentName)) {
-            parsedMcpConfig = adaptMcpConfigForShell(parsedMcpConfig, agentName)
+        if (parsedMcpConfig && selectedShellType) {
+          if (isMcpCapableShellType(selectedShellType)) {
+            parsedMcpConfig = adaptMcpConfigForShell(parsedMcpConfig, selectedShellType)
           } else {
-            console.warn(`Unknown agent type "${agentName}", skipping MCP config adaptation`)
+            console.warn(
+              `Unknown agent type "${selectedShellType}", skipping MCP config adaptation`
+            )
           }
         }
       } catch {

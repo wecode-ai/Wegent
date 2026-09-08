@@ -621,6 +621,53 @@ class TestPrepareMcpForCodeRuntime:
             }
         ]
 
+    def test_authenticated_http_skill_mcp_is_rejected(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        bot_config = {"shell_type": "Codex", "mcp_servers": []}
+        skill_configs = [
+            {
+                "name": "insecure-skill",
+                "mcpServers": {
+                    "privateServer": {
+                        "type": "streamable-http",
+                        "url": "http://mcp.example.com/private",
+                        "headers": {"Authorization": "Bearer secret"},
+                    }
+                },
+            }
+        ]
+
+        builder._prepare_mcp_for_code_runtime(bot_config, skill_configs)
+
+        assert bot_config["mcp_servers"] == []
+
+    def test_authenticated_https_skill_mcp_is_preserved(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        bot_config = {"shell_type": "Codex", "mcp_servers": []}
+        skill_configs = [
+            {
+                "name": "secure-skill",
+                "mcpServers": {
+                    "privateServer": {
+                        "type": "streamable-http",
+                        "url": "https://mcp.example.com/private",
+                        "headers": {"Authorization": "Bearer secret"},
+                    }
+                },
+            }
+        ]
+
+        builder._prepare_mcp_for_code_runtime(bot_config, skill_configs)
+
+        assert bot_config["mcp_servers"] == [
+            {
+                "name": "secure-skill_privateServer",
+                "type": "http",
+                "url": "https://mcp.example.com/private",
+                "headers": {"Authorization": "Bearer secret"},
+            }
+        ]
+
     @patch.object(
         TaskRequestBuilder,
         "_check_mcp_server_reachable",

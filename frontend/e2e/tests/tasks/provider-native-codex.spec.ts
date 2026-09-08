@@ -116,7 +116,7 @@ test.describe('Provider-native Codex access', () => {
     expect(JSON.stringify(calls[0].output)).toContain(PROVIDER_NATIVE_MARKERS.a1)
     expect(extractTaskAnswer(task)).toContain(PROVIDER_NATIVE_MARKERS.a1)
     await expect(page.getByTestId('messages-container')).toContainText(PROVIDER_NATIVE_MARKERS.a1, {
-      timeout: 120_000,
+      timeout: 30_000,
     })
     await page.screenshot({
       path: testInfo.outputPath('codex-web-02-skill-mcp-completed.png'),
@@ -143,6 +143,8 @@ test.describe('Provider-native Codex access', () => {
           kind: 'Model',
           metadata: { name: CODEX_MODEL_NAME, namespace: 'default' },
           spec: {
+            protocol: 'openai',
+            apiFormat: 'chat/completions',
             modelConfig: {
               env: {
                 model: 'openai',

@@ -7,11 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createSingleRootLocalProject, DEFAULT_MODEL_LABEL } from '../modules/shared.mjs'
-import {
-  responseCompleted,
-  responseCreated,
-  streamingTextEvents,
-} from '../modules/response-protocol.mjs'
+import { streamingTextEvents } from '../modules/response-protocol.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -49,7 +45,6 @@ async function requestJson(backendUrl, authToken, path, init = {}) {
 function writeText(response, id, text) {
   const stream = streamingTextEvents(id, text)
   const events = [
-    responseCreated(id),
     ...stream.start,
     ...stream.chunks.map(delta => ({
       type: 'response.output_text.delta',
@@ -59,7 +54,6 @@ function writeText(response, id, text) {
       delta,
     })),
     ...stream.finish,
-    responseCompleted(id),
   ]
   response.writeHead(200, {
     'cache-control': 'no-cache',
@@ -271,14 +265,14 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await selectAgent(control, teamId, uiTimeoutMs)
       await captureSelectorMenus(control, captureScreenshot, teamId, uiTimeoutMs)
       await captureScreenshot(control, 'agent-runtime-03-agent-and-runtime-selectors.png')
-      await sendAndWait(control, CLAUDE_PROMPT, CLAUDE_COMPLETION, 60_000)
+      await sendAndWait(control, CLAUDE_PROMPT, CLAUDE_COMPLETION, uiTimeoutMs)
       await captureScreenshot(control, 'agent-runtime-04-claude-completed.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await selectAgent(control, teamId, uiTimeoutMs)
       await selectRuntime(control, 'codex', uiTimeoutMs)
       await captureScreenshot(control, 'agent-runtime-05-codex-override.png')
-      await sendAndWait(control, CODEX_PROMPT, CODEX_COMPLETION, 60_000)
+      await sendAndWait(control, CODEX_PROMPT, CODEX_COMPLETION, uiTimeoutMs)
       await captureScreenshot(control, 'agent-runtime-06-codex-completed.png')
 
       assert.deepEqual(

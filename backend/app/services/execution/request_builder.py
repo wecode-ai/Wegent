@@ -13,6 +13,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 import json
 import logging
 from typing import Any, List, Optional, Union
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -2445,7 +2446,11 @@ Response template:
             skill_configs: List of resolved skill config dicts
         """
         # Step 1: Extract skill MCP servers and merge
-        skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
+        skill_mcp = [
+            server
+            for server in self._extract_skill_mcp_to_list(skill_configs)
+            if self._is_secure_skill_mcp_server(server)
+        ]
         if skill_mcp:
             bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
             logger.info(
@@ -2566,6 +2571,34 @@ Response template:
                 entry.get("type", "?"),
             )
         return result
+
+    @staticmethod
+    def _is_secure_skill_mcp_server(server: dict) -> bool:
+        """Reject credentialed remote MCP servers that use cleartext HTTP."""
+        server_type = str(server.get("type") or "").lower()
+        if server_type == "stdio":
+            return True
+
+        url = str(server.get("url") or "")
+        if not url or ("${{" in url and "}}" in url):
+            return True
+
+        parsed_url = urlsplit(url)
+        has_url_credentials = bool(parsed_url.username or parsed_url.password)
+        credential_fields = ("headers", "auth", "server_auth", "credentials")
+        has_configured_credentials = any(
+            bool(server.get(field)) for field in credential_fields
+        )
+        if parsed_url.scheme.lower() == "http" and (
+            has_url_credentials or has_configured_credentials
+        ):
+            logger.warning(
+                "[SKILL-MCP] Rejected credentialed non-HTTPS server: %s",
+                server.get("name", "?"),
+            )
+            return False
+
+        return True
 
     @staticmethod
     def _normalize_mcp_types_for_claude_code(mcp_servers: list) -> None:

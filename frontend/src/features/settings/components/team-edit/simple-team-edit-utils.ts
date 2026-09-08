@@ -121,7 +121,11 @@ export function resolveShellForExecutor(
   }
 
   if (mode === 'complex') {
-    return shells.find(shell => shell.shellType === 'ClaudeCode') ?? null
+    return (
+      shells.find(shell => shell.shellType === 'ClaudeCode') ??
+      shells.find(shell => shell.shellType === 'Codex') ??
+      null
+    )
   }
 
   if (!customShellName) {
@@ -139,7 +143,7 @@ export function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
     return { mode: 'simple', customShellName: '' }
   }
 
-  if (bot.shell_name === 'ClaudeCode') {
+  if (bot.shell_name === 'ClaudeCode' || bot.shell_name === 'Codex') {
     return { mode: 'complex', customShellName: '' }
   }
 

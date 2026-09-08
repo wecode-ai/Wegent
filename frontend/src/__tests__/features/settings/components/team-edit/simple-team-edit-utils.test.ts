@@ -111,6 +111,19 @@ describe('simple team edit utils', () => {
     expect(resolveShellForExecutor(shells, 'complex')?.name).toBe('ClaudeCode')
   })
 
+  it('resolves complex executor to Codex when ClaudeCode is unavailable', () => {
+    const codexOnlyShells: UnifiedShell[] = [
+      {
+        name: 'Codex',
+        type: 'public',
+        displayName: 'Codex',
+        shellType: 'Codex',
+      },
+    ]
+
+    expect(resolveShellForExecutor(codexOnlyShells, 'complex')?.name).toBe('Codex')
+  })
+
   it('resolves custom executor by selected custom shell name', () => {
     expect(resolveShellForExecutor(shells, 'custom', 'custom-code')?.name).toBe('custom-code')
   })
@@ -127,6 +140,16 @@ describe('simple team edit utils', () => {
         ...bot,
         shell_name: 'ClaudeCode',
         shell_type: 'ClaudeCode',
+      })
+    ).toEqual({
+      mode: 'complex',
+      customShellName: '',
+    })
+    expect(
+      resolveSimpleExecutorFromBot({
+        ...bot,
+        shell_name: 'Codex',
+        shell_type: 'Codex',
       })
     ).toEqual({
       mode: 'complex',
