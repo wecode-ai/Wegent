@@ -37,7 +37,9 @@ test.describe('Provider-native Codex access', () => {
   let activePrompt = ''
 
   test.beforeAll(async ({ request }) => {
-    resources = await createProviderNativeResources(request, TEST_PREFIX)
+    resources = await createProviderNativeResources(request, TEST_PREFIX, {
+      syncDingTalk: false,
+    })
     codexTeamId = await createCodexResources(request)
   })
 

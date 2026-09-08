@@ -24,6 +24,10 @@ export interface ProviderNativeResources {
   fixture: ProviderNativeKnowledgeFixture
 }
 
+interface ProviderNativeResourceOptions {
+  syncDingTalk?: boolean
+}
+
 export interface RecordedProviderCall {
   timestamp: string
   name: string
@@ -46,7 +50,8 @@ export interface ToolScenarioStep {
 
 export async function createProviderNativeResources(
   request: APIRequestContext,
-  prefix: string
+  prefix: string,
+  options: ProviderNativeResourceOptions = {}
 ): Promise<ProviderNativeResources> {
   const apiClient: ApiClient = createApiClient(request)
   const login = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
@@ -110,15 +115,17 @@ export async function createProviderNativeResources(
   expect([200, 201]).toContain(teamResponse.status())
   const teamId = ((await teamResponse.json()) as { id?: number }).id
   expect(teamId).toBeTruthy()
-  await configureDingTalkService(request, token, 'docs', true)
-  await configureDingTalkService(request, token, 'wikispace', true)
-  await resetMockMcp(request)
-  for (const endpoint of ['dingtalk-docs/sync', 'dingtalk-wikispace/sync']) {
-    const response = await request.post(`${PROVIDER_NATIVE_API_URL}/api/${endpoint}`, {
-      headers: authHeaders(token),
-      timeout: 30_000,
-    })
-    expect(response.status(), await response.text()).toBe(200)
+  if (options.syncDingTalk !== false) {
+    await configureDingTalkService(request, token, 'docs', true)
+    await configureDingTalkService(request, token, 'wikispace', true)
+    await resetMockMcp(request)
+    for (const endpoint of ['dingtalk-docs/sync', 'dingtalk-wikispace/sync']) {
+      const response = await request.post(`${PROVIDER_NATIVE_API_URL}/api/${endpoint}`, {
+        headers: authHeaders(token),
+        timeout: 30_000,
+      })
+      expect(response.status(), await response.text()).toBe(200)
+    }
   }
   await resetMockMcp(request)
   return { token, prefix, modelName, botName, teamName, teamId: teamId!, fixture }
