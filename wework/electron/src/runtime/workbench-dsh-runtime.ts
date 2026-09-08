@@ -220,7 +220,7 @@ async function prepareInstanceBundle(
   return packages
 }
 
-async function materializeManifestPackages(
+export async function materializeManifestPackages(
   manifest: WorkbenchAppManifest,
   root: string
 ): Promise<string[]> {
