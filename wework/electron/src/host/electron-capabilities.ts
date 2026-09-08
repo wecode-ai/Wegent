@@ -983,7 +983,12 @@ export function createWorkbenchCapabilityRouter(
       )
     }
     const rect = ownerCaptureRectParam(params)
-    return { dataUrl: await browser.capture(ownerLabel, rect) }
+    return {
+      dataUrl: await browser.capture(ownerLabel, rect, {
+        preferDebugger: true,
+        debuggerFromSurface: true,
+      }),
+    }
   })
   router.grant(WEWORK_WORKBENCH_PRINCIPAL, WORKBENCH_ONLY_CAPABILITIES)
   return router

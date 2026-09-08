@@ -778,6 +778,32 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  setPhase('model-catalog-refresh')
+  const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+  await control.command('waitFor', modelSelector, {
+    enabled: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const selectedModelLabel = await control.command('getText', modelSelector)
+  assert.ok(
+    selectedModelLabel,
+    'The model selector did not expose its selected model before refresh'
+  )
+  await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
+  const refreshSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.ok(
+    refreshSnapshot.testIds.includes('model-selector-button'),
+    'The model selector disappeared while refreshing an already loaded model catalog'
+  )
+  assert.ok(
+    !refreshSnapshot.testIds.includes('model-selector-loading'),
+    'The model selector was replaced by a blank loading placeholder during catalog refresh'
+  )
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
     setPhase(`local-model-switch-${switchCase.id}`)

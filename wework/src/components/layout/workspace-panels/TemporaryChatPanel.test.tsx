@@ -41,6 +41,12 @@ const mocks = vi.hoisted(() => ({
     }
   } | null,
   activeModelSelection: null as ModelSelectionConfig | null,
+  isBootstrapping: false,
+  runtimeWork: null as {
+    projects: unknown[]
+    chats: unknown[]
+    totalTasks: number
+  } | null,
 }))
 
 vi.mock('@/components/chat/ScrollableMessageArea', () => ({
@@ -108,7 +114,11 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     services: {},
-    state: { devices: [], runtimeWork: null },
+    state: {
+      devices: [],
+      isBootstrapping: mocks.isBootstrapping,
+      runtimeWork: mocks.runtimeWork,
+    },
     projectChat: {
       models: [],
       selectedModel: null,
@@ -215,6 +225,8 @@ describe('TemporaryChatPanel', () => {
     mocks.syncTranscript.mockReset()
     mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
+    mocks.isBootstrapping = false
+    mocks.runtimeWork = null
   })
 
   it('passes the collapsed idle state through to the shared composer', () => {
@@ -427,6 +439,25 @@ describe('TemporaryChatPanel', () => {
 
     expect(screen.getByTestId('mock-send')).toBeDisabled()
     expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+  })
+
+  it('lets a legacy task select a model after runtime work finishes without an identity', () => {
+    mocks.runtimeWork = {
+      projects: [],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="legacy-task-without-model"
+        initialAddress={address}
+      />
+    )
+
+    expect(screen.getByTestId('mock-send')).toBeEnabled()
   })
 
   it('auto-submits the initial input once after the task model identity is available', async () => {

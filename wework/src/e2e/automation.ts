@@ -1558,6 +1558,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'dispatchLocalModelSettingsChangedThenMacrotask':
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      await waitForDesktopControlTick()
+      return ''
     case 'dispatchRuntimeLifecycleEvent':
       window.dispatchEvent(
         new CustomEvent('wework:e2e:runtime-task-lifecycle', {

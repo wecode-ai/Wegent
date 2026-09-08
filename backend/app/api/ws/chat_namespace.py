@@ -277,12 +277,21 @@ def _resolve_existing_task_team(
     client-selected team cannot move a turn onto another agent. For legacy
     tasks without a usable teamRef the client team is used as-is; a missing
     client team is corrected to the bound team when available.
+
+    The task lookup must accept subscription tasks (``STATE_SUBSCRIPTION``)
+    as well as regular active ones: subscription-triggered conversations are
+    normal chats that users keep sending follow-up messages to. Using
+    ``get_regular_active_task`` here rejected every follow-up in such
+    conversations with "Task not found". ``TaskResource.is_active_query()``
+    mirrors the states accepted by the REST read path
+    (``get_active_non_deleted_task`` in the sharded store).
     """
-    existing_task = task_stores.task_store.get_regular_active_task(
+    existing_task = task_stores.task_store.get_task_by_states(
         db,
         task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
-    if not existing_task:
+    if not existing_task or existing_task.namespace == "system":
         return None, None, {"error": "Task not found"}
 
     try:

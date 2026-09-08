@@ -82,4 +82,18 @@ describe('MCP import response gate', () => {
       await pending
     }
   })
+
+  it.each([
+    ['calls', 'GET'],
+    ['config', 'POST'],
+    ['reset', 'POST'],
+  ])('closes the %s control connection after responding', async (path, method) => {
+    const response = await fetch(`${url}/mcp-control/${path}`, {
+      method,
+      body: method === 'POST' ? '{}' : undefined,
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('connection')).toBe('close')
+  })
 })

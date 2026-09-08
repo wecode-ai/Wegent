@@ -40,6 +40,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'preview-plugin-import': 'previewPluginImport',
       'import-plugin-package': 'importPluginPackage',
       'set-local-proxy-url': 'setLocalProxyUrl',
+      'model-refresh': 'dispatchLocalModelSettingsChangedThenMacrotask',
       'set-storage': 'setLocalStorageItem',
       'get-storage': 'getLocalStorageItem',
       'remove-storage': 'removeLocalStorageItem',

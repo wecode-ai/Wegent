@@ -395,7 +395,49 @@ describe('CloudTodoBoardCard', () => {
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-85')).not.toBeInTheDocument()
   })
 
-  it('highlights unread cards and mounts the shared task conversation in the hover preview', async () => {
+  it('uses a distinct card color until the item is read', () => {
+    const onClick = vi.fn()
+    const onArchive = vi.fn()
+    const display = {
+      showAssignee: false,
+      showPriority: false,
+      showTags: false,
+      showDate: false,
+    }
+    const { rerender } = render(
+      <CloudTodoBoardCard
+        item={{ ...item, is_unread: true }}
+        processingStatus={false}
+        onClick={onClick}
+        onArchive={onArchive}
+        display={display}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-drop-WEG-85')
+    expect(card).toHaveClass(
+      'border-focus/30',
+      'bg-focus/10',
+      'hover:border-focus/40',
+      'hover:bg-focus/[0.14]'
+    )
+    expect(card).not.toHaveClass('border-border', 'bg-background')
+
+    rerender(
+      <CloudTodoBoardCard
+        item={{ ...item, is_unread: false }}
+        processingStatus={false}
+        onClick={onClick}
+        onArchive={onArchive}
+        display={display}
+      />
+    )
+
+    expect(card).toHaveClass('border-border', 'bg-background', 'hover:border-text-primary/15')
+    expect(card).not.toHaveClass('border-focus/30', 'bg-focus/10')
+  })
+
+  it('mounts the shared task conversation in the hover preview', async () => {
     render(
       <CloudTodoBoardCard
         item={{ ...item, is_unread: true }}
@@ -421,10 +463,6 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-card-drop-WEG-85')).toHaveClass(
-      'border-blue-500/15',
-      'bg-blue-500/[0.04]'
-    )
     expect(screen.getByTestId('cloud-todo-card-final-response-WEG-85')).toHaveTextContent(
       '第六行：等待确认'
     )

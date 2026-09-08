@@ -270,9 +270,19 @@ def test_board_snapshot_returns_first_screen_dependencies(
             "deviceId": "local-device",
             "taskId": "snapshot-runtime-task",
             "taskTitle": "Snapshot runtime task",
+            "modelSelection": {
+                "modelName": "gpt-5.6-codex",
+                "modelType": "public",
+                "options": {"reasoning": "high"},
+            },
         },
     )
     assert binding.status_code == 201
+    assert binding.json()["modelSelection"] == {
+        "modelName": "gpt-5.6-codex",
+        "modelType": "public",
+        "options": {"reasoning": "high"},
+    }
 
     response = test_client.get(
         f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",
