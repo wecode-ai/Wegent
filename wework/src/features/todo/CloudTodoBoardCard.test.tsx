@@ -407,6 +407,7 @@ describe('CloudTodoBoardCard', () => {
     const { rerender } = render(
       <CloudTodoBoardCard
         item={{ ...item, is_unread: true }}
+        processingStatus={false}
         onClick={onClick}
         onArchive={onArchive}
         display={display}
@@ -425,6 +426,7 @@ describe('CloudTodoBoardCard', () => {
     rerender(
       <CloudTodoBoardCard
         item={{ ...item, is_unread: false }}
+        processingStatus={false}
         onClick={onClick}
         onArchive={onArchive}
         display={display}
