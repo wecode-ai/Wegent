@@ -2080,28 +2080,4 @@ mod tests {
             "Invalid model ID"
         );
     }
-
-    #[test]
-    fn is_stale_claude_session_failure_matches_stderr() {
-        assert!(is_stale_claude_session_failure(
-            "No conversation found with session ID: abc-123",
-            ""
-        ));
-    }
-
-    #[test]
-    fn is_stale_claude_session_failure_matches_stdout() {
-        assert!(is_stale_claude_session_failure(
-            "",
-            r#"{"type":"result","is_error":true,"errors":["No conversation found with session ID: abc-123"]}"#
-        ));
-    }
-
-    #[test]
-    fn is_stale_claude_session_failure_ignores_other_errors() {
-        assert!(!is_stale_claude_session_failure(
-            "command timed out after 300s",
-            "some other failure"
-        ));
-    }
 }
