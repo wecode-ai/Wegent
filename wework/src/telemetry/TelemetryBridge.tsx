@@ -1,11 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { installTelemetry, isTelemetryEnabled, setTelemetryEnabled, track } from './client'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { updateAppPreferences } from '@/desktop/appPreferences'
-import { useTranslation } from '@/hooks/useTranslation'
-import { TelemetryConsentDialog } from './TelemetryConsentDialog'
-import { isOfficialReleaseBuild } from './config'
 
 function appSurface(): 'main' | 'popout' | 'workspace' {
   const label = isElectronRuntime() ? getDesktopWindowLabel() : 'main'
@@ -16,20 +13,15 @@ function appSurface(): 'main' | 'popout' | 'workspace' {
 
 export function TelemetryBridge() {
   const appPreferences = useAppPreferencesState()
-  const { t } = useTranslation('common')
   const initializedRef = useRef(false)
   const startedRef = useRef(false)
-  const [savingConsent, setSavingConsent] = useState(false)
-  const [consentError, setConsentError] = useState<string | null>(null)
   const consentAsked = appPreferences?.preferences.telemetryConsentAsked
   const telemetryEnabled = appPreferences?.preferences.telemetryEnabled
-  const officialRelease = isOfficialReleaseBuild()
-  const effectiveTelemetryEnabled =
-    !officialRelease && consentAsked !== true ? true : telemetryEnabled === true
+  const effectiveTelemetryEnabled = consentAsked !== true ? true : telemetryEnabled === true
   const surface = useMemo(() => appSurface(), [])
 
   useEffect(() => {
-    if (!appPreferences?.loaded || (officialRelease && !consentAsked) || initializedRef.current) {
+    if (!appPreferences?.loaded || initializedRef.current) {
       return
     }
     initializedRef.current = true
@@ -38,10 +30,10 @@ export function TelemetryBridge() {
       startedRef.current = true
       track('app_started', { surface })
     })
-  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, officialRelease, surface])
+  }, [appPreferences?.loaded, effectiveTelemetryEnabled, surface])
 
   useEffect(() => {
-    if (!appPreferences?.loaded || (officialRelease && !consentAsked)) return
+    if (!appPreferences?.loaded) return
     void setTelemetryEnabled(effectiveTelemetryEnabled).then(() => {
       // app_started marks the first point in this session where telemetry is
       // active: either right after app launch or after the user re-enables it.
@@ -49,47 +41,17 @@ export function TelemetryBridge() {
       startedRef.current = true
       track('app_started', { surface })
     })
-  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, officialRelease, surface])
+  }, [appPreferences?.loaded, effectiveTelemetryEnabled, surface])
 
   useEffect(() => {
-    if (
-      officialRelease ||
-      !isElectronRuntime() ||
-      !appPreferences?.loaded ||
-      consentAsked === true
-    ) {
+    if (!isElectronRuntime() || !appPreferences?.loaded || consentAsked === true) {
       return
     }
     void updateAppPreferences({
       telemetryConsentAsked: true,
       telemetryEnabled: true,
     })
-  }, [appPreferences?.loaded, consentAsked, officialRelease])
+  }, [appPreferences?.loaded, consentAsked])
 
-  if (!appPreferences?.loaded || !officialRelease || consentAsked || surface !== 'main') {
-    return null
-  }
-
-  const chooseConsent = async (enabled: boolean) => {
-    setSavingConsent(true)
-    setConsentError(null)
-    try {
-      await updateAppPreferences({
-        telemetryConsentAsked: true,
-        telemetryEnabled: enabled,
-      })
-    } catch {
-      setConsentError(t('workbench.telemetry_consent_save_failed'))
-    } finally {
-      setSavingConsent(false)
-    }
-  }
-
-  return (
-    <TelemetryConsentDialog
-      error={consentError}
-      saving={savingConsent}
-      onChoose={enabled => void chooseConsent(enabled)}
-    />
-  )
+  return null
 }
