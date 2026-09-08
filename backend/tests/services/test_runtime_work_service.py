@@ -4877,6 +4877,9 @@ def test_build_runtime_send_execution_request_preserves_selected_model_and_catal
     assert execution_request.model_config["base_url"].endswith(
         "/api/runtime-work/llm-responses-proxy"
     )
+    assert execution_request.model_config["responses_url"].endswith(
+        "/api/runtime-work/llm-responses-proxy/responses"
+    )
     assert execution_request.model_config["default_headers"] == {
         "X-Wegent-Model-Type": "public",
         "X-Wegent-Model-Namespace": "default",

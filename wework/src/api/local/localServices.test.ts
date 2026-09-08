@@ -2339,6 +2339,8 @@ describe('createLocalAppServices', () => {
             model_id: 'shared-model',
             codex_catalog_model_id: 'wework-gpt-5.6-sol',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+            responses_url:
+              'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
             api_key: 'cloud-login-token',
             default_headers: {
               'X-Wegent-Model-Type': 'user',

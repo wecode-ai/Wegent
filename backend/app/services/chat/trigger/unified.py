@@ -565,13 +565,15 @@ def _build_cloud_gateway_model_config(
     )
     model_spec = kind.json.get("spec") if isinstance(kind.json, dict) else None
     catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
+    gateway_base_url = f"{backend_base}/api/runtime-work/llm-responses-proxy"
     config = {
         "model": "openai",
         "model_id": model_name,
         "api_format": "responses",
         "protocol": "openai-responses",
         "upstream_api_format": upstream_api_format or "openai-responses",
-        "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
+        "base_url": gateway_base_url,
+        "responses_url": f"{gateway_base_url}/responses",
         "api_key": token,
         "default_headers": {
             "X-Wegent-Model-Type": model_type,

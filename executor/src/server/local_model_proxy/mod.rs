@@ -2425,14 +2425,14 @@ mod tests {
     fn preserves_explicit_provider_request_url() {
         let upstream = upstream_from_model_config(&json!({
             "base_url": "https://gateway.example/api/runtime-work/llm-responses-proxy",
-            "responses_url": "https://gateway.example/api/runtime-work/llm-responses-proxy",
+            "responses_url": "https://gateway.example/api/runtime-work/llm-responses-proxy/responses",
             "upstream_api_format": "anthropic-messages"
         }))
         .expect("model config should produce an upstream");
 
         assert_eq!(
             upstream.request_url.as_deref(),
-            Some("https://gateway.example/api/runtime-work/llm-responses-proxy")
+            Some("https://gateway.example/api/runtime-work/llm-responses-proxy/responses")
         );
     }
     use std::{
