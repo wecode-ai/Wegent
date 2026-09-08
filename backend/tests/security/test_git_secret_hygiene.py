@@ -83,7 +83,8 @@ def _raw_git_info(engine, user_id: int):
 
 def _assert_transient_read_view(view, attached, db) -> None:
     """Lock the ownership contract: the view is a transient copy, never the
-    session-attached instance, and not registered with the session."""
+    session-attached instance, and not registered with the session. The view
+    must also not share any mutable container with the attached instance."""
     assert view is not attached
     state = sa_inspect(view)
     assert state.transient
@@ -92,6 +93,11 @@ def _assert_transient_read_view(view, attached, db) -> None:
     assert view not in db.dirty
     assert view not in db.new
     assert view not in db.deleted
+    if view.git_info is not None:
+        assert view.git_info is not attached.git_info
+        for view_item, attached_item in zip(view.git_info, attached.git_info):
+            if isinstance(view_item, dict):
+                assert view_item is not attached_item
 
 
 def _assert_attached_clean(attached, db) -> None:
@@ -136,7 +142,13 @@ def test_getter_leaves_no_dirty_state(db_engine) -> None:
 
 
 def test_commit_after_getter_keeps_db_ciphertext(db_engine) -> None:
-    """The admin-path sequence (getter then an unrelated commit)."""
+    """A bare unrelated commit after the getter leaves the DB ciphertext.
+
+    Note this invariant also held on the vulnerable BASE code (value-equality
+    masked the in-place contamination); the persistence regression lock for
+    the real BASE exploit sequence (getter -> git_info rewrite -> commit) is
+    test_git_info_rewrite_after_getter_keeps_db_ciphertext.
+    """
     engine = db_engine
     with sessionmaker(bind=engine)() as db:
         user_id = _add_encrypted_user(db)
@@ -145,6 +157,46 @@ def test_commit_after_getter_keeps_db_ciphertext(db_engine) -> None:
         db.commit()
 
     assert is_token_encrypted(_raw_git_info(engine, user_id)[0]["git_token"])
+
+
+def test_git_info_rewrite_after_getter_keeps_db_ciphertext(db_engine) -> None:
+    """The proven BASE exploit sequence: decrypt getter, then a git_info
+    rewrite in the same session via the production write path, then commit.
+
+    On the vulnerable code the getter left plaintext on the session-attached
+    instance, so the rewrite (delete_git_token) persisted it to the database.
+    The stored ciphertext must survive this sequence.
+    """
+    engine = db_engine
+    with sessionmaker(bind=engine)() as db:
+        user_id = _add_user(
+            db,
+            "two-tokens",
+            [
+                {
+                    "type": "personal",
+                    "git_domain": "github.com",
+                    "git_token": encrypt_git_token(PLAIN_TOKEN),
+                },
+                {
+                    "type": "personal",
+                    "git_domain": "gitlab.com",
+                    "git_token": encrypt_git_token(PLAIN_LEGACY),
+                },
+            ],
+        )
+    with sessionmaker(bind=engine)() as db:
+        # Hold the attached instance BEFORE the getter runs: the vulnerable
+        # code contaminates it in place, and a reload after the getter would
+        # return a fresh (clean) instance via the weak identity map.
+        attached = db.query(User).filter(User.id == user_id).first()
+        user_service.get_user_by_id(db, user_id)  # decrypt read view
+        user_service.delete_git_token(db, user=attached, git_domain="gitlab.com")
+
+    remaining = _raw_git_info(engine, user_id)
+    assert len(remaining) == 1
+    assert is_token_encrypted(remaining[0]["git_token"])
+    assert remaining[0]["git_token"] != PLAIN_TOKEN
 
 
 def test_subsequent_same_session_reader_not_contaminated(db_engine) -> None:
@@ -252,11 +304,18 @@ def test_read_view_ownership_and_pass_through(db_engine, shape, stored) -> None:
 def test_git_auth_consumer_receives_plaintext_token(db_engine) -> None:
     """Production consumer regression: the git-skill auth resolver
     (git_skill.utils.get_auth_for_repo) receives the plaintext token while
-    the session-attached User keeps ciphertext and the DB is unchanged."""
+    the session-attached User keeps ciphertext and the DB is unchanged.
+
+    The attached instance is captured BEFORE the consumer runs, so a
+    regression that contaminates it in place cannot hide behind a reload.
+    """
     engine = db_engine
     with sessionmaker(bind=engine)() as db:
         user_id = _add_encrypted_user(db)
     with sessionmaker(bind=engine)() as db:
+        # Hold the instance the consumer will resolve from before it runs.
+        attached = db.query(User).filter(User.id == user_id).first()
+
         provider, owner, repo, auth_info = get_auth_for_repo(
             "https://github.com/wecode-ai/Wegent", user_id, db
         )
@@ -266,7 +325,8 @@ def test_git_auth_consumer_receives_plaintext_token(db_engine) -> None:
         assert owner == "wecode-ai"
         assert repo == "Wegent"
 
-        attached = db.query(User).filter(User.id == user_id).first()
+        # The very instance the consumer resolved from must still hold
+        # ciphertext and stay clean.
         assert is_token_encrypted(attached.git_info[0]["git_token"])
         _assert_attached_clean(attached, db)
 
