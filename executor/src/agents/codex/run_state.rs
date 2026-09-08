@@ -8,7 +8,7 @@ use super::diagnostics::{
     json_object_keys, json_scalar_field, json_string_field, nested_json_string_field,
     raw_log_preview, serialized_json_len, truncate_text,
 };
-use super::{codex_error_message, extract_text, message_params};
+use super::{codex_error_message, extract_text, message_params, CodexResponseValueOrigin};
 use crate::{
     codex_phase::{codex_phase_is_final, codex_phase_is_process, CodexAgentMessagePhaseTracker},
     logging::log_executor_event,
@@ -61,6 +61,16 @@ impl CodexRunState {
             self.pending_message_id.as_deref()
         } else {
             self.final_message_id.as_deref()
+        }
+    }
+
+    pub(super) fn response_value_origin(&self) -> CodexResponseValueOrigin {
+        if !self.final_text.is_empty() {
+            CodexResponseValueOrigin::Final
+        } else if !self.pending_text.is_empty() {
+            CodexResponseValueOrigin::ProcessFallback
+        } else {
+            CodexResponseValueOrigin::Empty
         }
     }
 
