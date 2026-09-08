@@ -1644,7 +1644,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('私信 AI')
+    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('问AI')
     await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
     expect(requestCatalogs).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('project-space-chat-sidebar')).toHaveAttribute(
