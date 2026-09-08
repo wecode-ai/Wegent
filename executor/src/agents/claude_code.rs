@@ -6,6 +6,7 @@ use std::{
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use futures_util::{stream, StreamExt};
@@ -13,8 +14,10 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     agents::{
-        backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
-        runtime_capabilities::resolve_skill, skill_download::skill_download_concurrency,
+        backend_url::request_backend_url,
+        interactive_mcp::build_interactive_form_answer_query,
+        runtime_capabilities::resolve_skill,
+        skill_download::{log_skill_cache_observation, skill_download_concurrency},
         task_identity::task_identity_env,
     },
     attachments::{
@@ -777,6 +780,7 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
             let provider = provider.clone();
             let plan = &plan;
             async move {
+                let cache_started_at = Instant::now();
                 let Some(skill_ref) = plan.resolved_skill_map.get(&skill_name) else {
                     return;
                 };
@@ -784,6 +788,12 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
                 let Some(cache_miss_reason) =
                     claude_task_skill_cache_miss_reason(&target, skill_ref)
                 else {
+                    log_skill_cache_observation(
+                        Some(skill_ref.skill_id),
+                        &skill_name,
+                        cache_started_at,
+                        "cache_hit",
+                    );
                     return;
                 };
                 let mut fields = task_fields(&request.task_id, &request.subtask_id);

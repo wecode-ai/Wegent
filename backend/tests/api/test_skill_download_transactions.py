@@ -22,6 +22,10 @@ class _QueryStub:
         return self.result
 
 
+def _request_stub():
+    return SimpleNamespace(headers={}, state=SimpleNamespace())
+
+
 @pytest.mark.unit
 def test_download_skill_releases_transaction_before_streaming_response(monkeypatch):
     call_order = []
@@ -49,7 +53,7 @@ def test_download_skill_releases_transaction_before_streaming_response(monkeypat
 
     skills_endpoint.download_skill(
         skill_id=42,
-        request=SimpleNamespace(headers={}),
+        request=_request_stub(),
         namespace="default",
         task_id=None,
         current_user=SimpleNamespace(id=current_user.id, role="user"),
@@ -78,9 +82,10 @@ def test_download_skill_returns_not_modified_for_matching_etag(monkeypatch):
         Mock(return_value=archive),
     )
 
+    request = _request_stub()
     response = skills_endpoint.download_skill(
         skill_id=42,
-        request=SimpleNamespace(headers={}),
+        request=request,
         namespace="default",
         task_id=None,
         if_none_match=f'"sha256:{expected_hash}"',
@@ -91,6 +96,8 @@ def test_download_skill_returns_not_modified_for_matching_etag(monkeypatch):
     assert isinstance(response, Response)
     assert response.status_code == 304
     assert response.headers["etag"] == f'"sha256:{expected_hash}"'
+    assert request.state.skill_download_metadata.cache_source == "conditional_etag"
+    assert request.state.skill_download_metadata.bytes_count == 0
 
 
 @pytest.mark.unit
@@ -117,7 +124,7 @@ def test_download_public_skill_releases_transaction_before_streaming_response(
 
     skills_endpoint.download_public_skill(
         skill_id=42,
-        request=SimpleNamespace(headers={}),
+        request=_request_stub(),
         current_user=SimpleNamespace(id=7, role="admin"),
         db=db,
     )
@@ -137,9 +144,10 @@ def test_download_public_skill_encodes_content_disposition_filename(monkeypatch)
         Mock(return_value=b"zip-data"),
     )
 
+    request = _request_stub()
     response = skills_endpoint.download_public_skill(
         skill_id=42,
-        request=SimpleNamespace(headers={}),
+        request=request,
         current_user=SimpleNamespace(id=7, role="admin"),
         db=db,
     )
@@ -148,3 +156,7 @@ def test_download_public_skill_encodes_content_disposition_filename(monkeypatch)
         response.headers["Content-Disposition"]
         == "attachment; filename*=UTF-8''%E5%88%86%E6%9E%90%20Tool.zip"
     )
+    assert response.headers["Content-Length"] == "8"
+    assert request.state.skill_download_metadata.skill_name == "分析 Tool"
+    assert request.state.skill_download_metadata.cache_source == "skill_binary"
+    assert request.state.skill_download_metadata.bytes_count == 8

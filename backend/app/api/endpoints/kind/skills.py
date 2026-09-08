@@ -62,6 +62,7 @@ from app.services.group_permission import check_group_permission
 from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.resource_library_service import resource_library_service
 from app.services.skill_binding_service import skill_binding_service
+from app.services.skill_download_observability import set_skill_download_metadata
 
 router = APIRouter(prefix="/kinds/skills")
 
@@ -989,12 +990,26 @@ def download_public_skill(
     if not skill:
         raise HTTPException(status_code=404, detail="Public skill not found")
 
+    set_skill_download_metadata(
+        request,
+        skill_name=skill.name,
+        cache_source="none",
+        bytes_count=0,
+    )
+
     # Get binary data using service with user_id=0
     binary_data = skill_kinds_service.get_skill_binary(
         db=db, skill_id=skill_id, user_id=0
     )
     if not binary_data:
         raise HTTPException(status_code=404, detail="Public skill binary not found")
+
+    set_skill_download_metadata(
+        request,
+        skill_name=skill.name,
+        cache_source="skill_binary",
+        bytes_count=len(binary_data),
+    )
 
     filename = f"{skill.name}.zip"
     encoded_filename = quote(filename, safe="")
@@ -1005,7 +1020,10 @@ def download_public_skill(
     return StreamingResponse(
         io.BytesIO(binary_data),
         media_type="application/zip",
-        headers={"Content-Disposition": content_disposition},
+        headers={
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(len(binary_data)),
+        },
     )
 
 
@@ -1777,13 +1795,33 @@ def download_skill(
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
+    set_skill_download_metadata(
+        request,
+        skill_name=skill.metadata.name,
+        cache_source="none",
+        bytes_count=0,
+    )
+
     if not binary_data:
         raise HTTPException(status_code=404, detail="Skill binary not found")
 
     etag = _skill_content_etag(binary_data)
     if _etag_matches(if_none_match, etag):
+        set_skill_download_metadata(
+            request,
+            skill_name=skill.metadata.name,
+            cache_source="conditional_etag",
+            bytes_count=0,
+        )
         _release_read_transaction(db)
         return Response(status_code=304, headers={"ETag": etag})
+
+    set_skill_download_metadata(
+        request,
+        skill_name=skill.metadata.name,
+        cache_source="skill_binary",
+        bytes_count=len(binary_data),
+    )
 
     # Return as streaming response
     # RFC 5987 encoding for non-ASCII filenames
@@ -1796,7 +1834,11 @@ def download_skill(
     return StreamingResponse(
         io.BytesIO(binary_data),
         media_type="application/zip",
-        headers={"Content-Disposition": content_disposition, "ETag": etag},
+        headers={
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(len(binary_data)),
+            "ETag": etag,
+        },
     )
 
 

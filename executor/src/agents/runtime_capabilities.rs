@@ -7,7 +7,7 @@ use std::{
     env, fs,
     io::Cursor,
     path::{Component, Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures_util::{stream, StreamExt};
@@ -22,7 +22,12 @@ use crate::{
     agents::{
         backend_url::{is_local_mode, request_backend_url_or_default},
         claude_config_dir, claude_task_dir, extract_claude_options,
-        skill_download::skill_download_concurrency,
+        skill_download::{
+            encoded_skill_name, log_skill_cache_observation, response_milliseconds,
+            response_request_id, skill_download_concurrency, SkillDownloadObservation,
+            SkillDownloadOutcome, BACKEND_TIME_HEADER, CACHE_SOURCE_HEADER,
+            GATEWAY_UPSTREAM_TIME_HEADER, REQUEST_ID_HEADER, SKILL_ID_HEADER, SKILL_NAME_HEADER,
+        },
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     logging::{log_executor_event, push_error_fields, task_fields},
@@ -906,6 +911,7 @@ async fn deploy_skills(
         .map(|skill| {
             let client = &client;
             async move {
+                let cache_started_at = Instant::now();
                 let target = plan.skills_dir.join(&skill);
                 let skill_ref = plan.resolved_skill_map.get(&skill);
                 let cache_miss_reason =
@@ -916,6 +922,12 @@ async fn deploy_skills(
                             let mut fields = vec![("skill", skill.clone())];
                             fields.push(("reason", reason.clone()));
                             log_executor_event("skill cache validation failed", &fields);
+                            log_skill_cache_observation(
+                                skill_ref.map(|value| value.skill_id),
+                                &skill,
+                                cache_started_at,
+                                "cache_validation_error",
+                            );
                             return SkillDeploymentResult {
                                 skill_name: skill,
                                 success: false,
@@ -925,6 +937,12 @@ async fn deploy_skills(
                         }
                     };
                 let Some(cache_miss_reason) = cache_miss_reason else {
+                    log_skill_cache_observation(
+                        skill_ref.map(|value| value.skill_id),
+                        &skill,
+                        cache_started_at,
+                        "cache_hit",
+                    );
                     return SkillDeploymentResult {
                         skill_name: skill.clone(),
                         success: true,
@@ -1173,6 +1191,10 @@ async fn download_skill(
     let local_hash = installed_skill_hash(&plan.skills_dir, skill_name);
     let download = get_skill_archive(
         client,
+        SkillDownloadIdentity {
+            skill_id,
+            skill_name,
+        },
         &plan.auth_token,
         api_base_url,
         &path,
@@ -1252,49 +1274,133 @@ enum SkillArchiveResponse {
     },
 }
 
+struct SkillDownloadIdentity<'a> {
+    skill_id: i64,
+    skill_name: &'a str,
+}
+
 async fn get_skill_archive(
     client: &reqwest::Client,
+    identity: SkillDownloadIdentity<'_>,
     auth_token: &str,
     api_base_url: &str,
     path: &str,
     local_hash: Option<&str>,
     timeout: Duration,
 ) -> Result<SkillArchiveResponse, String> {
+    let observation = SkillDownloadObservation::begin(identity.skill_id, identity.skill_name);
     let mut request = client
         .get(api_url(api_base_url, path))
         .bearer_auth(auth_token)
+        .header(REQUEST_ID_HEADER, observation.request_id())
+        .header(SKILL_ID_HEADER, identity.skill_id.to_string())
+        .header(SKILL_NAME_HEADER, encoded_skill_name(identity.skill_name))
         .timeout(timeout);
     if let Some(local_hash) = local_hash.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.header(IF_NONE_MATCH, quote_etag(local_hash));
     }
-    let response = request.send().await.map_err(|error| {
-        if error.is_timeout() {
-            "backend download timed out".to_owned()
-        } else if error.is_connect() {
-            "backend download connection failed".to_owned()
-        } else {
-            "backend download request failed".to_owned()
+    let upstream_started_at = Instant::now();
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            let result = if error.is_timeout() {
+                "timeout"
+            } else if error.is_connect() {
+                "connection_error"
+            } else {
+                "request_error"
+            };
+            observation.finish(SkillDownloadOutcome {
+                cache_source: "none",
+                bytes: 0,
+                result,
+                upstream_time_ms: upstream_started_at.elapsed().as_secs_f64() * 1000.0,
+                upstream_status: None,
+                backend_time_ms: None,
+                response_request_id: None,
+            });
+            return Err(if error.is_timeout() {
+                "backend download timed out".to_owned()
+            } else if error.is_connect() {
+                "backend download connection failed".to_owned()
+            } else {
+                "backend download request failed".to_owned()
+            });
         }
-    })?;
-    if response.status() == StatusCode::NOT_MODIFIED {
+    };
+    let status = response.status();
+    let upstream_time_ms =
+        response_milliseconds(response.headers().get(GATEWAY_UPSTREAM_TIME_HEADER))
+            .unwrap_or_else(|| upstream_started_at.elapsed().as_secs_f64() * 1000.0);
+    let backend_time_ms = response_milliseconds(response.headers().get(BACKEND_TIME_HEADER));
+    let request_id = response_request_id(response.headers().get(REQUEST_ID_HEADER));
+    let reported_cache_source = response
+        .headers()
+        .get(CACHE_SOURCE_HEADER)
+        .and_then(|value| value.to_str().ok());
+    let cache_source = if status == StatusCode::NOT_MODIFIED {
+        "executor_local"
+    } else if status == StatusCode::OK && reported_cache_source == Some("skill_binary") {
+        "skill_binary"
+    } else if status == StatusCode::OK {
+        "backend"
+    } else {
+        "none"
+    };
+
+    if status == StatusCode::NOT_MODIFIED {
+        observation.finish(SkillDownloadOutcome {
+            cache_source,
+            bytes: 0,
+            result: "not_modified",
+            upstream_time_ms,
+            upstream_status: Some(status.as_u16()),
+            backend_time_ms,
+            response_request_id: request_id.as_deref(),
+        });
         return Ok(SkillArchiveResponse::NotModified);
     }
-    if response.status() != StatusCode::OK {
-        return Err(format!(
-            "backend download failed with HTTP {}",
-            response.status()
-        ));
+    if status != StatusCode::OK {
+        observation.finish(SkillDownloadOutcome {
+            cache_source,
+            bytes: 0,
+            result: "http_error",
+            upstream_time_ms,
+            upstream_status: Some(status.as_u16()),
+            backend_time_ms,
+            response_request_id: request_id.as_deref(),
+        });
+        return Err(format!("backend download failed with HTTP {}", status));
     }
     let content_hash = response
         .headers()
         .get(ETAG)
         .and_then(|value| value.to_str().ok())
         .map(normalize_etag_hash);
-    let bytes = response
-        .bytes()
-        .await
-        .map(|bytes| bytes.to_vec())
-        .map_err(|_| "backend download body read failed".to_owned())?;
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes.to_vec(),
+        Err(_) => {
+            observation.finish(SkillDownloadOutcome {
+                cache_source,
+                bytes: 0,
+                result: "body_read_error",
+                upstream_time_ms,
+                upstream_status: Some(status.as_u16()),
+                backend_time_ms,
+                response_request_id: request_id.as_deref(),
+            });
+            return Err("backend download body read failed".to_owned());
+        }
+    };
+    observation.finish(SkillDownloadOutcome {
+        cache_source,
+        bytes: bytes.len(),
+        result: "success",
+        upstream_time_ms,
+        upstream_status: Some(status.as_u16()),
+        backend_time_ms,
+        response_request_id: request_id.as_deref(),
+    });
     Ok(SkillArchiveResponse::Archive {
         bytes,
         content_hash,
@@ -2819,6 +2925,15 @@ mod tests {
                     .and_then(|rest| rest.split('/').next())
                     .and_then(|value| value.parse::<i64>().ok())
                     .unwrap();
+                let request_lower = request.to_ascii_lowercase();
+                assert!(
+                    request_lower.contains("x-request-id: skill-download-"),
+                    "{request}"
+                );
+                assert!(
+                    request_lower.contains(&format!("x-wegent-skill-id: {skill_id}")),
+                    "{request}"
+                );
                 let body = bodies.get(&skill_id).unwrap();
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
