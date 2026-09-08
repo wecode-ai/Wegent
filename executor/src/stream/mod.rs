@@ -500,6 +500,11 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
     }
 }
 
+/// Extract the best available error message from a Claude `result` event.
+///
+/// Claude may report failures in `result`, `message`, or the `errors` array. This
+/// function prefers non-empty `result`, then `message`, then the first non-empty
+/// string in `errors`.
 fn extract_result_error_message(value: &Value) -> Option<&str> {
     let result = value
         .get("result")

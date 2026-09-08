@@ -854,6 +854,10 @@ fn claude_follow_up_resume_spec(
     spec
 }
 
+/// Build a copy of the Claude command spec without `--resume` and `--input-format`.
+///
+/// Used when the saved Claude session is no longer present in the sandbox and the
+/// initial `--resume` execution fails with "No conversation found with session ID".
 fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
     let mut spec = CommandSpec::new(base_spec.program.clone());
     spec.env = base_spec.env.clone();
@@ -874,6 +878,10 @@ fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
     spec
 }
 
+/// Check whether the process failure is caused by a missing Claude session.
+///
+/// Claude Code exits with `No conversation found with session ID` when `--resume`
+/// references a session that does not exist in the current sandbox.
 fn is_stale_claude_session_failure(stderr: &str, stdout: &str) -> bool {
     stderr.contains("No conversation found with session ID")
         || stdout.contains("No conversation found with session ID")

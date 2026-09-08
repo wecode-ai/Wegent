@@ -106,6 +106,10 @@ fn inherited_session_id(request: &ExecutionRequest) -> Option<String> {
     })
 }
 
+/// Delete the saved Claude session files for the current task.
+///
+/// Called when the remembered Claude session no longer exists in the sandbox and
+/// the executor needs to fall back to a fresh session.
 pub(crate) fn delete_saved_session_files(request: &ExecutionRequest) {
     for path in removable_session_file_candidates(request) {
         let _ = fs::remove_file(path);
