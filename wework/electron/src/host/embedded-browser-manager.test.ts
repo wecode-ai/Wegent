@@ -415,6 +415,10 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     expect(manager.state('workspace-browser').url).toBe('https://example.test/')
     expect(manager.state('workspace-browser').visible).toBe(true)
 
+    contents.navigationHistory.canGoBack.mockReturnValue(true)
+    expect(manager.state('workspace-browser').canGoBack).toBe(true)
+    expect(manager.state('workspace-browser').canGoForward).toBe(false)
+
     finishNavigation?.()
     await expect(opening).resolves.toMatchObject({
       label: 'workspace-browser',

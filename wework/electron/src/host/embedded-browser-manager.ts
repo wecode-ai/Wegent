@@ -37,6 +37,8 @@ export interface BrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
   visible: boolean
   navigationError: {
     code: number
@@ -618,6 +620,8 @@ export class EmbeddedBrowserManager {
       title: contents.getTitle() || null,
       url: pendingUrl || visibleCurrentUrl || entry.requestedUrl,
       isLoading: contents.isLoading(),
+      canGoBack: contents.navigationHistory.canGoBack(),
+      canGoForward: contents.navigationHistory.canGoForward(),
       visible: entry.visible,
       navigationError: entry.navigationError,
     }
