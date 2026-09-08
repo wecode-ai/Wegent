@@ -152,7 +152,7 @@ export function ImageSizeSelector({
               onClick={() => selectPreset(selectedRatio, resolution)}
               disabled={disabled}
               className={cn(
-                'flex-1 rounded py-1.5 text-sm transition-colors',
+                'min-h-11 flex-1 rounded py-1.5 text-sm transition-colors',
                 selectedResolution === resolution
                   ? 'bg-primary/10 text-text-primary'
                   : 'text-text-secondary hover:bg-base',
