@@ -6,6 +6,7 @@ import { createServer } from 'node:net'
 import { dirname, join, resolve, sep } from 'node:path'
 import type { WorkbenchRuntimeLaunch } from '../runtime/workbench-runtime.js'
 import {
+  materializeManifestPackages,
   prepareWorkbenchDshLaunch,
   WORKBENCH_DSH_VERSION,
   type WorkbenchAppManifest,
@@ -16,6 +17,7 @@ import {
   findSmartAppManifestRoot,
   isSafeSmartAppRelativePath,
   MAX_SMART_APP_ARCHIVE_BYTES,
+  readSmartAppManifest,
   requiredSmartAppDirectory,
   validateSmartAppPackageDirectory,
 } from './smart-app-package-validator.js'
@@ -137,6 +139,8 @@ export class SmartAppManager {
     try {
       await extractSmartAppArchive(absolutePath, staging)
       const packageRoot = await findSmartAppManifestRoot(staging)
+      const stagedManifest = await readSmartAppManifest(packageRoot)
+      await materializeManifestPackages(stagedManifest, packageRoot)
       const { manifest } = await validateSmartAppPackageDirectory(packageRoot)
       return {
         valid: true,

@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import * as tar from 'tar'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SmartAppManager } from './smart-app-manager.js'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
@@ -59,6 +60,43 @@ describe('SmartAppManager', () => {
 
     const duplicate = await manager.exportToDownloads(installation.id)
     expect(duplicate.destinationPath).toBe(join(root, 'downloads', 'fixture-app-1.0.0 (1).zip'))
+  })
+
+  test('previews a standard DSH Release ZIP with declared npm tarballs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-release-'))
+    roots.push(root)
+    const manifest: WorkbenchAppManifest = {
+      ...validManifest(),
+      packages: [
+        { name: 'fixture-profile', role: 'profile-bundle', path: 'app' },
+        { name: 'fixture-host', role: 'host-and-web-plugin', path: 'plugins/host' },
+      ],
+    }
+    const archivePath = await createSmartAppReleaseArchive(root, manifest)
+
+    await expect(createManager(root).preview(archivePath)).resolves.toMatchObject({
+      valid: true,
+      manifest: { name: 'fixture-app', packages: manifest.packages },
+      issues: [],
+    })
+  })
+
+  test('rejects a DSH Release ZIP missing a declared npm tarball', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-release-'))
+    roots.push(root)
+    const manifest: WorkbenchAppManifest = {
+      ...validManifest(),
+      packages: [
+        { name: 'fixture-profile', role: 'profile-bundle', path: 'app' },
+        { name: 'fixture-host', role: 'host-and-web-plugin', path: 'plugins/host' },
+      ],
+    }
+    const archivePath = await createSmartAppReleaseArchive(root, manifest, 'fixture-host')
+
+    await expect(createManager(root).preview(archivePath)).resolves.toMatchObject({
+      valid: false,
+      issues: [expect.stringContaining('Smart app npm package is missing: fixture-host')],
+    })
   })
 
   test('rejects package paths escaping the archive root', async () => {
@@ -460,6 +498,45 @@ async function createSmartAppArchive(
     archive.once('error', reject)
     archive.pipe(output)
     archive.directory(source, false)
+    void archive.finalize()
+  })
+  return archivePath
+}
+
+async function createSmartAppReleaseArchive(
+  root: string,
+  manifest: WorkbenchAppManifest,
+  omittedPackageName?: string
+): Promise<string> {
+  const source = join(root, `release-${Math.random().toString(16).slice(2)}`)
+  await mkdir(source)
+  await writeFile(join(source, 'plugin-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  for (const descriptor of manifest.packages ?? []) {
+    if (descriptor.name === omittedPackageName) continue
+    const packageRoot = join(root, `npm-${descriptor.name.replaceAll('/', '-')}`)
+    await mkdir(join(packageRoot, 'package'), { recursive: true })
+    await writeFile(
+      join(packageRoot, 'package', 'package.json'),
+      `${JSON.stringify({ name: descriptor.name, version: '1.0.0' })}\n`
+    )
+    await tar.c(
+      {
+        cwd: packageRoot,
+        file: join(source, `${descriptor.name.replaceAll('/', '-')}.tgz`),
+        gzip: true,
+      },
+      ['package']
+    )
+  }
+  const archivePath = `${source}.zip`
+  await new Promise<void>((resolvePromise, reject) => {
+    const output = createWriteStream(archivePath)
+    const archive = new ZipArchive({ zlib: { level: 9 } })
+    output.once('close', resolvePromise)
+    output.once('error', reject)
+    archive.once('error', reject)
+    archive.pipe(output)
+    archive.directory(source, 'fixture-release')
     void archive.finalize()
   })
   return archivePath

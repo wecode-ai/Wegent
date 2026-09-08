@@ -60,6 +60,8 @@ export const HOST_CAPABILITIES = [
   'diagnostics.filePreview',
   'developer.openDevTools',
   'developer.openLogDirectory',
+  'dshCapture.capabilities',
+  'dshCapture.ownerRect',
   'e2e.capturePopoutWindow',
   'e2e.capturePrimaryView',
   'e2e.captureWorkspaceWindow',
@@ -160,6 +162,7 @@ export const HOST_CAPABILITIES = [
   'window.openWorkspace',
   'window.showPopout',
   'window.toggleMaximize',
+  'weworkSync.request',
 ] as const
 
 export type HostCapability = (typeof HOST_CAPABILITIES)[number]

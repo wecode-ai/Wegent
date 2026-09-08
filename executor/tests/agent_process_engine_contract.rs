@@ -1056,6 +1056,7 @@ async fn agent_process_engine_writes_default_claude_settings_before_claude() {
 settings="$CLAUDE_CONFIG_DIR/settings.json"
 python3 - "$settings" <<'PY'
 import json
+import os
 import sys
 
 settings_path = sys.argv[1]
@@ -1065,6 +1066,7 @@ payload = {
     "includeCoAuthoredBy": settings.get("includeCoAuthoredBy"),
     "skipDangerousModePermissionPrompt": settings.get("skipDangerousModePermissionPrompt"),
     "env": settings.get("env", {}),
+    "maxContextTokens": os.environ.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
 }
 print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(payload, sort_keys=True)}]}}))
 PY
@@ -1078,7 +1080,11 @@ PY
         task_id: "86".to_owned(),
         prompt: json!("inspect default settings"),
         bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
-        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        model_config: json!({
+            "model": "anthropic",
+            "model_id": "claude-sonnet-4",
+            "context_window": 1_000_000
+        }),
         ..ExecutionRequest::default()
     };
 
@@ -1101,6 +1107,7 @@ PY
         "0"
     );
     assert_eq!(payload["env"]["ENABLE_TOOL_SEARCH"], "false");
+    assert_eq!(payload["maxContextTokens"], "1000000");
 }
 
 #[cfg(unix)]
@@ -1115,6 +1122,7 @@ async fn agent_process_engine_uses_process_env_for_claude_settings_env() {
 settings="$CLAUDE_CONFIG_DIR/settings.json"
 python3 - "$settings" <<'PY'
 import json
+import os
 import sys
 
 settings_path = sys.argv[1]

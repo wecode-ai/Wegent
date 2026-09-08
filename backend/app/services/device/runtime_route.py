@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+from app.services.device.identity import record_id_from_route, record_route_id
 from app.services.device_service import device_service
 from shared.telemetry.decorators import trace_async
 
@@ -69,6 +70,8 @@ def _device_type(device: Kind) -> DeviceType:
 
 
 def _runtime_device_id(device: Kind) -> str:
+    if _device_type(device) == DeviceType.APP:
+        return record_route_id(device)
     spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
     cloud_config = spec.get("cloudConfig")
     if not isinstance(cloud_config, dict):
@@ -117,13 +120,39 @@ def resolve_runtime_route_identity(
         Kind.namespace == "default",
         Kind.is_active.is_(True),
     )
-    logical_match = (
-        db.query(Kind)
-        .filter(and_(base_filter, Kind.name == submitted_device_id))
-        .first()
+    record_id = record_id_from_route(submitted_device_id)
+    if record_id is not None:
+        device = db.query(Kind).filter(base_filter, Kind.id == record_id).one_or_none()
+        if not device or _device_type(device) != DeviceType.APP:
+            return None
+        identity = _identity_from_device(device)
+        return RuntimeRouteIdentity(
+            logical_device_id=submitted_device_id,
+            runtime_device_id=record_route_id(device),
+            runtime_instance_id=identity.runtime_instance_id,
+            device_type=identity.device_type,
+            app_device_id=identity.app_device_id,
+        )
+    logical_matches = (
+        db.query(Kind).filter(and_(base_filter, Kind.name == submitted_device_id)).all()
     )
-    if logical_match is not None:
-        return _identity_from_device(logical_match)
+    if logical_matches:
+        if len(logical_matches) > 1:
+            identities = {
+                (_runtime_instance_id(device), _app_device_id(device))
+                for device in logical_matches
+            }
+            if len(identities) == 1 and all(
+                _runtime_instance_id(device) for device in logical_matches
+            ):
+                return _identity_from_device(
+                    min(logical_matches, key=lambda device: device.id)
+                )
+        return (
+            _identity_from_device(logical_matches[0])
+            if len(logical_matches) == 1
+            else None
+        )
 
     devices = db.query(Kind).filter(base_filter).all()
     app_matches = [
@@ -200,7 +229,7 @@ class RuntimeRouteResolver:
         if identity is None:
             raise RuntimeRouteError(
                 "device_not_found",
-                "Device not found or access denied",
+                "Device not found, access denied, or ambiguous historical identity; select a specific device",
                 details={"deviceId": submitted_device_id},
             )
 

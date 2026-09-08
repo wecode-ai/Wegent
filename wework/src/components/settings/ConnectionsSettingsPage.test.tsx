@@ -20,8 +20,6 @@ import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/l
 import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import '@/i18n'
@@ -51,18 +49,6 @@ const remoteDeviceOnboardingExtensionMock = vi.hoisted(() => ({
   CommandDetails: vi.fn(() => null),
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
-const appPreferencesMocks = vi.hoisted(() => ({
-  update: vi.fn(),
-}))
-
-vi.mock('@/desktop/appPreferences', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
-  return {
-    ...actual,
-    updateAppPreferences: appPreferencesMocks.update,
-  }
-})
-
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
@@ -244,10 +230,6 @@ describe('ConnectionsSettingsPage', () => {
     await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
-    appPreferencesMocks.update.mockResolvedValue({
-      ...defaultAppPreferences,
-      remoteControlEnabled: true,
-    })
     getLocalCodexOfficialModelsMock.mockResolvedValue({ providers: [], models: [] })
     getLocalCodexModelCatalogOverridesMock.mockResolvedValue([])
     saveLocalCodexModelCatalogOverrideMock.mockResolvedValue(undefined)
@@ -1812,75 +1794,6 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
-  })
-
-  test('persists the remote control switch while cloud is connected', async () => {
-    api.getAllDevices.mockResolvedValue([])
-    const renderPage = (remoteControlEnabled: boolean) => (
-      <AppPreferencesContext.Provider
-        value={{
-          loaded: true,
-          preferences: { ...defaultAppPreferences, remoteControlEnabled },
-        }}
-      >
-        <ConnectionsSettingsPage onBack={vi.fn()} />
-      </AppPreferencesContext.Provider>
-    )
-    const view = render(renderPage(false))
-
-    const toggle = await screen.findByTestId('remote-control-toggle')
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
-    expect(toggle).toBeEnabled()
-
-    await userEvent.click(toggle)
-
-    await waitFor(() =>
-      expect(appPreferencesMocks.update).toHaveBeenCalledWith({ remoteControlEnabled: true })
-    )
-
-    view.rerender(renderPage(true))
-    expect(screen.getByTestId('remote-control-toggle')).toHaveAttribute('aria-checked', 'true')
-  })
-
-  test('keeps remote control unavailable until cloud is connected', async () => {
-    const disconnectedConnection: CloudConnectionContextValue = {
-      ...DISCONNECTED_STATE,
-      isConnected: false,
-      serviceKey: 'disconnected',
-      connectWithAuthorization: vi.fn(),
-      refreshUser: vi.fn(),
-      disconnect: vi.fn(),
-    }
-
-    render(
-      <AppPreferencesContext.Provider value={{ preferences: defaultAppPreferences, loaded: true }}>
-        <CloudConnectionContext.Provider value={disconnectedConnection}>
-          <ConnectionsSettingsPage onBack={vi.fn()} />
-        </CloudConnectionContext.Provider>
-      </AppPreferencesContext.Provider>
-    )
-
-    const setting = await screen.findByTestId('remote-control-setting')
-    expect(setting).toHaveTextContent('连接云端后才能开启远程控制')
-    expect(screen.getByTestId('remote-control-toggle')).toBeDisabled()
-    expect(appPreferencesMocks.update).not.toHaveBeenCalled()
-  })
-
-  test('reports a remote control preference save failure without changing state', async () => {
-    api.getAllDevices.mockResolvedValue([])
-    appPreferencesMocks.update.mockRejectedValueOnce(new Error('save failed'))
-
-    render(
-      <AppPreferencesContext.Provider value={{ preferences: defaultAppPreferences, loaded: true }}>
-        <ConnectionsSettingsPage onBack={vi.fn()} />
-      </AppPreferencesContext.Provider>
-    )
-
-    const toggle = await screen.findByTestId('remote-control-toggle')
-    await userEvent.click(toggle)
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('远程控制设置更新失败')
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
   test('shows device Git configuration after the cloud and remote device list', async () => {

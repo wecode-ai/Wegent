@@ -152,13 +152,23 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const startBackgroundDownload = useCallback(
     (update: WeworkUpdateInfo, channel: WeworkUpdateChannel) => {
-      void downloadUpdate(update)
+      setError(null)
+      setStatus('downloading')
+      setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
+      void downloadUpdate(update, setDownloadProgress)
         .then(() => {
           if (updateChannelRef.current === channel) {
             setDownloadedUpdateVersion(update.version)
+            setStatus('available')
+            setDownloadProgress(null)
           }
         })
-        .catch(() => undefined)
+        .catch(caughtError => {
+          if (updateChannelRef.current === channel) {
+            setStatus('error')
+            setError(createAppUpdateError(caughtError, 'download'))
+          }
+        })
     },
     [downloadUpdate]
   )
@@ -336,7 +346,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [appVersion, availableUpdate, status, updateChannel])
 
   const installUpdate = useCallback(async () => {
-    if (!availableUpdate || isUpdateBusy) return
+    if (!availableUpdate || status === 'installing') return
     if (downloadedUpdateVersion === availableUpdate.version) {
       setRestartConfirmationOpen(true)
       return
@@ -361,13 +371,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setStatus('error')
       setError(createAppUpdateError(caughtError, 'download'))
     }
-  }, [
-    availableUpdate,
-    downloadedUpdateVersion,
-    downloadUpdate,
-    isUpdateBusy,
-    startSimulatedDownload,
-  ])
+  }, [availableUpdate, downloadedUpdateVersion, downloadUpdate, startSimulatedDownload, status])
 
   const dismissInstalledReleaseNotes = useCallback(() => {
     if (installedReleaseNotes) {

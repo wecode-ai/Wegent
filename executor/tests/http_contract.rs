@@ -603,6 +603,12 @@ async fn envd_compat_routes_report_health_metrics_and_envs() {
         serde_json::from_slice(&metrics.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert!(body["cpu_count"].as_u64().unwrap_or_default() >= 1);
     assert!(body["disk_total"].as_u64().unwrap_or_default() > 0);
+    assert!(body["terminal_output_batches_total"].is_u64());
+    assert!(body["terminal_output_bytes_total"].is_u64());
+    assert!(body["terminal_replayed_batches_total"].is_u64());
+    assert!(body["terminal_replay_bytes"].is_u64());
+    assert!(body["terminal_ack_lag_bytes"].is_u64());
+    assert!(body["terminal_backpressured_sessions"].is_u64());
 
     let init = app
         .clone()

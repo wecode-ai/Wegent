@@ -5,9 +5,9 @@ import { resolveDevUserDataDirectory } from './resolve-dev-user-data.mjs'
 describe('resolveDevUserDataDirectory', () => {
   test('isolates the default user data directory by worktree', () => {
     const homeDirectory = '/Users/example'
-    const first = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory)
-    const repeated = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory)
-    const second = resolveDevUserDataDirectory('/worktrees/second', '', homeDirectory)
+    const first = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory, 'darwin')
+    const repeated = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory, 'darwin')
+    const second = resolveDevUserDataDirectory('/worktrees/second', '', homeDirectory, 'darwin')
     const root = join(homeDirectory, 'Library', 'Application Support', 'io.wecode.wework.dev')
 
     expect(first).toBe(repeated)

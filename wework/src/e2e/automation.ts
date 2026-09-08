@@ -49,7 +49,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
-import { downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -1992,6 +1992,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return desktopControlSnapshot(command.selector)
     case 'getClipboardText':
       return invokeDesktopHost<string>('e2e.getClipboardText')
+    case 'checkForAppUpdate':
+      return JSON.stringify(await checkForWeworkUpdate('stable'))
+    case 'getAppUpdateProgress':
+      return JSON.stringify(await invokeDesktopHost('appUpdate.downloadProgress'))
     case 'downloadPendingAppUpdate':
       await downloadPendingWeworkUpdate()
       return 'downloaded'

@@ -45,6 +45,11 @@ async def test_start_project_device_session_uses_project_bound_device_and_path(
         }
     )
     monkeypatch.setattr(
+        service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: None,
+    )
+    monkeypatch.setattr(
         service.local_device_session_service,
         "start_session",
         execute_mock,
@@ -180,6 +185,11 @@ async def test_start_project_device_session_creates_configured_workspace_path(
         }
     )
     monkeypatch.setattr(
+        service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: None,
+    )
+    monkeypatch.setattr(
         service.local_device_session_service,
         "start_session",
         execute_mock,
@@ -225,6 +235,11 @@ async def test_start_project_device_session_accepts_existing_project_path_field(
         }
     )
     monkeypatch.setattr(
+        service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: None,
+    )
+    monkeypatch.setattr(
         service.local_device_session_service,
         "start_session",
         execute_mock,
@@ -267,6 +282,11 @@ async def test_start_project_device_session_uses_default_project_path_when_missi
             "session_id": "terminal-17-short",
             "url": "http://localhost:17888/s/terminal-17-short/?token=short",
         }
+    )
+    monkeypatch.setattr(
+        service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: None,
     )
     monkeypatch.setattr(
         service.local_device_session_service,

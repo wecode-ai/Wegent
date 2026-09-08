@@ -2506,6 +2506,7 @@ async def test_external_device_command_rejects_app_device_when_remote_control_is
         command_service.device_service,
         "get_device_by_device_id",
         lambda db, user_id, device_id: SimpleNamespace(
+            id=123,
             name="app-device",
             json={"spec": {"deviceType": "app"}},
         ),
