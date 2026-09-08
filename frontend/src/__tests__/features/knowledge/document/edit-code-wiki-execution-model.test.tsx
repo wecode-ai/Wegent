@@ -127,7 +127,9 @@ describe('editing a code wiki that has no model of its own', () => {
       />
     )
 
-    fireEvent.click(await screen.findByTestId('code-wiki-execution-model-select'))
+    const modelSelect = await screen.findByTestId('code-wiki-execution-model-select')
+    await waitFor(() => expect(modelSelect).toBeEnabled())
+    fireEvent.click(modelSelect)
     fireEvent.click(await screen.findByText('ZZZ'))
     fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
 
