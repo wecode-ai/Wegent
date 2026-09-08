@@ -219,11 +219,29 @@ struct ActiveCodexTurn {
     turn_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexResponseValueOrigin {
+    Final,
+    ProcessFallback,
+    Empty,
+}
+
+impl CodexResponseValueOrigin {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Final => "final",
+            Self::ProcessFallback => "process_fallback",
+            Self::Empty => "empty",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
     pub response_item_id: Option<String>,
+    pub response_value_origin: CodexResponseValueOrigin,
     pub goal_status: Option<String>,
     pub goal_status_observed: bool,
 }
@@ -1798,11 +1816,13 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
         let response_item_id = state.response_item_id().map(str::to_owned);
+        let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
             response_item_id,
+            response_value_origin,
             goal_status,
             goal_status_observed,
         })
@@ -2056,11 +2076,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
         }
         log_executor_event("codex turn request finished", &turn_fields);
         let response_item_id = state.response_item_id().map(str::to_owned);
+        let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
             response_item_id,
+            response_value_origin,
             goal_status,
             goal_status_observed,
         })

@@ -4427,7 +4427,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <X />
       </button>
     ) : undefined
-  const feedbackInChromeTitlebar = isDesktop && getPlatform() === 'mac'
+  const feedbackInChromeTitlebar = isDesktop
   const mainHeaderActions = activeLocalHarnessSession ? (
     <>
       {workspaceToolbarExtensions}

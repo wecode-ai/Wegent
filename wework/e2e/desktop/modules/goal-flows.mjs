@@ -614,11 +614,27 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     DEFAULT_STEP_TIMEOUT_MS,
     'The supervisor did not inspect the completed auto-correction'
   )
+  const supervisorStatusSelector = '[data-testid="task-supervisor-status"]'
   await control.command('clickWhenEnabled', '[data-testid="task-supervisor-run-now-button"]')
   await withTimeout(
     control.awaitScenarioRequestCount('supervisor', 5),
     DEFAULT_STEP_TIMEOUT_MS,
     'The immediate supervisor review did not reach the evaluator'
+  )
+  await control.command('waitFor', '[data-testid="task-supervisor-run-now-button"]', {
+    enabled: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.doesNotMatch(
+    await control.command('getText', supervisorStatusSelector),
+    /正在检查|Checking the latest progress/,
+    'The immediate supervisor review remained in its intermediate checking state'
+  )
+  assert.match(
+    await control.command('getText', supervisorStatusSelector),
+    /最近检查|Last checked/,
+    'The immediate supervisor review did not publish its completed check state'
   )
   await control.command('waitFor', '[data-testid="task-supervisor-next-check"]', {
     text: '下次巡检',

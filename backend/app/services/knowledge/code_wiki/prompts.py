@@ -24,6 +24,11 @@ alongside the mode is what keeps the two from being merged as duplicates later.
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
+from app.services.knowledge.code_wiki.generation_strategy import (
+    COORDINATOR_ADAPTIVE,
+    COORDINATOR_SOLO,
+)
+
 
 @dataclass(frozen=True)
 class WikiRunContext:
@@ -39,10 +44,12 @@ class WikiRunContext:
     existing_pages: Sequence[str] = ()
     reviewer_agent_type: str = ""
     section_writer_agent_type: str = ""
+    strategy_id: str = ""
 
 
-def build_full_prompt(context: WikiRunContext) -> str:
-    """Instructions for rebuilding a wiki from nothing."""
+def _full_rebuild_intro(context: WikiRunContext, *, strategy_id: str = "") -> str:
+    """The run facts and empty-version contract shared by every full strategy."""
+    strategy = f"\n- Strategy: `{strategy_id}`" if strategy_id else ""
     return f"""\
 Document the repository **{context.project_name}**, from scratch.
 
@@ -50,12 +57,22 @@ Document the repository **{context.project_name}**, from scratch.
 
 - Generation: `{context.generation_id}`
 - Commit: `{context.head_commit or "current HEAD"}`
-- Language: {context.language}
+- Language: {context.language}{strategy}
 - This is a **full rebuild**: the wiki is being written from scratch.
 
 Your version begins empty. A page you do not write is not in the wiki, so write every
 page the wiki should contain, including the ones an earlier run already covered.
-Declaring a removal does nothing here, because there is nothing to remove from.
+Declaring a removal does nothing here, because there is nothing to remove from."""
+
+
+def build_full_prompt(context: WikiRunContext) -> str:
+    """Instructions for rebuilding a wiki from nothing."""
+    if context.strategy_id == COORDINATOR_ADAPTIVE:
+        return _build_adaptive_full_prompt(context)
+    if context.strategy_id == COORDINATOR_SOLO:
+        return _build_solo_full_prompt(context)
+    return f"""\
+{_full_rebuild_intro(context)}
 
 ## Required Writer/Reviewer quality loop
 
@@ -89,6 +106,90 @@ scope from the persisted passed Plan. Trust submitted-page status rather than a
 subagent's prose response, and handle only missing planned pages after each delegation.
 Do not delegate in coordinator mode. Write coordinator-owned synthesis pages only
 after the relevant Work Packages have submitted their domain pages.
+Incremental-only shortcuts do not apply to this run.\
+"""
+
+
+def _build_adaptive_full_prompt(context: WikiRunContext) -> str:
+    """A full rebuild whose Coordinator chooses page authorship by source scope."""
+    return f"""\
+{_full_rebuild_intro(context, strategy_id=COORDINATOR_ADAPTIVE)}
+
+## Adaptive Coordinator protocol
+
+Do not open Plan, QA, Recheck, or other Reviewer phases, and do not delegate a
+Reviewer. This strategy deliberately has no review loop.
+
+Start with shallow discovery: identify the repository topology, important workflows,
+state owners, integration boundaries, and representative tests without deeply reading
+every planned scope. Build one ordered page plan. For every page record its path,
+purpose, concrete `Must explain` questions, seed paths, related or prerequisite pages,
+and exactly one author: `coordinator` or `writer:<work-package-id>`.
+Before writing or delegating any page, record its complete current order with
+`node wiki_submit.js plan --generation-id {context.generation_id} --structure-order ...`.
+If exploration changes the page set, run `plan` again with the full revised order. This
+is reader-facing progress only, not a review or a publishing gate.
+
+Choose authorship early. Write a page yourself when you already have enough evidence,
+especially `index`, `quickstart`, compact local topics, and final cross-page assembly.
+When a scope requires deeper reading across modules or its `Must explain` questions
+exceed your evidence, delegate one complete research-and-writing Work Package to
+`{context.section_writer_agent_type or "the configured Section Writer agent"}`. Pass
+the generation ID plus that package's full page contracts, seed paths, prerequisites,
+known source-grounded facts, and output language. The same Writer must complete the
+package's remaining exploration and page submission in that one synchronous call; do
+not run a separate exploration delegation first, do not delegate one agent per page,
+and do not ask a Writer to delegate again. Keep related module and workflow pages in
+one package when doing so lets that Writer reuse evidence.
+
+Once a scope is delegated, do not deeply reread it. Reconcile the pages actually
+submitted after each package rather than trusting its prose response. Handle only
+missing or rejected pages, and never rewrite a successfully delegated page merely to
+change its voice.
+
+Before writing any coordinator-owned page, reread that page's purpose, `Must explain`
+questions, seed paths, and prerequisite pages. Coordinator-owned and delegated pages
+must meet the same standard: explain mechanisms, state changes, boundaries, failure or
+recovery behaviour, practical change guidance, and resolvable source citations where
+the source supports them. Use completed prerequisite pages for shared facts instead of
+deriving those facts from source again.
+
+Write or delegate every planned page, then call `complete` with every resulting path in
+the intended reading order. Follow the existing wiki_submit completion and Mermaid
+feedback rules. Incremental-only shortcuts do not apply to this run.\
+"""
+
+
+def _build_solo_full_prompt(context: WikiRunContext) -> str:
+    """A full rebuild whose Coordinator is the only researcher and author."""
+    return f"""\
+{_full_rebuild_intro(context, strategy_id=COORDINATOR_SOLO)}
+
+## Solo Coordinator protocol
+
+Do not call the Claude Code `Task` or `Agent` tool and do not delegate research,
+writing, review, or QA. Do not open Plan, QA, Recheck, or other Reviewer phases. This
+strategy deliberately has no subagent or review loop: you are the sole author.
+
+First build one ordered page plan. For every page record its path, purpose, concrete
+`Must explain` questions, seed paths, and prerequisite pages. Then inspect the source
+needed to answer those questions and write every page yourself. Work through related
+areas in a dependency-aware order so that later pages reuse facts established in
+earlier pages instead of rediscovering them.
+Before writing the first page, record the complete order with
+`node wiki_submit.js plan --generation-id {context.generation_id} --structure-order ...`.
+If the plan changes, rerun `plan` with the full revised order. This is reader-facing
+progress only, not a review or a publishing gate.
+
+Before writing each page, reread that page's purpose, `Must explain` questions, seed
+paths, and prerequisite pages. Every page must meet the same engineering contract:
+explain mechanisms, state changes, boundaries, failure or recovery behaviour, practical
+change guidance, and resolvable source citations where the source supports them. Do not
+replace this with a directory inventory or a thin overview merely because the repository
+is large.
+
+Write every planned page, then call `complete` with every resulting path in the intended
+reading order. Follow the existing wiki_submit completion and Mermaid feedback rules.
 Incremental-only shortcuts do not apply to this run.\
 """
 

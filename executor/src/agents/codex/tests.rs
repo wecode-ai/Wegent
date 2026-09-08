@@ -1856,6 +1856,10 @@ fn codex_run_state_uses_commentary_agent_delta_as_fallback_final_content() {
             content: "I will inspect.".to_owned()
         }
     );
+    assert_eq!(
+        state.response_value_origin(),
+        CodexResponseValueOrigin::ProcessFallback
+    );
 }
 
 #[test]
@@ -2491,6 +2495,37 @@ fn codex_run_state_prefers_explicit_final_text_over_unphased_text() {
         ExecutionOutcome::Completed {
             content: "The task is complete.".to_owned()
         }
+    );
+    assert_eq!(
+        state.response_value_origin(),
+        CodexResponseValueOrigin::Final
+    );
+}
+
+#[test]
+fn codex_run_state_marks_empty_completed_output() {
+    let mut state = CodexRunState::default();
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: String::new()
+        }
+    );
+    assert_eq!(
+        state.response_value_origin(),
+        CodexResponseValueOrigin::Empty
     );
 }
 

@@ -239,7 +239,11 @@ class IMCommandRouter:
                     await im_session_service.set_mode(
                         db, session=session, mode=IMSessionMode.CHAT
                     )
-                    return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
+                    return IMCommandResult(
+                        handled=True,
+                        action=IMCommandAction.START_CHAT,
+                        reply="已切换到 Chat 模式。",
+                    )
 
                 return await self._enter_task_mode(
                     db=db,
@@ -258,7 +262,11 @@ class IMCommandRouter:
             await im_session_service.set_mode(
                 db, session=session, mode=IMSessionMode.CHAT
             )
-            return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
+            return IMCommandResult(
+                handled=True,
+                action=IMCommandAction.START_CHAT,
+                reply="已切换到 Chat 模式。",
+            )
 
         if command == CommandType.TASK:
             return await self._enter_task_mode(

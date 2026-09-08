@@ -6,6 +6,9 @@ use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_se
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[path = "execution_timestamp_tests.rs"]
+mod execution_timestamp_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
@@ -2017,6 +2020,7 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
                 content: "done".to_owned(),
             },
             response_item_id: Some("assistant-1".to_owned()),
+            response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: Some("complete".to_owned()),
             goal_status_observed: true,
         }),
@@ -2117,6 +2121,7 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
                 content: "stale".to_owned(),
             },
             response_item_id: Some("assistant-stale".to_owned()),
+            response_value_origin: crate::agents::CodexResponseValueOrigin::Final,
             goal_status: None,
             goal_status_observed: false,
         }),
@@ -2789,13 +2794,22 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
 
 #[test]
 fn completed_responses_use_the_active_codex_turn_id() {
-    for (case, outcome, response_item_id) in [
+    for (case, outcome, response_item_id, value_origin) in [
         (
             "completed",
             ExecutionOutcome::Completed {
                 content: "Done".to_owned(),
             },
             Some("assistant-item-1".to_owned()),
+            crate::agents::CodexResponseValueOrigin::Final,
+        ),
+        (
+            "process-fallback",
+            ExecutionOutcome::Completed {
+                content: "I will inspect.".to_owned(),
+            },
+            Some("assistant-progress-1".to_owned()),
+            crate::agents::CodexResponseValueOrigin::ProcessFallback,
         ),
         (
             "waiting",
@@ -2803,6 +2817,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
                 stop_reason: "Need input".to_owned(),
             },
             None,
+            crate::agents::CodexResponseValueOrigin::Empty,
         ),
     ] {
         let (event_tx, mut event_rx) = broadcast::channel(1);
@@ -2835,6 +2850,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
                 thread_id: format!("thread-{case}"),
                 outcome,
                 response_item_id: response_item_id.clone(),
+                response_value_origin: value_origin,
                 goal_status: None,
                 goal_status_observed: false,
             }),
@@ -2846,6 +2862,11 @@ fn completed_responses_use_the_active_codex_turn_id() {
         assert_eq!(event["event"], "response.completed", "{case}");
         assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+        assert_eq!(
+            event["payload"]["data"]["valueOrigin"],
+            value_origin.as_str(),
+            "{case}"
+        );
         assert_eq!(
             event["payload"]["data"]["itemId"],
             response_item_id.map(Value::String).unwrap_or(Value::Null),
@@ -4375,6 +4396,7 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
     let execution_id = start_test_execution(&handler, local_task_id);
+    let started_at = handler.store.get_task(local_task_id).unwrap().updated_at;
     handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
     handler.record_active_codex_turn(
         local_task_id,
@@ -4389,7 +4411,7 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
             .get_task(local_task_id)
             .expect("registered task should remain stored")
             .updated_at,
-        1_780_000_000_000
+        started_at
     );
 
     handler.route_codex_notification(json!({
