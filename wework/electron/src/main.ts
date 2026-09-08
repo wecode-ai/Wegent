@@ -39,6 +39,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
+import { normalizeWorkbenchMode } from './runtime/workbench-mode.js'
 import { RendererStorageStore } from './host/renderer-storage-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
@@ -113,6 +114,11 @@ import {
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
+import {
+  createWeworkSyncRequestSignal,
+  normalizeWeworkSyncApiBaseUrl,
+  normalizeWeworkSyncPath,
+} from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -260,8 +266,10 @@ const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => packagedApplication,
-  prepareUpdate: async (version, channel) => {
-    await componentUpdates?.stageUpdateForApp(version, channel)
+  log: event => appUpdateLogger.info(event),
+  prepareUpdate: async (version, channel, onProgress) => {
+    if (!componentUpdates) throw new Error('Component update manager is not initialized.')
+    await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
   },
   prepareInstall: async () => {
     await prepareApplicationShutdown()
@@ -1288,7 +1296,6 @@ async function configureDesktopRuntime(): Promise<void> {
     projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
-    smartApps: () => smartApps,
   })
   await desktopControlBridge.start()
   computerUse = new ComputerUseService(
@@ -1318,6 +1325,8 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
+    readWorkbenchMode: async () =>
+      normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     onExecutorEvent: (event, payload) => {
       systemSleep.handleExecutorEvent(event, payload)
       trayNativeStatus?.handleExecutorEvent(event)
@@ -1371,6 +1380,30 @@ async function configureDesktopRuntime(): Promise<void> {
           secureStorage,
           takePendingWorkspaceOpenRequests,
           updatePreferences: updateDesktopPreferences,
+          weworkSyncRequest: async request => {
+            const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
+            const path = normalizeWeworkSyncPath(request.path)
+            const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+            const response = await fetch(`${apiBaseUrl}${path}`, {
+              method: request.method,
+              signal: createWeworkSyncRequestSignal(),
+              headers: {
+                authorization: `${credential.tokenType} ${credential.accessToken}`,
+                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
+              },
+              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+            })
+            const text = await response.text()
+            let body: unknown = null
+            if (text) {
+              try {
+                body = JSON.parse(text)
+              } catch {
+                body = text
+              }
+            }
+            return { status: response.status, body }
+          },
         },
         {
           captureTarget: windowLabel =>
@@ -1686,6 +1719,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      log: event => appUpdateLogger.info(event),
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),
       updateBaseUrl,

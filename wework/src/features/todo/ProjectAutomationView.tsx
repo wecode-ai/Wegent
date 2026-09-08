@@ -13,6 +13,7 @@ import type {
   ProjectEventSourceCatalogItem,
 } from '@/api/projectIncomingHooks'
 import type { ExecutionListApi } from '@/features/todo/ProjectQueueView'
+import { modelSelectionIdentityOptions } from '@/features/workbench/runtimeModelSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type {
   CloneGitRepositoryInput,
@@ -23,6 +24,7 @@ import type {
 } from '@/types/api'
 import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
+import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationRulesView } from './AutomationRulesView.jsx'
 import {
@@ -242,23 +244,20 @@ async function fetchExecutionCatalog(
 }
 
 function modelCatalogEntry(model: UnifiedModel) {
-  const options = Object.fromEntries(
+  const configOptions = Object.fromEntries(
     Object.entries(model.config ?? {}).flatMap(([key, value]) =>
       typeof value === 'string' ? [[key, value]] : []
     )
   )
-  // Cloud-backed models (user/public/group) require their namespace and owning
-  // user to build the runtime model identity; without them the backend rejects
-  // the execution as an incomplete cloud model.
-  if (model.namespace) options.weworkCloudModelNamespace = model.namespace
-  if (model.resourceUserId != null) {
-    options.weworkCloudModelResourceUserId = String(model.resourceUserId)
-  }
   return {
     name: model.name,
-    label: model.displayName || model.name,
+    label: getModelDisplayLabel(model),
     type: model.type,
-    options,
+    options: {
+      ...configOptions,
+      ...getDefaultModelOptions(model),
+      ...modelSelectionIdentityOptions(model),
+    },
   }
 }
 
@@ -713,6 +712,17 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
       onLoadExecutionCatalog={loadExecutionCatalog}
       onLoadExecutionPlugins={loadExecutionPlugins}
       onLoadRuns={refreshRuns}
+      onRunRule={
+        projectAutomationApi
+          ? async rule => {
+              const run = await projectAutomationApi.runNow(projectId, rule.id)
+              setRuns(current => [
+                automationRunFromBackend(run, rule),
+                ...current.filter(item => item.id !== run.id),
+              ])
+            }
+          : undefined
+      }
       onSaveRule={persistRule}
       onToggleRule={toggleRule}
       onDuplicateRule={duplicateRule}

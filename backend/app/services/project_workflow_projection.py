@@ -203,7 +203,11 @@ def update_workflow_task_status(
     )
     from app.services.loop_item_executions.service import runtime_device_identity_ids
 
-    device_ids = runtime_device_identity_ids(db, device_id)
+    device_ids = runtime_device_identity_ids(
+        db,
+        device_id,
+        owner_user_id=user_id,
+    )
     if not device_ids:
         logger.warning(
             "[IssueTaskStatusSync] binding missing user=%s device=%s task=%s",

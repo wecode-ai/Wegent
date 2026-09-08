@@ -131,38 +131,36 @@ def runtime_task_id_for(execution_id: int) -> str:
     return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
 
 
-def runtime_device_identity_ids(db: Session, runtime_device_id: str) -> list[str]:
+def runtime_device_identity_ids(
+    db: Session,
+    runtime_device_id: str,
+    *,
+    owner_user_id: int | None = None,
+) -> list[str]:
     """Resolve every identity of the device that reported a Runtime event.
 
-    Queued executions persist the desktop app's device id, while Runtime
-    events are delivered under the executor's registered device id. Both are
-    stored on the same Device CRD, so a submitted id resolves to the device
-    and every one of its identities is accepted when matching executions.
+    Record routes are already globally unambiguous. Legacy aliases are expanded
+    only inside the authenticated owner's device namespace.
     """
 
     submitted = runtime_device_id.strip()
     if not submitted:
         return []
-    identities = [submitted]
-    devices = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Device",
-            Kind.namespace == "default",
-            Kind.is_active.is_(True),
-        )
-        .all()
+    if owner_user_id is None:
+        return [submitted]
+    from app.services.device.identity import (
+        device_identity_ids,
+        resolve_owned_device_alias,
     )
-    for device in devices:
-        spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
-        candidates = {
-            str(device.name or ""),
-            str(spec.get("deviceId") or ""),
-            str(spec.get("appDeviceId") or ""),
-        }
-        if submitted in candidates:
-            identities.extend(candidate for candidate in candidates if candidate)
-    return list(dict.fromkeys(identities))
+
+    device = resolve_owned_device_alias(
+        db,
+        user_id=owner_user_id,
+        device_id=submitted,
+    )
+    if device is None:
+        return [submitted]
+    return list(dict.fromkeys([submitted, *device_identity_ids(device)]))
 
 
 def runtime_configuration_complete(
@@ -398,6 +396,27 @@ def _canonical_execution_device(
         )
         or submitted_device_id
     )
+
+
+def _owned_execution_device_ids(
+    db: Session,
+    *,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> list[str]:
+    """Return every queue identity for one user-owned device."""
+
+    from app.services.device.identity import (
+        device_identity_ids,
+        resolve_owned_device_alias,
+    )
+
+    device = resolve_owned_device_alias(
+        db,
+        user_id=owner_user_id,
+        device_id=submitted_device_id,
+    )
+    return device_identity_ids(device) if device is not None else [submitted_device_id]
 
 
 def _active_agent_counts(
@@ -1291,7 +1310,7 @@ class LoopItemExecutionService:
         """
 
         submitted_execution_device_id = execution_device_id
-        execution_device_id = _canonical_execution_device(
+        execution_device_ids = _owned_execution_device_ids(
             db,
             owner_user_id=owner_user_id,
             submitted_device_id=execution_device_id,
@@ -1320,7 +1339,7 @@ class LoopItemExecutionService:
             .filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id,
                 LoopItemExecution.agent_id == agent_id,
-                LoopItemExecution.execution_device_id == execution_device_id,
+                LoopItemExecution.execution_device_id.in_(execution_device_ids),
                 LoopItemExecution.execution_environment == environment,
                 LoopItemExecution.status == STATUS_QUEUED,
             )
@@ -1384,7 +1403,7 @@ class LoopItemExecutionService:
         """Claim one queued run for a stable execution target."""
 
         submitted_execution_device_id = execution_device_id
-        execution_device_id = _canonical_execution_device(
+        execution_device_ids = _owned_execution_device_ids(
             db,
             owner_user_id=owner_user_id,
             submitted_device_id=execution_device_id,
@@ -1400,7 +1419,7 @@ class LoopItemExecutionService:
             return None
         queue_filters = (
             LoopItemExecution.executor_owner_user_id == owner_user_id,
-            LoopItemExecution.execution_device_id == execution_device_id,
+            LoopItemExecution.execution_device_id.in_(execution_device_ids),
             LoopItemExecution.execution_environment == environment,
             LoopItemExecution.status == STATUS_QUEUED,
         )
@@ -2076,22 +2095,27 @@ class LoopItemExecutionService:
         *,
         runtime_device_id: str,
         runtime_task_id: str,
+        owner_user_id: int | None = None,
     ) -> Optional[LoopItemExecution]:
         """Resolve the active execution owned by a Runtime task identity."""
 
-        device_ids = runtime_device_identity_ids(db, runtime_device_id)
+        device_ids = runtime_device_identity_ids(
+            db,
+            runtime_device_id,
+            owner_user_id=owner_user_id,
+        )
         if not device_ids:
             return None
-        return (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.runtime_device_id.in_(device_ids),
-                LoopItemExecution.runtime_task_id == runtime_task_id,
-                LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            )
-            .order_by(LoopItemExecution.id.desc())
-            .first()
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.runtime_device_id.in_(device_ids),
+            LoopItemExecution.runtime_task_id == runtime_task_id,
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
         )
+        if owner_user_id is not None:
+            query = query.filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id
+            )
+        return query.order_by(LoopItemExecution.id.desc()).first()
 
     def open_execution_activity(
         self,
@@ -3179,6 +3203,7 @@ class LoopItemExecutionService:
         runtime_task_id: str,
         event_name: str,
         payload: dict,
+        owner_user_id: int | None = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         allow_unsequenced_terminal: bool = False,
     ) -> Optional[LoopItemExecution]:
@@ -3188,6 +3213,7 @@ class LoopItemExecutionService:
             db,
             runtime_device_id=device_id,
             runtime_task_id=runtime_task_id,
+            owner_user_id=owner_user_id,
         )
         if row is None:
             return None

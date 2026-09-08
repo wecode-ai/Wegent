@@ -56,6 +56,9 @@ function uiRule(): AutomationUiRule {
     description: '创建后完成开发流程',
     enabled: true,
     updatedAt: '尚未发布',
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: null,
     trigger: {
       type: 'event',
       source: 'wework',
@@ -724,5 +727,26 @@ describe('automationRuleBackend', () => {
     expect(t1).toMatchObject({ node_type: 'task', loop_id: 'loop1', depends_on: ['ls'] })
     const t2 = definition.nodes.find(node => node.id === 't2')
     expect(t2).toMatchObject({ node_type: 'task', loop_id: 'loop1', depends_on: ['t1'] })
+  })
+})
+
+test.each([0, 17, 59])('round trips hourly schedules at minute %s', minute => {
+  const expression = `${minute} * * * *`
+  const ui = automationRuleFromBackend(
+    backendRule({
+      triggerType: 'schedule',
+      cronExpression: expression,
+      timezone: 'UTC',
+    })
+  )
+  expect(ui.trigger.schedule).toMatchObject({
+    frequency: 'hourly',
+    time: `00:${String(minute).padStart(2, '0')}`,
+    timezone: 'UTC',
+  })
+  expect(automationInputFromUi(ui, 7)).toMatchObject({
+    cronExpression: expression,
+    timezone: 'UTC',
+    triggerType: 'schedule',
   })
 })

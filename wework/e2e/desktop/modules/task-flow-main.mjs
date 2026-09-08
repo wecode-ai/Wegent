@@ -52,7 +52,7 @@ import {
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyDisabledRemoteSessionCapabilities,
-  verifyLocalRemoteControlFlow,
+  verifyWeworkAppDeviceRegistrationFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
@@ -496,8 +496,45 @@ async function verifyProjectAiSettings({
     'A new local project did not initially follow the global model'
   )
   await captureVerificationScreenshot(control, 'project-ai-settings-01-defaults.png')
+  await saveProjectAiSettings(control)
+
+  setPhase('project-ai-settings-follow-global-model-memory')
+  control.setScenario('checkpoint_task')
+  await selectRememberedTaskModel(control)
+  const inheritedConversationRequest = await sendProjectAiCheckpointPrompt(
+    control,
+    composerSelector,
+    { createsConversation: true }
+  )
+  assert.equal(
+    inheritedConversationRequest.body.model,
+    REMEMBERED_TASK_MODEL_ID,
+    'The follow-global project did not use the selected global model'
+  )
+  assert.equal(
+    inheritedConversationRequest.body.reasoning?.effort,
+    REMEMBERED_TASK_REASONING,
+    'The follow-global project did not use the selected global reasoning effort'
+  )
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await control.command('click', '[data-testid="model-selector-button"]')
+  assert.match(
+    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    /High|高/,
+    'The follow-global project did not remember the selected model and reasoning effort'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await captureVerificationScreenshot(
+    control,
+    'project-ai-settings-01-follow-global-model-remembered.png'
+  )
 
   setPhase('project-ai-settings-configure')
+  await openProjectAiSettings(control, projectId)
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
@@ -1113,7 +1150,6 @@ async function main() {
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-      DEVICE_ID: `wework-e2e-device-${process.pid}`,
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
@@ -1157,6 +1193,7 @@ async function main() {
         : {}),
     }
     for (const key of [
+      'DEVICE_ID',
       'ELECTRON_RUN_AS_NODE',
       'WEGENT_APP_IPC_DEVICE_ID',
       'WEGENT_APP_IPC_ENDPOINT',
@@ -1391,7 +1428,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
-      await verifyLocalRemoteControlFlow(control, cloudEnvironment)
+      await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
       const generatedDevice = await verifyRemoteDockerCommandFlow(control, cloudEnvironment, {
         interactiveSessions: { codeServer: false, terminal: false },
       })

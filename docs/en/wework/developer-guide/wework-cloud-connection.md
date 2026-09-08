@@ -84,6 +84,46 @@ The relay timeout for `device.execute_command` must use the request's `timeout_s
 
 In a multi-instance Backend deployment, the Socket.IO Redis manager forwards RPCs to the worker that owns the executor connection. The Redis device-online record containing the `socket_id` is the routing source. The current worker's in-process connection table must not be used to declare the executor disconnected, because the connection may belong to another worker.
 
+## Cloud Terminal Compatibility and Rollout
+
+Terminals relay through `/terminal` → Backend → `/local-executor`. The successful attach response determines the protocol; device capabilities do not advertise a duplicate protocol field.
+
+| New-session combination                                       | Protocol |
+| ------------------------------------------------------------- | -------- |
+| New Wework, Backend, and Executor, with v2 enabled in Backend | v2       |
+| Any old peer, or v2 disabled in Backend                       | v1       |
+
+- A missing `protocol_version` in an attach request or successful response means v1. A v2 request requires a valid `consumer_id` and non-negative `last_acked_sequence`. The first attach pins the session protocol; reconnect cannot change it automatically.
+- v2 acknowledges cumulative consumption after the `xterm.write` callback; the Executor then releases bounded replay. ACKs and controls from an old consumer cannot affect the new consumer.
+- v1 carries no consumer/sequence and sends no consumption ACK. The new Executor releases v1 replay after Backend receipt; v1 does not guarantee lossless reconnect replay, deduplication, or end-to-end backpressure. New Wework explicitly fails and closes a terminal on queue overflow.
+- Reattaching after a Backend restart does not imply recovery after an Executor restart. PTYs and replay live only in Executor memory and are lost when it restarts.
+
+Multi-replica rollout and rollback:
+
+1. Keep rollback artifacts for Backend, Executor, and Wework. Explicitly set `TERMINAL_PROTOCOL_V2_ENABLED=false` on new Backends before rolling every replica. The default is **true**; do not mix versions with that default.
+2. Once all Backends support both protocols, drain active terminals on affected devices and upgrade Executors in batches.
+3. Complete [terminal load and compatibility acceptance](wework-performance-diagnostics.md#cloud-terminal-load-and-acceptance), enable v2 on all Backends, and gradually release Wework. The switch affects only new-session negotiation; old peers keep v1.
+4. Before rollback, disable new v2 negotiation and drain existing v2 terminals, then downgrade Executor/Backend. Disabling the switch cannot transparently downgrade existing v2 sessions; recreate terminals when necessary.
+
+Redis keys and session JSON remain unchanged. No SQL migration, Redis scan, or Redis flush is needed. Old Backends do not publish cache invalidations; during mixed rollout, authorization revalidation takes up to 5 seconds and revocation on an old replica is not guaranteed to propagate immediately.
+
+Maintenance entry points (repository-relative paths):
+
+- Handshake and relay: `backend/app/services/device/terminal_protocol.py`, `backend/app/api/ws/terminal_namespace.py`, and `backend/app/api/ws/device_namespace.py`.
+- Routing and authorization: `backend/app/services/device/terminal_session_service.py`.
+- PTY, replay, and flow control: `executor/src/local/pty.rs`, `executor/src/local/session/terminal.rs`, and `executor/src/local/backend/{handlers,terminal_relay}.rs`.
+- Rendering and consumption ACK: `wework/src/components/layout/workspace-panels/RemoteTerminal.tsx` and `wework/src/lib/remote-terminal-socket.ts`.
+
+### Open-Source Code References
+
+These pinned commits are mechanism references, not copied implementations or evidence that these projects share one complete protocol. v1/v2 compatibility is Wegent-specific.
+
+- VS Code: [output batching](https://github.com/microsoft/vscode/blob/85ce8ef0824ac5afb363e3fa3483ada007791785/src/vs/platform/terminal/common/terminalDataBuffering.ts), [PTY watermarks](https://github.com/microsoft/vscode/blob/85ce8ef0824ac5afb363e3fa3483ada007791785/src/vs/platform/terminal/node/terminalProcess.ts), and [terminal writes and acknowledgement](https://github.com/microsoft/vscode/blob/85ce8ef0824ac5afb363e3fa3483ada007791785/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts).
+- xterm.js: [write callback boundary](https://github.com/xtermjs/xterm.js/blob/c58ea3637f3968e0e6e79cd92cf9aace7ef89ee2/src/common/input/WriteBuffer.ts) and [flow-control guide](https://xtermjs.org/docs/guides/flowcontrol/).
+- ttyd: [event-driven PTY](https://github.com/tsl0922/ttyd/blob/2922cb89f518bae4d0fcf4d757a7419638fc71fc/src/pty.c) and [pause/resume protocol](https://github.com/tsl0922/ttyd/blob/2922cb89f518bae4d0fcf4d757a7419638fc71fc/src/protocol.c).
+- Coder: [reconnecting sessions](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/agent/reconnectingpty/server.go), [bounded buffering](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/agent/reconnectingpty/buffered.go), [proxy](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/coderd/workspaceapps/proxy.go), and [authorization](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/coderd/workspaceapps/token.go).
+- ShellHub: [control connections and data forwarding](https://github.com/shellhub-io/shellhub/blob/ef2e2056e0ae4e575b60b79d5fde0365799b2a1c/pkg/revdial/revdial.go).
+
 ## Local Executor Lifecycle
 
 Packaged release builds of Wework keep one active app paired with one local executor. On release startup, only one Wework instance may stay active; repeated launches focus the existing window. The app directly starts and owns the executor child process and communicates through stdin/stdout JSONL, without a shared socket, TCP address file, or process discovery.

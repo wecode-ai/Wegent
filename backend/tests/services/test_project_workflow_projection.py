@@ -472,7 +472,11 @@ def test_runtime_device_identity_ids_resolve_executor_and_app_ids(
     )
     test_db.commit()
 
-    assert runtime_device_identity_ids(test_db, "executor-dev") == [
+    assert runtime_device_identity_ids(
+        test_db,
+        "executor-dev",
+        owner_user_id=test_user.id,
+    ) == [
         "executor-dev",
         "app-device-1",
     ]

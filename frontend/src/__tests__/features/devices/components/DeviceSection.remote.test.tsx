@@ -11,7 +11,7 @@ import { DeviceSection } from '@/features/devices/components/DeviceSection'
 
 function device(deviceId: string, deviceType: DeviceInfo['device_type']): DeviceInfo {
   return {
-    id: deviceId === 'remote-1' ? 1 : 2,
+    id: deviceId.length,
     device_id: deviceId,
     name: deviceId,
     status: 'online',
@@ -44,5 +44,24 @@ describe('DeviceSection remote devices', () => {
     expect(screen.getByText('Remote devices').parentElement).toHaveTextContent('(1)')
     expect(screen.getByTestId('device-remote-1')).toBeInTheDocument()
     expect(screen.queryByTestId('device-local-1')).not.toBeInTheDocument()
+  })
+
+  it('renders Wework app devices inside the personal device section', () => {
+    render(
+      <DeviceSection
+        title="Personal devices"
+        icon={Server}
+        devices={[device('app-1', 'app'), device('local-1', 'local'), device('remote-1', 'remote')]}
+        type={['local', 'app']}
+        emptyMessage="No personal devices"
+      >
+        {item => <div data-testid={`device-${item.device_id}`}>{item.name}</div>}
+      </DeviceSection>
+    )
+
+    expect(screen.getByTestId('device-section-local')).toHaveTextContent('(2)')
+    expect(screen.getByTestId('device-app-1')).toBeInTheDocument()
+    expect(screen.getByTestId('device-local-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('device-remote-1')).not.toBeInTheDocument()
   })
 })

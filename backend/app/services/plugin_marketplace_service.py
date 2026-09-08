@@ -68,6 +68,11 @@ from app.schemas.installed_plugin import (
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
 )
+from app.services.plugin_device_identity import (
+    coalesce_plugin_device_rows,
+    plugin_device_id,
+    plugin_device_rows,
+)
 from app.services.plugin_marketplace_identity import (
     ENTERPRISE_CATALOG_NAMESPACE,
     OFFICIAL_CATALOG_NAMESPACE,
@@ -255,13 +260,19 @@ class PluginMarketplaceService:
             if installed_by_id
             else []
         )
-        for row in device_rows:
+        coalesced_rows = coalesce_plugin_device_rows(db, device_rows)
+        for (_, canonical_id), row in coalesced_rows.items():
             item = installed_by_id.get(row.installed_kind_id)
             if not item:
                 continue
             item.status.devices.append(
                 PluginDeviceInstallationItem(
-                    deviceId=row.device_id,
+                    deviceId=(
+                        device_id
+                        if device_id
+                        and plugin_device_id(db, row.user_id, device_id) == canonical_id
+                        else canonical_id
+                    ),
                     desiredReleaseId=row.desired_release_id,
                     actualReleaseId=unset_id(row.actual_release_id),
                     state=row.state,
@@ -273,7 +284,10 @@ class PluginMarketplaceService:
                 )
             )
         rows_by_install = {
-            (row.installed_kind_id, row.device_id): row for row in device_rows
+            installed_id: row
+            for (installed_id, canonical_id), row in coalesced_rows.items()
+            if device_id
+            and plugin_device_id(db, row.user_id, device_id) == canonical_id
         }
         for item in response.items:
             plugin_id = item.spec.pluginId
@@ -281,7 +295,7 @@ class PluginMarketplaceService:
                 continue
             installed_id = self._installed_item_id(item)
             if device_id and installed_id:
-                device_row = rows_by_install.get((installed_id, device_id))
+                device_row = rows_by_install.get(installed_id)
                 if not self._device_has_materialized_release(device_row):
                     item.spec.installState = (
                         "failed"
@@ -363,16 +377,8 @@ class PluginMarketplaceService:
         )
         installed_kind_ids = [row.id for row in installed_by_plugin_id.values()]
         device_rows_by_kind_id: dict[int, PluginDeviceInstallation] = {}
-        if device_id and installed_kind_ids:
-            device_rows_by_kind_id = {
-                row.installed_kind_id: row
-                for row in db.query(PluginDeviceInstallation)
-                .filter(
-                    PluginDeviceInstallation.installed_kind_id.in_(installed_kind_ids),
-                    PluginDeviceInstallation.device_id == device_id,
-                )
-                .all()
-            }
+        if device_id and installed_kind_ids and user_id is not None:
+            device_rows_by_kind_id = plugin_device_rows(db, user_id, device_id)
 
         items: list[PluginMarketplaceItem] = []
         for plugin in rows:
@@ -2163,7 +2169,11 @@ class PluginMarketplaceService:
                 )
             ),
             currentDeviceInstallation=(
-                self._device_installation_item(device_row) if device_row else None
+                self._device_installation_item(device_row).model_copy(
+                    update={"deviceId": device_id or device_row.device_id}
+                )
+                if device_row
+                else None
             ),
         )
 
@@ -2219,13 +2229,11 @@ class PluginMarketplaceService:
         installed_kind_id: int,
         device_id: str,
     ) -> PluginDeviceInstallation | None:
-        return (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id == installed_kind_id,
-                PluginDeviceInstallation.device_id == device_id,
-            )
-            .first()
+        installed = db.get(Kind, installed_kind_id)
+        if installed is None:
+            return None
+        return plugin_device_rows(db, installed.user_id, device_id).get(
+            installed_kind_id
         )
 
     def _device_has_materialized_release(

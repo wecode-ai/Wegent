@@ -13,7 +13,8 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat } from 'node:fs/promises'
-import { cpus, freemem, totalmem } from 'node:os'
+import { cpus } from 'node:os'
+import { availableMemoryRatio } from './maintenance-memory.js'
 import { join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
@@ -73,6 +74,12 @@ export interface ElectronDesktopServices {
   pluginDevelopment: () => PluginDevelopmentService | null
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  weworkSyncRequest?: (request: {
+    apiBaseUrl: string
+    path: string
+    method: 'GET' | 'POST' | 'PUT'
+    body?: unknown
+  }) => Promise<unknown>
 }
 
 interface ElectronNotificationHandle {
@@ -626,6 +633,22 @@ export function createElectronCapabilityRouter(
     }
     return updated
   })
+  router.register('weworkSync.request', params => {
+    if (!desktopServices.weworkSyncRequest) {
+      throw new HostCapabilityError(
+        'capability_unavailable',
+        'Wework cloud synchronization is unavailable'
+      )
+    }
+    const method = optionalStringParam(params, 'method') ?? 'GET'
+    if (!['GET', 'POST', 'PUT'].includes(method)) invalidParam('method')
+    return desktopServices.weworkSyncRequest({
+      apiBaseUrl: stringParam(params, 'apiBaseUrl'),
+      path: stringParam(params, 'path'),
+      method: method as 'GET' | 'POST' | 'PUT',
+      ...(Object.hasOwn(params, 'body') ? { body: params.body } : {}),
+    })
+  })
   registerRendererStorageCapabilities(router, rendererStorage)
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
@@ -691,7 +714,6 @@ export function createElectronCapabilityRouter(
       name: stringParam(params, 'name'),
       displayName: stringParam(params, 'displayName'),
       description: stringParam(params, 'description'),
-      template: stringParam(params, 'template'),
     })
   )
   router.register('smartApps.linkDirectory', params =>
@@ -760,17 +782,11 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.exportToDownloads', params =>
     requiredSmartApps(smartApps).exportToDownloads(stringParam(params, 'installationId'))
   )
-  router.register('smartApps.inspectVerification', params =>
-    requiredSmartApps(smartApps).inspectVerification(stringParam(params, 'installationId'))
-  )
   router.register('smartApps.upload', params =>
     requiredSmartApps(smartApps).upload(
       stringParam(params, 'archivePath'),
       stringParam(params, 'uploadUrl')
     )
-  )
-  router.register('smartApps.verify', params =>
-    requiredSmartApps(smartApps).verify(stringParam(params, 'installationId'))
   )
   router.register('systemDrag.complete', params =>
     e2eHost.completeSystemDragDrop(systemDragPayload(params))
@@ -937,10 +953,9 @@ export async function systemPressureSnapshot(): Promise<{
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()
-  const totalMemory = totalmem()
   return {
     cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
-    freeMemoryRatio: totalMemory > 0 ? freemem() / totalMemory : 0,
+    freeMemoryRatio: availableMemoryRatio(process.getSystemMemoryInfo(), process.platform),
     userIdleSeconds: powerMonitor.getSystemIdleTime(),
   }
 }

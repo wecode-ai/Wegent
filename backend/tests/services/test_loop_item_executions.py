@@ -497,6 +497,7 @@ def test_runtime_event_matches_execution_by_any_device_identity(
         runtime_task_id=execution.runtime_task_id,
         event_name="response.created",
         payload={"eventSeq": 1, "data": {}},
+        owner_user_id=test_user.id,
     )
     assert running is not None
     assert running.id == execution.id
@@ -5921,7 +5922,7 @@ def test_enqueue_automation_manager_normalizes_ambiguous_app_device_id(
         },
     )
 
-    assert execution.execution_device_id == "local-device"
+    assert execution.execution_device_id == f"app-record-{app.id}"
     assert execution.execution_environment == "local"
 
 
@@ -5978,5 +5979,5 @@ def test_enqueue_generic_robot_normalizes_app_device_id(
         automation_context={"runtime_source": "runtime_user", "run_id": str(run.id)},
     )
 
-    assert execution.execution_device_id == "local-device"
+    assert execution.execution_device_id == f"app-record-{device.id}"
     assert execution.execution_environment == "local"

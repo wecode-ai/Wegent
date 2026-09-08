@@ -22,6 +22,7 @@ export interface AutomationRulesViewProps {
   onLoadExecutionCatalog?: () => Promise<AutomationExecutionCatalog>
   onLoadExecutionPlugins?: () => Promise<AutomationExecutionCatalog['plugins']>
   onLoadRuns?: () => Promise<AutomationUiRun[]>
+  onRunRule?: (rule: AutomationUiRule) => Promise<void>
   onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>
   onToggleRule?: (rule: AutomationUiRule, enabled: boolean) => Promise<AutomationUiRule>
   onDuplicateRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>

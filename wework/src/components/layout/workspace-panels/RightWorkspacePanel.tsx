@@ -1,6 +1,4 @@
 import {
-  CheckCircle2,
-  CircleAlert,
   File,
   FileDiff,
   Globe2,
@@ -28,7 +26,6 @@ import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarn
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { TitlebarRightPanelPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
-import type { HarnessAppVerificationReport } from '@/api/local/harnessApps'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -158,9 +155,6 @@ export interface RightWorkspaceBrowserState {
     workspaceTabId?: string
     status: 'starting' | 'ready' | 'reloading' | 'error'
     error?: string
-    verificationStatus: 'unverified' | 'running' | 'passed' | 'failed' | 'stale'
-    verificationReport?: HarnessAppVerificationReport | null
-    verificationError?: string
   }
 }
 
@@ -219,10 +213,6 @@ interface RightWorkspacePanelProps {
     installationId: string,
     pluginSpec: string
   ) => Promise<void>
-  onVerifySmartAppDevelopmentPreview?: (
-    tab: RightWorkspaceBrowserTab,
-    installationId: string
-  ) => void
   codeCommentCount?: number
   codeCommentContexts?: CodeCommentContext[]
   browserAnnotationCommand?: BrowserAnnotationCommand | null
@@ -382,104 +372,6 @@ function SmartAppDevelopmentPreviewState({
   )
 }
 
-function SmartAppDevelopmentVerification({
-  disabled,
-  preview,
-  tab,
-  onVerify,
-}: {
-  disabled: boolean
-  preview: NonNullable<RightWorkspaceBrowserState['developmentPreview']>
-  tab: RightWorkspaceBrowserTab
-  onVerify?: (tab: RightWorkspaceBrowserTab, installationId: string) => void
-}) {
-  const { t } = useTranslation('common')
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const blockingIssue = preview.verificationReport?.issues.find(issue => issue.blocking)
-  const issues = preview.verificationReport?.issues ?? []
-  const label =
-    preview.verificationStatus === 'passed'
-      ? t('workbench.smart_app_preview_verification_passed')
-      : preview.verificationStatus === 'failed'
-        ? t('workbench.smart_app_preview_verification_failed')
-        : preview.verificationStatus === 'stale'
-          ? t('workbench.smart_app_preview_verification_stale')
-          : preview.verificationStatus === 'running'
-            ? t('workbench.smart_app_preview_verification_running')
-            : t('workbench.smart_app_preview_verification_unverified')
-
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <div
-        data-testid={`smart-app-development-preview-verification-${preview.verificationStatus}`}
-        className="min-w-0 text-xs text-text-secondary"
-      >
-        <span className="inline-flex items-center gap-1">
-          {preview.verificationStatus === 'running' ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : preview.verificationStatus === 'passed' ? (
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          ) : preview.verificationStatus === 'failed' || preview.verificationStatus === 'stale' ? (
-            <CircleAlert className="h-3.5 w-3.5" />
-          ) : null}
-          {label}
-        </span>
-        {preview.verificationStatus === 'failed' && (blockingIssue || preview.verificationError) ? (
-          <span className="ml-2">
-            {blockingIssue ? (
-              <>
-                {blockingIssue.code}
-                {blockingIssue.file ? ` · ${blockingIssue.file}` : ''}
-                {blockingIssue.hint ? ` · ${blockingIssue.hint}` : ''}
-              </>
-            ) : (
-              preview.verificationError
-            )}
-          </span>
-        ) : null}
-      </div>
-      {issues.length > 1 ? (
-        <button
-          type="button"
-          data-testid="smart-app-development-preview-verification-details"
-          aria-expanded={detailsOpen}
-          onClick={() => setDetailsOpen(current => !current)}
-          className="shrink-0 rounded px-1.5 py-1 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-        >
-          {detailsOpen
-            ? t('workbench.smart_app_preview_verification_hide_details')
-            : t('workbench.smart_app_preview_verification_show_details', { count: issues.length })}
-        </button>
-      ) : null}
-      <button
-        type="button"
-        data-testid="smart-app-development-preview-verify"
-        disabled={disabled || preview.verificationStatus === 'running'}
-        onClick={() => onVerify?.(tab, preview.installationId)}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {t('workbench.smart_app_preview_verify')}
-      </button>
-      {detailsOpen && issues.length > 1 ? (
-        <div
-          data-testid="smart-app-development-preview-verification-issues"
-          className="absolute right-3 top-12 z-popover w-80 rounded-md border border-border bg-background p-3 shadow-md"
-        >
-          <ul className="space-y-2 text-xs text-text-secondary">
-            {issues.map(issue => (
-              <li key={`${issue.stage}:${issue.code}:${issue.file ?? ''}`}>
-                <div className="font-medium text-text-primary">{issue.code}</div>
-                <div>{issue.file ?? issue.message}</div>
-                {issue.hint ? <div>{issue.hint}</div> : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   showWorkbenchBackground = false,
   visible,
@@ -514,7 +406,6 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onBrowserStateChange,
   onReloadSmartAppDevelopmentPreview,
   onAddSmartAppDevelopmentPlugin,
-  onVerifySmartAppDevelopmentPreview,
   codeCommentCount = 0,
   codeCommentContexts = [],
   browserAnnotationCommand,
@@ -966,13 +857,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                         </span>
                       </div>
                     </div>
-                    <div className="relative flex shrink-0 items-center justify-end gap-1">
-                      <SmartAppDevelopmentVerification
-                        disabled={developmentPreview.status !== 'ready'}
-                        preview={developmentPreview}
-                        tab={tab}
-                        onVerify={onVerifySmartAppDevelopmentPreview}
-                      />
+                    <div className="flex shrink-0 items-center justify-end gap-1">
                       <button
                         type="button"
                         data-testid="smart-app-development-preview-add-plugins"
