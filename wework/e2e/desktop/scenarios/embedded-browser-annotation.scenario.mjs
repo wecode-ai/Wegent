@@ -675,19 +675,6 @@ async function pageValue(bridge, expression) {
   return result.value
 }
 
-async function pageValueWithRuntimeDiagnostics(control, bridge, expression, previousRevision) {
-  try {
-    return await pageValue(bridge, expression)
-  } catch (error) {
-    const actualRevision = await browserAnnotationRuntimeRevision(control).catch(() => null)
-    throw new Error(
-      `${
-        error instanceof Error ? error.message : String(error)
-      }; annotationRuntimeRevision=${previousRevision}->${String(actualRevision)}`
-    )
-  }
-}
-
 async function waitForPageValue(bridge, expression, expected, timeoutMs, message) {
   const startedAt = Date.now()
   let actual = null
@@ -1216,15 +1203,12 @@ async function verifyDesign(
     uiTimeoutMs,
     'Holding Original View did not complete its page render'
   )
-  assert.equal(
-    await pageValueWithRuntimeDiagnostics(
-      control,
-      bridge,
-      `getComputedStyle(document.querySelector('#design-target')).color`,
-      runtimeRevision
-    ),
+  await waitForPageValue(
+    bridge,
+    `getComputedStyle(document.querySelector('#design-target')).color`,
     'rgb(17, 24, 39)',
-    'Original View did not restore the target color'
+    uiTimeoutMs,
+    `Original View did not restore the target color after runtime revision ${runtimeRevision}`
   )
   await captureScreenshot(control, 'browser-annotation-06-original-view.png')
   await control.command('pointerUp', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
@@ -1244,15 +1228,12 @@ async function verifyDesign(
     uiTimeoutMs,
     'Releasing Original View did not complete its page render'
   )
-  assert.equal(
-    await pageValueWithRuntimeDiagnostics(
-      control,
-      bridge,
-      `getComputedStyle(document.querySelector('#design-target')).color`,
-      runtimeRevision
-    ),
+  await waitForPageValue(
+    bridge,
+    `getComputedStyle(document.querySelector('#design-target')).color`,
     'rgb(239, 68, 68)',
-    'Releasing Original View did not replay the design change'
+    uiTimeoutMs,
+    `Releasing Original View did not replay the design change after runtime revision ${runtimeRevision}`
   )
 
   await control.command('click', BROWSER_ANNOTATION_CLOSE_SELECTOR)

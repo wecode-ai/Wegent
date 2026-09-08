@@ -4,16 +4,10 @@ async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
 }
 
-async function waitForReadyAfter(control, readyCount, timeoutMs) {
+async function waitForReadyAfter(control, readyCount, timeoutMs, message) {
   let timeout
   const reconnectTimeout = new Promise((_, reject) => {
-    timeout = setTimeout(
-      () =>
-        reject(
-          new Error('Restoring the main window from Tray did not reconnect the desktop controller')
-        ),
-      timeoutMs
-    )
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
   })
   try {
     await Promise.race([control.awaitReadyAfter(readyCount), reconnectTimeout])
@@ -45,8 +39,19 @@ async function waitForRoute(control, expected, timeoutMs) {
 }
 
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+  let launchSecondInstance = null
+
   return {
+    appEnvironment: {
+      WEWORK_E2E_BACKGROUND_WINDOW: '0',
+    },
+
+    setLaunchSecondInstance(launch) {
+      launchSecondInstance = launch
+    },
+
     async verify(control) {
+      assert.ok(launchSecondInstance, 'The second-instance launcher was not configured')
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
       assert.match(
@@ -74,7 +79,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       )
       await waitForRoute(control, '/settings', uiTimeoutMs)
 
-      const readyCountBeforeClose = control.readyCount
+      const readyCountBeforeSecondInstance = control.readyCount
       await control.command('requestMainWindowClose', 'body')
       await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
         timeoutMs: uiTimeoutMs,
@@ -90,10 +95,45 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         assert.equal(hidden.dockVisible, false, 'Closing to Tray did not hide the macOS Dock icon')
       }
 
+      await launchSecondInstance()
+      await waitForReadyAfter(
+        control,
+        readyCountBeforeSecondInstance,
+        uiTimeoutMs,
+        'Launching Wework again did not reconnect the desktop controller'
+      )
+      const secondInstanceRestored = await waitForWindowState(
+        control,
+        state => state.visible && !state.minimized,
+        'Launching Wework again did not restore the hidden main window',
+        uiTimeoutMs
+      )
+      if (secondInstanceRestored.platform === 'darwin') {
+        assert.equal(
+          secondInstanceRestored.dockVisible,
+          true,
+          'Launching Wework again did not restore the macOS Dock icon'
+        )
+      }
+      await captureScreenshot(control, 'tray-lifecycle-second-instance-restored.png', 'body')
+
+      const readyCountBeforeTrayRestore = control.readyCount
+      await control.command('requestMainWindowClose', 'body')
+      await waitForWindowState(
+        control,
+        state => !state.visible,
+        'A subsequent close-to-tray request did not hide the Electron window',
+        uiTimeoutMs
+      )
       await control.command('activateTray', 'body', {
         value: JSON.stringify({ type: 'click' }),
       })
-      await waitForReadyAfter(control, readyCountBeforeClose, uiTimeoutMs)
+      await waitForReadyAfter(
+        control,
+        readyCountBeforeTrayRestore,
+        uiTimeoutMs,
+        'Restoring the main window from Tray did not reconnect the desktop controller'
+      )
       const restored = await waitForWindowState(
         control,
         state => state.visible && !state.minimized,
@@ -107,7 +147,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
     },
 
     diagnostics() {
-      return { trayLifecycle: true }
+      return { secondInstanceRestore: true, trayLifecycle: true }
     },
   }
 }
