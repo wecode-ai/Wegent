@@ -308,6 +308,13 @@ CI reliability depends on these invariants:
   wait for each target element before reading attributes or asserting state.
   Visible final text does not imply that associated disclosure controls or
   timelines have mounted.
+- After desktop E2E triggers an asynchronous export, disable, reload,
+  immediate inspection, creation, or archival, do not treat a success notice,
+  request count, re-enabled button, or optimistic DOM update as the final
+  result. Assert at least one independently verifiable outcome from the actual
+  artifact, persisted file, stopped service, completed-state copy, or
+  backend/UI state loaded again. If the test environment exposes no real
+  outcome boundary, do not fabricate coverage with a mocked readback.
 - After a page reload, task switch, or injected lifecycle/transcript event,
   desktop E2E must not wait only for sidebar, composer, or debug state. Before
   reading a virtualized transcript or asserting text occurrence counts, wait

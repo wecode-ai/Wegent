@@ -133,6 +133,22 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         '[data-testid="workspace-file-preview-loading-indicator"]',
         uiTimeoutMs
       )
+      await control.command('click', '[data-testid="workspace-file-edit-button"]')
+      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.match(
+        await control.command('getText', '[data-testid="workspace-file-editor"] .cm-content'),
+        /export const authenticated = false\s*\/\/ changed outside Wework/,
+        'Reloading the conflicted file did not render the final on-disk contents'
+      )
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="workspace-file-save-error"]')
+        ),
+        0,
+        'Reloading the conflicted file left the stale save error visible'
+      )
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
       await control.command('clickWhenEnabled', '[data-testid="right-workspace-review-option"]', {
         timeoutMs: uiTimeoutMs,
