@@ -21,6 +21,7 @@ import tempfile
 import uuid
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
@@ -225,7 +226,7 @@ def test_request_style_close_without_commit_keeps_stored_credentials(shared_team
 
 def test_owner_view_response_and_state_unchanged(shared_team_db):
     # G4: the owner's own view keeps its response semantics.
-    engine, factory, (owner_id, viewer_id, team_id) = shared_team_db
+    _, factory, (owner_id, viewer_id, team_id) = shared_team_db
     with factory() as db:
         attached = userReader.get_by_id(db, owner_id)
         before = copy.deepcopy(attached.git_info)
@@ -250,7 +251,7 @@ def test_owner_view_response_and_state_unchanged(shared_team_db):
 
 def test_unauthorized_viewer_is_denied(shared_team_db):
     # G5: redaction must not become an access-control change.
-    engine, factory, (owner_id, viewer_id, team_id) = shared_team_db
+    _, factory, (owner_id, viewer_id, team_id) = shared_team_db
     with factory() as db:
         stranger = User(
             user_name="stranger",
@@ -260,11 +261,8 @@ def test_unauthorized_viewer_is_denied(shared_team_db):
         db.add(stranger)
         db.flush()
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             team_kinds_service.get_team_detail(db, team_id=team_id, user_id=stranger.id)
-        from fastapi import HTTPException
-
-        assert isinstance(exc_info.value, HTTPException)
         assert exc_info.value.status_code == 404
 
 
