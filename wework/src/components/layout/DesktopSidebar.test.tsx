@@ -2094,17 +2094,11 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
-  test('shows Sites only while experimental features are enabled', async () => {
+  test('shows Applications while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
-    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
   test('shows Automations when experimental features are disabled', () => {

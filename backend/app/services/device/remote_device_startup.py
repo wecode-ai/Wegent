@@ -263,6 +263,8 @@ class DefaultRemoteDeviceCommandProvider:
             "DEVICE_ID": context.device_id,
             "DEVICE_NAME": context.device_name,
             "EXECUTOR_MODE": "local",
+            "DEVICE_CODE_SERVER_ENABLED": "true",
+            "DEVICE_TERMINAL_ENABLED": "true",
             "WEGENT_EXECUTOR_HOME_ID": context.device_id,
             "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": "true",
             "WEGENT_BACKEND_URL": backend_url,

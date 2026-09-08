@@ -4,6 +4,7 @@ export type SitePublishStatus = 'unpublished' | 'publishing' | 'published' | 'fa
 export type SiteAppType = 'web' | 'miniapp'
 export type SiteNetwork = 'inner' | 'outer'
 export type SiteAccessRole = 'owner' | 'collaborator'
+export type SiteAccessAudience = 'all' | 'login' | 'owner' | 'custom'
 export type ApplicationCapability =
   | 'create'
   | 'publish'
@@ -11,6 +12,7 @@ export type ApplicationCapability =
   | 'delete'
   | 'open_experience'
   | 'configure_environment'
+  | 'manage_access'
 export type EnvironmentVariableType = 'plain' | 'secret'
 
 export interface PlainEnvironmentVariable {
@@ -141,6 +143,22 @@ export interface SiteCollaborator {
   created_at: string
 }
 
+export interface SiteAccessPolicy {
+  id: string
+  project_id: string
+  target: 'inner'
+  audience: SiteAccessAudience
+  subjects: string[]
+  revision_number: number
+  created_by: string
+  created_at: string
+}
+
+export interface UpdateSiteAccessInput {
+  audience: SiteAccessAudience
+  subjects: string[]
+}
+
 export interface SitesApi {
   listApplicationTypes(): Promise<ApplicationTypeListResponse>
   listSites(input: ListSitesInput): Promise<SiteListResponse>
@@ -161,6 +179,12 @@ export interface SitesApi {
     idempotencyKey: string
   ): Promise<SiteCollaborator>
   removeCollaborator(siteid: string, subject: string): Promise<void>
+  getSiteAccess(siteid: string): Promise<SiteAccessPolicy>
+  updateSiteAccess(
+    siteid: string,
+    input: UpdateSiteAccessInput,
+    idempotencyKey: string
+  ): Promise<SiteAccessPolicy>
 }
 
 interface SitesApiOptions {
@@ -233,6 +257,14 @@ export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): 
         `/sites/${encodeURIComponent(siteid)}/collaborators/${encodeURIComponent(subject)}`
       )
     },
+    getSiteAccess(siteid) {
+      return client.get(`/sites/${encodeURIComponent(siteid)}/access`)
+    },
+    updateSiteAccess(siteid, input, idempotencyKey) {
+      return client.put(`/sites/${encodeURIComponent(siteid)}/access`, input, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+      })
+    },
   }
 }
 
@@ -252,6 +284,8 @@ export function createUnavailableSitesApi(): SitesApi {
     listCollaborators: unavailable,
     addCollaborator: unavailable,
     removeCollaborator: unavailable,
+    getSiteAccess: unavailable,
+    updateSiteAccess: unavailable,
   }
 }
 
