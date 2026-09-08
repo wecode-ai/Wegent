@@ -18,6 +18,7 @@ core_segments=(
   project-ai-settings
   model-routing
   permission-modes
+  workbench-mode
   computer-use
   task-status-sync
   task-board-association
@@ -32,6 +33,7 @@ core_segments=(
   running-conversation-history
   codex-notification-isolation
   executor-stream-recovery
+  transcript-sync
   context-compaction
   split-workbench
   release-package-startup
@@ -55,6 +57,7 @@ core_segments=(
   browser-annotation-core
   browser-annotation-anchors
   browser-annotation-design
+  dsh-owner-capture
 )
 plugin_segments=(
   core-dsh-ui-plugin-composition
@@ -63,6 +66,7 @@ plugin_segments=(
   sites-plugin-auto-install
 )
 formal_release_segments=(
+  app-update-baseline
   app-update-differential
 )
 cloud_worktree_segments=(
@@ -124,7 +128,7 @@ core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
-  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle
+  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
@@ -136,7 +140,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,executor-stream-recovery
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,computer-use
 )
 
@@ -274,6 +278,10 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/modules/terminal-compatibility-flows.mjs)
+      select_target "cloud:core-task-flow"
+      return
+      ;;
     # Documentation does not change the packaged desktop application.
     wework/*.md)
       return
@@ -298,6 +306,14 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # Workbench mode owns the managed Git plugin state and settings flow.
+    wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs | \
+      wework/electron/src/runtime/workbench-mode* | \
+      wework/src/features/workbench-mode/*)
+      select_target "core:workbench-mode"
       return
       ;;
 
@@ -654,6 +670,13 @@ classify_wework_path() {
       select_target "core:executor-stream-recovery"
       return
       ;;
+    wework/dsh/transcript-sync/* | \
+      wework/dsh/executor-runtime/session-projector* | \
+      wework/electron/src/host/wework-sync-request* | \
+      wework/e2e/desktop/scenarios/transcript-sync.scenario.mjs)
+      select_target "core:transcript-sync"
+      return
+      ;;
 
     # Git hosting preferences and explicit device synchronization share one
     # independently bootstrapped real-Tauri checkpoint.
@@ -698,6 +721,12 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/api/ws/terminal_namespace.py | \
+      backend/app/services/device/terminal_protocol.py | \
+      backend/app/services/device/terminal_session_record.py | \
+      backend/app/services/device/terminal_session_service.py)
+      select_target "cloud:core-task-flow"
+      ;;
     executor/src/local/app_ipc.rs | \
       executor/src/local/codex_home.rs | \
       executor/tests/local_app_ipc_contract.rs)

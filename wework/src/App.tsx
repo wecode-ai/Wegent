@@ -120,6 +120,7 @@ import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-ap
 import type { User } from '@/types/api'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
+import { telemetryDomainForFeature, telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
@@ -182,17 +183,6 @@ function useCurrentLocation() {
   }, [])
 
   return location
-}
-
-function telemetryFeatureForPath(path: string) {
-  if (path === '/login' || path === '/login/oidc') return 'login' as const
-  const pluginRoute = resolveDshRoute(path)
-  if (pluginRoute) return pluginRoute.telemetryFeature
-  if (path.startsWith('/app/')) return 'apps' as const
-  if (path.startsWith('/settings')) return 'settings' as const
-  if (path.startsWith('/project-space')) return 'project_space' as const
-  if (path === '/') return 'workbench' as const
-  return 'unknown' as const
 }
 
 interface AppRoutesProps {
@@ -503,7 +493,7 @@ export function WorkspaceTabSurface({
 }
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
-  const path = useCurrentPath()
+  const { pathname: path, search } = useCurrentLocation()
   useDshSlotEntries(WEWORK_DSH_SLOTS.route)
   const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
@@ -580,11 +570,17 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     }
   }, [])
 
+  const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
+  const telemetryDomain = telemetryDomainForFeature(telemetryFeature)
+
   useEffect(() => {
-    track('feature_opened', {
-      feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
-    })
-  }, [isPopoutWindow, path, telemetryEnabled])
+    track(
+      'feature_opened',
+      telemetryDomain
+        ? { domain: telemetryDomain, feature: telemetryFeature }
+        : { feature: telemetryFeature }
+    )
+  }, [path, telemetryDomain, telemetryEnabled, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)
@@ -765,9 +761,6 @@ function AppShell() {
     socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
-    registrationDeviceType: appPreferences?.preferences.remoteControlEnabled
-      ? ('remote' as const)
-      : ('app' as const),
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
@@ -1118,7 +1111,6 @@ function AppShell() {
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
             preferencesLoaded={appPreferences?.loaded ?? false}
-            remoteControlEnabled={appPreferences?.preferences.remoteControlEnabled ?? false}
           />
         ) : null}
         {isMainWindow && isElectron ? (

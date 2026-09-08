@@ -175,6 +175,117 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
 }
 
 #[test]
+fn claude_command_maps_supported_context_window_fields_to_process_environment() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let cases = [
+        ("model_context_window", json!(1_000_000)),
+        ("context_window", json!(200_000)),
+        ("contextWindow", json!("128000")),
+    ];
+
+    for (key, value) in cases {
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config: json!({key: value}),
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        let expected = match key {
+            "model_context_window" => "1000000",
+            "context_window" => "200000",
+            "contextWindow" => "128000",
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            spec.envs().get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn claude_command_ignores_invalid_context_window_values() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+
+    for value in [json!(0), json!(-1), json!(true), json!("invalid")] {
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config: json!({"context_window": value}),
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        assert!(!spec.envs().contains_key("CLAUDE_CODE_MAX_CONTEXT_TOKENS"));
+    }
+
+    let invalid_explicit_env = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({
+            "env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "invalid"}
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&invalid_explicit_env, "claude");
+
+    assert!(!spec.envs().contains_key("CLAUDE_CODE_MAX_CONTEXT_TOKENS"));
+}
+
+#[test]
+fn claude_command_applies_context_window_precedence() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::set("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "262144");
+    let request_context = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({"context_window": 1_000_000}),
+        ..ExecutionRequest::default()
+    };
+    let explicit_context = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({
+            "context_window": 1_000_000,
+            "env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "524288"}
+        }),
+        ..ExecutionRequest::default()
+    };
+    let process_context = ExecutionRequest {
+        prompt: json!("run locally"),
+        ..ExecutionRequest::default()
+    };
+
+    let request_spec = build_claude_command(&request_context, "claude");
+    let explicit_spec = build_claude_command(&explicit_context, "claude");
+    let process_spec = build_claude_command(&process_context, "claude");
+
+    assert_eq!(
+        request_spec
+            .envs()
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .unwrap(),
+        "1000000"
+    );
+    assert_eq!(
+        explicit_spec
+            .envs()
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .unwrap(),
+        "524288"
+    );
+    assert_eq!(
+        process_spec
+            .envs()
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .unwrap(),
+        "262144"
+    );
+}
+
+#[test]
 fn claude_command_uses_explicit_default_models_when_set() {
     let _lock = env_lock();
     let _default_haiku = EnvGuard::set("ANTHROPIC_DEFAULT_HAIKU_MODEL", "process-haiku");

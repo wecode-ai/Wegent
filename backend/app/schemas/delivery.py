@@ -18,6 +18,7 @@ from pydantic import (
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
+from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
 
@@ -361,6 +362,10 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    model_selection: RuntimeModelSelection | None = Field(
+        default=None,
+        alias="modelSelection",
+    )
     workflow_node_id: str | None = Field(
         default=None,
         alias="workflowNodeId",
@@ -371,7 +376,7 @@ class LoopItemTaskBind(BaseModel):
 
 
 class LoopItemTaskBindingResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: SnowflakeId
     cloud_project_id: SnowflakeId
@@ -381,6 +386,10 @@ class LoopItemTaskBindingResponse(BaseModel):
     task_id: str
     task_title: str | None
     backend_task_id: int | None
+    model_selection: RuntimeModelSelection | None = Field(
+        default=None,
+        alias="modelSelection",
+    )
     workflow_node_id: str | None = None
     linked_by_user_id: int
     linked_at: datetime

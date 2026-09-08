@@ -7,6 +7,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 
 const mergedDefaultPreferences = {
+  workbenchMode: 'developer',
   appearanceMode: 'system',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
@@ -90,7 +91,6 @@ const mergedDefaultPreferences = {
       permissionMode: 'default',
     },
   ],
-  remoteControlEnabled: false,
   cloudConnection: null,
 }
 
@@ -132,25 +132,25 @@ describe('appPreferences', () => {
     })
   })
 
-  test('normalizes the remote control preference and defaults it off', async () => {
-    invokeMock.mockResolvedValue({ remoteControlEnabled: true })
-
-    const { getAppPreferences } = await import('./appPreferences')
-
-    await expect(getAppPreferences()).resolves.toEqual({
-      ...mergedDefaultPreferences,
-      remoteControlEnabled: true,
-    })
-
-    invokeMock.mockResolvedValue({ remoteControlEnabled: 'yes' })
-    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
-  })
-
   test('falls back to the default language for invalid stored language values', async () => {
     invokeMock.mockResolvedValue({ language: 'fr' })
 
     const { getAppPreferences } = await import('./appPreferences')
 
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
+  })
+
+  test('normalizes the workbench mode and preserves existing behavior by default', async () => {
+    invokeMock.mockResolvedValue({ workbenchMode: 'focus' })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      workbenchMode: 'focus',
+    })
+
+    invokeMock.mockResolvedValue({ workbenchMode: 'unknown' })
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 

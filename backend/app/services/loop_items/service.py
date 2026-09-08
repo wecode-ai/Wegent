@@ -89,6 +89,17 @@ ASSIGNMENT_HISTORY_KEY = "assignment_history"
 logger = logging.getLogger(__name__)
 
 
+def _task_binding_metadata(
+    values: LoopItemTaskBind, *, include_workflow_node: bool = True
+) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if include_workflow_node and values.workflow_node_id:
+        metadata["workflow_node_id"] = values.workflow_node_id
+    if values.model_selection:
+        metadata["model_selection"] = values.model_selection.model_dump(by_alias=True)
+    return metadata
+
+
 class LoopItemService:
     @staticmethod
     def _project_status_ids(project: CloudProject) -> list[str]:
@@ -1650,15 +1661,17 @@ class LoopItemService:
             if active.loop_item_id == item_id:
                 if values.task_title and active.task_title != values.task_title:
                     active.task_title = values.task_title
-                if values.workflow_node_id:
+                metadata_updates = _task_binding_metadata(values)
+                if metadata_updates:
                     active.metadata_json = {
                         **(
                             active.metadata_json
                             if isinstance(active.metadata_json, dict)
                             else {}
                         ),
-                        "workflow_node_id": values.workflow_node_id,
+                        **metadata_updates,
                     }
+                if values.workflow_node_id:
                     from app.services.workflow_stage_context import (
                         workflow_stage_context_resolver,
                     )
@@ -1691,11 +1704,7 @@ class LoopItemService:
             backend_task_id=values.backend_task_id,
             linked_by_user_id=user_id,
             linked_at=self._now(),
-            metadata_json=(
-                {"workflow_node_id": values.workflow_node_id}
-                if values.workflow_node_id
-                else None
-            ),
+            metadata_json=_task_binding_metadata(values) or None,
         )
         if values.workflow_node_id:
             from app.services.workflow_stage_context import (
@@ -1780,6 +1789,18 @@ class LoopItemService:
             ):
                 if values.task_title and active.task_title != values.task_title:
                     active.task_title = values.task_title
+                metadata_updates = _task_binding_metadata(
+                    values, include_workflow_node=False
+                )
+                if metadata_updates:
+                    active.metadata_json = {
+                        **(
+                            active.metadata_json
+                            if isinstance(active.metadata_json, dict)
+                            else {}
+                        ),
+                        **metadata_updates,
+                    }
                 db.commit()
                 db.refresh(active)
                 return active
@@ -1794,6 +1815,8 @@ class LoopItemService:
             backend_task_id=values.backend_task_id,
             linked_by_user_id=user_id,
             linked_at=self._now(),
+            metadata_json=_task_binding_metadata(values, include_workflow_node=False)
+            or None,
         )
         db.add(binding)
         db.commit()

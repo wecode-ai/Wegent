@@ -82,7 +82,14 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
           app_type: 'web',
           enabled: true,
           order: 10,
-          capabilities: ['create', 'publish', 'edit', 'delete', 'configure_environment'],
+          capabilities: [
+            'create',
+            'publish',
+            'edit',
+            'delete',
+            'configure_environment',
+            'manage_access',
+          ],
           create: {
             plugin_name: 'wegent-sites',
             marketplace_name: 'wegent',
@@ -152,6 +159,28 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
       })
     ),
     removeCollaborator: vi.fn().mockResolvedValue(undefined),
+    getSiteAccess: vi.fn().mockResolvedValue({
+      id: 'policy-1',
+      project_id: 'site-1',
+      target: 'inner',
+      audience: 'owner',
+      subjects: [],
+      revision_number: 2,
+      created_by: 'alice',
+      created_at: '2026-09-08T08:00:00Z',
+    }),
+    updateSiteAccess: vi.fn().mockImplementation((_siteid, input) =>
+      Promise.resolve({
+        id: 'policy-2',
+        project_id: 'site-1',
+        target: 'inner' as const,
+        audience: input.audience,
+        subjects: input.subjects,
+        revision_number: 3,
+        created_by: 'alice',
+        created_at: '2026-09-08T09:00:00Z',
+      })
+    ),
   }
 }
 
@@ -220,7 +249,9 @@ describe('SitesWorkspace', () => {
     })
 
     await userEvent.click(screen.getByTestId('site-internal-url-site-1'))
-    expect(openExternalUrl).toHaveBeenCalledWith('http://sites.internal/product')
+    expect(openExternalUrl).toHaveBeenCalledWith('http://sites.internal/product', {
+      target: 'system',
+    })
   })
 
   test('lets owners load, add, and remove Project collaborators', async () => {
@@ -266,6 +297,48 @@ describe('SitesWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('site-more-site-1'))
     expect(screen.queryByTestId('site-collaborators-menu-item-site-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('site-access-menu-item-site-1')).toBeInTheDocument()
+  })
+
+  test('lets collaborators update the access policy for an internal site', async () => {
+    const api = createApi([{ ...unpublishedSite, access_role: 'collaborator' }])
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
+    await userEvent.click(screen.getByTestId('site-access-menu-item-site-1'))
+
+    expect(await screen.findByTestId('site-access-dialog')).toBeInTheDocument()
+    await waitFor(() => expect(api.getSiteAccess).toHaveBeenCalledWith('site-1'))
+    expect(screen.getByTestId('site-access-audience-owner')).toBeChecked()
+
+    await userEvent.click(screen.getByTestId('site-access-audience-custom'))
+    await userEvent.type(screen.getByTestId('site-access-subjects'), 'member-b, member-a')
+    await userEvent.click(screen.getByTestId('site-access-save'))
+
+    await waitFor(() =>
+      expect(api.updateSiteAccess).toHaveBeenCalledWith(
+        'site-1',
+        { audience: 'custom', subjects: ['member-a', 'member-b'] },
+        expect.stringMatching(/^site-access-/)
+      )
+    )
+    expect(await screen.findByText('访问权限已保存')).toBeInTheDocument()
+  })
+
+  test('does not show access management for an external site', async () => {
+    const api = createApi([
+      {
+        ...unpublishedSite,
+        network: 'outer',
+        external_url: 'https://product.example.site',
+      },
+    ])
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
+    expect(screen.queryByTestId('site-access-menu-item-site-1')).not.toBeInTheDocument()
   })
 
   test('debounces search and replaces the current results', async () => {

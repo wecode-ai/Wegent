@@ -94,6 +94,11 @@ where
     }
 
     pub async fn register_device(&self, timeout: Duration) -> Result<bool, String> {
+        if self.config.device_id.is_empty() || self.config.runtime_instance_id.is_empty() {
+            return Err(
+                "persistent device and Runtime identities are required for registration".to_owned(),
+            );
+        }
         let response = self
             .transport
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
@@ -188,6 +193,23 @@ where
 
     pub async fn emit_raw_event(&self, event: &str, payload: Value) -> Result<(), String> {
         self.transport.emit(event, payload).await
+    }
+
+    pub async fn call_raw_event(
+        &self,
+        event: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let response = self.transport.call(event, payload, timeout).await?;
+        if ack_success(&response) {
+            return Ok(());
+        }
+        Err(ack_payload(&response)
+            .and_then(|value| value.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("Backend rejected executor event")
+            .to_owned())
     }
 
     pub fn set_running_task_ids<I>(&self, task_ids: I)

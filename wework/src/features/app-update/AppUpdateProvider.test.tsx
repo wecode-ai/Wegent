@@ -239,13 +239,79 @@ describe('AppUpdateProvider', () => {
     await act(async () => {
       await appUpdate?.checkNow()
     })
-    act(() => {
+    await act(async () => {
       appUpdate?.setAutoUpdateEnabled(true)
     })
 
     expect(localStorage.getItem(APP_UPDATE_AUTO_DOWNLOAD_KEY)).toBe('true')
     expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith(expect.any(Function))
     expect(appUpdate?.downloadProgress).toBeNull()
+  })
+
+  test('clears a previous download error when retrying automatically', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    let failInitialDownload: ((error: Error) => void) | undefined
+    let finishRetry: (() => void) | undefined
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+    vi.mocked(downloadPendingWeworkUpdate)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failInitialDownload = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishRetry = resolve
+          })
+      )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    act(() => {
+      appUpdate?.setAutoUpdateEnabled(true)
+    })
+    if (!failInitialDownload) {
+      throw new Error('Initial background download rejecter was not initialized')
+    }
+    await act(async () => {
+      failInitialDownload?.(new Error('download failed'))
+      await Promise.resolve()
+    })
+    expect(appUpdate?.status).toBe('error')
+    expect(appUpdate?.error).not.toBeNull()
+
+    act(() => {
+      appUpdate?.setAutoUpdateEnabled(false)
+      appUpdate?.setAutoUpdateEnabled(true)
+    })
+    expect(appUpdate?.status).toBe('downloading')
+    expect(appUpdate?.error).toBeNull()
+
+    if (!finishRetry) {
+      throw new Error('Background download retry resolver was not initialized')
+    }
+    await act(async () => {
+      finishRetry?.()
+    })
+    expect(appUpdate?.status).toBe('available')
   })
 
   test('restores the persisted Beta channel for automatic checks', async () => {

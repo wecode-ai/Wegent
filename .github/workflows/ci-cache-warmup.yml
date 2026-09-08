@@ -339,6 +339,7 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build
@@ -493,6 +494,7 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
+          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/wework-executor-target
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build

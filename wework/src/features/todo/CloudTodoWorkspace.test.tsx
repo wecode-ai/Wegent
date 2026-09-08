@@ -114,13 +114,18 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     collapseComposerWhenIdle,
   }: {
     testId: string
-    initialAddress?: { deviceId: string; taskId: string } | null
+    initialAddress?: {
+      deviceId: string
+      taskId: string
+      runtimeHandle?: { modelSelection?: { modelName?: string } }
+    } | null
     collapseComposerWhenIdle?: boolean
   }) => (
     <div
       data-testid={testId}
       data-device-id={initialAddress?.deviceId}
       data-task-id={initialAddress?.taskId}
+      data-model-name={initialAddress?.runtimeHandle?.modelSelection?.modelName}
       data-collapse-composer={String(collapseComposerWhenIdle)}
     >
       <div
@@ -999,6 +1004,11 @@ describe('CloudTodoWorkspace', () => {
         task_id: 'runtime-2',
         task_title: '验证完整工作流',
         backend_task_id: null,
+        modelSelection: {
+          modelName: 'gpt-5.6-codex',
+          modelType: 'public',
+          options: { reasoning: 'high' },
+        },
         linked_at: '2026-08-16T00:01:00Z',
       },
     ])
@@ -1129,6 +1139,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-collapse-composer',
       'true'
+    )
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-model-name',
+      'gpt-5.6-codex'
     )
     expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
       'max-h-[min(68vh,42rem)]',

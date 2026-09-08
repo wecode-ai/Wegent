@@ -41,8 +41,9 @@ describe('MarkdownCodeBlock', () => {
     const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
     const pre = scrollContainer.querySelector('pre')
     const code = scrollContainer.querySelector('code')
-    expect(scrollContainer).toHaveClass('overflow-x-auto', 'scrollbar-none')
+    expect(scrollContainer).toHaveClass('scrollbar-none', 'overflow-x-hidden')
     expect(scrollContainer).not.toHaveClass('scrollbar-soft')
+    expect(screen.getByTestId('markdown-code-horizontal-scrollbar')).toHaveAttribute('hidden')
     expect(pre).toHaveStyle({ overflowX: 'visible' })
 
     await waitFor(() => expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true'))
@@ -53,8 +54,9 @@ describe('MarkdownCodeBlock', () => {
     expect(scrollContainer.querySelector('pre')).toBe(pre)
     expect(scrollContainer.querySelector('code')).toBe(code)
     expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true')
-    expect(scrollContainer).toHaveClass('overflow-x-auto', 'scrollbar-soft')
+    expect(scrollContainer).toHaveClass('scrollbar-soft', 'overflow-x-auto')
     expect(scrollContainer).not.toHaveClass('scrollbar-none')
+    expect(screen.getByTestId('markdown-code-horizontal-scrollbar')).not.toHaveAttribute('hidden')
     expect(scrollContainer.querySelector('.hljs-keyword')).toHaveTextContent('SELECT')
   })
 

@@ -78,6 +78,11 @@ from app.models.task import TaskResource
 # Import User last as it may have relationships to other models
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.models.wework_transcript import (
+    WeworkTranscript,
+    WeworkTranscriptArchive,
+    WeworkTranscriptTurn,
+)
 from app.models.wiki import WikiContent, WikiGeneration, WikiProject
 from app.models.work_queue import (
     QueueMessage,
@@ -106,6 +111,9 @@ __all__ = [
     "Delivery",
     "DeliveryAsset",
     "User",
+    "WeworkTranscript",
+    "WeworkTranscriptArchive",
+    "WeworkTranscriptTurn",
     "Kind",
     "IMPrivateSession",
     "IMSessionMode",

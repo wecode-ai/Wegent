@@ -27,7 +27,10 @@ import { useTeamContext } from '@/contexts/TeamContext'
 import { Monitor, WifiOff } from 'lucide-react'
 import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
-import { getAccountDefaultDeviceId } from '@/features/devices/utils/execution-target'
+import {
+  getAccountDefaultDeviceId,
+  resolveDeviceSelectionId,
+} from '@/features/devices/utils/execution-target'
 import {
   filterDevicesByAdvancedMode,
   resolveOrdinaryDeviceChatTarget,
@@ -83,7 +86,10 @@ export default function DeviceChatPage() {
     [devices, showAdvancedDevices]
   )
   const conversationDevices = useMemo(() => {
-    const pinnedDeviceId = isExistingTask ? persistedTaskDeviceId : routeDeviceId
+    const pinnedDeviceId = resolveDeviceSelectionId(
+      devices,
+      isExistingTask ? persistedTaskDeviceId : routeDeviceId
+    )
     const pinnedDevice = pinnedDeviceId
       ? devices.find(device => device.device_id === pinnedDeviceId)
       : undefined
@@ -116,7 +122,10 @@ export default function DeviceChatPage() {
   // links and existing tasks keep their exact persisted target.
   useEffect(() => {
     if (hasDeviceIdParam || isExistingTask || !isAdvancedDeviceModeReady) return
-    const defaultDeviceId = getAccountDefaultDeviceId(user?.preferences?.default_execution_target)
+    const defaultDeviceId = resolveDeviceSelectionId(
+      devices,
+      getAccountDefaultDeviceId(user?.preferences?.default_execution_target)
+    )
     const nextDeviceId = resolveOrdinaryDeviceChatTarget(devices, selectedDeviceId, defaultDeviceId)
     if (selectedDeviceId !== nextDeviceId) setSelectedDeviceId(nextDeviceId)
   }, [
@@ -175,7 +184,10 @@ export default function DeviceChatPage() {
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskMatchesRoute ? selectedTaskDetail?.title : undefined
 
-  const activeDeviceId = isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  const activeDeviceId = resolveDeviceSelectionId(
+    devices,
+    isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  )
   const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
 
   // Check if selected device is OpenClaw type
@@ -230,7 +242,12 @@ export default function DeviceChatPage() {
                 {t('select_device')}
               </option>
               {conversationDevices.map(device => (
-                <option key={device.device_id} value={device.device_id}>
+                <option
+                  key={device.device_id}
+                  value={device.device_id}
+                  data-testid={`device-chat-option-${device.device_id}`}
+                >
+                  {device.device_type === 'app' ? t('wework_device_prefix') : ''}
                   {device.name} (
                   {device.status === 'online'
                     ? t('status_online')
