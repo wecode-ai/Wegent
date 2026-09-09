@@ -197,7 +197,7 @@ run_wework_unit_tests() {
 
     if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
         if [ "$WEWORK_RENDERER_FULL_TESTS" -eq 1 ]; then
-            test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-1}"
+            test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
             echo -e "   Running full renderer unit tests with $(format_worker_count "$test_workers")..."
             if ! pnpm --filter wework exec vitest run --dir src --pool=threads \
                 --maxWorkers "$test_workers" \
@@ -570,7 +570,11 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   Running unit tests..."
         pnpm --filter @wegent/chat-core test > "$TEMP_DIR/test.log" 2>&1
         CORE_TEST_EXIT=$?
-        pnpm --filter wecode-ai-assistant run test --passWithNoTests >> "$TEMP_DIR/test.log" 2>&1
+        # Bound JSDOM workers, as with Wework, to avoid CPU and memory
+        # contention turning short UI interactions into test timeouts.
+        FRONTEND_TEST_WORKERS="${FRONTEND_PRE_PUSH_TEST_WORKERS:-2}"
+        pnpm --filter wecode-ai-assistant run test --passWithNoTests \
+            --maxWorkers "$FRONTEND_TEST_WORKERS" >> "$TEMP_DIR/test.log" 2>&1
         TEST_EXIT=$?
         if [ $CORE_TEST_EXIT -eq 0 ] && [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"

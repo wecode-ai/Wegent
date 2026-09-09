@@ -489,15 +489,14 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     wait_for_turn_count(&log_path, 2).await;
 
     let calls = read_json_lines(&log_path);
-    let unsubscribe_index = calls
-        .iter()
-        .position(|call| call["method"] == "thread/unsubscribe")
-        .expect("send should release the loaded thread before changing providers");
-    let resume_index = calls
-        .iter()
-        .position(|call| call["method"] == "thread/resume")
-        .expect("send should resume the existing thread");
-    assert!(unsubscribe_index < resume_index);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        0,
+        "a follow-up must keep the loaded thread and its background processes alive"
+    );
     let resume = calls
         .iter()
         .find(|call| call["method"] == "thread/resume")
@@ -1247,7 +1246,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
 }
 
 #[tokio::test]
-async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
+async fn runtime_tasks_keep_subscription_between_turns_and_release_it_on_archive() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -1318,7 +1317,6 @@ async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "local-task-persistent").await;
-    wait_for_method_count(&log_path, "thread/unsubscribe", 3).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1347,7 +1345,7 @@ async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        3
+        0
     );
 
     let archived = handler
@@ -1361,7 +1359,7 @@ async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
         .await
         .expect("archive should succeed");
     assert_eq!(archived["success"], true);
-    wait_for_method_count(&log_path, "thread/unsubscribe", 4).await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
 }
 
 #[tokio::test]
@@ -1839,7 +1837,6 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
         .is_some()
     );
     wait_until_task_idle(&handler, "local-task-goal-loop").await;
-    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1856,15 +1853,17 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
             .count(),
         0
     );
-    let continuation_marker = calls
+    assert!(calls
         .iter()
-        .position(|call| call["event"] == "goal-continuation-completed")
-        .expect("goal continuation should finish before the thread is released");
-    let unsubscribe = calls
-        .iter()
-        .position(|call| call["method"] == "thread/unsubscribe")
-        .expect("terminal goal turn should release its subscription");
-    assert!(continuation_marker < unsubscribe);
+        .any(|call| call["event"] == "goal-continuation-completed"));
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        0,
+        "a completed goal should retain the thread during the idle window"
+    );
 }
 
 #[tokio::test]

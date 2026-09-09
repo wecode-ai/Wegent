@@ -62,6 +62,7 @@ def list_direct_nodes(
     include_inactive: bool,
     limit: int,
     offset: int,
+    original_download_allowed: bool = True,
 ) -> DirectNodeList:
     """List direct child folders and documents for a folder with pagination."""
     folder_count = (
@@ -126,6 +127,7 @@ def list_direct_nodes(
             document,
             attachment=attachment_map.get(document.attachment_id),
             creator=creator_map.get(document.user_id),
+            original_download_allowed=original_download_allowed,
         )
         for document in child_documents
     )
@@ -142,6 +144,7 @@ def list_recursive_nodes(
     knowledge_base_id: int,
     folder_id: int,
     include_inactive: bool,
+    original_download_allowed: bool = True,
 ) -> tuple[list[ExternalKnowledgeNode], list[str]]:
     """List nodes recursively from root or a specific folder."""
     if folder_id != 0:
@@ -150,6 +153,7 @@ def list_recursive_nodes(
             knowledge_base_id=knowledge_base_id,
             folder_id=folder_id,
             include_inactive=include_inactive,
+            original_download_allowed=original_download_allowed,
         )
 
     warnings: list[str] = []
@@ -217,6 +221,7 @@ def list_recursive_nodes(
                 document,
                 attachment=attachment_map.get(document.attachment_id),
                 creator=creator_map.get(document.user_id),
+                original_download_allowed=original_download_allowed,
             )
             for document in documents_by_folder.get(parent_id, [])
         )
@@ -272,6 +277,7 @@ def list_recursive_nodes(
                     attachment=attachment_map.get(document.attachment_id),
                     creator=creator_map.get(document.user_id),
                     orphan=True,
+                    original_download_allowed=original_download_allowed,
                 )
             )
 
@@ -288,6 +294,7 @@ def _list_recursive_subtree_nodes(
     knowledge_base_id: int,
     folder_id: int,
     include_inactive: bool,
+    original_download_allowed: bool,
 ) -> tuple[list[ExternalKnowledgeNode], list[str]]:
     warnings: list[str] = []
     visited_folder_ids = {folder_id}
@@ -364,6 +371,7 @@ def _list_recursive_subtree_nodes(
                 document,
                 attachment=attachment_map.get(document.attachment_id),
                 creator=creator_map.get(document.user_id),
+                original_download_allowed=original_download_allowed,
             )
             for document in documents_by_folder.get(parent_id, [])
         )
@@ -407,8 +415,13 @@ def _build_document_node(
     attachment=None,
     creator=None,
     orphan: bool = False,
+    original_download_allowed: bool = True,
 ) -> ExternalKnowledgeNode:
-    capabilities = build_document_capabilities(document, attachment)
+    capabilities = build_document_capabilities(
+        document,
+        attachment,
+        original_download_allowed=original_download_allowed,
+    )
     return ExternalKnowledgeNode(
         node_id=f"document:{document.id}",
         raw_id=document.id,

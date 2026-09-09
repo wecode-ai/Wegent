@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 import { useKnowledgeBaseDialogs } from '@/features/knowledge/document/hooks/useKnowledgeBaseDialogs'
+import { createKnowledgeBase } from '@/apis/knowledge'
 
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(() => ({ push: jest.fn() })),
@@ -23,6 +24,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   migrateKnowledgeBaseToGroup: jest.fn(),
+  createKnowledgeBase: jest.fn(),
 }))
 
 jest.mock('@/features/knowledge/code-wiki/createCodeWiki', () => ({
@@ -80,5 +82,51 @@ describe('creating a Code Wiki', () => {
     expect(result.current.isCreating).toBe(false)
 
     resolveRefresh?.()
+  })
+})
+
+describe('creating a normal knowledge base', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    jest.mocked(createKnowledgeBase).mockResolvedValue({
+      id: 7,
+      name: 'Docs',
+      description: null,
+      user_id: 1,
+      namespace: 'default',
+      document_count: 0,
+      is_active: true,
+      summary_enabled: false,
+      max_calls_per_conversation: 10,
+      exempt_calls_before_check: 5,
+      created_at: '2026-08-18T00:00:00Z',
+      updated_at: '2026-08-18T00:00:00Z',
+    })
+  })
+
+  it('forwards the dialog download setting instead of silently dropping it', async () => {
+    const sidebar = {
+      groups: [],
+      selectedGroupId: null,
+      currentUser: { id: 1 },
+      selectedKbId: null,
+      refreshAll: jest.fn().mockResolvedValue(undefined),
+      clearSelection: jest.fn(),
+    }
+    const { result } = renderHook(() =>
+      useKnowledgeBaseDialogs({ sidebar, reloadGroupKbs: jest.fn() })
+    )
+
+    await act(async () => {
+      await result.current.handleCreate({
+        name: 'Docs',
+        allow_document_download: false,
+      })
+    })
+
+    expect(createKnowledgeBase).toHaveBeenCalledWith(
+      expect.objectContaining({ allow_document_download: false })
+    )
+    expect(result.current.isCreating).toBe(false)
   })
 })

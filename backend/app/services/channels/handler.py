@@ -28,7 +28,9 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.models.im_session import IMSessionMode
 from app.models.kind import Kind
+from app.models.subtask import Subtask
 from app.models.user import User
 from app.services.channels.callback import (
     BaseCallbackInfo,
@@ -348,13 +350,32 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     def _select_dispatch_result_emitter(
         self,
         *,
+        task_id: int,
+        subtask_id: int,
+        user_id: int,
         device_id: Optional[str],
         streaming_emitter: Any,
         response_emitter: Any,
     ) -> Any:
-        """Avoid letting WebSocket dispatch close callback-owned emitters."""
+        """Select an emitter that keeps IM and Web task views synchronized."""
         if device_id and streaming_emitter:
             return None
+        if streaming_emitter:
+            from app.services.execution.emitters import (
+                CompositeResultEmitter,
+                WebSocketResultEmitter,
+            )
+
+            return CompositeResultEmitter(
+                [
+                    response_emitter,
+                    WebSocketResultEmitter(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        user_id=user_id,
+                    ),
+                ]
+            )
         return response_emitter
 
     def should_merge_task_created_running_notice_with_stream(self) -> bool:
@@ -1068,6 +1089,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         )
         from app.services import runtime_work_service
 
+        uses_active_runtime_task = runtime_task is None
         runtime_task = runtime_task or getattr(im_session, "active_runtime_task", None)
         if not isinstance(runtime_task, dict):
             await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
@@ -1077,7 +1099,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         try:
-            address = RuntimeTaskAddress.model_validate(runtime_task)
+            address = runtime_work_service.canonical_runtime_event_address(
+                db,
+                user_id=user.id,
+                address=RuntimeTaskAddress.model_validate(runtime_task),
+            )
         except ValidationError:
             self.logger.exception(
                 "[%sHandler] Active private IM runtime task address is invalid: "
@@ -1090,6 +1116,24 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
             )
             return
+
+        if (
+            uses_active_runtime_task
+            and address.device_id
+            != str(
+                runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
+            ).strip()
+        ):
+            runtime_task = {
+                **runtime_task,
+                "deviceId": address.device_id,
+            }
+            runtime_task.pop("device_id", None)
+            await im_session_service.bind_active_runtime_task(
+                db,
+                session=im_session,
+                runtime_task=runtime_task,
+            )
 
         message_source = self._build_private_im_message_source(
             im_session,
@@ -1115,6 +1159,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             response = await runtime_work_service.send_runtime_message(
                 db=db,
                 user_id=user.id,
+                allow_app_device_task_messaging=True,
                 request=RuntimeSendRequest(
                     address=address,
                     message=message,
@@ -1281,6 +1326,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             project_id=project_id,
             task_type="task",
             message_source=message_source,
+            inherit_wework_model_selection=(self._channel_type != ChannelType.DINGTALK),
         )
         result = await create_chat_task(
             db=db,
@@ -1438,6 +1484,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         try:
             dispatch_result_emitter = self._select_dispatch_result_emitter(
+                task_id=task_id,
+                subtask_id=assistant_subtask.id,
+                user_id=user.id,
                 device_id=device_id,
                 streaming_emitter=streaming_emitter,
                 response_emitter=response_emitter,
@@ -1521,6 +1570,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
     ) -> None:
         """Handle /devices command - list devices or switch to a device."""
+        from app.services.channels.device_selection import (
+            get_device_execution_target_id,
+        )
         from app.services.device_service import device_service
 
         devices = await device_service.get_all_devices(db, user.id)
@@ -1612,11 +1664,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                         model_display_name = m.get("displayName") or override_model_name
                         break
 
+            # Store the record-scoped route for app devices. Their logical ID is
+            # display metadata and does not own the Runtime heartbeat/socket.
+            execution_target_id = get_device_execution_target_id(matched_device)
+
             # Clear conversation cache if switching mode or device
             current_selection = await device_selection_manager.get_selection(user.id)
             if (
                 current_selection.device_type != DeviceType.LOCAL
-                or current_selection.device_id != matched_device["device_id"]
+                or current_selection.device_id != execution_target_id
             ):
                 await self._delete_conversation_task_id(
                     message_context.conversation_id, user.id
@@ -1624,7 +1680,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             await device_selection_manager.set_local_device(
                 user.id,
-                matched_device["device_id"],
+                execution_target_id,
                 matched_device["name"],
             )
 
@@ -1656,7 +1712,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message += "**在线设备:**\n"
             for idx, device in enumerate(online_devices, start=1):
                 status_str = ""
-                if device["device_id"] == current_device_id:
+                if get_device_execution_target_id(device) == current_device_id:
                     status_str = " - ⭐ 当前"
                 elif device["status"] == "busy":
                     status_str = " - 🔴 忙碌"
@@ -1731,6 +1787,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Cloud executor
         if argument == "cloud":
+            await self._reset_private_im_session_for_cloud_mode(
+                db=db,
+                user=user,
+                message_context=message_context,
+            )
             await device_selection_manager.set_cloud_executor(user.id)
             model_name = await get_model_display()
             await self.send_text_reply(
@@ -1756,6 +1817,36 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             "• `/use device` - 设备模式",
         )
 
+    async def _reset_private_im_session_for_cloud_mode(
+        self,
+        *,
+        db: Session,
+        user: User,
+        message_context: MessageContext,
+    ) -> None:
+        """Leave a bound DingTalk private task before entering cloud mode."""
+        if (
+            self._channel_type != ChannelType.DINGTALK
+            or not self._is_private_conversation(message_context)
+        ):
+            return
+
+        session_key = im_session_service.build_session_key(
+            user_id=user.id,
+            channel_type=self._channel_type.value,
+            channel_id=self._channel_id,
+            conversation_id=message_context.conversation_id,
+        )
+        im_session = await im_session_service.get_session(session_key)
+        if im_session is None:
+            return
+
+        await im_session_service.set_mode(
+            db,
+            session=im_session,
+            mode=IMSessionMode.CHAT,
+        )
+
     async def _handle_use_device_mode(
         self,
         db: Session,
@@ -1764,6 +1855,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> None:
         """Handle /use device - switch to last selected device."""
         from app.core.config import settings
+        from app.services.channels.device_selection import (
+            get_device_execution_target_id,
+        )
+        from app.services.device.runtime_route import (
+            RuntimeRouteError,
+            runtime_route_resolver,
+        )
         from app.services.device_service import device_service
         from app.services.model_aggregation_service import model_aggregation_service
 
@@ -1874,10 +1972,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if selection.device_type == DeviceType.LOCAL and selection.device_id:
             # Verify device is still online
-            device_info = await device_service.get_device_online_info(
-                user.id, selection.device_id
-            )
-            if device_info:
+            try:
+                route = await runtime_route_resolver.resolve(
+                    user_id=user.id,
+                    submitted_device_id=selection.device_id,
+                )
+            except RuntimeRouteError:
+                route = None
+            if route:
+                if route.runtime_device_id != selection.device_id:
+                    await device_selection_manager.set_local_device(
+                        user.id,
+                        route.runtime_device_id,
+                        selection.device_name or route.logical_device_id,
+                    )
                 await self.send_text_reply(
                     message_context,
                     f"✅ 已切换到**设备模式**\n\n"
@@ -1902,7 +2010,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             device = online_devices[0]
             await device_selection_manager.set_local_device(
                 user.id,
-                device["device_id"],
+                get_device_execution_target_id(device),
                 device["name"],
             )
             await self.send_text_reply(
@@ -1934,7 +2042,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
     ) -> None:
         """Handle /status command - show current status."""
-        from app.services.device_service import device_service
+        from app.services.device.runtime_route import (
+            RuntimeRouteError,
+            runtime_route_resolver,
+        )
 
         selection = await device_selection_manager.get_selection(user.id)
 
@@ -1944,12 +2055,25 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         elif selection.device_type == DeviceType.LOCAL:
             mode = "💻 本地设备模式"
             # Check device online status
-            device_name = selection.device_name or selection.device_id[:8]
+            device_name = selection.device_name or (
+                selection.device_id[:8] if selection.device_id else "未选择"
+            )
             if selection.device_id:
-                online_info = await device_service.get_device_online_info(
-                    user.id, selection.device_id
-                )
-                if online_info:
+                try:
+                    route = await runtime_route_resolver.resolve(
+                        user_id=user.id,
+                        submitted_device_id=selection.device_id,
+                    )
+                except RuntimeRouteError:
+                    route = None
+                if route:
+                    if route.runtime_device_id != selection.device_id:
+                        await device_selection_manager.set_local_device(
+                            user.id,
+                            route.runtime_device_id,
+                            selection.device_name or route.logical_device_id,
+                        )
+                    online_info = route.online_info
                     status_icon = "🟢" if online_info.get("status") != "busy" else "🔴"
                     device_info = f"**当前设备**: {device_name} ({status_icon} 在线)\n"
                 else:
@@ -2407,7 +2531,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
     ) -> None:
         """Process message for local device execution."""
-        from app.services.device_service import device_service
+        from app.services.device.runtime_route import (
+            RuntimeRouteError,
+            runtime_route_resolver,
+        )
 
         device_id = device_selection.device_id
         if not device_id:
@@ -2417,14 +2544,26 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
 
-        device_info = await device_service.get_device_online_info(user.id, device_id)
-        if not device_info:
+        try:
+            route = await runtime_route_resolver.resolve(
+                user_id=user.id,
+                submitted_device_id=device_id,
+            )
+        except RuntimeRouteError:
             await self.send_text_reply(
                 message_context,
                 f"❌ 设备 **{device_selection.device_name}** 已离线\n\n"
                 "请使用 `/devices` 查看在线设备或 `/use` 切换回对话模式",
             )
             return
+
+        device_id = route.runtime_device_id
+        if device_selection.device_id != device_id:
+            await device_selection_manager.set_local_device(
+                user.id,
+                device_id,
+                device_selection.device_name or route.logical_device_id,
+            )
 
         # Use short-lived db session for database operations
         db = SessionLocal()
@@ -2622,6 +2761,68 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         return created_ids
 
+    async def _broadcast_user_message_to_web(
+        self,
+        *,
+        db: Session,
+        task_id: int,
+        user_subtask: Subtask,
+        message: str,
+        user: User,
+    ) -> None:
+        """Broadcast a persisted IM user message to open Web task sessions."""
+        from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
+        from app.services.context import context_service
+
+        websocket_emitter = get_webpage_ws_emitter()
+        if websocket_emitter is None:
+            self.logger.debug(
+                "[%sHandler] WebSocket emitter unavailable for user message: "
+                "task_id=%d, subtask_id=%d",
+                self._channel_type.value,
+                task_id,
+                user_subtask.id,
+            )
+            return
+
+        try:
+            contexts = [
+                context.model_dump(mode="json")
+                for context in context_service.get_briefs_by_subtask(
+                    db, user_subtask.id
+                )
+            ]
+            source = None
+            if isinstance(user_subtask.result, dict):
+                result_source = user_subtask.result.get("source")
+                if isinstance(result_source, dict):
+                    source = result_source
+
+            await websocket_emitter.emit_chat_message(
+                task_id=task_id,
+                subtask_id=user_subtask.id,
+                message_id=user_subtask.message_id,
+                role="user",
+                content=message,
+                sender={
+                    "user_id": user.id,
+                    "user_name": user.user_name,
+                },
+                created_at=user_subtask.created_at,
+                attachment=None,
+                attachments=[],
+                contexts=contexts,
+                source=source,
+            )
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Failed to broadcast IM user message to Web: "
+                "task_id=%d, subtask_id=%d",
+                self._channel_type.value,
+                task_id,
+                user_subtask.id,
+            )
+
     @staticmethod
     def _build_vision_content(
         text: str, images: List[Dict[str, str]]
@@ -2757,6 +2958,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             # expire_on_commit=False ensures attributes remain accessible
             db.commit()
 
+            await self._broadcast_user_message_to_web(
+                db=db,
+                task_id=task_id,
+                user_subtask=result.user_subtask,
+                message=message,
+                user=user,
+            )
+
             # Detach objects from session so they can be used after close
             db.expunge_all()
 
@@ -2823,6 +3032,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             params, "device_id", None
         )
         dispatch_result_emitter = self._select_dispatch_result_emitter(
+            task_id=task_id,
+            subtask_id=trigger_data["assistant_subtask"].id,
+            user_id=user.id,
             device_id=dispatch_device_id,
             streaming_emitter=streaming_emitter,
             response_emitter=response_emitter,
@@ -2984,6 +3196,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 conversation_id, user.id, result.task.id
             )
 
+        await self._broadcast_user_message_to_web(
+            db=db,
+            task_id=result.task.id,
+            user_subtask=result.user_subtask,
+            message=message,
+            user=user,
+        )
+
         # Notify user if auto-starting new conversation due to timeout
         if auto_new_conversation:
             from app.core.config import settings
@@ -3136,6 +3356,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self._set_conversation_task_id(
                 conversation_id, user.id, result.task.id
             )
+
+        await self._broadcast_user_message_to_web(
+            db=db,
+            task_id=result.task.id,
+            user_subtask=result.user_subtask,
+            message=message,
+            user=user,
+        )
 
         # Notify user if auto-starting new conversation due to timeout
         if auto_new_conversation:

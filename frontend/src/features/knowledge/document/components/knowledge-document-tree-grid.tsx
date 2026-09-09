@@ -98,6 +98,7 @@ interface KnowledgeDocumentTreeGridProps {
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  /** Whether this knowledge base permits original document downloads. */
   allowDownload?: boolean
 }
 
@@ -940,6 +941,7 @@ export function KnowledgeDocumentTreeGrid({
       selectedDocumentIds,
       selectedFolderIds,
       showSelectionColumn,
+      allowDownload,
       t,
       toggleFolder,
     ]

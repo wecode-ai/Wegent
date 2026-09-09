@@ -1098,7 +1098,7 @@ export function DesktopWorkbenchLayout({
                 onCreateDeviceDirectory={onCreateDeviceDirectory}
                 onCloneGitRepository={onCloneGitRepository}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                onArchiveRuntimeTask={onArchiveRuntimeTask}
+                onArchiveRuntimeTasks={onArchiveChatConversations}
                 onOpenSettings={options => openSettings(options)}
                 onLogout={onLogout}
                 activeProjectRef={

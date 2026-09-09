@@ -20,7 +20,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Publish one official plugin through Marketplace V2"
     )
-    parser.add_argument("source", type=Path, help="Plugin source directory")
+    parser.add_argument(
+        "source", type=Path, help="Plugin source directory or prebuilt ZIP"
+    )
+    parser.add_argument(
+        "--prebuilt", action="store_true", help="Publish the exact CI-built ZIP"
+    )
+    parser.add_argument(
+        "--sha256", help="Required expected archive checksum with --prebuilt"
+    )
     parser.add_argument("--slug", help="Catalog slug; defaults to manifest name")
     parser.add_argument("--listing-type", choices=("plugin", "skill"), default="plugin")
     parser.add_argument(
@@ -38,7 +46,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    built = official_plugin_publisher.build_package(args.source)
+    if args.prebuilt and not args.sha256:
+        parser.error("--prebuilt requires --sha256")
+    if args.sha256 and not args.prebuilt:
+        parser.error("--sha256 requires --prebuilt")
+    built = (
+        official_plugin_publisher.load_archive(args.source, expected_sha256=args.sha256)
+        if args.prebuilt
+        else official_plugin_publisher.build_package(args.source)
+    )
     output = {
         "name": built.name,
         "version": built.version,

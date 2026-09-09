@@ -282,6 +282,87 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(result.current.boundCloudItemStatusOverride).toBe('in_progress')
   })
 
+  test('persists settled execution status for an already-bound work item', async () => {
+    const cloudProject = project('space-cloud', 'local')
+    const runningItem = loopItem(cloudProject.id)
+    const reviewItem = {
+      ...runningItem,
+      status: 'in_review' as const,
+      version: 2,
+    }
+    const runtimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+    }
+    let currentItem = runningItem
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockImplementation(async () => ({
+        project: cloudProject,
+        loop_item: currentItem,
+        loop_item_id: currentItem.id,
+      })),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [cloudProject] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockImplementation(async () => ({ items: [currentItem] })),
+      updateTaskTrackingStatus: vi.fn().mockImplementation(async () => {
+        currentItem = reviewItem
+        return reviewItem
+      }),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result, rerender } = renderHook(
+      ({
+        runtimeTaskExecutionKnown,
+        runtimeTaskExecutionStatus,
+        runtimeTaskRunning,
+      }: {
+        runtimeTaskExecutionKnown: boolean
+        runtimeTaskExecutionStatus: string | null
+        runtimeTaskRunning: boolean
+      }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: runtimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskExecutionKnown,
+          runtimeTaskExecutionStatus,
+          runtimeTaskRunning,
+          runtimeTaskTitle: 'Lifecycle task',
+          services,
+          userId: 1,
+        }),
+      {
+        initialProps: {
+          runtimeTaskExecutionKnown: true,
+          runtimeTaskExecutionStatus: 'running',
+          runtimeTaskRunning: true,
+        },
+      }
+    )
+
+    await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_progress'))
+
+    rerender({
+      runtimeTaskExecutionKnown: true,
+      runtimeTaskExecutionStatus: 'done',
+      runtimeTaskRunning: false,
+    })
+
+    await waitFor(() =>
+      expect(localApi.updateTaskTrackingStatus).toHaveBeenCalledWith(runtimeTask, 'succeeded')
+    )
+    await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_review'))
+    expect(localApi.updateTaskTrackingStatus).toHaveBeenCalledOnce()
+  })
+
   test('automatically selects the configured default project space', async () => {
     const defaultProject = project('space-default')
     const deliveryApi = {

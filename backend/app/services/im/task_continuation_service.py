@@ -28,6 +28,7 @@ from app.services.chat.storage.task_manager import (
 from app.services.chat.wework_task_defaults import (
     apply_existing_wework_task_defaults,
     apply_wework_task_defaults,
+    apply_wework_task_device_defaults,
 )
 from app.services.im.session_service import im_session_service
 from app.stores.tasks import task_store
@@ -259,6 +260,7 @@ async def build_new_task_params(
     project_id: int | None = None,
     task_type: str | None = None,
     message_source: dict[str, Any] | None = None,
+    inherit_wework_model_selection: bool = True,
 ) -> TaskCreationParams:
     """Build TaskCreationParams for creating a personal WeWork task from IM."""
 
@@ -272,6 +274,12 @@ async def build_new_task_params(
         source=IM_SOURCE,
         message_source=deepcopy(message_source) if message_source is not None else None,
     )
+    if not inherit_wework_model_selection:
+        return await apply_wework_task_device_defaults(
+            db,
+            user=user,
+            params=params,
+        )
     return await apply_wework_task_defaults(db, user=user, params=params)
 
 

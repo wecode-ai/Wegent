@@ -1128,6 +1128,12 @@ describe('local codex plugin readState cache', () => {
                 {
                   slug: 'dingtalk',
                   authPolicy: 'on_install',
+                  accountAuth: {
+                    protocolVersion: 1,
+                    credentialType: 'oauth2',
+                    adapter: 'scripts/account-auth.py',
+                    exportMode: 'exclusive',
+                  },
                   localAuth: {
                     kind: 'browser_oauth',
                     health: ['auth', 'health'],
@@ -1161,6 +1167,12 @@ describe('local codex plugin readState cache', () => {
         start: ['auth', 'login'],
       })
     )
+    expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.accountAuth).toEqual({
+      protocolVersion: 1,
+      credentialType: 'oauth2',
+      adapter: 'scripts/account-auth.py',
+      exportMode: 'exclusive',
+    })
     expect(peeked?.installedPlugins[0]?.spec.components.skills).toEqual([
       { name: 'dingtalk', description: 'skill', path: 'dingtalk' },
     ])

@@ -28,6 +28,19 @@ export interface CodeWikiSummary {
   updated_at: string
 }
 
+export interface CodeWikiGenerationStrategyOption {
+  id: string
+  revision: number
+  display_name: string
+  description: string
+}
+
+export interface CodeWikiGenerationStrategyCapabilities {
+  /** Null when the configured global default is not currently runnable. */
+  default_strategy: string | null
+  strategies: CodeWikiGenerationStrategyOption[]
+}
+
 export interface CodeWikiListResponse {
   items: CodeWikiSummary[]
   total: number
@@ -115,6 +128,8 @@ export interface CodeWikiRunResponse {
   reason: string
   generation_id: number
   task_id: number
+  strategy_id?: string
+  strategy_revision?: number
 }
 
 /**
@@ -162,8 +177,10 @@ export interface CodeWikiRunProgress {
   total_steps: number
   /** Candidate pages written so far. Existing published pages are not counted. */
   pages_written: number
-  /** Planned page count once the Plan handoff exists. */
+  /** Planned page count once the review handoff or no-review plan exists. */
   pages_total: number
+  /** Whether planning was blocked on a Reviewer verdict for this run. */
+  review_required?: boolean
 }
 
 /**
@@ -230,6 +247,8 @@ export interface CodeWikiRunRecord {
    * behind even if its container then died.
    */
   task_status: string
+  strategy_id?: string
+  strategy_revision?: number
 }
 
 export interface CodeWikiRunHistory {

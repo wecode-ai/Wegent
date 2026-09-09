@@ -321,6 +321,12 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       await waitForFixtureAResponseCount(1)
       const expectedReloadRequestStartCount = fixtureARequestStartCount + 1
       const releaseReloadResponse = holdNextFixtureAResponse()
+      // Reload is disabled while the page is still loading; wait for the
+      // fixture to finish before triggering the reload under test.
+      await control.command('waitFor', BROWSER_RELOAD_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', BROWSER_RELOAD_SELECTOR)
       try {
         await waitForFixtureARequestStartCount(expectedReloadRequestStartCount)

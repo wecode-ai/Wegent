@@ -6,6 +6,10 @@ import {
 } from '@/desktop/appPreferences'
 
 export const MODE_MANAGED_GIT_PLUGIN = '@wegent/dsh-ui-git'
+export const MODE_MANAGED_HOME_PLUGINS = new Set([
+  '@wegent/dsh-ui-home-focus',
+  '@wegent/dsh-ui-home-developer',
+])
 
 interface WorkbenchModeDependencies {
   restartPlugins: () => Promise<void>

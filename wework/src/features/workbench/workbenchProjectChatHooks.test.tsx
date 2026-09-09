@@ -78,6 +78,55 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
   })
 
+  test('keeps an existing model selection ready while refreshing the catalog', async () => {
+    const model: UnifiedModel = {
+      name: 'codex-runtime',
+      type: 'runtime',
+      displayName: '本机 Codex',
+      runtime: { family: 'openai.openai-responses', provider: 'local' },
+    }
+    let resolveRefresh: ((value: { data: UnifiedModel[] }) => void) | undefined
+    const refresh = new Promise<{ data: UnifiedModel[] }>(resolve => {
+      resolveRefresh = resolve
+    })
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [model] })
+        .mockReturnValueOnce(refresh),
+    }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: model.name,
+          modelType: model.type,
+        },
+      })
+    )
+
+    expect(result.current.isSelectionReady).toBe(false)
+    await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
+    expect(result.current.selectedModel).toEqual(model)
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.isSelectionReady).toBe(true)
+    expect(result.current.selectedModel).toEqual(model)
+
+    await act(async () => {
+      resolveRefresh?.({ data: [model] })
+      await refresh
+    })
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.isSelectionReady).toBe(true)
+  })
+
   test('ignores an older model reload that settles after the latest request', async () => {
     const initialModel: UnifiedModel = { name: 'initial-model', type: 'runtime' }
     const recoveredModel: UnifiedModel = { name: 'recovered-model', type: 'runtime' }

@@ -13,6 +13,7 @@ import type {
   ChunkResponse,
   KnowledgeBaseRetrievalProfile,
   DocumentDetailResponse,
+  DocumentProtection,
   DocumentContentReadResponse,
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -53,6 +54,11 @@ export async function listKnowledgeBases(
  */
 export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
   return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`)
+}
+
+/** Return the effective reader capability used only for knowledge UI state. */
+export async function getDocumentProtection(id: number): Promise<DocumentProtection> {
+  return apiClient.get<DocumentProtection>(`/knowledge-bases/${id}/document-protection`)
 }
 
 /**

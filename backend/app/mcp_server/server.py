@@ -121,6 +121,7 @@ def get_custom_mcp_lifespan_servers() -> tuple[tuple[str, FastMCP], ...]:
 class ExternalKnowledgeUser:
     id: int
     user_name: str
+    document_download_exempt: bool = False
 
 
 ExternalKnowledgeAuthHandler = Callable[
@@ -272,9 +273,10 @@ def _default_external_auth_handler(
 ) -> Optional[ExternalKnowledgeUser]:
     """Resolve a user-generated personal API key to its owner.
 
-    The request is passed so deployments can replace this handler with custom
-    authentication that may use headers such as X-User-Name. The default handler
-    intentionally ignores X-User-Name and trusts only the API key owner.
+    The API key remains the authentication factor. A non-empty X-User-Name is a
+    product-approved capability marker for the external KB download tool only;
+    its effect is carried in the short-lived document token rather than trusted
+    again by the later binary-file request.
     """
     if not token:
         return None
@@ -287,7 +289,13 @@ def _default_external_auth_handler(
         user = verify_api_key(db, token, update_last_used_at=False)
         if user is None:
             return None
-        return ExternalKnowledgeUser(id=user.id, user_name=user.user_name)
+        return ExternalKnowledgeUser(
+            id=user.id,
+            user_name=user.user_name,
+            document_download_exempt=bool(
+                request.headers.get("X-User-Name", "").strip()
+            ),
+        )
     finally:
         db.close()
 

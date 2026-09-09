@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,18 +10,17 @@ import { getKnowledgeVideoDownloader } from '../video-download-registry'
 /**
  * Unified knowledge-base document download.
  *
- * Routes video files through the registered `KnowledgeVideoDownloader`
- * (Weibo-backed videos are stored as a fid, not local bytes, so the generic
- * `/attachments/{id}/download` endpoint rejects them). Non-video files fall
- * through to the standard `downloadAttachment`.
- *
- * Used by `DocumentItem`, `knowledge-document-tree-grid`, and
- * `DocumentDetailDialog` so all three download entry points behave
- * consistently. Callers are responsible for their own error UI (toast).
+ * The core path uses the shared attachment download endpoint, where the
+ * backend applies the knowledge-document policy only to KB attachments.
+ * Internal deployments may register a video downloader for non-local video
+ * storage; it is used only after the caller has allowed the action. Imported
+ * external documents also use the shared endpoint when they retain an
+ * attachment snapshot.
  */
 export function useKnowledgeDocumentDownload() {
   return useCallback(
     async (document: {
+      id: number
       attachment_id?: number | null
       name: string
       source_type: string

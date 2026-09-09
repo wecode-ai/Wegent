@@ -114,6 +114,20 @@ function NavigationNode({ node, depth, activePath, expanded, onToggle, onSelect 
  */
 export function WikiNavigation({ pages, activePath, onSelect }: WikiNavigationProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    // The first level below the wiki overview is the useful reading map. Keep it
+    // open when a freshly fetched version arrives, without reopening a top-level
+    // section the reader explicitly collapsed.
+    setExpanded(current => {
+      const next = new Set(current)
+      for (const page of pages) {
+        if (page.children.length > 0 && !manuallyCollapsed.has(page.path)) next.add(page.path)
+      }
+      return next
+    })
+  }, [pages, manuallyCollapsed])
 
   useEffect(() => {
     // Follows the active page rather than replacing the set, so a section the
@@ -126,13 +140,24 @@ export function WikiNavigation({ pages, activePath, onSelect }: WikiNavigationPr
     })
   }, [activePath])
 
-  const toggle = (path: string) =>
+  const toggle = (path: string) => {
+    const topLevel = pages.some(page => page.path === path)
+    const wasExpanded = expanded.has(path)
+    if (topLevel) {
+      setManuallyCollapsed(current => {
+        const next = new Set(current)
+        if (wasExpanded) next.add(path)
+        else next.delete(path)
+        return next
+      })
+    }
     setExpanded(current => {
       const next = new Set(current)
       if (next.has(path)) next.delete(path)
       else next.add(path)
       return next
     })
+  }
 
   return (
     <nav

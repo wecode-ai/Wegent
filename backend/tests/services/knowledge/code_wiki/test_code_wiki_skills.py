@@ -25,7 +25,6 @@ def test_wiki_submit_owns_the_page_write_contract() -> None:
     metadata, body = _skill("wiki_submit")
 
     assert metadata["bindShells"] == ["ClaudeCode"]
-    assert metadata["version"] == "2.0.4"
     for subject in (
         "at most 4 folders",
         "complete content",

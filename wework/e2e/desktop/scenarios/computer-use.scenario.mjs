@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const PAGE_SELECTOR = '[data-testid="computer-use-settings-page"]'
@@ -47,6 +47,37 @@ async function verifyBridge(record) {
   )
 }
 
+async function waitForRuntimeRecordRemoved(executorHome, timeoutMs) {
+  const path = join(executorHome, 'runtime', RUNTIME_FILE)
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (
+      await access(path)
+        .then(() => false)
+        .catch(() => true)
+    )
+      return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail('Disabled computer use left its private bridge record on disk')
+}
+
+async function assertBridgeStopped(record) {
+  if (!record) return
+  await assert.rejects(
+    fetch(`http://${record.address}/computer`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${record.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'listTools' }),
+      signal: AbortSignal.timeout(1_000),
+    }),
+    'Disabled computer use left its private bridge reachable'
+  )
+}
+
 export function createDesktopScenario({ captureScreenshot, executorHome, uiTimeoutMs }) {
   return {
     async verify(control) {
@@ -89,6 +120,13 @@ export function createDesktopScenario({ captureScreenshot, executorHome, uiTimeo
 
       await captureScreenshot(control, 'computer-use-settings.png', PAGE_SELECTOR)
       await control.command('click', TOGGLE_SELECTOR)
+      await control.command('waitFor', TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForAttribute(control, TOGGLE_SELECTOR, 'aria-checked', 'false', uiTimeoutMs)
+      await waitForRuntimeRecordRemoved(executorHome, uiTimeoutMs)
+      await assertBridgeStopped(runtime)
+
+      await control.command('navigate', 'body', { value: '/' })
+      await control.command('navigate', 'body', { value: '/settings/computer-use' })
       await control.command('waitFor', TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await waitForAttribute(control, TOGGLE_SELECTOR, 'aria-checked', 'false', uiTimeoutMs)
     },

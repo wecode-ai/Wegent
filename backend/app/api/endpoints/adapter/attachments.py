@@ -11,9 +11,10 @@ Uses the unified context service for managing attachments as subtask contexts.
 import asyncio
 import logging
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 from urllib.parse import quote
 
 from fastapi import (
@@ -57,6 +58,13 @@ from app.services.attachment.public_link import (
 from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
+from app.services.knowledge.attachment_download_policy import (
+    AttachmentAccessPurpose,
+    require_attachment_download_allowed,
+)
+from app.services.knowledge.document_download_policy import (
+    DocumentDownloadDisabledError,
+)
 from app.services.media.weibo_image_upload import (
     WeiboImageUploadError,
     weibo_image_upload_service,
@@ -143,7 +151,15 @@ DOWNLOAD_TOKEN_EXPIRE_SECONDS = 300
 DOWNLOAD_TOKEN_SCOPE = "attachment_download"
 
 
-def _build_content_disposition(filename: str) -> str:
+@dataclass(frozen=True)
+class AttachmentDownloadToken:
+    """The authenticated user and signed purpose of a browser file token."""
+
+    user: User
+    purpose: AttachmentAccessPurpose
+
+
+def _build_content_disposition(filename: str, disposition: str = "attachment") -> str:
     """
     Build Content-Disposition header value with proper filename encoding.
 
@@ -157,11 +173,11 @@ def _build_content_disposition(filename: str) -> str:
     except UnicodeEncodeError:
         # Non-ASCII filename: use RFC 5987 encoding
         encoded = quote(filename)
-        return f"attachment; filename*=UTF-8''{encoded}"
+        return f"{disposition}; filename*=UTF-8''{encoded}"
 
     # ASCII filename: use simple quoted string
     escaped = filename.replace("\\", "\\\\").replace('"', '\\"')
-    return f'attachment; filename="{escaped}"'
+    return f'{disposition}; filename="{escaped}"'
 
 
 async def _stream_remote_media(
@@ -169,6 +185,7 @@ async def _stream_remote_media(
     filename: str,
     default_media_type: str,
     range_header: Optional[str] = None,
+    disposition: str = "attachment",
 ) -> StreamingResponse:
     """Proxy remote media without buffering the complete file in memory."""
     import httpx
@@ -200,7 +217,7 @@ async def _stream_remote_media(
             await client.aclose()
 
     headers = {
-        "Content-Disposition": _build_content_disposition(filename),
+        "Content-Disposition": _build_content_disposition(filename, disposition),
         "Referrer-Policy": "no-referrer",
         "X-Accel-Buffering": "no",
     }
@@ -226,6 +243,7 @@ async def _stream_external_attachment(
     context,
     *,
     range_header: Optional[str] = None,
+    disposition: str = "attachment",
 ) -> Optional[StreamingResponse]:
     """Resolve and stream externally stored media when an adapter handles it."""
     playback = await _resolve_attachment_playback(context)
@@ -236,6 +254,7 @@ async def _stream_external_attachment(
         context.original_filename,
         default_media_type=playback.media_type,
         range_header=range_header,
+        disposition=disposition,
     )
 
 
@@ -251,7 +270,9 @@ def _load_stored_attachment_binary_data(attachment_id: int) -> Optional[bytes]:
         return context_service.get_attachment_binary_data(db=db, context=context)
 
 
-async def _stream_stored_attachment(context) -> StreamingResponse:
+async def _stream_stored_attachment(
+    context, *, disposition: str = "attachment"
+) -> StreamingResponse:
     """Read blocking storage off the event loop and stream bounded chunks."""
     attachment_id = context.id
     filename = context.original_filename
@@ -297,7 +318,7 @@ async def _stream_stored_attachment(context) -> StreamingResponse:
         iter_bytes(),
         media_type=media_type,
         headers={
-            "Content-Disposition": _build_content_disposition(filename),
+            "Content-Disposition": _build_content_disposition(filename, disposition),
             "Content-Length": str(len(binary_data)),
             "X-Accel-Buffering": "no",
         },
@@ -343,7 +364,11 @@ def _raise_if_weibo_video_download_unsupported(context) -> None:
         )
 
 
-def _create_download_token(attachment_id: int, user: User) -> str:
+def _create_download_token(
+    attachment_id: int,
+    user: User,
+    purpose: AttachmentAccessPurpose = "download",
+) -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(
         seconds=DOWNLOAD_TOKEN_EXPIRE_SECONDS
     )
@@ -353,6 +378,7 @@ def _create_download_token(attachment_id: int, user: User) -> str:
             "attachment_id": attachment_id,
             "user_id": user.id,
             "sub": user.user_name,
+            "purpose": purpose,
             "exp": expires_at,
         },
         settings.SECRET_KEY,
@@ -364,7 +390,7 @@ def _resolve_user_from_download_token(
     db: Session,
     attachment_id: int,
     download_token: str,
-) -> User:
+) -> AttachmentDownloadToken:
     try:
         payload = jwt.decode(
             download_token,
@@ -379,9 +405,11 @@ def _resolve_user_from_download_token(
         )
         raise HTTPException(status_code=401, detail="Invalid download token")
 
+    purpose = payload.get("purpose", "download")
     if (
         payload.get("scope") != DOWNLOAD_TOKEN_SCOPE
         or payload.get("attachment_id") != attachment_id
+        or purpose not in {"download", "playback"}
     ):
         raise HTTPException(status_code=401, detail="Invalid download token")
 
@@ -396,7 +424,27 @@ def _resolve_user_from_download_token(
     )
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid download token")
-    return user
+    return AttachmentDownloadToken(user=user, purpose=purpose)
+
+
+def _require_attachment_download_allowed(
+    db: Session,
+    context,
+    purpose: AttachmentAccessPurpose,
+) -> None:
+    """Reject protected KB originals while leaving non-KB attachments unchanged."""
+    try:
+        require_attachment_download_allowed(
+            db,
+            attachment_id=context.id,
+            mime_type=getattr(context, "mime_type", None),
+            purpose=purpose,
+        )
+    except DocumentDownloadDisabledError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
 
 
 def _check_knowledge_base_access(
@@ -947,6 +995,8 @@ async def get_attachment_playback(
     else:
         raise HTTPException(status_code=401, detail="Authentication required")
 
+    _require_attachment_download_allowed(db, context, "playback")
+
     external_playback = await _resolve_attachment_playback(context)
     if external_playback and external_playback.delivery_mode == "direct":
         return AttachmentPlaybackResponse(
@@ -960,7 +1010,7 @@ async def get_attachment_playback(
     else:
         proxy_url = (
             f"{proxy_url}?download_token="
-            f"{quote(_create_download_token(attachment_id, current_user), safe='')}"
+            f"{quote(_create_download_token(attachment_id, current_user, 'playback'), safe='')}"
         )
     return AttachmentPlaybackResponse(
         playback_url=proxy_url,
@@ -1074,10 +1124,12 @@ async def download_attachment(
 
     # Method 1: Short-lived token used by browser-native downloads.
     if download_token:
-        current_user = _resolve_user_from_download_token(
+        token_context = _resolve_user_from_download_token(
             db, attachment_id, download_token
         )
+        current_user = token_context.user
         context = _get_attachment_context(db, attachment_id, current_user)
+        download_purpose = token_context.purpose
         has_access = True
 
     # Method 2: Share token authentication (no login required)
@@ -1091,10 +1143,12 @@ async def download_attachment(
             )
             if context is None:
                 raise HTTPException(status_code=404, detail="Attachment not found")
+        download_purpose = "share"
 
     # Method 3: JWT token authentication (existing logic)
     elif current_user:
         context = _get_attachment_context(db, attachment_id, current_user)
+        download_purpose = "download"
         has_access = True
 
     # Method 4: No authentication - redirect to login for browser access
@@ -1117,9 +1171,12 @@ async def download_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    _require_attachment_download_allowed(db, context, download_purpose)
+
     external_response = await _stream_external_attachment(
         context,
         range_header=range_header,
+        disposition="inline" if download_purpose == "playback" else "attachment",
     )
     if external_response is not None:
         return external_response
@@ -1142,9 +1199,15 @@ async def download_attachment(
                     context.original_filename,
                     default_media_type=context.mime_type or "video/mp4",
                     range_header=range_header,
+                    disposition=(
+                        "inline" if download_purpose == "playback" else "attachment"
+                    ),
                 )
 
-    return await _stream_stored_attachment(context)
+    return await _stream_stored_attachment(
+        context,
+        disposition="inline" if download_purpose == "playback" else "attachment",
+    )
 
 
 @router.post("/{attachment_id}/download-token")
@@ -1154,7 +1217,8 @@ async def create_attachment_download_token(
     current_user: User = Depends(security.get_current_user),
 ):
     """Create a short-lived token for browser-native attachment downloads."""
-    _get_attachment_context(db, attachment_id, current_user)
+    context = _get_attachment_context(db, attachment_id, current_user)
+    _require_attachment_download_allowed(db, context, "download")
     return {
         "download_token": _create_download_token(attachment_id, current_user),
         "expires_in": DOWNLOAD_TOKEN_EXPIRE_SECONDS,
@@ -1194,6 +1258,8 @@ async def executor_download_attachment(
     # Verify it's an attachment type
     if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    _require_attachment_download_allowed(db, context, "executor")
 
     external_response = await _stream_external_attachment(context)
     if external_response is not None:
@@ -1406,6 +1472,8 @@ async def create_public_share_link(
             status_code=403, detail="Only the attachment owner can create share links"
         )
 
+    _require_attachment_download_allowed(db, context, "share")
+
     # Generate public share token
     token = _generate_public_share_token(attachment_id, expires_in_days)
 
@@ -1457,6 +1525,8 @@ async def public_download_attachment(
 
     if context is None or context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    _require_attachment_download_allowed(db, context, "share")
 
     external_response = await _stream_external_attachment(
         context,

@@ -22,7 +22,11 @@ from app.models.wiki import (
     WikiGenerationStatus,
     WikiGenerationType,
 )
-from app.schemas.wiki import WikiContentSection, WikiContentWriteRequest
+from app.schemas.wiki import (
+    WikiContentSection,
+    WikiContentSummary,
+    WikiContentWriteRequest,
+)
 from app.services.knowledge.code_wiki.version_store import page_path_of
 from app.services.wiki_service import WikiService
 
@@ -330,6 +334,29 @@ def test_a_payload_with_nothing_in_it_is_still_refused(
         )
 
     assert exc.value.status_code == 400
+
+
+def test_a_page_plan_is_persisted_without_finishing_the_generation(
+    test_db: Session, generation: WikiGeneration
+) -> None:
+    WikiService().save_generation_contents(
+        test_db,
+        WikiContentWriteRequest(
+            generation_id=generation.id,
+            sections=[],
+            summary=WikiContentSummary(
+                structure_order=["index", "architecture", "operations"]
+            ),
+        ),
+    )
+
+    test_db.refresh(generation)
+    assert generation.status == WikiGenerationStatus.RUNNING
+    assert generation.ext["content_write"]["summary"]["structure_order"] == [
+        "index",
+        "architecture",
+        "operations",
+    ]
 
 
 # --- reading a page back ----------------------------------------------------

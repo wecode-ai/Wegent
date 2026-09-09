@@ -8,6 +8,7 @@ import {
   pluginDetailActionErrorMessage,
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
+  requiredConnectionNames,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
@@ -25,6 +26,23 @@ const emptyComponents = {
   bins: [],
   connectors: [],
 }
+
+test('account connections do not require legacy login during plugin installation', () => {
+  const item = githubMarketplaceItem()
+  item.components = {
+    ...emptyComponents,
+    connectors: [
+      {
+        slug: 'github',
+        authPolicy: 'on_install',
+        accountAuth: { protocolVersion: 1, credentialType: 'oauth2', adapter: 'scripts/auth.py' },
+      },
+    ],
+  }
+  expect(requiredConnectionNames(item)).toEqual([])
+  delete item.components.connectors![0].accountAuth
+  expect(requiredConnectionNames(item)).toEqual(['GitHub'])
+})
 
 function githubMarketplaceItem(): PluginMarketplaceItem {
   return {

@@ -21,6 +21,12 @@ from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
 
 
+@pytest.fixture(autouse=True)
+def isolate_notification_delivery():
+    with patch("app.core.async_utils.schedule_async_task"):
+        yield
+
+
 def _make_project(db: Session, user: User) -> CloudProject:
     public_id = str(uuid.uuid4())
     project = CloudProject(
@@ -265,6 +271,8 @@ def test_assign_to_other_member_sends_notification(
         )
 
     notify.assert_called_once_with(
+        test_db,
+        actor_user_id=test_user.id,
         user_id=member.id,
         project_id=str(project.id),
         project_name=project.name,

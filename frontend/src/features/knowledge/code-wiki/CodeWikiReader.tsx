@@ -421,7 +421,9 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setConfirmingRegenerate(true)}
+            onClick={() => {
+              setConfirmingRegenerate(true)
+            }}
             disabled={control.disabled}
             title={control.hint || undefined}
             data-testid="code-wiki-regenerate"

@@ -1475,6 +1475,7 @@ function filterRuntimeChatStreamHandlers(
     onRuntimeTransportReplaced: includeTransportReplacement
       ? handlers.onRuntimeTransportReplaced
       : undefined,
+    onWeworkNotification: acceptsDevice(undefined) ? handlers.onWeworkNotification : undefined,
     onProjectTaskAssigned: acceptsDevice(undefined) ? handlers.onProjectTaskAssigned : undefined,
   }
 }

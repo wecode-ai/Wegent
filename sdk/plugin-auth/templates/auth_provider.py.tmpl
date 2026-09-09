@@ -1,0 +1,42 @@
+"""Implement provider behavior here; transport is supplied by the bundled SDK.
+
+Expected credential fields: __REQUIRED_FIELDS__.
+Use extra JSON fields for provider configuration, never opaque OS keychain blobs.
+For a custom local auth directory, declare accountAuth.localEnvironment and call
+wegent_plugin_auth.local_configuration() in export_local/authorize/detach.
+Do not copy these local paths into exported credentials or business configuration.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Sequence
+
+from wegent_plugin_auth import AuthError
+
+# Explicitly list existing business commands. Never include login or logout.
+ALLOWED_COMMANDS: tuple[str, ...] = ()
+
+
+def export_local() -> dict[str, Any] | None:
+    """Read existing local authentication without deleting or changing it."""
+    raise AuthError("Provider export is not configured")
+
+
+def account_id(credential: dict[str, Any]) -> str:
+    """Return a stable public account identifier; never a password or token."""
+    raise AuthError("Provider account identity is not configured")
+
+
+def validate(credential: dict[str, Any]) -> None:
+    """Validate provider-specific fields; core credential fields are checked by SDK."""
+
+
+def execute(credential: dict[str, Any], arguments: Sequence[str]) -> int:
+    """Run existing business commands using credentials in memory only.
+
+    Restore scoped state in finally/context managers. Never persist delegated
+    secrets, auto-login on failure, print credentials, or log upstream exceptions.
+    """
+    raise AuthError("Provider execution is not configured")
+
+__OAUTH_PROVIDER__

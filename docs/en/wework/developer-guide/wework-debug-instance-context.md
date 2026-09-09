@@ -59,6 +59,12 @@ instances from the release app and other worktrees. Do not change the UUID
 namespace or replace it with a random GUID because doing so resets users' menu
 bar visibility rules again.
 
+Electron creates the macOS `NSStatusItem` before assigning its `autosaveName`.
+The tray must therefore be constructed with an empty image and receive its real
+icon afterward. This prevents iBar from observing the temporary `Item-0`
+identity and applying an unrelated hidden rule. Do not move the real image back
+into the `Tray` constructor.
+
 The script also exports these values as `VITE_WEWORK_*` so the frontend can display them at runtime.
 
 ## Frontend Display
