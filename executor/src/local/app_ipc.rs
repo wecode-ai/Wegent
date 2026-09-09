@@ -2789,7 +2789,7 @@ async fn handle_builtin_device_command(
     match command_key {
         "home_dir" => Some((
             CommandResult::ok(
-                dirs::home_dir()
+                configured_home_dir()
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| ".".to_string()),
             ),
@@ -3070,7 +3070,8 @@ fn project_workspace_root_path() -> Result<String, String> {
                 .to_string());
         }
     }
-    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    let home =
+        configured_home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
     Ok(home
         .join(".wecode")
         .join("wegent-executor")
@@ -3078,6 +3079,14 @@ fn project_workspace_root_path() -> Result<String, String> {
         .join("projects")
         .display()
         .to_string())
+}
+
+#[cfg(windows)]
+fn configured_home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
 }
 
 pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {

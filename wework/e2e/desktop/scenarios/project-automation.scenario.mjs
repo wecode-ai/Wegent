@@ -1200,14 +1200,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The completed Issue did not reach the review state required for board follow-up',
       uiTimeoutMs
     )
-    await control.command(
-      'waitFor',
-      `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`,
-      {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      }
-    )
+    const moonshotTaskListSelector = `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`
+    await control.command('scrollIntoView', moonshotTaskListSelector)
+    await control.command('waitFor', moonshotTaskListSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
     const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
     const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`

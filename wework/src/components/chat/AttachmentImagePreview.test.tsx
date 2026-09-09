@@ -357,8 +357,9 @@ describe('AttachmentImagePreview', () => {
     })
 
     expect(readWorkspaceFileChunk).toHaveBeenCalledTimes(1)
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
-    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2)
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:attachment-preview')
     second.unmount()
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
   })
 })

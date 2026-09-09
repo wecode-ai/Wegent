@@ -586,12 +586,17 @@ async fn app_ipc_imports_external_codex_content() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
+    let native_codex_home = home.join(".codex");
     let codex_home = root.path().join("wework-codex");
-    fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
-    fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
-    fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
-    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    fs::create_dir_all(native_codex_home.join("skills/example")).unwrap();
+    fs::write(native_codex_home.join("config.toml"), "model = \"gpt-5\"\n").unwrap();
+    fs::write(native_codex_home.join("skills/example/SKILL.md"), "example").unwrap();
     let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+    let _e2e = EnvGuard::set("VITE_WEWORK_E2E", "true");
+    let _native_home = EnvGuard::set(
+        "WEWORK_E2E_NATIVE_CODEX_HOME",
+        &native_codex_home.display().to_string(),
+    );
 
     let result = AppIpcServer::new()
         .dispatch(
