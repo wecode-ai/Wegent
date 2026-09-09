@@ -1002,6 +1002,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           !publishDialogText.includes('no file selected'),
         'Smart app publish dialog leaked native English file picker text'
       )
+      assert.ok(
+        publishDialogText.includes('发布时只接受项目打包命令生成的产物包') &&
+          publishDialogText.includes('不要直接压缩源码目录'),
+        'Smart app publish dialog did not distinguish release artifacts from source archives'
+      )
       await captureScreenshot(control, 'harness-apps-04a-publish-dialog-zh.png', 'body')
       await control.command('click', '[data-testid="smart-app-publish-close"]')
       await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {

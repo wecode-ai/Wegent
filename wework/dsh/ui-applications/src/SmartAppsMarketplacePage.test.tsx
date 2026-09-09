@@ -19,6 +19,8 @@ const deleteInstalled = vi.fn()
 const stopInstalled = vi.fn()
 const updateInstalled = vi.fn()
 const exportToDownloads = vi.fn()
+const exportPackage = vi.fn()
+const uploadPackage = vi.fn()
 const addPlugin = vi.fn()
 const createDirectory = vi.fn()
 const linkDirectory = vi.fn()
@@ -28,7 +30,7 @@ const getLocalExecutorDeviceId = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => {
   const translate = (_key: string, fallback?: string) => fallback ?? _key
-  return { useTranslation: () => ({ t: translate }) }
+  return { useTranslation: () => ({ t: translate, i18n: { language: 'zh-CN' } }) }
 })
 vi.mock('@/lib/navigation', () => ({ navigateTo: (path: string) => navigateTo(path) }))
 vi.mock('@/lib/local-terminal', () => ({
@@ -94,6 +96,8 @@ vi.mock('@/api/local/harnessApps', () => ({
     stop: (id: string) => stopInstalled(id),
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
     exportToDownloads: (id: string) => exportToDownloads(id),
+    export: (id: string) => exportPackage(id),
+    upload: (path: string, url: string) => uploadPackage(path, url),
     addPlugin: (id: string, spec: string) => addPlugin(id, spec),
     createDirectory: (input: unknown) => createDirectory(input),
     linkDirectory: (path: string) => linkDirectory(path),
@@ -202,6 +206,13 @@ describe('SmartAppsMarketplacePage', () => {
       sizeBytes: 1024,
       manifest: importedInstallation.manifest,
     })
+    exportPackage.mockReset().mockResolvedValue({
+      archivePath: '/tmp/research-desk.zip',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 1024,
+      manifest: importedInstallation.manifest,
+    })
+    uploadPackage.mockReset().mockResolvedValue(undefined)
     addPlugin.mockReset().mockResolvedValue(importedInstallation)
     getLocalExecutorDeviceId.mockReset().mockResolvedValue('local-device-1')
     downloadPackage.mockReset().mockResolvedValue({
@@ -570,7 +581,7 @@ describe('SmartAppsMarketplacePage', () => {
 
     await waitFor(() => expect(exportToDownloads).toHaveBeenCalledWith(importedInstallation.id))
     expect(screen.getByTestId('smart-app-export-success')).toHaveTextContent(
-      '安装包已导出到下载目录。'
+      '发布包已导出到下载目录。'
     )
   })
 
@@ -582,7 +593,7 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.click(await screen.findByTestId(`smart-app-actions-${importedInstallation.id}`))
     fireEvent.pointerDown(screen.getByTestId(`smart-app-export-package-${importedInstallation.id}`))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Downloads unavailable')
+    expect(await screen.findByRole('alert')).toHaveTextContent('发布包导出失败。')
     expect(
       screen.getByTestId(`smart-app-created-item-${importedInstallation.id}`)
     ).toBeInTheDocument()
@@ -805,6 +816,91 @@ describe('SmartAppsMarketplacePage', () => {
     expect(screen.getByText('已选择 2 个文件')).toBeInTheDocument()
   })
 
+  test('blocks an oversized imported source archive before calling the publish API', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.listTags).mockResolvedValue({
+      version: 1,
+      items: [
+        {
+          id: 'data_analysis',
+          name_zh: '数据分析',
+          name_en: 'Data analysis',
+          sort: 1,
+          enabled: true,
+        },
+      ],
+    })
+    listInstalled.mockResolvedValue([importedInstallation])
+    exportPackage.mockResolvedValue({
+      archivePath: '/tmp/source.zip',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 50 * 1024 * 1024 + 1,
+      manifest: importedInstallation.manifest,
+    })
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-created-publish-research-desk'))
+    expect(
+      screen.getByText('将使用已导入的发布包；源码目录请通过“关联文件夹”进入开发流程。')
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('数据分析'))
+    fireEvent.change(screen.getByTestId('smart-app-publish-icon'), {
+      target: { files: [new File(['icon'], 'icon.png', { type: 'image/png' })] },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-publish-scope-public'))
+    fireEvent.click(
+      within(screen.getByTestId('smart-app-publish-dialog')).getByRole('button', {
+        name: '发布',
+      })
+    )
+
+    expect(
+      await screen.findByText(
+        '发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。'
+      )
+    ).toBeInTheDocument()
+    expect(smartAppsApi.initSubmission).not.toHaveBeenCalled()
+    expect(uploadPackage).not.toHaveBeenCalled()
+  })
+
+  test('reports an oversized icon in Chinese before exporting the package', async () => {
+    const smartAppsApi = api([])
+    vi.mocked(smartAppsApi.listTags).mockResolvedValue({
+      version: 1,
+      items: [
+        {
+          id: 'data_analysis',
+          name_zh: '数据分析',
+          name_en: 'Data analysis',
+          sort: 1,
+          enabled: true,
+        },
+      ],
+    })
+    listInstalled.mockResolvedValue([importedInstallation])
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-created-publish-research-desk'))
+    fireEvent.click(screen.getByLabelText('数据分析'))
+    fireEvent.change(screen.getByTestId('smart-app-publish-icon'), {
+      target: {
+        files: [new File([new Uint8Array(512 * 1024 + 1)], 'oversized.png', { type: 'image/png' })],
+      },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-publish-scope-public'))
+    fireEvent.click(
+      within(screen.getByTestId('smart-app-publish-dialog')).getByRole('button', {
+        name: '发布',
+      })
+    )
+
+    expect(await screen.findByText('图标不能超过 512 KB。')).toBeInTheDocument()
+    expect(exportPackage).not.toHaveBeenCalled()
+    expect(smartAppsApi.initSubmission).not.toHaveBeenCalled()
+  })
+
   test('switches an owned app to everyone without sharing targets', async () => {
     const ownedItem = item({
       sourceType: 'user',
@@ -1015,7 +1111,7 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.click(await screen.findByTestId(`smart-app-actions-${importedInstallation.id}`))
     fireEvent.pointerDown(screen.getByTestId(`smart-app-open-directory-${importedInstallation.id}`))
 
-    expect(await screen.findByText('open failed')).toBeInTheDocument()
+    expect(await screen.findByText('打开工作台文件夹失败。')).toBeInTheDocument()
     expect(revealLocalFile).toHaveBeenCalledWith(importedInstallation.packagePath)
   })
 })
