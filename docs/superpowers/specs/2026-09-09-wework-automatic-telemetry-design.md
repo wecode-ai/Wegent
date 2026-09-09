@@ -1,6 +1,10 @@
 ---
 sidebar_position: 1
 title: Wework 自动统计与内外网分流设计
+status: approved
+supersedes:
+  - 2026-09-07-wework-smart-app-telemetry-design.md
+  - 2026-09-08-smart-app-telemetry-taxonomy-design.md
 ---
 
 # Wework 自动统计与内外网分流设计
@@ -496,9 +500,90 @@ DSH 插件共享 JavaScript 信任域，内部统计插件必须被视为组织�
 - 管理密钥只存在于 CI 或 Gateway secrets，不进入源码和构建产物。
 - 应支持按内部稳定用户 ID 执行查询或删除，以满足组织治理流程。
 
-## 13. 测试设计
+## 13. 现有实现迁移
 
-### 13.1 自动发现与业务事实
+当前 `feature/statistics` 分支已经按照早期方案实现了一部分智能工作台统计。新方案
+不会推翻已有的隐私保护和测试成果，但会替换智能工作台的事件命名、采集入口和业务
+调用位置。
+
+### 13.1 保留和复用
+
+以下基础设施继续使用：
+
+- PostHog 初始化、批量发送和内存队列；
+- `before_send` 二次字段过滤；
+- 事件属性 allowlist 和枚举约束机制；
+- 公共发行版的匿名统计授权逻辑；
+- 安装成功后才统计、更新不计为首次安装、取消 ZIP 选择不统计等业务测试场景；
+- 路由能够区分智能工作台市场、我的工作台和具体工作台的识别条件。
+
+现有 PostHog 客户端逐步封装为 Public Sink。现有类型化事件和字段白名单机制可以
+继续作为生成产物的运行时接口，不要求为了本次智能工作台迁移而同时重写其他 Wework
+事件。
+
+### 13.2 替换和删除
+
+| 现有位置                                                          | 迁移后处理                                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `App.tsx` 中的 `track('feature_opened', ...)`                     | 删除智能工作台的直接上报，由 Route Registry 和 Telemetry Agent 接管 |
+| `telemetry/routes.ts` 中的智能工作台硬编码 feature 集合           | 将匹配条件迁入 Route Registry；保留正确的路由识别语义               |
+| `SmartAppsMarketplacePage.tsx` 中的安装、更新、ZIP 导入 `track()` | 全部删除，由语义化 Operation 发布真实结果                           |
+| `events.ts` 中的 `smart_app_installed`                            | 被新的成功事件取代                                                  |
+| 通用 `feature_opened` 中的智能工作台 feature 枚举                 | 切换后移除                                                          |
+| 通用 `feature_action_completed` 中的 `smart_app/update`           | 切换后移除                                                          |
+| 通用 `operation_failed` 中的智能工作台 operation 枚举             | 切换后移除                                                          |
+
+其他 Wework 功能现有的 `track()` 暂时不在本次迁移范围内。架构约束首先禁止智能
+工作台模块和新增代码直接依赖底层 telemetry 客户端；其他历史调用点以后按功能域
+逐步迁移，不能让本次方案扩张成一次全量遥测重构。
+
+### 13.3 旧事件到新事件映射
+
+| 旧事件和属性                                                                | 新事件                           |
+| --------------------------------------------------------------------------- | -------------------------------- |
+| `feature_opened { domain: 'smart_app', feature: 'smart_apps_marketplace' }` | `smart_app_marketplace_opened`   |
+| `feature_opened { domain: 'smart_app', feature: 'smart_apps_owned' }`       | `smart_app_owned_opened`         |
+| `feature_opened { domain: 'smart_app', feature: 'smart_app' }`              | `smart_app_opened`               |
+| `smart_app_installed { install_source: 'marketplace' }`                     | `smart_app_install_succeeded`    |
+| `smart_app_installed { install_source: 'zip_import' }`                      | `smart_app_zip_import_succeeded` |
+| `feature_action_completed { domain: 'smart_app', action: 'update' }`        | `smart_app_update_succeeded`     |
+| `operation_failed { operation: 'smart_app_marketplace_install' }`           | `smart_app_install_failed`       |
+| `operation_failed { operation: 'smart_app_marketplace_update' }`            | `smart_app_update_failed`        |
+| `operation_failed { operation: 'smart_app_zip_import' }`                    | `smart_app_zip_import_failed`    |
+
+旧 `smart_app_marketplace_download` 没有记录下载属于安装还是更新，历史数据不能可靠
+拆分。它保留为旧版“市场下载准备失败”指标。新实现根据 Operation 的明确意图发送
+`smart_app_install_failed` 或 `smart_app_update_failed`，并使用
+`failure_stage: 'download'`。
+
+### 13.4 测试迁移
+
+现有测试的业务语义需要保留，但断言位置发生变化：
+
+- 页面测试只验证交互、取消和错误展示，不再 mock `track()`；
+- Operation 测试验证何时构成成功、失败或取消，以及一次尝试只有一个最终结果；
+- Telemetry Agent 测试验证 Operation 结果自动转换成正确事件；
+- Projection 测试继续验证路径、错误正文和新增业务字段不会进入公共 payload；
+- 路由测试从“调用通用 `feature_opened`”改为“注册路由后自动生成专属事件”。
+
+### 13.5 原子切换和历史连续性
+
+正式发行版不双写新旧智能工作台事件。迁移按以下顺序实施：
+
+1. 增加 Registry、Telemetry Agent、Sink Registry 和新事件契约，在测试环境验证，
+   但不与旧调用同时向生产发送；
+2. 把安装、更新和 ZIP 导入迁入统一 Smart App Operation 服务；
+3. 在同一个发行切换中启用 Agent，并删除 `App.tsx` 和页面中的旧智能工作台上报；
+4. 发布前由 CI 同步新事件和属性定义；
+5. PostHog 中的旧 Event Definition 标记 deprecated，不删除历史数据；
+6. 过渡期报表按上述映射合并新旧事件，并以发行版本或切换时间作为边界。
+
+不增加长期兼容分支或运行时双写开关。测试环境可以比较新旧结果，但同一次生产业务
+事实只能进入一套智能工作台事件。
+
+## 14. 测试设计
+
+### 14.1 自动发现与业务事实
 
 必须覆盖：
 
@@ -511,7 +596,7 @@ DSH 插件共享 JavaScript 信任域，内部统计插件必须被视为组织�
 - 取消文件选择不产生失败事件；
 - 一次尝试最多产生一个最终结果，重试作为新的尝试处理。
 
-### 13.2 字典和命名
+### 14.2 字典和命名
 
 CI 必须验证：
 
@@ -523,7 +608,7 @@ CI 必须验证：
 - PostHog Event Definition 同步支持 dry-run，并且重复执行保持幂等；
 - 历史事件只废弃、不自动删除。
 
-### 13.3 投影与隐私
+### 14.3 投影与隐私
 
 对每个事件分别生成 Public Projection 和 Internal Projection 快照，断言：
 
@@ -535,7 +620,7 @@ CI 必须验证：
 - Public 与 Internal 标识完全不同；
 - 原始错误和对象展开无法通过类型及运行时校验进入 payload。
 
-### 13.4 Sink 和故障隔离
+### 14.4 Sink 和故障隔离
 
 分别模拟 Public Sink、Internal Sink、两个 Sink、内部插件和 Gateway 的不可用、超时、
 限流与 4xx/5xx。所有情况下都必须满足：
@@ -546,7 +631,7 @@ CI 必须验证：
 - 应用退出不被无限等待；
 - 普通日志不出现敏感字段。
 
-### 13.5 安全测试
+### 14.5 安全测试
 
 - 内部 endpoint 仅接受 HTTPS allowlist；
 - 未授权重定向被拒绝；
@@ -556,7 +641,7 @@ CI 必须验证：
 - 内部事件永远不能发往公共 PostHog；
 - Public Sink 不能因为私有插件存在而得到内部字段。
 
-### 13.6 真实 Electron 验证
+### 14.6 真实 Electron 验证
 
 实施涉及 Wework UI、Electron host、DSH bridge 和本地运行时，必须使用
 `scripts/ai-verify.mjs` 在隔离的真实 Electron 中验证，不能只依赖浏览器或 mock。
@@ -579,9 +664,9 @@ CI 必须验证：
 
 关键成功路径保留可复现的 Electron 验证记录、脱敏测试 Gateway 载荷和界面截图。
 
-## 14. 发布、监控与回滚
+## 15. 发布、监控与回滚
 
-### 14.1 分阶段发布
+### 15.1 分阶段发布
 
 1. 在公共代码中落地注册表、Telemetry Agent、Public Projection、Sink Registry 和
    catalog generator，不启用新的内部发送；
@@ -590,7 +675,7 @@ CI 必须验证：
 4. 全量启用 Internal Sink；
 5. 后续功能逐步迁移到统一 Route、Command、Operation 注册表。
 
-### 14.2 运行监控
+### 15.2 运行监控
 
 只监控聚合健康指标：
 
@@ -604,7 +689,7 @@ CI 必须验证：
 
 健康监控不得把 payload、用户或智能工作台名称写入日志或告警正文。
 
-### 14.3 回滚
+### 15.3 回滚
 
 - 内部 Sink 可通过内部构建/profile 配置或 Gateway 接收策略集中停用；
 - 停用私有插件不需要回滚 Wework 业务功能；
@@ -612,7 +697,7 @@ CI 必须验证：
 - 已同步的 PostHog 定义不删除，只标记 deprecated；
 - 协议不兼容时拒绝插件注册并继续启动 Wework。
 
-## 15. 验收标准
+## 16. 验收标准
 
 实现只有在同时满足以下条件时才算完成：
 
@@ -629,7 +714,7 @@ CI 必须验证：
 - 任意统计、插件或网络故障都不影响业务；
 - 单元测试、集成测试、CI catalog 检查、桌面 E2E 和真实 Electron 验证通过。
 
-## 16. 实施边界
+## 17. 实施边界
 
 公共仓库负责：
 

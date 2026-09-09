@@ -1,13 +1,15 @@
 ---
 sidebar_position: 1
-title: Smart App telemetry taxonomy
+title: "[已废弃] 智能工作台统计事件命名与属性契约"
+status: superseded
+superseded_by: 2026-09-09-wework-automatic-telemetry-design.md
 ---
 
-# 智能工作台统计事件命名与属性契约
+# [已废弃] 智能工作台统计事件命名与属性契约
 
 > 本文档已由
-> `2026-09-09-wework-automatic-telemetry-design.md` 取代。事件模型、命名和实现边界
-> 以新文档为准；本文仅保留为历史设计记录。
+> [Wework 自动统计与内外网分流设计](./2026-09-09-wework-automatic-telemetry-design.md)
+> 取代。事件模型、命名和实现边界以新文档为准；本文仅保留为历史设计记录。
 
 ## 目标
 
