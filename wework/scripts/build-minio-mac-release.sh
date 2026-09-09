@@ -6,8 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 
-# shellcheck source=lib/wework-updater-signing.sh
-source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 # shellcheck source=lib/wework-release-notes.sh
 source "$SCRIPT_DIR/lib/wework-release-notes.sh"
 # shellcheck source=lib/wework-macos-signing.sh
@@ -64,9 +62,7 @@ S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
 S3_PREFIX="${WEWORK_RELEASE_S3_PREFIX:-}"
 COMPONENT_S3_PREFIX="${WEWORK_COMPONENT_S3_PREFIX:-wework/components}"
-UPDATE_MANIFEST_S3_PREFIX="${WEWORK_UPDATE_MANIFEST_S3_PREFIX:-${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}}"
 OUTPUT_DIR="${WEWORK_RELEASE_OUTPUT_DIR:-$WEWORK_DIR/electron/release-minio}"
-UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-aarch64-apple-darwin}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
@@ -74,6 +70,14 @@ RESUME_SIGNED_APP=""
 SIGNED_APP_ONLY="false"
 UPLOAD_EXISTING="false"
 COMPONENTIZED_HOST_UPDATE="false"
+PREVIOUS_COMPONENT_MANIFEST=""
+
+cleanup() {
+  if [ -n "$PREVIOUS_COMPONENT_MANIFEST" ]; then
+    rm -f "$PREVIOUS_COMPONENT_MANIFEST"
+  fi
+}
+trap cleanup EXIT
 
 configure_release_sccache() {
   local sccache_port=""
@@ -164,8 +168,6 @@ Signing environment:
   APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER, APPLE_TEAM_ID
   or APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD (APPLE_PASSWORD is also accepted)
 
-The Tauri updater private key signs only migration bridge assets for clients
-installed before the Electron migration.
 EOF
 }
 
@@ -242,11 +244,9 @@ upload_artifacts() {
   ATTACHMENT_S3_BUCKET="$S3_BUCKET" \
   WEWORK_RELEASE_S3_PREFIX="$S3_PREFIX" \
   WEWORK_COMPONENT_S3_PREFIX="$COMPONENT_S3_PREFIX" \
-  WEWORK_UPDATE_MANIFEST_S3_PREFIX="$UPDATE_MANIFEST_S3_PREFIX" \
   WEWORK_MAC_ARM64_RELEASE_S3_PREFIX="$arm64_prefix" \
   WEWORK_MAC_X64_RELEASE_S3_PREFIX="$x64_prefix" \
-  WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX="${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}" \
-  UPDATER_PLATFORMS="$(release_platform)" \
+  RELEASE_PLATFORM="$(release_platform)" \
   RELEASE_VERSION="$VERSION" \
   RELEASE_SOURCE_SHA="$SOURCE_SHA" \
   RELEASE_CHANNEL="$CHANNEL" \
@@ -259,7 +259,6 @@ verify_uploaded_artifacts() {
   local arch
   local component_manifest
   local electron_channel="$CHANNEL"
-  local platform_manifest
 
   arch="$(release_arch)"
   component_manifest="components-$CHANNEL-macos-$arch.json"
@@ -274,15 +273,13 @@ verify_uploaded_artifacts() {
     return
   fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
-  platform_manifest="$CHANNEL-$(release_platform).json"
   for url in \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_$(release_platform).dmg" \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_$(release_platform).zip" \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_$(release_platform).zip.blockmap" \
     "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_$(release_platform).zip" \
     "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_$(release_platform).zip.blockmap" \
-    "$UPDATE_BASE_URL/$electron_channel-mac.yml" \
-    "$UPDATE_MANIFEST_BASE_URL/$platform_manifest"; do
+    "$UPDATE_BASE_URL/$electron_channel-mac.yml"; do
     if ! curl -fsSI -o /dev/null "$url"; then
       echo "Published release file is not publicly readable: $url" >&2
       exit 1
@@ -397,10 +394,8 @@ fi
 S3_ENDPOINT="${S3_ENDPOINT%/}"
 S3_PREFIX="$(normalize_prefix "$S3_PREFIX")"
 COMPONENT_S3_PREFIX="$(normalize_prefix "$COMPONENT_S3_PREFIX")"
-UPDATE_MANIFEST_S3_PREFIX="$(normalize_prefix "$UPDATE_MANIFEST_S3_PREFIX")"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX"
 COMPONENT_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$COMPONENT_S3_PREFIX"
-UPDATE_MANIFEST_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$UPDATE_MANIFEST_S3_PREFIX"
 if [ "$SIGNED_APP_ONLY" != "true" ] &&
   [ "$UPLOAD_EXISTING" != "true" ] &&
   [ -z "$RELEASE_NOTES" ]; then
@@ -429,7 +424,6 @@ require_command pnpm
 configure_release_build_cache
 if [ "$SIGNED_APP_ONLY" != "true" ]; then
   require_command curl
-  wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
   COMPONENTIZED_HOST_UPDATE="$(
     wework_resolve_componentized_host_update \
       "$UPDATE_BASE_URL/components-$CHANNEL-macos-$arch.json"
@@ -440,6 +434,16 @@ if [ "$SIGNED_APP_ONLY" != "true" ]; then
     export WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS=true
   fi
   echo "Componentized Host update enabled: $COMPONENTIZED_HOST_UPDATE"
+  candidate_manifest="$(mktemp "${TMPDIR:-/tmp}/wework-components-${CHANNEL}-${arch}.XXXXXX.json")"
+  if curl -fsS \
+    "$UPDATE_BASE_URL/components-$CHANNEL-macos-$arch.json" \
+    -o "$candidate_manifest"; then
+    PREVIOUS_COMPONENT_MANIFEST="$candidate_manifest"
+    echo "Loaded previous component manifest for unchanged asset reuse."
+  else
+    rm -f "$candidate_manifest"
+    echo "No previous component manifest available; generating all component assets."
+  fi
 fi
 
 export APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APPLE_PASSWORD:-}}"
@@ -501,6 +505,8 @@ else
 fi
 
 WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app \
+WEWORK_PREVIOUS_COMPONENT_MANIFEST="$PREVIOUS_COMPONENT_MANIFEST" \
+WEWORK_INCLUDE_LEGACY_TAURI_BRIDGE=false \
   node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
     macos "$arch" "$VERSION" "$OUTPUT_DIR"
 notes_path="$OUTPUT_DIR/WeWork_${VERSION}_$(release_platform).md"
@@ -508,6 +514,7 @@ printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
 WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE" \
+WEWORK_INCLUDE_LEGACY_TAURI_BRIDGE=false \
 WEWORK_RELEASE_TARGETS="macos-$arch" \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \

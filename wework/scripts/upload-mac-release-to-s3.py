@@ -9,7 +9,6 @@ import json
 import mimetypes
 import os
 import re
-from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -24,10 +23,6 @@ from minio_release_assets import (
     publish_immutable_file,
 )
 
-MACOS_PLATFORM_PREFIXES = {
-    "darwin-aarch64": "WEWORK_MAC_ARM64_RELEASE_S3_PREFIX",
-    "darwin-x86_64": "WEWORK_MAC_X64_RELEASE_S3_PREFIX",
-}
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.([1-9]\d*))?$")
 
 
@@ -108,33 +103,8 @@ def publish_latest_dmg(
     print(f"Published latest DMG: s3://{bucket}/{latest_key}")
 
 
-def validate_manifest(path: Path, version: str, expected_platforms: set[str]) -> dict:
-    try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise SystemExit(f"Invalid updater manifest {path}: {error}") from error
-
-    if manifest.get("version") != version:
-        raise SystemExit(
-            f"Updater manifest version must be {version}, got {manifest.get('version')!r}"
-        )
-
-    platforms = manifest.get("platforms")
-    if not isinstance(platforms, dict):
-        raise SystemExit("Updater manifest must contain a platforms object")
-
-    missing_platforms = expected_platforms.difference(platforms)
-    if missing_platforms:
-        missing = ", ".join(sorted(missing_platforms))
-        raise SystemExit(
-            "Refusing to publish an incomplete macOS updater manifest; "
-            f"missing platforms: {missing}"
-        )
-    return manifest
-
-
 def read_manifest(
-    client: Minio, bucket: str, prefix: str, filename: str = "latest.json"
+    client: Minio, bucket: str, prefix: str, filename: str
 ) -> dict | None:
     response = None
     try:
@@ -164,17 +134,6 @@ def version_parts(version: str) -> tuple[int, int, int, int, int]:
     )
 
 
-def upload_channel_manifest(
-    client: Minio,
-    bucket: str,
-    prefix: str,
-    path: Path,
-) -> None:
-    if not path.is_file():
-        raise SystemExit(f"Updater channel manifest not found: {path}")
-    upload_file(client, bucket, prefix, path, "no-cache, no-store")
-
-
 def release_advances_channel(
     client: Minio,
     bucket: str,
@@ -188,8 +147,8 @@ def release_advances_channel(
     current = read_manifest(client, bucket, prefix, path.name)
     if current is None:
         return True
-    candidate_version = candidate["version"]
-    current_version = current["version"]
+    candidate_version = candidate["appVersion"]
+    current_version = current["appVersion"]
     if version_parts(candidate_version) > version_parts(current_version):
         return True
 
@@ -249,14 +208,12 @@ def publish_channel(
     client: Minio,
     bucket: str,
     release_prefix: str,
-    manifest_prefix: str,
     output_dir: Path,
     channel: str,
     platform: str,
     publish_components,
 ) -> bool:
-    operating_system, architecture = platform.split("-", 1)
-    channel_manifest = output_dir / f"{channel}-{operating_system}-{architecture}.json"
+    _, architecture = platform.split("-", 1)
     component_arch = "arm64" if architecture == "aarch64" else "x64"
     component_manifest = (
         output_dir / f"components-{channel}-macos-{component_arch}.json"
@@ -266,8 +223,8 @@ def publish_channel(
     if not release_advances_channel(
         client,
         bucket,
-        manifest_prefix,
-        channel_manifest,
+        release_prefix,
+        component_manifest,
         (
             (release_prefix, electron_manifest.name),
             (release_prefix, component_manifest.name),
@@ -275,88 +232,14 @@ def publish_channel(
     ):
         return False
     publish_components()
-    upload_channel_manifest(client, bucket, manifest_prefix, channel_manifest)
     upload_electron_manifest(client, bucket, release_prefix, electron_manifest)
     return True
-
-
-def publish_legacy_manifest(
-    client: Minio,
-    bucket: str,
-    version: str,
-    manifest_prefix: str,
-) -> None:
-    manifests = {}
-    for platform, prefix_env in MACOS_PLATFORM_PREFIXES.items():
-        prefix = os.environ.get(prefix_env, "")
-        manifest = read_manifest(client, bucket, prefix)
-        if manifest is None or manifest.get("version") != version:
-            print(
-                f"Legacy manifest unchanged: {platform} release {version} "
-                f"is not available under s3://{bucket}/{prefix}."
-            )
-            return
-        platforms = manifest.get("platforms", {})
-        if platform not in platforms:
-            raise SystemExit(
-                f"Manifest under s3://{bucket}/{prefix} is missing {platform}"
-            )
-        manifests[platform] = manifest
-
-    for platform, manifest in manifests.items():
-        operating_system, architecture = platform.split("-", 1)
-        channel_manifest = read_manifest(
-            client,
-            bucket,
-            manifest_prefix,
-            f"stable-{operating_system}-{architecture}.json",
-        )
-        expected_entry = manifest["platforms"][platform]
-        if (
-            channel_manifest is None
-            or channel_manifest.get("version") != version
-            or channel_manifest.get("platforms", {}).get(f"stable-{operating_system}")
-            != expected_entry
-        ):
-            raise SystemExit(
-                "Refusing to publish the legacy macOS manifest before the "
-                f"stable channel manifest for {platform} is available under "
-                f"s3://{bucket}/{manifest_prefix}."
-            )
-
-    arm_manifest = manifests["darwin-aarch64"]
-    legacy_manifest = {
-        "version": version,
-        "notes": arm_manifest.get("notes"),
-        "pub_date": arm_manifest.get("pub_date"),
-        "platforms": {
-            platform: manifests[platform]["platforms"][platform]
-            for platform in MACOS_PLATFORM_PREFIXES
-        },
-    }
-    content = (
-        json.dumps(legacy_manifest, ensure_ascii=False, indent=2) + "\n"
-    ).encode()
-    legacy_prefix = os.environ.get(
-        "WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX", "wework/macos"
-    )
-    object_name = storage_key(legacy_prefix, "latest.json")
-    client.put_object(
-        bucket,
-        object_name,
-        BytesIO(content),
-        len(content),
-        content_type="application/json",
-        metadata={"Cache-Control": "no-cache, no-store"},
-    )
-    print(f"Published legacy macOS updater manifest: s3://{bucket}/{object_name}")
 
 
 def main() -> None:
     client = create_client(require_env("ATTACHMENT_S3_ENDPOINT"))
     bucket = require_env("ATTACHMENT_S3_BUCKET")
     prefix = os.environ.get("WEWORK_RELEASE_S3_PREFIX", "wework/macos")
-    manifest_prefix = os.environ.get("WEWORK_UPDATE_MANIFEST_S3_PREFIX", prefix)
     version = require_env("RELEASE_VERSION")
     source_sha = require_env("RELEASE_SOURCE_SHA")
     release_kind = os.environ.get("RELEASE_KIND", "full")
@@ -365,7 +248,7 @@ def main() -> None:
     channel = os.environ.get("RELEASE_CHANNEL", "stable")
     if channel not in {"stable", "beta"}:
         raise SystemExit(f"Unsupported Wework update channel: {channel}")
-    expected_platforms = set(require_env("UPDATER_PLATFORMS").split(","))
+    release_platform = require_env("RELEASE_PLATFORM")
     output_dir = Path(require_env("RELEASE_OUTPUT_DIR"))
     component_prefix = os.environ.get("WEWORK_COMPONENT_S3_PREFIX", "wework/components")
 
@@ -376,7 +259,7 @@ def main() -> None:
         "darwin-aarch64": ("macos", "arm64"),
         "darwin-x86_64": ("macos", "x64"),
     }
-    component_targets = [platform_details[platform] for platform in expected_platforms]
+    component_targets = [platform_details[release_platform]]
     component_assets = []
     for platform, arch in component_targets:
         component_assets.extend(
@@ -445,19 +328,13 @@ def main() -> None:
                 "public, max-age=31536000, immutable",
             ),
         )
-    manifest = output_dir / "latest.json"
-    if not manifest.is_file():
-        raise SystemExit(f"Updater manifest not found: {manifest}")
-    validate_manifest(manifest, version, expected_platforms)
-
     stable_advanced = False
-    for platform in expected_platforms:
+    for platform in [release_platform]:
         component_platform, component_arch = platform_details[platform]
         advanced = publish_channel(
             client,
             bucket,
             prefix,
-            manifest_prefix,
             output_dir,
             channel,
             platform,
@@ -475,7 +352,6 @@ def main() -> None:
                 client,
                 bucket,
                 prefix,
-                manifest_prefix,
                 output_dir,
                 "beta",
                 platform,
@@ -491,12 +367,6 @@ def main() -> None:
     if channel != "stable" or not stable_advanced:
         return
     publish_latest_dmg(client, bucket, prefix, version, artifacts)
-    upload_file(client, bucket, prefix, manifest, "no-cache, no-store")
-    print("Published the per-architecture legacy manifest after its release assets.")
-    if len(expected_platforms) == 1 and expected_platforms.issubset(
-        MACOS_PLATFORM_PREFIXES
-    ):
-        publish_legacy_manifest(client, bucket, version, manifest_prefix)
 
 
 if __name__ == "__main__":

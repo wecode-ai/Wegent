@@ -8,6 +8,8 @@ import { expect, test } from 'vitest'
 const require = createRequire(import.meta.url)
 const {
   authorizationArgs,
+  formatBytes,
+  formatDuration,
   isTransientNotaryFailure,
   retryAttempts,
   run,
@@ -129,4 +131,11 @@ test('uses S3 acceleration by default and supports explicit standard S3', () => 
   expect(s3AccelerationArgs('true')).toEqual(['--s3-acceleration'])
   expect(s3AccelerationArgs('false')).toEqual(['--no-s3-acceleration'])
   expect(() => s3AccelerationArgs('invalid')).toThrow('must be true or false')
+})
+
+test('formats notarization archive sizes and phase durations for CI logs', () => {
+  expect(formatBytes(390_360_297)).toBe('372 MiB')
+  expect(formatBytes(1_073_741_824)).toBe('1.0 GiB')
+  expect(formatDuration(34 * 60 * 1000 + 11_000)).toBe('34m 11s')
+  expect(formatDuration(900)).toBe('1s')
 })
