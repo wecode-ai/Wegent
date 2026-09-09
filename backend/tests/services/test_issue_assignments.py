@@ -111,6 +111,9 @@ def assigned_issue(test_db, test_user):
 @pytest.fixture(autouse=True)
 def no_assignment_notification_delivery(monkeypatch):
     monkeypatch.setattr("app.core.async_utils.schedule_async_task", MagicMock())
+    monkeypatch.setattr(
+        "app.services.project_chat.push.push_project_chat_message", MagicMock()
+    )
 
 
 def command(action="assign_role", **kwargs):

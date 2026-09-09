@@ -12,7 +12,6 @@ interface Props {
   item: CloudLoopItem
   currentUserId?: string | number
   expectedAssignmentId?: string | null
-  requestedReply?: { text: string } | null
   saveReply?: ReplyAction
   submitResult?: ReplyAction
   onUpdated: () => Promise<void>
@@ -21,9 +20,14 @@ interface Props {
 export function IssueHumanReplyPanel(props: Props) {
   const { t } = useTranslation()
   const assignment = props.item.workflow?.assignment
+  const noticeRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    noticeRef.current?.scrollIntoView({ block: 'center' })
+  }, [props.expectedAssignmentId, assignment?.id, assignment?.status])
   if (props.expectedAssignmentId && props.expectedAssignmentId !== assignment?.id) {
     return (
       <p
+        ref={noticeRef}
         role="status"
         data-testid="issue-assignment-expired"
         className="my-4 rounded-lg border border-border p-4 text-sm"
@@ -34,7 +38,12 @@ export function IssueHumanReplyPanel(props: Props) {
   }
   if (!assignment || assignment.status !== 'waiting_human') {
     return props.expectedAssignmentId ? (
-      <p role="status" data-testid="issue-assignment-handled" className="my-4 text-sm">
+      <p
+        ref={noticeRef}
+        role="status"
+        data-testid="issue-assignment-handled"
+        className="my-4 text-sm"
+      >
         {t('todo.human_reply_handled')}
       </p>
     ) : null
@@ -44,23 +53,16 @@ export function IssueHumanReplyPanel(props: Props) {
   )
 }
 
-function HumanReplyForm({
-  item,
-  currentUserId,
-  requestedReply,
-  saveReply,
-  submitResult,
-  onUpdated,
-}: Props) {
+function HumanReplyForm({ item, currentUserId, saveReply, submitResult, onUpdated }: Props) {
   const { t } = useTranslation()
   const assignment = item.workflow!.assignment!
   const storageKey = `issue-human-reply:${currentUserId}:${item.id}:${assignment.id}`
-  const [text, setText] = useState(
-    () => sessionStorage.getItem(storageKey) ?? assignment.reply_draft ?? ''
-  )
+  const [text, setText] = useState(() => sessionStorage.getItem(storageKey) ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+  const [lastReply, setLastReply] = useState(assignment.reply_draft ?? '')
+  const threadReply = useRef<HTMLElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
   const active = useRef(true)
   useEffect(() => {
@@ -72,31 +74,23 @@ function HumanReplyForm({
   const canReply =
     currentUserId != null && String(currentUserId) === String(assignment.assignee_user_id)
   const paused = item.workflow?.orchestration_status === 'paused'
-  const [appliedRequest, setAppliedRequest] = useState<Props['requestedReply']>(null)
-  if (requestedReply !== appliedRequest) {
-    setAppliedRequest(requestedReply)
-    if (canReply && requestedReply?.text) setText(requestedReply.text)
-  }
   useEffect(() => {
-    if (!requestedReply || !canReply) return
-    if (requestedReply.text) {
-      sessionStorage.setItem(storageKey, requestedReply.text)
-    }
-    textarea.current?.scrollIntoView({ block: 'center' })
-    textarea.current?.focus()
-  }, [requestedReply, storageKey, canReply])
+    threadReply.current?.scrollIntoView({ block: 'center' })
+    if (canReply) textarea.current?.focus({ preventScroll: true })
+  }, [canReply])
   const submit = async (advance: boolean) => {
     const action = advance ? submitResult : saveReply
-    if (!action || !text.trim() || busy) return
+    const content = text.trim() || (advance ? lastReply : '')
+    if (!action || !content || busy) return
     setBusy(true)
     setError('')
     try {
-      await action(item.id, assignment.id, text.trim())
-      if (advance) sessionStorage.removeItem(storageKey)
-      else sessionStorage.setItem(storageKey, text.trim())
+      await action(item.id, assignment.id, content)
+      sessionStorage.removeItem(storageKey)
       if (!active.current) return
       setSaved(!advance)
-      if (advance) setText('')
+      setLastReply(content)
+      setText('')
       await onUpdated()
     } catch (cause) {
       if (active.current) setError(cause instanceof Error ? cause.message : String(cause))
@@ -106,17 +100,15 @@ function HumanReplyForm({
   }
   return (
     <section
+      ref={threadReply}
       data-testid="issue-assignment-human-control"
-      className="my-4 space-y-3 rounded-lg border border-border bg-surface p-4 text-sm"
+      className="task-detail-comment-card-composer ml-8 space-y-2 text-sm"
     >
       <div>
         <p className="font-medium">
           {t(canReply ? 'todo.human_reply_yours' : 'todo.human_reply_waiting', {
             name: item.assignee_name || String(assignment.assignee_user_id),
           })}
-        </p>
-        <p className="mt-1 whitespace-pre-wrap">
-          {item.workflow?.current_work || assignment.decision.instruction}
         </p>
       </div>
       {canReply ? (
@@ -128,13 +120,13 @@ function HumanReplyForm({
           className="space-y-3"
         >
           <label className="block">
-            {t('todo.human_reply_label')}
+            <span className="sr-only">{t('todo.human_reply_label')}</span>
             <textarea
               ref={textarea}
               data-testid="issue-assignment-result"
               value={text}
               disabled={busy}
-              rows={4}
+              rows={2}
               onChange={event => {
                 setText(event.target.value)
                 sessionStorage.setItem(storageKey, event.target.value)
@@ -161,10 +153,10 @@ function HumanReplyForm({
               type="button"
               data-testid="issue-assignment-submit-result"
               onClick={() => void submit(true)}
-              disabled={busy || !text.trim() || !submitResult || paused}
+              disabled={busy || (!text.trim() && !lastReply) || !submitResult || paused}
               className="min-h-11 md:min-h-0"
             >
-              {t('todo.assignment_submit_result')}
+              {t('todo.human_reply_continue')}
             </Button>
           </div>
           {saved ? (

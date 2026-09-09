@@ -4,6 +4,27 @@ sidebar_position: 10
 
 # Board automation interaction and acceptance
 
+## 2026-09-09 Continue the same work in its comment thread
+
+This supersedes the separate reply panel: the AI question is the parent comment, with the person's answers and later AI follow-ups in chronological replies. Cards and notifications locate the active assignment's discussion and composer. The same goal stays in its discussion even after a task ends; a new independently deliverable goal starts a new activity and task.
+
+```mermaid
+flowchart TD
+  E[Card or notification] --> Q[Locate the assignment discussion]
+  Q --> R[Write an inline reply]
+  R --> S[Reply: post as the person and retain human control]
+  R --> C[Reply and continue: post and submit the assignment result]
+  S --> C
+  C --> AI[AI works on the same Issue]
+  AI --> F[Follow-up questions and results stay in the thread]
+  F --> R
+  N[Independent new goal] --> T[New activity / task]
+```
+
+Questions and answers use existing comment reply/root fields. Human results are authored by the person instead of appearing as new top-level AI comments. Continuing after posting does not duplicate the reply. Comment and assignment changes commit together, then broadcast; rolled-back comments are never published. Message pages include their parent comments and the active question so long discussions retain a usable reply entry.
+
+Acceptance covers card/notification navigation, multiple replies retaining human control, AI follow-ups in the same thread, cleared sent text, preserved unsent drafts, stale notifications, and independent comments/task conversations. Regression sources and the CI event-center scenario were updated. Tests and application verification were not run per user instruction; acceptance remains with the user in Test-Wegent.
+
 ## 2026-09-09 Human replies and handoff notifications
 
 Issue details and the activity modal share a prominent reply panel with the assignee, requested work, and input. Board cards, handoff activities, and notifications open this panel. Ordinary comments accept replies without an AI task; replies to actual tasks continue their existing conversations.

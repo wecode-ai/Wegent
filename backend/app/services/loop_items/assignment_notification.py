@@ -30,7 +30,7 @@ def notify_human_assignment(db: Session, *, issue: LoopItem, workflow: dict) -> 
         ),
         kind="assignment",
         title=f"待你处理：{issue.title}"[:256],
-        body=f"请回复工单「{issue.title}」：\n{instruction[:1000]}\n\n确认处理完成后，点击“继续推进”交回 AI。",
+        body=f"请在工单「{issue.title}」的提问下回复：\n{instruction[:1000]}\n\n确认处理完成后，点击“回复并继续推进”交回 AI。",
         url=url,
         payload={
             "projectId": str(issue.cloud_project_id),

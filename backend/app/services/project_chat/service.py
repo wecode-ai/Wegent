@@ -483,6 +483,11 @@ class ProjectChatService:
                 query.order_by(ProjectChatMessage.id.desc()).limit(request.limit).all()
             )
             rows.reverse()
+        from app.services.project_chat.thread_context import include_thread_context
+
+        rows = include_thread_context(
+            db, query=query, rows=rows, task_id=request.task_id
+        )
         reconciled = False
         for row in rows:
             reconciled = self._reconcile_ai_run_projection(db, row=row) or reconciled

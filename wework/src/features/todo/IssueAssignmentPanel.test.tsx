@@ -13,7 +13,10 @@ const IssueAssignmentPanel = (props: ComponentProps<typeof IssueHumanReplyPanel>
   </>
 )
 
-beforeEach(() => sessionStorage.clear())
+beforeEach(() => {
+  sessionStorage.clear()
+  HTMLElement.prototype.scrollIntoView = vi.fn()
+})
 
 const item = {
   id: 'issue-1',
@@ -239,6 +242,10 @@ it('saves a reply without submitting the assignment and restores it after reopen
   expect(saveReply).toHaveBeenCalledWith(item.id, 'assignment-3', 'A simple test website')
   expect(submitResult).not.toHaveBeenCalled()
   expect(screen.getByRole('status')).toHaveTextContent('todo.human_reply_saved')
+  expect(screen.getByTestId('issue-assignment-result')).toHaveValue('')
+  expect(screen.getByTestId('issue-assignment-submit-result')).toBeEnabled()
+  await user.click(screen.getByTestId('issue-assignment-submit-result'))
+  expect(submitResult).toHaveBeenCalledWith(item.id, 'assignment-3', 'A simple test website')
 })
 
 it('does not submit from an obsolete notification or while explicitly paused', () => {

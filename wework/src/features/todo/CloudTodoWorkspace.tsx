@@ -5498,6 +5498,13 @@ export function CloudTodoWorkspace({
                 key={selectedItem.id}
                 mode="edit"
                 presentation="workspace-panel"
+                onAssignmentSubmitted={assignmentId =>
+                  setReplyDestination(current =>
+                    current?.itemId === selectedItem.id && current.assignmentId === assignmentId
+                      ? null
+                      : current
+                  )
+                }
                 expectedAssignmentId={
                   replyDestination?.itemId === selectedItem.id
                     ? replyDestination.assignmentId

@@ -2393,6 +2393,68 @@ describe('TaskActivityView', () => {
     expect(createProjectRuntimeTask).not.toHaveBeenCalled()
   })
 
+  it('places the human reply below its question thread and keeps unrelated comments independent', async () => {
+    HTMLElement.prototype.scrollIntoView = vi.fn()
+    const question: ProjectChatMessage = {
+      ...userMessage,
+      messageId: 'question',
+      sender: { type: 'system', id: 'issue_assignment', name: 'AI' },
+      content: 'What kind of website?',
+      metadata: { issue_assignment: { id: 'first', status: 'waiting_human' } },
+    }
+    const followup: ProjectChatMessage = {
+      ...question,
+      messageId: 'followup',
+      sequenceNumber: 3,
+      rootMessageId: question.messageId,
+      replyToMessageId: question.messageId,
+      content: 'Who will use it?',
+      metadata: { issue_assignment: { id: 'current', status: 'waiting_human' } },
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: {
+          messages: [question, userMessage, followup],
+          latestSequence: 3,
+          currentUserId: '1',
+        },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(),
+      startAgentResponse: vi.fn(),
+      failAgentResponse: vi.fn(),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const props = {
+      client,
+      project: { id: '11', name: 'Wework' } as never,
+      task: {
+        id: 'WEG-1',
+        title: 'Website',
+        status: 'in_progress',
+        workflow: {
+          nodes: [],
+          advancement_policy: 'ai',
+          orchestration_status: 'waiting_human',
+          assignment: { id: 'current', status: 'waiting_human', assignee_user_id: 1 },
+        },
+      } as never,
+      linear: true,
+    }
+    const view = render(<TaskActivityView {...props} />)
+    const thread = await screen.findByTestId('cloud-task-activity-card-question')
+    expect(within(thread).getByText('Who will use it?')).toBeInTheDocument()
+    expect(within(thread).getByTestId('issue-assignment-result')).toHaveFocus()
+    expect(screen.getAllByTestId('issue-assignment-result')).toHaveLength(1)
+    expect(
+      screen.getByTestId(`cloud-task-activity-card-composer-${userMessage.messageId}`)
+    ).toBeInTheDocument()
+    view.rerender(<TaskActivityView {...props} expectedAssignmentId="first" />)
+    expect(await screen.findByTestId('issue-assignment-expired')).toBeInTheDocument()
+    expect(screen.queryByTestId('issue-assignment-result')).not.toBeInTheDocument()
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+  })
+
   it('passes comment attachments to the AI run', async () => {
     const user = userEvent.setup()
     const attachment: Attachment = {

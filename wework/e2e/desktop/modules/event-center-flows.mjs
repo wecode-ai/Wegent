@@ -409,10 +409,18 @@ export async function verifyEventCenter({
     visible: true,
   })
   await control.command('waitFor', '[data-testid="issue-assignment-result"]', { visible: true })
-  assert.equal(
-    await control.command('getValue', '[data-testid="issue-assignment-result"]'),
-    'Review in progress; do not advance.'
+  assert.equal(await control.command('getValue', '[data-testid="issue-assignment-result"]'), '')
+  const discussionId = generatedIssue.workflow.assignment.thread_root_message_id
+  assert.ok(discussionId, 'Human assignment has no discussion root')
+  await control.command(
+    'waitFor',
+    `[data-testid="cloud-task-activity-card-${discussionId}"] [data-testid="issue-assignment-result"]`,
+    { visible: true }
   )
+  await control.command('waitFor', `[data-testid="cloud-task-activity-replies-${discussionId}"]`, {
+    text: 'Review in progress; do not advance.',
+    visible: true,
+  })
   await captureScreenshot(control, 'event-center-human-reply-saved.png')
   await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
   for (let index = 0; index < 2; index++) {
@@ -543,6 +551,10 @@ export async function verifyEventCenter({
     visible: true,
   })
   await captureScreenshot(control, 'event-center-human-continued.png')
+  await control.command('waitFor', `[data-testid="cloud-task-activity-replies-${discussionId}"]`, {
+    text: 'I reviewed both tasks and the incoming event.',
+    visible: true,
+  })
   await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
   await control.command('click', '[data-testid="wework-notifications-button"]', { visible: true })
   await control.command('click', `[data-testid="wework-notification-${handoffNotice.id}"]`, {

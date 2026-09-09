@@ -55,7 +55,9 @@ A software Issue may use product, design, development, and release roles, or onl
 
 ## Conversations and storage
 
-Replying to an activity continues its runtime task. A new activity creates a new runtime task, including after Issue completion, without reopening its automation.
+Keep the same work in its original comment thread: requirements, answers, revisions, and results belong in that discussion, including revisions after a task ends. Start a new activity and runtime task only for a new independently deliverable goal. New tasks remain available after Issue completion without reopening its automation.
+
+When AI asks a person a question, cards and notifications locate that thread's reply composer. Reply only posts a comment; the assignee explicitly chooses Reply and continue to submit the assignment result and return control to AI. A posted reply can be submitted without typing it again. Later AI questions stay in the same thread. Replies to ordinary activities with a runtime task continue their existing task conversation.
 
 Reuse existing Issue, automation, execution, and activity storage. Store advancement and assignment state in existing metadata; do not add business tables. Migrate old definitions explicitly rather than guessing a serial order or inventing historical intent.
 

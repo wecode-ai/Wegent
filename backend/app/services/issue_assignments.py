@@ -18,6 +18,11 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.issue_assignment import IssueAssignmentDecision, IssueAssignmentResult
 from app.schemas.issue_workflow import IssueWorkflowInstance
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.issue_assignment_comments import (
+    append_human_reply,
+    assignment_thread_root,
+    queue_assignment_comment,
+)
 from app.services.issue_assignment_errors import IssueAssignmentConflict
 from app.services.issue_assignment_state import decide_assignment, finish_assignment
 from app.services.issue_workflow_planning import issue_workflow_planning_service
@@ -33,6 +38,11 @@ def write_assignment(
         "assignment"
     ) or {}
     assignment = workflow.get("assignment") or {}
+    message_id = str(uuid4())
+    root_id = assignment_thread_root(db, issue, previous) if previous else ""
+    if root_id or assignment.get("status") == "waiting_human":
+        assignment = {**assignment, "thread_root_message_id": root_id or message_id}
+        workflow["assignment"] = assignment
     if assignment.get("status") == "waiting_human" and assignment.get(
         "id"
     ) != previous.get("id"):
@@ -42,22 +52,23 @@ def write_assignment(
 
         notify_human_assignment(db, issue=issue, workflow=workflow)
     issue_workflow_planning_service._write_workflow(issue, workflow)
-    message_id = str(uuid4())
-    db.add(
-        ProjectChatMessage(
-            message_id=message_id,
-            client_message_id=message_id,
-            project_id=str(issue.cloud_project_id),
-            task_id=str(issue.id),
-            sender_type="system",
-            sender_id="issue_assignment",
-            sender_name="AI",
-            message_type="text",
-            content=content,
-            metadata_json={"issue_assignment": workflow.get("assignment")},
-            status="completed",
-        )
+    row = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(issue.cloud_project_id),
+        task_id=str(issue.id),
+        sender_type="system",
+        sender_id="issue_assignment",
+        sender_name="AI",
+        message_type="text",
+        content=content,
+        reply_to_message_id=root_id,
+        thread_root_message_id=root_id,
+        metadata_json={"issue_assignment": workflow.get("assignment")},
+        status="completed",
     )
+    db.add(row)
+    queue_assignment_comment(db, row)
 
 
 def assignment_handoff(workflow: dict) -> dict:
@@ -163,11 +174,6 @@ class IssueAssignmentService:
     def save_reply(
         self, db: Session, *, issue_id: str, user_id: int, result: IssueAssignmentResult
     ) -> dict:
-        from app.models.user import User
-        from app.schemas.project_chat import ProjectChatSend
-        from app.services.project_chat.push import push_project_chat_message
-        from app.services.project_chat.service import project_chat_service
-
         issue = issue_workflow_planning_service._issue(
             db, issue_id, user_id, for_update=True
         )
@@ -180,23 +186,14 @@ class IssueAssignmentService:
             raise ValueError("This assignment is no longer waiting for a reply")
         if assignment.get("assignee_user_id") != user_id:
             raise ValueError("Only the assigned person can save this reply")
-        if assignment.get("reply_draft") == result.summary:
-            return workflow
-        workflow["assignment"] = {**assignment, "reply_draft": result.summary}
-        issue_workflow_planning_service._write_workflow(issue, workflow)
-        user = db.get(User, user_id)
-        message = project_chat_service.send(
-            db,
-            user_id=user_id,
-            user_name=user.user_name,
-            request=ProjectChatSend(
-                client_message_id=str(uuid4()),
-                project_id=str(issue.cloud_project_id),
-                task_id=str(issue.id),
-                content=result.summary,
-            ),
+        message = append_human_reply(
+            db, issue=issue, workflow=workflow, user_id=user_id, content=result.summary
         )
-        push_project_chat_message(message.message.model_dump(by_alias=True))
+        if message is None:
+            return workflow
+        issue_workflow_planning_service._write_workflow(issue, workflow)
+        queue_assignment_comment(db, message)
+        db.commit()
         publish_loop_item_changed(
             db, item=issue, reason="issue_assignment_reply", actor_user_id=user_id
         )
@@ -338,7 +335,14 @@ class IssueAssignmentService:
         )
         if next_workflow is workflow:
             return workflow
-        write_assignment(db, issue, next_workflow, result.summary)
+        message = append_human_reply(
+            db,
+            issue=issue,
+            workflow=next_workflow,
+            user_id=user_id,
+            content=result.summary,
+        )
+        issue_workflow_planning_service._write_workflow(issue, next_workflow)
         if workflow.get("advancement_policy") == "manual":
             from app.services.project_workflow_projection import apply_workflow_nodes
 
@@ -350,6 +354,7 @@ class IssueAssignmentService:
                 actor_user_id=user_id,
             )
         issue.assignee_user_id = None
+        queue_assignment_comment(db, message)
         db.commit()
         project = db.get(CloudProject, issue.cloud_project_id)
         await issue_workflow_start_service.start(

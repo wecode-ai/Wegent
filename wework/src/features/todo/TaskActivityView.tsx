@@ -38,6 +38,8 @@ import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
 import { isExecutionFailed } from './executionStatus'
 import { taskActivityExecutionConfig } from './taskActivityExecutionConfig'
+import { IssueHumanReplyPanel } from './IssueHumanReplyPanel'
+import { assignmentReplyRootId } from './assignmentReplyThread'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -57,7 +59,8 @@ interface TaskActivityViewProps {
   taskBindings?: LoopItemTaskBinding[]
   onOpenTask?: (task: LoopItemTaskBinding) => void
   onRefreshTaskBindings?: () => void | Promise<void>
-  onHumanReplyRequested?: (text: string) => void
+  expectedAssignmentId?: string | null
+  onAssignmentSubmitted?: (assignmentId: string) => void
 }
 
 interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
@@ -84,7 +87,8 @@ export function TaskActivityView({
   taskBindings = [],
   onOpenTask,
   onRefreshTaskBindings,
-  onHumanReplyRequested,
+  expectedAssignmentId,
+  onAssignmentSubmitted,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -605,6 +609,16 @@ export function TaskActivityView({
     return ordered.sort((left, right) => right.root.sequenceNumber - left.root.sequenceNumber)
   }, [threadMessages])
 
+  const humanAssignment = task.workflow?.assignment
+  const humanReplyRootId = assignmentReplyRootId(threadMessages, humanAssignment?.id)
+  const notificationUnavailable = Boolean(
+    expectedAssignmentId &&
+    (expectedAssignmentId !== humanAssignment?.id || humanAssignment?.status !== 'waiting_human')
+  )
+  const refreshHumanReply = async () => {
+    if (projectDeliveryApi) onTaskUpdated?.(await projectDeliveryApi.getLoopItem(task.id))
+  }
+
   const cardQueueScopeKey = useCallback(
     (rootId: string) =>
       `task-activity:${projectLocation ?? 'cloud'}:${project.id}:${task.id}:${rootId}`,
@@ -998,16 +1012,6 @@ export function TaskActivityView({
     )
     if (!cardSessionAddress(card) && !hasNativeTask) {
       try {
-        if (
-          task.workflow?.assignment?.status === 'waiting_human' &&
-          onHumanReplyRequested &&
-          String(task.workflow.assignment.assignee_user_id) ===
-            String(chatCurrentUserId ?? currentUserId)
-        ) {
-          await persistConversationAttachments(attachments)
-          onHumanReplyRequested(text)
-          return { ok: true }
-        }
         const message = await client.send({
           projectId: project.id,
           taskId: task.id,
@@ -1313,6 +1317,13 @@ export function TaskActivityView({
             !compact && 'min-h-48 py-3'
           )}
         >
+          {notificationUnavailable ? (
+            <IssueHumanReplyPanel
+              item={task}
+              expectedAssignmentId={expectedAssignmentId}
+              onUpdated={refreshHumanReply}
+            />
+          ) : null}
           {loading ? (
             <div className="flex min-h-48 items-center justify-center text-sm text-text-muted">
               <CompositedSpinner className="mr-2 h-4 w-4" />
@@ -1433,20 +1444,26 @@ export function TaskActivityView({
                         }
                       />
                     </div>
-                    {task.workflow?.assignment?.status === 'waiting_human' &&
-                    onHumanReplyRequested &&
-                    String(task.workflow.assignment.assignee_user_id) ===
-                      String(chatCurrentUserId ?? currentUserId) &&
-                    (isCustomAutomationManager(card.root) ||
-                      (!cardSessionAddress(card) && !card.root.metadata.backend_task_id)) ? (
-                      <button
-                        type="button"
-                        data-testid={`cloud-task-activity-human-reply-${rootId}`}
-                        onClick={() => onHumanReplyRequested('')}
-                        className="my-3 min-h-11 text-sm underline underline-offset-2 md:min-h-7"
-                      >
-                        {t('todo.human_reply_open')}
-                      </button>
+                    {humanAssignment?.status === 'waiting_human' &&
+                    rootId === humanReplyRootId &&
+                    !notificationUnavailable ? (
+                      <IssueHumanReplyPanel
+                        item={task}
+                        currentUserId={chatCurrentUserId ?? currentUserId}
+                        saveReply={projectDeliveryApi?.saveIssueAssignmentReply}
+                        submitResult={
+                          projectDeliveryApi?.submitIssueAssignmentResult
+                            ? async (...args) => {
+                                const result = await projectDeliveryApi.submitIssueAssignmentResult(
+                                  ...args
+                                )
+                                onAssignmentSubmitted?.(args[1])
+                                return result
+                              }
+                            : undefined
+                        }
+                        onUpdated={refreshHumanReply}
+                      />
                     ) : (
                       <CardCommentComposer
                         rootId={rootId}

@@ -1299,7 +1299,9 @@
 
 .task-detail-comment-replies {
   margin-top: 6px;
-  border-top: 1px solid rgb(var(--color-border));
+  margin-left: 32px;
+  padding-left: 12px;
+  border-left: 1px solid rgb(var(--color-border));
 }
 
 .task-detail-comment-replies .task-detail-ai-run-card {
