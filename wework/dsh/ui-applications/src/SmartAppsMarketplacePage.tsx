@@ -347,8 +347,10 @@ export function SmartAppsMarketplacePage({
   const installModelKey = modelKey || modelOptions[0]?.key || ''
   const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
     return activeInstallations.map(installation => {
-      const ownedItem = items.find(
-        item => item.id === installation.smartAppId || item.name === installation.manifest.name
+      const ownedItem = items.find(item =>
+        installation.smartAppId != null
+          ? item.id === installation.smartAppId
+          : item.name === installation.manifest.name
       )
       const marketItem = installation.smartAppId
         ? marketItems.find(item => item.id === installation.smartAppId)

@@ -140,7 +140,6 @@ def test_views_accept_managed_wegent_environment_and_queued_run() -> None:
             "eventConfig": {},
             "assignmentMode": "ai_managed",
             "managerType": "wegent",
-            "webhookEventId": None,
             "cronExpression": "0 3 * * *",
             "timezone": "Asia/Shanghai",
             "agentId": None,

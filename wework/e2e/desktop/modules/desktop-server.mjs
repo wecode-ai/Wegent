@@ -1181,6 +1181,14 @@ class DesktopE2EServer {
       return
     }
 
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
+    ) {
+      json(response, 200, null)
+      return
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
       json(response, 200, { apps: [] })
       return
@@ -3290,7 +3298,13 @@ class DesktopE2EServer {
 
     if (this.scenario === 'request_user_input') {
       this.recordScenarioRequest('request_user_input', modelRequest)
-      if (JSON.stringify(body.input).includes('wework-e2e-request-user-input')) {
+      const answer = toolOutputText(body, 'wework-e2e-request-user-input')
+      if (answer !== null) {
+        assert.deepEqual(
+          JSON.parse(answer),
+          { answers: { direction: { answers: ['Complete'] } } },
+          'Codex must receive the selected answer, not a mode restriction error'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           assistantMessage(REQUEST_USER_INPUT_COMPLETION_TEXT),

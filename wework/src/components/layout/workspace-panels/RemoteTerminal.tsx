@@ -459,13 +459,6 @@ export function RemoteTerminal({
     const titleDisposable = terminal.onTitleChange(title => {
       onTitleChangeRef.current?.(title)
     })
-    const unsubscribeExit = client.onExit(payload => {
-      if (!disposed && !outputFailed && payload.session_id === sessionId) {
-        exitReceived = true
-        drainPendingOutputs()
-      }
-    })
-
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
@@ -536,6 +529,32 @@ export function RemoteTerminal({
       clearReconnectAttachRetry()
       setDetached()
     }
+
+    const unsubscribeExit = client.onExit(payload => {
+      if (disposed || outputFailed || payload.session_id !== sessionId) return
+      exitReceived = true
+      if (payload.output_complete !== false) {
+        drainPendingOutputs()
+        return
+      }
+
+      outputFailed = true
+      reconnectGeneration += 1
+      attachGeneration += 1
+      clearReconnectAttachRetry()
+      clearOutputGapTimer()
+      setDetached()
+      writingSequence = null
+      pendingOutputs.clear()
+      pendingOutputCharacters = 0
+      outputReplayRequiredThroughSequence = null
+      pendingInputs.length = 0
+      pendingInputCharacters = 0
+      if (!exitReported) {
+        exitReported = true
+        onExitRef.current?.()
+      }
+    })
 
     flushPendingInput = () => {
       if (disposed || !attached || inputFlushInFlight || pendingInputs.length === 0) return
