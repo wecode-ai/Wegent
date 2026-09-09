@@ -122,7 +122,7 @@ GitHub CI 的执行前提。
 | `POST /{id}/lease`                        | 创建 transcript 或获取写租约          |
 | `PUT /{id}/lease/{token}`                 | 续租                                  |
 | `POST /{id}/lease/release`                | 释放租约                              |
-| `POST /{id}/segments/prepare`             | 校验 sequence 并生成预签名 PUT 地址   |
+| `POST /{id}/segments/prepare`             | 校验 sequence 并生成限长预签名 POST   |
 | `POST /{id}/segments`                     | 同事务提交对象索引、回合摘要和 head   |
 | `POST /{id}/archive`                      | 标记 transcript 为 archived           |
 | `GET /{id}/archives/{archiveId}/download` | 生成短期签名下载地址                  |

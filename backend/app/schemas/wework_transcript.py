@@ -81,6 +81,7 @@ class TranscriptSegmentPrepareResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     upload_url: str = Field(alias="uploadUrl")
+    upload_fields: dict[str, str] = Field(alias="uploadFields")
     expires_at: datetime = Field(alias="expiresAt")
 
 

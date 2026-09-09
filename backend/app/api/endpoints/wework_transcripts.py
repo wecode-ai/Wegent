@@ -181,7 +181,7 @@ def prepare_segment_upload_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    upload_url, expires_at = _translate(
+    upload_url, upload_fields, expires_at = _translate(
         lambda: wework_transcript_service.prepare_segment_upload(
             db,
             user_id=current_user.id,
@@ -189,7 +189,11 @@ def prepare_segment_upload_endpoint(
             request=request,
         )
     )
-    return {"uploadUrl": upload_url, "expiresAt": expires_at}
+    return {
+        "uploadUrl": upload_url,
+        "uploadFields": upload_fields,
+        "expiresAt": expires_at,
+    }
 
 
 @router.post(

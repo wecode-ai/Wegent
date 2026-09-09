@@ -83,9 +83,11 @@ test('uploads a native snapshot and persists only its locator', async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (_url, options) => {
     assert.ok(options.signal instanceof AbortSignal)
-    const chunks = []
-    for await (const chunk of options.body) chunks.push(chunk)
-    uploads.push(Buffer.concat(chunks).toString())
+    uploads.push({
+      method: options.method,
+      key: options.body.get('key'),
+      content: await options.body.get('file').text(),
+    })
     return new Response(null, { status: 200 })
   }
   try {
@@ -114,7 +116,13 @@ test('uploads a native snapshot and persists only its locator', async () => {
               }
             }
             if (request.path.endsWith('/segments/prepare')) {
-              return { status: 200, body: { uploadUrl: 'https://storage/upload' } }
+              return {
+                status: 200,
+                body: {
+                  uploadUrl: 'https://storage/upload',
+                  uploadFields: { key: 'transcripts/segment' },
+                },
+              }
             }
             return { status: 200, body: { currentSequence: 1, appended: 1 } }
           },
@@ -125,7 +133,13 @@ test('uploads a native snapshot and persists only its locator', async () => {
     assert.equal(Object.hasOwn(outbox.first(), 'payload'), false)
     await sync.flushPending()
     assert.equal(outbox.count(), 0)
-    assert.deepEqual(uploads, ['native-codex-state'])
+    assert.deepEqual(uploads, [
+      {
+        method: 'POST',
+        key: 'transcripts/segment',
+        content: 'native-codex-state',
+      },
+    ])
     assert.equal(source.calls.at(-1).options.snapshot, true)
     assert.equal(acknowledgements[0].rolloutEnd, 2048)
     assert.ok(requests.some(request => request.path.endsWith('/segments/prepare')))
@@ -294,7 +308,13 @@ test('branches deterministically when the cloud causal head changed', async () =
               }
             }
             if (request.path.endsWith('/segments/prepare')) {
-              return { status: 200, body: { uploadUrl: 'https://storage/upload' } }
+              return {
+                status: 200,
+                body: {
+                  uploadUrl: 'https://storage/upload',
+                  uploadFields: { key: 'transcripts/segment' },
+                },
+              }
             }
             return { status: 200, body: {} }
           },

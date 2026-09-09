@@ -1,4 +1,4 @@
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createWriteStream, openAsBlob } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -283,15 +283,19 @@ export class WeworkSync {
       'POST',
       descriptor
     )
+    const uploadBody = new FormData()
+    for (const [name, value] of Object.entries(prepared.uploadFields)) {
+      uploadBody.append(name, value)
+    }
+    uploadBody.append(
+      'file',
+      await openAsBlob(segment.path, { type: 'application/octet-stream' }),
+      'segment.tgz.aes256gcm'
+    )
     const response = await fetch(prepared.uploadUrl, {
-      method: 'PUT',
-      body: createReadStream(segment.path),
-      duplex: 'half',
+      method: 'POST',
+      body: uploadBody,
       signal: AbortSignal.timeout(OBJECT_TRANSFER_TIMEOUT_MS),
-      headers: {
-        'content-length': String(segment.sizeBytes),
-        'content-type': 'application/octet-stream',
-      },
     })
     if (!response.ok) {
       throw new Error(`Transcript object upload failed (${response.status})`)

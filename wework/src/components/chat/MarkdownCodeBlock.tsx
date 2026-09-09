@@ -244,13 +244,17 @@ function useThrottledHighlightedCode(text: string, language: string): Highlighte
       const code = state.latestText
       const nextLanguage = state.latestLanguage
       state.lastStartedAtMs = performance.now()
-      highlightCodeModulePromise ??= import('./highlightCode')
-      void highlightCodeModulePromise.then(
+      const modulePromise = (highlightCodeModulePromise ??= import('./highlightCode'))
+      void modulePromise.then(
         ({ highlightCode }) => {
           if (state.disposed) return
           setHighlightedCode(highlightCode(code, nextLanguage))
         },
-        () => undefined
+        () => {
+          if (highlightCodeModulePromise === modulePromise) {
+            highlightCodeModulePromise = null
+          }
+        }
       )
     }
 

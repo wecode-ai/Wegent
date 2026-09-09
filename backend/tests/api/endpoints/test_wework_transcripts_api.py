@@ -49,7 +49,7 @@ def _segment(lease, **overrides):
     }
 
 
-def _segment_integrity(object_key: str) -> tuple[int, str]:
+def _segment_integrity(object_key: str, _max_bytes: int) -> tuple[int, str]:
     digest = object_key.rsplit("-", 1)[-1].split(".", 1)[0]
     return 4096, digest
 
@@ -70,9 +70,10 @@ def test_commits_native_object_metadata_and_structured_summary(
     storage = wework_transcript_service.wework_transcript_storage
     monkeypatch.setattr(
         storage,
-        "upload_url",
-        lambda key: (
+        "upload_policy",
+        lambda key, size_bytes: (
             f"https://storage.example/{key}",
+            {"key": key, "expected-size": str(size_bytes)},
             datetime.now(UTC) + timedelta(minutes=5),
         ),
     )
@@ -85,6 +86,7 @@ def test_commits_native_object_metadata_and_structured_summary(
     )
     assert prepare.status_code == 200
     assert prepare.json()["uploadUrl"].startswith("https://storage.example/")
+    assert prepare.json()["uploadFields"]["expected-size"] == "4096"
 
     commit = test_client.post(
         "/api/wework-transcripts/transcript-1/segments",
@@ -131,7 +133,7 @@ def test_rejects_uploaded_segment_with_mismatched_digest(
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
         "integrity",
-        lambda _key: (4096, "b" * 64),
+        lambda _key, _max_bytes: (4096, "b" * 64),
     )
 
     response = test_client.post(

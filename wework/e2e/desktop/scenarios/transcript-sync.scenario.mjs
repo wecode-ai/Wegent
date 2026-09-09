@@ -72,6 +72,19 @@ async function rawBody(request) {
   return Buffer.concat(chunks)
 }
 
+async function multipartFile(request) {
+  const contentType = String(request.headers['content-type'] || '')
+  const boundary = contentType.match(/boundary=([^;]+)/u)?.[1]
+  assert.ok(boundary, 'Transcript upload must include a multipart boundary')
+  const body = await rawBody(request)
+  const fileHeader = body.indexOf(Buffer.from('name="file"'))
+  assert.notEqual(fileHeader, -1, 'Transcript multipart upload must include the file field')
+  const contentStart = body.indexOf(Buffer.from('\r\n\r\n'), fileHeader) + 4
+  const contentEnd = body.indexOf(Buffer.from(`\r\n--${boundary}`), contentStart)
+  assert.ok(contentStart >= 4 && contentEnd > contentStart, 'Transcript file part is malformed')
+  return body.subarray(contentStart, contentEnd)
+}
+
 function seedCloudCredential(electronUserDataDirectory, apiBaseUrl) {
   const { publicKey, privateKey } = generateKeyPairSync('ec', {
     namedCurve: 'prime256v1',
@@ -264,13 +277,14 @@ export function createDesktopScenario({
         prepared.set(objectId, structuredClone(body))
         json(response, 200, {
           uploadUrl: `${origin}/transcript-objects/${encodeURIComponent(objectId)}`,
+          uploadFields: { key: objectId, policy: 'desktop-e2e-size-bounded' },
           expiresAt: '2026-09-08T01:00:00.000Z',
         })
         return true
       }
       const objectMatch = url.pathname.match(/^\/transcript-objects\/([^/]+)$/u)
-      if (request.method === 'PUT' && objectMatch) {
-        objects.set(decodeURIComponent(objectMatch[1]), await rawBody(request))
+      if (request.method === 'POST' && objectMatch) {
+        objects.set(decodeURIComponent(objectMatch[1]), await multipartFile(request))
         response.writeHead(200)
         response.end()
         return true

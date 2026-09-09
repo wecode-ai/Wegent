@@ -205,11 +205,21 @@ impl RuntimeWorkRpcHandler {
         .map_err(|error| AppIpcError::new("transcript_restore_failed", error))?;
         let link = restored_task_link(&task_id, &transcript_id, &restored);
         if let Some((workspace_path, thread_id)) = superseded_restore {
-            if let Err(error) =
-                remove_restored_transcript(std::path::Path::new(&workspace_path), &thread_id)
-            {
-                let _ = remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
-                return Err(AppIpcError::new("transcript_restore_failed", error));
+            match remove_restored_transcript(std::path::Path::new(&workspace_path), &thread_id) {
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ =
+                        remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
+                    return Err(AppIpcError::new(
+                        "transcript_restore_failed",
+                        "refusing to replace a transcript outside the managed restore directory",
+                    ));
+                }
+                Err(error) => {
+                    let _ =
+                        remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
+                    return Err(AppIpcError::new("transcript_restore_failed", error));
+                }
             }
         }
         self.upsert_local_task(link);

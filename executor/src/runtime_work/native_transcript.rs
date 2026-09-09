@@ -1265,4 +1265,17 @@ mod tests {
 
         assert!(error.contains("exceeds"));
     }
+
+    #[test]
+    fn refuses_to_remove_a_workspace_outside_the_managed_restore_directory() {
+        let _guard = environment_lock();
+        let root = tempfile::tempdir().unwrap();
+        std::env::set_var("WEGENT_EXECUTOR_HOME", root.path().join("executor"));
+
+        assert!(
+            !remove_restored_transcript(&root.path().join("ordinary-workspace"), "thread-1")
+                .unwrap()
+        );
+        std::env::remove_var("WEGENT_EXECUTOR_HOME");
+    }
 }

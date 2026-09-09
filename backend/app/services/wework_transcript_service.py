@@ -214,7 +214,7 @@ def prepare_segment_upload(
     user_id: int,
     transcript_id: str,
     request: TranscriptSegmentRequest,
-) -> tuple[str, datetime]:
+) -> tuple[str, dict[str, str], datetime]:
     transcript = get_transcript(
         db,
         user_id=user_id,
@@ -222,8 +222,9 @@ def prepare_segment_upload(
         for_update=True,
     )
     _validate_segment_write(transcript, request)
-    return wework_transcript_storage.upload_url(
-        _segment_object_key(user_id, transcript_id, request)
+    return wework_transcript_storage.upload_policy(
+        _segment_object_key(user_id, transcript_id, request),
+        request.size_bytes,
     )
 
 
@@ -285,7 +286,10 @@ def commit_segment(
             "A different transcript summary already exists for this turn or sequence",
         )
     _validate_segment_write(transcript, request)
-    stored_size, stored_sha256 = wework_transcript_storage.integrity(object_key)
+    stored_size, stored_sha256 = wework_transcript_storage.integrity(
+        object_key,
+        request.size_bytes,
+    )
     if stored_size != request.size_bytes:
         raise WeworkTranscriptError(
             "segment_size_mismatch",

@@ -146,7 +146,7 @@ The authenticated prefix is `/api/wework-transcripts`:
 | `POST /{id}/lease`                        | Create a transcript or acquire its writer lease   |
 | `PUT /{id}/lease/{token}`                 | Renew a lease                                     |
 | `POST /{id}/lease/release`                | Release a lease                                   |
-| `POST /{id}/segments/prepare`             | Validate sequence and create a presigned PUT URL  |
+| `POST /{id}/segments/prepare`             | Validate sequence and create a size-bounded POST  |
 | `POST /{id}/segments`                     | Atomically commit object index, summary, and head |
 | `POST /{id}/archive`                      | Mark a transcript archived                        |
 | `GET /{id}/archives/{archiveId}/download` | Create a short-lived signed download URL          |
