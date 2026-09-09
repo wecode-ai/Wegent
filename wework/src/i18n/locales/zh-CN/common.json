@@ -2200,6 +2200,7 @@
     "smart_apps_storage_unavailable": "文件存储服务暂不可用，请稍后重试",
     "smart_apps_development_failed": "创建智能工作台失败。",
     "smart_apps_error_package_too_large": "发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。",
+    "smart_apps_error_extracted_package_too_large": "发布包解压后不能超过 250 MB，请精简文件后重新打包。",
     "smart_apps_error_image_too_large": "图标不能超过 512 KB，单张截图不能超过 2 MB。",
     "smart_apps_error_icon_too_large": "图标不能超过 512 KB。",
     "smart_apps_error_screenshot_too_large": "单张截图不能超过 2 MB。",

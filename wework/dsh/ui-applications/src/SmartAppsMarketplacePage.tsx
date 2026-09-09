@@ -192,11 +192,11 @@ function SmartAppFilePicker({
   )
 }
 
-function readDataUrl(file: File): Promise<string> {
+function readDataUrl(file: File, errorMessage: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result ?? ''))
-    reader.onerror = () => reject(reader.error ?? new Error('图片读取失败'))
+    reader.onerror = () => reject(new Error(errorMessage))
     reader.readAsDataURL(file)
   })
 }
@@ -2364,8 +2364,23 @@ function SmartAppPublishDialog({
         summary: summary.trim(),
         descriptionMd: description,
         tags: selectedTags,
-        iconDataUrl: await readDataUrl(icon),
-        screenshotDataUrls: await Promise.all(screenshots.slice(0, 5).map(readDataUrl)),
+        iconDataUrl: await readDataUrl(
+          icon,
+          t('workbench.smart_apps_error_image_invalid', '图片无法读取，请重新选择有效的图片文件。')
+        ),
+        screenshotDataUrls: await Promise.all(
+          screenshots
+            .slice(0, 5)
+            .map(value =>
+              readDataUrl(
+                value,
+                t(
+                  'workbench.smart_apps_error_image_invalid',
+                  '图片无法读取，请重新选择有效的图片文件。'
+                )
+              )
+            )
+        ),
         releaseNotes: notes,
       }
       const metadata = item

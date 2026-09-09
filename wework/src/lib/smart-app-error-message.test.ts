@@ -20,6 +20,21 @@ describe('getSmartAppErrorMessage', () => {
     expect(getSmartAppErrorMessage(error, '发布失败', t)).toContain('不要直接上传源码压缩包')
   })
 
+  test('uses a translated parent field for nested validation locations', () => {
+    const error = new ApiError('Request parameter validation failed', 422, undefined, {
+      detail: 'Request parameter validation failed',
+      errors: [{ loc: ['body', 'targets', 0, 'id'], type: 'missing' }],
+    })
+
+    expect(getSmartAppErrorMessage(error, '发布失败', t)).toBe('分享成员或部门无效，请重新选择。')
+  })
+
+  test('distinguishes expanded package size from archive size', () => {
+    expect(
+      getSmartAppErrorMessage(new Error('Smart app ZIP expands beyond 250 MB'), '发布失败', t)
+    ).toBe('发布包解压后不能超过 250 MB，请精简文件后重新打包。')
+  })
+
   test('does not leak unknown Smart App host errors into the Chinese UI', () => {
     expect(
       getSmartAppErrorMessage(

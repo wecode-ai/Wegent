@@ -2202,6 +2202,7 @@
     "smart_apps_storage_unavailable": "File storage is temporarily unavailable. Try again later.",
     "smart_apps_development_failed": "Failed to create the Smart app.",
     "smart_apps_error_package_too_large": "The release package exceeds 50 MB. Generate a release artifact with the project's packaging command instead of uploading a ZIP of the source directory.",
+    "smart_apps_error_extracted_package_too_large": "The extracted release package must not exceed 250 MB. Remove unnecessary files and package it again.",
     "smart_apps_error_image_too_large": "The icon must be no larger than 512 KB and each screenshot no larger than 2 MB.",
     "smart_apps_error_icon_too_large": "The icon must be no larger than 512 KB.",
     "smart_apps_error_screenshot_too_large": "Each screenshot must be no larger than 2 MB.",

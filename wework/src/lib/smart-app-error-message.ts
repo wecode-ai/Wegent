@@ -10,10 +10,14 @@ interface ErrorTranslation {
 
 const ERROR_TRANSLATIONS: ErrorTranslation[] = [
   {
-    pattern:
-      /^(?:Smart app package is too large|Smart app ZIP exceeds 50 MB|Smart app ZIP expands beyond 250 MB|Smart app directory exceeds 250 MB)$/i,
+    pattern: /^(?:Smart app package is too large|Smart app ZIP exceeds 50 MB)$/i,
     key: 'workbench.smart_apps_error_package_too_large',
     fallback: '发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。',
+  },
+  {
+    pattern: /^(?:Smart app ZIP expands beyond 250 MB|Smart app directory exceeds 250 MB)$/i,
+    key: 'workbench.smart_apps_error_extracted_package_too_large',
+    fallback: '发布包解压后不能超过 250 MB，请精简文件后重新打包。',
   },
   {
     pattern: /^Smart app image is too large$/i,
@@ -152,8 +156,10 @@ function validationField(error: SmartAppApiError): string | null {
     if (!item || typeof item !== 'object') continue
     const location = (item as { loc?: unknown }).loc
     if (!Array.isArray(location)) continue
-    const field = [...location].reverse().find(value => typeof value === 'string')
-    if (typeof field === 'string' && FIELD_TRANSLATIONS[field]) return field
+    const field = [...location]
+      .reverse()
+      .find(value => typeof value === 'string' && FIELD_TRANSLATIONS[value])
+    if (typeof field === 'string') return field
   }
   return null
 }
