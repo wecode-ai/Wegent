@@ -88,8 +88,14 @@ from app.services.device.capability_sync_service import device_capability_sync_s
 from app.services.device.identity import record_route_id
 from app.services.device.record_operations import app_identity_lock
 from app.services.device.terminal_metrics import record_terminal_event
-from app.services.device.terminal_protocol import parse_terminal_event
+from app.services.device.terminal_protocol import (
+    get_browser_socket_id,
+    get_consumer_id,
+    get_protocol_version,
+    parse_terminal_event,
+)
 from app.services.device.terminal_session_service import (
+    TerminalSessionAuthorizationUnavailable,
     TerminalSessionRecord,
     normalize_terminal_session_id,
     terminal_session_service,
@@ -141,6 +147,7 @@ DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
 DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
 REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 120
 DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
+TERMINAL_END_DISPATCH_TIMEOUT_SECONDS = 5
 RUNTIME_TASK_TERMINAL_STATUSES = {
     "done",
     "complete",
@@ -177,6 +184,25 @@ DEVICE_TRACE_EXCLUDED_EVENTS = {
     "connect",
     "terminal:output",
 }
+TERMINAL_END_DISPATCHABLE_REJECTION_CODES = {
+    "terminal_session_not_found",
+    "terminal_session_expired",
+    "terminal_session_device_mismatch",
+}
+
+
+def _terminal_event_error(
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+    terminal_end_dispatched: bool = False,
+) -> dict:
+    """Return a machine-readable terminal delivery rejection."""
+    error = {"error": message, "code": code, "retryable": retryable}
+    if terminal_end_dispatched:
+        error["terminal_end_dispatched"] = True
+    return error
 
 
 @dataclass(frozen=True)
@@ -2633,7 +2659,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         record, error = await self._authorize_terminal_event(sid, data)
         if error:
-            return error
+            return await self._finish_terminal_event_rejection(
+                data,
+                error,
+                output_complete=False,
+            )
 
         payload["session_id"] = record.session_id
         await get_sio().emit(
@@ -2656,13 +2686,36 @@ class DeviceNamespace(socketio.AsyncNamespace):
             session_id = normalize_terminal_session_id(
                 data.get("session_id") if isinstance(data, dict) else None
             )
-            if (
-                error.get("error") == "Terminal session not found"
-                and session_id
-                and await terminal_session_service.is_durably_revoked(session_id)
-            ):
-                return {"success": True}
-            return error
+            if error.get("code") == "terminal_session_not_found" and session_id:
+                try:
+                    durably_revoked = await terminal_session_service.is_durably_revoked(
+                        session_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "[Device WS] Failed to verify terminal revocation "
+                        "session=%s",
+                        session_id,
+                    )
+                    return _terminal_event_error(
+                        "terminal_session_authorization_unavailable",
+                        "Terminal session authorization is temporarily unavailable",
+                        retryable=True,
+                    )
+                if durably_revoked:
+                    dispatched = await self._finish_terminal_event_rejection(
+                        data,
+                        error,
+                        output_complete=True,
+                    )
+                    if dispatched.get("terminal_end_dispatched") is True:
+                        return {"success": True}
+                    return dispatched
+            return await self._finish_terminal_event_rejection(
+                data,
+                error,
+                output_complete=True,
+            )
 
         payload["session_id"] = record.session_id
         await get_sio().emit(
@@ -2685,33 +2738,165 @@ class DeviceNamespace(socketio.AsyncNamespace):
         user_id = session.get("user_id")
         device_id = session.get("device_id")
         if not user_id or not device_id:
-            return None, {"error": "Not authenticated or not registered"}
+            return None, _terminal_event_error(
+                "terminal_not_registered",
+                "Not authenticated or not registered",
+                retryable=True,
+            )
 
         session_id = normalize_terminal_session_id(
             data.get("session_id") if isinstance(data, dict) else None
         )
         if not session_id:
-            return None, {"error": "Missing session_id"}
+            return None, _terminal_event_error(
+                "terminal_session_id_missing",
+                "Missing session_id",
+            )
 
-        record = await terminal_session_service.get(session_id)
+        try:
+            record = await terminal_session_service.get(session_id)
+        except TerminalSessionAuthorizationUnavailable:
+            return None, _terminal_event_error(
+                "terminal_session_authorization_unavailable",
+                "Terminal session authorization is temporarily unavailable",
+                retryable=True,
+            )
         if not record:
-            return None, {"error": "Terminal session not found"}
+            return None, _terminal_event_error(
+                "terminal_session_not_found",
+                "Terminal session not found",
+            )
         if record.is_expired():
-            return None, {"error": "Terminal session expired"}
+            return None, _terminal_event_error(
+                "terminal_session_expired",
+                "Terminal session expired",
+            )
         if record.user_id != user_id or record.device_id != device_id:
-            return None, {"error": "Terminal session does not belong to this device"}
+            return None, _terminal_event_error(
+                "terminal_session_device_mismatch",
+                "Terminal session does not belong to this device",
+            )
         if record.socket_id != sid:
             online_info = await device_service.get_device_online_info(
                 user_id, device_id
             )
             if not online_info or online_info.get("socket_id") != sid:
-                return None, {
-                    "error": "Terminal session belongs to a stale device socket"
-                }
-            record = await terminal_session_service.rebind_socket(record, sid)
+                return None, _terminal_event_error(
+                    "terminal_session_stale_socket",
+                    "Terminal session belongs to a stale device socket",
+                    retryable=True,
+                )
+            try:
+                record = await terminal_session_service.rebind_socket(record, sid)
+            except TerminalSessionAuthorizationUnavailable:
+                return None, _terminal_event_error(
+                    "terminal_session_authorization_unavailable",
+                    "Terminal session authorization is temporarily unavailable",
+                    retryable=True,
+                )
             if not record:
-                return None, {"error": "Terminal session could not be rebound"}
+                return None, _terminal_event_error(
+                    "terminal_session_rebind_failed",
+                    "Terminal session could not be rebound",
+                    retryable=True,
+                )
         return record, None
+
+    async def _finish_terminal_event_rejection(
+        self,
+        data: dict,
+        error: dict,
+        *,
+        output_complete: bool,
+    ) -> dict:
+        """Dispatch a session-scoped terminal end before permanent retirement."""
+        if error.get("retryable") is not False:
+            return error
+        code = error.get("code")
+        if code not in TERMINAL_END_DISPATCHABLE_REJECTION_CODES:
+            return error
+
+        session_id = normalize_terminal_session_id(
+            data.get("session_id") if isinstance(data, dict) else None
+        )
+        consumer_id = get_consumer_id(data)
+        protocol_version = get_protocol_version(
+            data,
+            default=2 if consumer_id else 1,
+        )
+        if not session_id or protocol_version is None:
+            return error
+
+        payload = {
+            "session_id": session_id,
+            "exit_code": (
+                data.get("exit_code")
+                if output_complete and isinstance(data, dict)
+                else None
+            ),
+            "error": str(error.get("error") or "Terminal session ended"),
+            "reason_code": code,
+            "output_complete": output_complete,
+        }
+        if protocol_version == 2:
+            if not consumer_id:
+                return error
+            payload["protocol_version"] = 2
+            payload["consumer_id"] = consumer_id
+
+        browser_socket_id = get_browser_socket_id(data)
+        if not browser_socket_id:
+            return _terminal_event_error(
+                "terminal_end_dispatch_failed",
+                "Failed to dispatch terminal session end",
+                retryable=True,
+            )
+
+        sio = get_sio()
+        manager = getattr(sio, "manager", None)
+        local_target_connected = (
+            manager.is_connected(browser_socket_id, "/terminal")
+            if manager is not None
+            else None
+        )
+
+        try:
+            call_options = (
+                {"ignore_queue": True} if local_target_connected is True else {}
+            )
+            acknowledged = await sio.call(
+                "terminal:exit",
+                payload,
+                to=browser_socket_id,
+                namespace="/terminal",
+                timeout=TERMINAL_END_DISPATCH_TIMEOUT_SECONDS,
+                **call_options,
+            )
+            if (
+                not isinstance(acknowledged, dict)
+                or acknowledged.get("success") is not True
+            ):
+                raise RuntimeError("Terminal end was not acknowledged")
+        except Exception:
+            logger.exception(
+                "[Device WS] Failed to confirm terminal end session=%s code=%s "
+                "target_sid=%s",
+                session_id,
+                code,
+                browser_socket_id,
+            )
+            return _terminal_event_error(
+                "terminal_end_dispatch_failed",
+                "Failed to dispatch terminal session end",
+                retryable=True,
+            )
+
+        record_terminal_event(source="device", event="forced_exit")
+        return _terminal_event_error(
+            str(code),
+            str(error.get("error") or "Terminal session ended"),
+            terminal_end_dispatched=True,
+        )
 
     # ============================================================
     # OpenAI Responses API Event Handler
@@ -3110,7 +3295,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
         from app.services.wework_api.events import publish_runtime_event
 
-        await publish_runtime_event(user_id, logical_device_id, payload)
+        await publish_runtime_event(user_id, device_id, payload)
         await self._local_task_responses.forward_runtime_event_to_channels(
             device_id=device_id,
             payload=payload["payload"],

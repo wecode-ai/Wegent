@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { StrictMode } from 'react'
 import { openExternalUrl } from '@/lib/external-links'
@@ -197,19 +197,21 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(
-      <RemoteTerminal
-        sessionId="terminal-1"
-        clientFactory={createRemoteTerminalClient}
-        active={false}
-      />
-    )
-    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
-    testState.terminalInstances[0].emitData('pwd\r')
-
-    await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to write to remote terminal:', error)
+    await act(async () => {
+      render(
+        <RemoteTerminal
+          sessionId="terminal-1"
+          clientFactory={createRemoteTerminalClient}
+          active={false}
+        />
+      )
     })
+    expect(client.attach).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      testState.terminalInstances[0].emitData('pwd\r')
+    })
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to write to remote terminal:', error)
   })
 
   test('queues input until the initial attach completes', async () => {
@@ -803,6 +805,41 @@ describe('RemoteTerminal', () => {
     expect(testState.terminalInstances[0].writeln).not.toHaveBeenCalledWith(
       expect.stringContaining('Process exited')
     )
+  })
+
+  test('forced exit does not wait for missing output sequences', async () => {
+    let outputHandler: ((payload: OutputPayload) => void) | null = null
+    let exitHandler: ((payload: { session_id: string; output_complete?: boolean }) => void) | null =
+      null
+    const client = createClient({
+      onOutput: vi.fn(handler => {
+        outputHandler = handler
+        return vi.fn()
+      }),
+      onExit: vi.fn(handler => {
+        exitHandler = handler
+        return vi.fn()
+      }),
+    })
+    const onExit = vi.fn()
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+        onExit={onExit}
+      />
+    )
+    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
+    outputHandler?.({ session_id: 'terminal-1', sequence: 2, data: 'after-gap' })
+
+    exitHandler?.({ session_id: 'terminal-1', output_complete: false })
+    exitHandler?.({ session_id: 'terminal-1', output_complete: false })
+
+    expect(testState.terminalInstances[0].write).not.toHaveBeenCalled()
+    expect(onExit).toHaveBeenCalledTimes(1)
   })
 
   test('skips resize observer syncs while inactive', () => {

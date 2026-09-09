@@ -10,6 +10,7 @@ import {
   extractSingleRootZipFixture,
   extractZipFixture,
 } from '../modules/zip-fixtures.mjs'
+import { verifySmartAppMarketplaceIdentity } from '../modules/smart-app-marketplace-identity.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
@@ -1585,6 +1586,15 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Removing an imported workbench left its card visible in My'
       )
       await captureScreenshot(control, 'harness-apps-15a-local-removal-semantics.png', 'body')
+
+      await verifySmartAppMarketplaceIdentity({
+        control,
+        ownerRequest,
+        installationId: INSTALLATION_ID,
+        publicationId: sharedSmartAppId,
+        captureScreenshot,
+        uiTimeoutMs,
+      })
 
       await setExperimentalFeatures(control, false, uiTimeoutMs)
       await control.command('navigate', 'body', { value: '/sites' })

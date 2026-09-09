@@ -25,6 +25,7 @@ from app.services.device.terminal_protocol import (
     get_sequence,
 )
 from app.services.device.terminal_session_service import (
+    TerminalSessionAuthorizationUnavailable,
     TerminalSessionRecord,
     normalize_terminal_session_id,
     terminal_session_service,
@@ -156,11 +157,16 @@ class TerminalNamespace(socketio.AsyncNamespace):
         except ValueError as exc:
             return {"error": str(exc)}
 
-        record = await terminal_session_service.authorize(
-            session_id,
-            user_id=user_id,
-            refresh=True,
-        )
+        try:
+            record = await terminal_session_service.authorize(
+                session_id,
+                user_id=user_id,
+                refresh=True,
+            )
+        except TerminalSessionAuthorizationUnavailable:
+            return {
+                "error": "Terminal session authorization is temporarily unavailable"
+            }
         if not record:
             return {"error": "Terminal session not found or access denied"}
 
@@ -171,7 +177,11 @@ class TerminalNamespace(socketio.AsyncNamespace):
         try:
             attach_result = await get_sio().call(
                 "terminal:attach",
-                request.payload(record.session_id, offered),
+                request.payload(
+                    record.session_id,
+                    offered,
+                    browser_socket_id=sid,
+                ),
                 to=executor_socket_id,
                 namespace=DEVICE_NAMESPACE,
                 timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
@@ -208,10 +218,19 @@ class TerminalNamespace(socketio.AsyncNamespace):
             return {"error": str(exc)}
 
         if executor_socket_id != record.socket_id:
-            rebound = await terminal_session_service.rebind_socket(
-                record,
-                executor_socket_id,
-            )
+            try:
+                rebound = await terminal_session_service.rebind_socket(
+                    record,
+                    executor_socket_id,
+                )
+            except TerminalSessionAuthorizationUnavailable:
+                if previous_session_id != session_id:
+                    await self.leave_room(sid, _terminal_room(session_id))
+                return {
+                    "error": (
+                        "Terminal session authorization is temporarily unavailable"
+                    )
+                }
             if not rebound:
                 if previous_session_id != session_id:
                     await self.leave_room(sid, _terminal_room(session_id))
@@ -426,16 +445,33 @@ class TerminalNamespace(socketio.AsyncNamespace):
         if record.is_expired():
             return None, "", {"error": "Terminal session expired"}
         if not terminal_session_service.is_authorization_current(record):
-            refreshed = await terminal_session_service.authorize(
-                session_id,
-                user_id=user_id,
-                refresh=True,
-            )
+            try:
+                refreshed = await terminal_session_service.authorize(
+                    session_id,
+                    user_id=user_id,
+                    refresh=True,
+                )
+            except TerminalSessionAuthorizationUnavailable:
+                return (
+                    None,
+                    "",
+                    {
+                        "error": (
+                            "Terminal session authorization is temporarily unavailable"
+                        )
+                    },
+                )
             if not refreshed or refreshed.device_id != record.device_id:
                 return None, "", {"error": "Terminal session must be reattached"}
             record = refreshed
             session["terminal_authorization"] = refreshed
             await self.save_session(sid, session)
+        if not terminal_session_service.is_authorization_current(record):
+            return (
+                None,
+                "",
+                {"error": "Terminal session authorization is temporarily unavailable"},
+            )
         if terminal_session_service.is_revoked(session_id):
             return None, "", {"error": "Terminal session not found or access denied"}
         return record, consumer_id, None
