@@ -159,6 +159,7 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "canceled",
 }
 DEVICE_TRACE_EXCLUDED_EVENTS = {
+    "plugin.auth.local_lifecycle",
     "plugin.auth.automatic",
     "plugin.auth.prepare",
     "plugin.auth.transfer.stage",
@@ -1318,6 +1319,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
             "runtime:event": "on_runtime_event",
+            "plugin.auth.local_lifecycle": "on_plugin_auth_local_lifecycle",
             "plugin.auth.automatic": "on_plugin_auth_automatic",
             "plugin.auth.prepare": "on_plugin_auth_prepare",
             "plugin.auth.transfer.stage": "on_plugin_auth_transfer_stage",
@@ -2409,6 +2411,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
             sid=sid,
             session=await self.get_session(sid),
             operation="transfer_finish",
+            data=data,
+        )
+
+    async def on_plugin_auth_local_lifecycle(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="local_lifecycle",
             data=data,
         )
 

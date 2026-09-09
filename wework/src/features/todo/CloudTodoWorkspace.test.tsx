@@ -1170,7 +1170,10 @@ describe('CloudTodoWorkspace', () => {
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
-    expect(progressPopup).toHaveTextContent('当前任务进展')
+    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(progressPopup).not.toHaveTextContent('当前任务进展')
     expect(progressPopup).toHaveTextContent('验证完整工作流')
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-task-id',
@@ -1260,7 +1263,10 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
-    expect(progressPopup).toHaveTextContent('当前任务进展')
+    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(progressPopup).not.toHaveTextContent('当前任务进展')
     expect(progressResponse).toHaveAttribute('data-task-id', 'runtime-review')
   })
 

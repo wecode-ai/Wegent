@@ -625,7 +625,7 @@ class RealCloudEnvironment {
         throw new Error(`Cloud runtime task ${address.taskId} settled as ${task.status}`)
       }
       const active =
-        task?.running === true || ['creating', 'queued', 'active', 'running'].includes(task?.status)
+        task?.running === true || ['creating', 'queued', 'running'].includes(task?.status)
       if (task?.workspacePath === address.workspacePath && !active) return task
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
