@@ -22,6 +22,9 @@ from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
 from shared.utils.url_util import build_url
 
+TRACKED_FILE_COUNT_PAGE_SIZE = 100
+MAX_TRACKED_FILE_COUNT_PAGES = 50
+
 
 class GitLabProvider(RepositoryProvider):
     """
@@ -1047,6 +1050,14 @@ class GitLabProvider(RepositoryProvider):
         seen_pages: set[str] = set()
         count = 0
         while page and page not in seen_pages:
+            if len(seen_pages) >= MAX_TRACKED_FILE_COUNT_PAGES:
+                self.logger.info(
+                    "Tree pagination for %s at %s exceeded %s pages; repository size is unknown",
+                    repo_name,
+                    ref,
+                    MAX_TRACKED_FILE_COUNT_PAGES,
+                )
+                return None
             seen_pages.add(page)
             response = self._make_request_with_auth_retry(
                 method="GET",
@@ -1055,7 +1066,7 @@ class GitLabProvider(RepositoryProvider):
                 params={
                     "ref": ref,
                     "recursive": "true",
-                    "per_page": "100",
+                    "per_page": str(TRACKED_FILE_COUNT_PAGE_SIZE),
                     "page": page,
                 },
                 timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,

@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { GroupedModelSelect, type ModelCascadeLabels } from './ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
+import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getGlobalModelPreference,
@@ -22,27 +23,41 @@ export interface ModelRef {
 }
 
 // A knowledge-base edit dialog can show both the generation and summary selectors.
-// They need the same all-scope LLM list, so share an active fetch while preserving a
-// fresh request each time the dialog is opened later.
-let llmModelsRequest: Promise<UnifiedModel[]> | null = null
+// Share its active all-scope request, but never cross the current authenticated
+// session: an OIDC account switch retains this module while the old request settles.
+const llmModelsRequests = new Map<string | null, Promise<UnifiedModel[]>>()
 
 function loadLlmModels(): Promise<UnifiedModel[]> {
-  if (!llmModelsRequest) {
-    llmModelsRequest = modelApis
-      .getUnifiedModels(undefined, false, 'all', undefined, 'llm')
-      .then(response =>
-        [...(response.data || [])].sort((a, b) => {
-          const nameA = a.displayName || a.name
-          const nameB = b.displayName || b.name
-          return nameA.localeCompare(nameB)
-        })
-      )
-      .finally(() => {
-        llmModelsRequest = null
-      })
+  const token = getToken()
+  const existingRequest = llmModelsRequests.get(token)
+  if (existingRequest) {
+    return existingRequest
   }
 
-  return llmModelsRequest
+  const request = modelApis
+    .getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+    .then(response =>
+      [...(response.data || [])].sort((a, b) => {
+        const nameA = a.displayName || a.name
+        const nameB = b.displayName || b.name
+        return nameA.localeCompare(nameB)
+      })
+    )
+  llmModelsRequests.set(token, request)
+  void request.then(
+    () => {
+      if (llmModelsRequests.get(token) === request) {
+        llmModelsRequests.delete(token)
+      }
+    },
+    () => {
+      if (llmModelsRequests.get(token) === request) {
+        llmModelsRequests.delete(token)
+      }
+    }
+  )
+
+  return request
 }
 
 interface ModelRefSelectorProps {

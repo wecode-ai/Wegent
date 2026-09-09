@@ -228,6 +228,25 @@ def test_gitlab_counts_every_page_of_a_recursive_tree():
     assert count == 2
 
 
+def test_gitlab_reports_an_overlong_recursive_tree_as_unknown():
+    provider = GitLabProvider()
+    page = _response([{"type": "blob"}])
+    page.headers = {"X-Next-Page": "2"}
+
+    with (
+        patch("app.repository.gitlab_provider.MAX_TRACKED_FILE_COUNT_PAGES", 1),
+        patch.object(
+            GitLabProvider, "_make_request_with_auth_retry", return_value=page
+        ) as request,
+    ):
+        count = provider.get_tracked_file_count(
+            git_domain="gitlab.com", ref="bbb", **DOMAIN_ARGS
+        )
+
+    assert count is None
+    assert request.call_count == 1
+
+
 # --- Gitea ------------------------------------------------------------------
 
 
@@ -295,3 +314,42 @@ def test_gitea_counts_blobs_in_a_complete_recursive_tree():
         )
 
     assert count == 2
+
+
+def test_gitea_counts_every_page_of_a_recursive_tree():
+    provider = GiteaProvider()
+    first = _response({"truncated": True, "tree": [{"type": "blob"}]})
+    second = _response({"truncated": False, "tree": [{"type": "blob"}]})
+
+    with patch(
+        "app.repository.gitea_provider.requests.get", side_effect=[first, second]
+    ) as request:
+        count = provider.get_tracked_file_count(
+            git_domain="gitea.com", ref="bbb", **DOMAIN_ARGS
+        )
+
+    assert count == 2
+    assert request.call_args_list[0].kwargs["params"] == {
+        "recursive": "true",
+        "page": 1,
+        "per_page": 100,
+    }
+    assert request.call_args_list[1].kwargs["params"]["page"] == 2
+
+
+def test_gitea_reports_an_overlong_recursive_tree_as_unknown():
+    provider = GiteaProvider()
+    page = _response({"truncated": True, "tree": [{"type": "blob"}]})
+
+    with (
+        patch("app.repository.gitea_provider.MAX_TRACKED_FILE_COUNT_PAGES", 1),
+        patch(
+            "app.repository.gitea_provider.requests.get", return_value=page
+        ) as request,
+    ):
+        count = provider.get_tracked_file_count(
+            git_domain="gitea.com", ref="bbb", **DOMAIN_ARGS
+        )
+
+    assert count is None
+    assert request.call_count == 1

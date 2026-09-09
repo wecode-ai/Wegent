@@ -170,7 +170,7 @@ def test_complete_counts_the_explicit_checkout_from_a_staging_directory(
         ]
 
         completed = subprocess.run(
-            command, cwd=tmp_path, text=True, capture_output=True
+            command, cwd=tmp_path, text=True, capture_output=True, timeout=120
         )
 
         assert completed.returncode == 0, completed.stderr
@@ -194,6 +194,7 @@ def test_complete_counts_the_explicit_checkout_from_a_staging_directory(
             cwd=tmp_path,
             text=True,
             capture_output=True,
+            timeout=120,
             env={**os.environ, "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}"},
         )
 
@@ -211,6 +212,7 @@ def test_complete_counts_the_explicit_checkout_from_a_staging_directory(
             cwd=tmp_path,
             text=True,
             capture_output=True,
+            timeout=120,
         )
 
         assert missing_repository.returncode == 1

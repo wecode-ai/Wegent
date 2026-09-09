@@ -27,6 +27,8 @@ from shared.utils.url_util import build_url
 # Reading repository state happens on a scheduled path, but an unresponsive instance
 # must still fail rather than hold the worker.
 REPO_STATE_TIMEOUT_SECONDS = 15
+TRACKED_FILE_COUNT_PAGE_SIZE = 100
+MAX_TRACKED_FILE_COUNT_PAGES = 50
 
 
 class GiteaProvider(RepositoryProvider):
@@ -940,27 +942,36 @@ class GiteaProvider(RepositoryProvider):
     def get_tracked_file_count(
         self, token: str, git_domain: str, repo_name: str, ref: str
     ) -> Optional[int]:
-        """Count files in Gitea's recursive Git tree, rejecting a partial tree."""
+        """Count blobs in Gitea's paginated recursive tree at ``ref``."""
         api_base_url = self._get_api_base_url(git_domain)
-        response = requests.get(
-            f"{api_base_url}/repos/{repo_name}/git/trees/{quote(ref, safe='')}",
-            params={"recursive": "true"},
-            headers=self._build_headers(token),
-            timeout=REPO_STATE_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json() or {}
-        if payload.get("truncated"):
-            self.logger.info(
-                "Tree of %s at %s is truncated; repository size is unknown",
-                repo_name,
-                ref,
+        count = 0
+        for page in range(1, MAX_TRACKED_FILE_COUNT_PAGES + 1):
+            response = requests.get(
+                f"{api_base_url}/repos/{repo_name}/git/trees/{quote(ref, safe='')}",
+                params={
+                    "recursive": "true",
+                    "page": page,
+                    "per_page": TRACKED_FILE_COUNT_PAGE_SIZE,
+                },
+                headers=self._build_headers(token),
+                timeout=REPO_STATE_TIMEOUT_SECONDS,
             )
-            return None
-        tree = payload.get("tree")
-        if not isinstance(tree, list):
-            return None
-        return sum(entry.get("type") == "blob" for entry in tree)
+            response.raise_for_status()
+            payload = response.json() or {}
+            tree = payload.get("tree")
+            if not isinstance(tree, list):
+                return None
+            count += sum(entry.get("type") == "blob" for entry in tree)
+            if not payload.get("truncated"):
+                return count
+
+        self.logger.info(
+            "Tree pagination for %s at %s exceeded %s pages; repository size is unknown",
+            repo_name,
+            ref,
+            MAX_TRACKED_FILE_COUNT_PAGES,
+        )
+        return None
 
     def describe_repository(
         self, token: str, git_domain: str, repo_name: str
