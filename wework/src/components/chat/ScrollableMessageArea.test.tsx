@@ -2872,6 +2872,57 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('starts from the latest message when restore is disabled for a preview', () => {
+    cacheConversationScrollSnapshot('latest-preview', {
+      distanceFromBottomPx: 420,
+      pinnedToBottom: false,
+    })
+    render(
+      <ScrollableMessageArea
+        conversationKey="latest-preview"
+        initialScrollPosition="latest"
+        messages={[
+          {
+            id: 'latest-preview-message',
+            role: 'assistant',
+            content: '最新消息',
+            status: 'done',
+            createdAt: '2026-09-09T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 600,
+      behavior: 'auto',
+    })
+    expect(getConversationScrollSnapshot('latest-preview')).toEqual({
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
+    })
+  })
+
   test('keeps following the bottom while an unopened conversation is being measured', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
