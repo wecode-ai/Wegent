@@ -45,6 +45,12 @@ async function segmentSource() {
           ? 'codex-rollout-snapshot.v1.tgz.aes256gcm'
           : 'codex-rollout-delta.v1.tgz.aes256gcm',
         rolloutEnd: 2048,
+        summary: {
+          userMessages: [{ id: 'user-1', text: 'Continue' }],
+          assistantMessage: 'Done',
+          reasoning: 'Checked',
+          completion: { kind: 'completed' },
+        },
       }
     },
   }
@@ -122,7 +128,17 @@ test('uploads a native snapshot and persists only its locator', async () => {
     assert.equal(source.calls.at(-1).options.snapshot, true)
     assert.equal(acknowledgements[0].rolloutEnd, 2048)
     assert.ok(requests.some(request => request.path.endsWith('/segments/prepare')))
-    assert.ok(requests.some(request => request.path.endsWith('/segments')))
+    const prepare = requests.find(request => request.path.endsWith('/segments/prepare'))
+    const commit = requests.find(request => request.path.endsWith('/segments'))
+    assert.equal(Object.hasOwn(prepare.body, 'summary'), false)
+    assert.equal(commit.body.turnId, 'turn-1')
+    assert.deepEqual(commit.body.summary, {
+      userMessages: [{ id: 'user-1', text: 'Continue' }],
+      assistantMessage: 'Done',
+      reasoning: 'Checked',
+      completion: { kind: 'completed' },
+      taskId: 'task-1',
+    })
   } finally {
     globalThis.fetch = originalFetch
   }

@@ -21,6 +21,7 @@ from app.models.wework_transcript import (
     EPOCH_TIME,
     WeworkTranscript,
     WeworkTranscriptArchive,
+    WeworkTranscriptTurn,
 )
 from app.schemas.wework_transcript import (
     TranscriptAppendResponse,
@@ -32,8 +33,11 @@ from app.schemas.wework_transcript import (
     TranscriptLeaseResponse,
     TranscriptListResponse,
     TranscriptResponse,
+    TranscriptSegmentCommitRequest,
     TranscriptSegmentPrepareResponse,
     TranscriptSegmentRequest,
+    TranscriptTurnResponse,
+    TranscriptTurnsResponse,
 )
 from app.services import wework_transcript_service
 from app.services.wework_transcript_service import WeworkTranscriptError
@@ -197,7 +201,7 @@ def prepare_segment_upload_endpoint(
 )
 def commit_segment_endpoint(
     transcript_id: str,
-    request: TranscriptSegmentRequest,
+    request: TranscriptSegmentCommitRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -213,6 +217,39 @@ def commit_segment_endpoint(
         "currentSequence": transcript.current_sequence,
         "appended": int(appended),
     }
+
+
+@router.get(
+    "/{transcript_id}/turns",
+    response_model=TranscriptTurnsResponse,
+    response_model_by_alias=True,
+)
+def list_turns_endpoint(
+    transcript_id: str,
+    after_sequence: int = Query(default=0, ge=0, alias="after"),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    transcript = _translate(
+        lambda: wework_transcript_service.get_transcript(
+            db,
+            user_id=current_user.id,
+            transcript_id=transcript_id,
+        )
+    )
+    turns = wework_transcript_service.list_turns(
+        db,
+        transcript_db_id=transcript.id,
+        after_sequence=after_sequence,
+        limit=limit + 1,
+    )
+    return TranscriptTurnsResponse(
+        turns=[_turn_response(turn) for turn in turns[:limit]],
+        currentSequence=transcript.current_sequence,
+        archivedThroughSequence=transcript.archived_through_sequence,
+        hasMore=len(turns) > limit,
+    )
 
 
 @router.post(
@@ -307,6 +344,15 @@ def _archive_response(
         sizeBytes=archive.size_bytes,
         format=archive.format,
         createdAt=archive.created_at,
+    )
+
+
+def _turn_response(turn: WeworkTranscriptTurn) -> TranscriptTurnResponse:
+    return TranscriptTurnResponse(
+        turnId=turn.turn_id,
+        sequence=turn.sequence,
+        payload=turn.payload,
+        createdAt=turn.created_at,
     )
 
 

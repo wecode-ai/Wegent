@@ -266,7 +266,7 @@ export class WeworkSync {
   }
 
   async uploadPendingSegment(turn, segment, lease) {
-    const body = {
+    const descriptor = {
       clientId: this.clientId,
       baseSequence: turn.cloudSequence - 1,
       fencingToken: lease.fencingToken,
@@ -279,7 +279,7 @@ export class WeworkSync {
     const prepared = await this.request(
       `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/segments/prepare`,
       'POST',
-      body
+      descriptor
     )
     const response = await fetch(prepared.uploadUrl, {
       method: 'PUT',
@@ -296,7 +296,11 @@ export class WeworkSync {
     await this.request(
       `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/segments`,
       'POST',
-      body
+      {
+        ...descriptor,
+        turnId: turn.turnId,
+        summary: segmentSummary(turn, segment),
+      }
     )
   }
 
@@ -309,16 +313,25 @@ export class WeworkSync {
       encryptionKey: encryption.key,
     })
     try {
-      const transcript = await this.request(
-        `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}`
-      )
+      const encodedTranscriptId = encodeURIComponent(turn.transcriptId)
+      const [transcript, summaries] = await Promise.all([
+        this.request(`/wework-transcripts/${encodedTranscriptId}`),
+        this.request(
+          `/wework-transcripts/${encodedTranscriptId}/turns?after=${turn.cloudSequence - 1}&limit=1`
+        ),
+      ])
       const existing = transcript.archives?.find(
         archive => archive.toSequence === turn.cloudSequence
+      )
+      const existingSummary = summaries.turns?.find(
+        candidate => candidate.sequence === turn.cloudSequence
       )
       if (
         existing?.sha256 === segment.sha256 &&
         existing?.format === segment.format &&
-        existing?.sizeBytes === segment.sizeBytes
+        existing?.sizeBytes === segment.sizeBytes &&
+        existingSummary?.turnId === turn.turnId &&
+        stableJson(existingSummary.payload) === stableJson(segmentSummary(turn, segment))
       ) {
         return { ...turn, rolloutEnd: segment.rolloutEnd }
       }
@@ -614,10 +627,17 @@ function stableJson(value) {
   return JSON.stringify(value)
 }
 
+function segmentSummary(turn, segment) {
+  return {
+    ...segment.summary,
+    taskId: turn.taskId,
+  }
+}
+
 function isSequenceConflict(error) {
   return (
     error instanceof SyncRequestError &&
-    (error.code === 'sequence_conflict' || error.code === 'segment_conflict')
+    ['sequence_conflict', 'segment_conflict', 'turn_conflict'].includes(error.code)
   )
 }
 

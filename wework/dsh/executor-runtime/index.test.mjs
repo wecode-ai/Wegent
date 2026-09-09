@@ -5,9 +5,29 @@ import { createTranscriptTarget, exportExecutorTranscript } from './index.js'
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
 
-test('exports a native segment without materializing transcript text', async () => {
+test('exports a native segment with a separate structured summary', async () => {
   const client = {
     async request(method, params) {
+      if (method === 'runtime.tasks.transcript') {
+        assert.deepEqual(params, { taskId: 'task-1', limit: 100 })
+        return {
+          turns: [
+            {
+              id: 'turn-5',
+              status: 'done',
+              items: [
+                {
+                  id: 'user-item',
+                  type: 'user_message',
+                  message: { id: 'user-1', content: 'Continue' },
+                },
+                { id: 'reasoning', type: 'reasoning', summary: ['Checked'] },
+                { id: 'assistant', type: 'assistant_text', content: 'Done' },
+              ],
+            },
+          ],
+        }
+      }
       assert.equal(method, 'runtime.tasks.transcript.export')
       assert.deepEqual(params, {
         transcriptId: 'transcript-1',
@@ -28,7 +48,11 @@ test('exports a native segment without materializing transcript text', async () 
   }
   const result = await exportExecutorTranscript(
     client,
-    { transcriptId: 'transcript-1', taskId: 'task-1' },
+    {
+      transcriptId: 'transcript-1',
+      taskId: 'task-1',
+      executorTurnId: 'turn-5',
+    },
     {
       baseSequence: 4,
       sequence: 5,
@@ -37,7 +61,12 @@ test('exports a native segment without materializing transcript text', async () 
     }
   )
   assert.equal(result.path, '/tmp/segment.tgz.aes256gcm')
-  assert.equal(Object.hasOwn(result, 'payload'), false)
+  assert.deepEqual(result.summary, {
+    userMessages: [{ id: 'user-1', text: 'Continue' }],
+    assistantMessage: 'Done',
+    reasoning: 'Checked',
+    completion: { kind: 'completed' },
+  })
 })
 
 test('routes restore and acknowledgement through native transcript RPCs', async () => {

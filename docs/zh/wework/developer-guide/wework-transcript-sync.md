@@ -5,22 +5,28 @@ sidebar_position: 36
 # Wework 会话与配置云同步
 
 Wework 的 Core DSH 插件 `@wegent/dsh-transcript-sync` 同步原生 Codex
-rollout、任务工作区和可移植偏好。同步层不再把会话压缩成用户/助手文本，也不再通过
-`thread/inject_items` 重建历史。
+rollout、任务工作区、旧版本同结构的回合摘要和可移植偏好。双机恢复不再把会话压缩成
+用户/助手文本，也不再通过 `thread/inject_items` 重建历史。
 
 ## 存储边界
 
-Backend 只使用两张表：
+Backend 使用三张表：
 
 | 表                           | 用途                                                          |
 | ---------------------------- | ------------------------------------------------------------- |
 | `wework_transcripts`         | transcript 身份、分支关系、全局 sequence、状态和单写租约      |
 | `wework_transcript_archives` | 不可变原生 segment 的 sequence、对象 key、SHA-256、大小和格式 |
+| `wework_transcript_turns`    | 每个已完成回合的结构化摘要，沿用旧版本的数据契约              |
 
 正文先在 Executor 中使用 AES-256-GCM 加密，再直接上传到私有
-`wework-transcripts` 对象存储。MySQL 不保存消息、
-reasoning、工具调用、usage、rollout JSONL 或工作区文件，因此 transcript 大小不受
-MySQL JSON/VARCHAR 字段容量限制。
+`wework-transcripts` 对象存储。MySQL 的 `wework_transcript_turns.payload` 会按回合
+保存原有协议中的用户消息、助手最终文本、reasoning 摘要、完成状态和任务 ID，但不保存
+完整工具协议、usage、rollout JSONL 或工作区文件。摘要是一回合一行 JSON，不会把整个
+transcript 持续追加进单个字段；完整数据容量和精确恢复均由分段 tgz 对象承担。
+
+同一 sequence 的 archive 索引、turn 摘要和 transcript head 在一个 MySQL 事务中提交。
+仅当对象元数据与摘要都完全一致时，重复提交才视为幂等；任一侧缺失或不一致都会报冲突，
+不会形成“数据库显示已同步但摘要或 tgz 缺一份”的半状态。
 
 Backend 基于服务端 `SECRET_KEY`、用户 ID 和 transcript ID 派生稳定的每会话密钥，通过已认证的
 `GET /{id}/encryption-key` 接口短暂下发。密钥不写入同步状态、outbox 或对象存储。
@@ -37,6 +43,7 @@ sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-
 - 工作区打包会排除 `.git`、`node_modules`、构建产物和常见缓存目录，避免重复上传
   仓库对象库或无关的大体积派生文件。
 - outbox 只保存任务、session、turn、sequence 和分支路由，不复制正文。
+- 原生对象的快照清理不会删除 `wework_transcript_turns` 中对应的结构化摘要。
 - 新完整快照提交后，服务端保留“上一个完整快照 + 其后的全部 segment”，删除更旧的
   OSS 对象和元数据。快照间隔为 10 时，每个持续活跃的 transcript 通常保留 11 个、
   峰值不超过约 20 个对象，不会随对话轮数无限增长。
@@ -46,7 +53,8 @@ sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-
 覆盖。两台电脑若同时完成同一 sequence，先提交者进入主线，后提交者按确定性 ID 建立分支，
 两边内容都保留。
 
-旧 beta 版本写入的 `wework_transcript_turns` 文本数据不参与恢复。迁移会删除该表。
+已有 `wework_transcript_turns` 表继续保留，并沿用旧版本的摘要字段。该表不参与双机
+恢复，也不能替代原生 tgz。
 
 ## 状态转换
 
@@ -58,12 +66,12 @@ stateDiagram-v2
     OfflinePending --> LeaseHeld: 网络恢复
     LeaseHeld --> SegmentBuilt: 生成并加密快照或 rollout 增量
     SegmentBuilt --> ObjectUploaded: PUT 预签名对象地址
-    ObjectUploaded --> MetadataCommitted: 提交 SHA-256、大小和 sequence
+    ObjectUploaded --> MetadataCommitted: 同事务提交对象索引、回合摘要和 head
     MetadataCommitted --> LocalReady: 记录 rollout offset、清理 outbox、释放租约
 
     LeaseHeld --> Reconcile: 云端 head != baseSequence
-    Reconcile --> LocalReady: 同 sequence 对象哈希一致
-    Reconcile --> BranchSnapshot: 同 sequence 对象不存在或哈希不同
+    Reconcile --> LocalReady: 同 sequence 对象与摘要均一致
+    Reconcile --> BranchSnapshot: 对象或摘要不存在/不一致
     BranchSnapshot --> LeaseHeld: 创建确定性 fork transcript
 
     [*] --> RestoreRequired: 本机没有该 transcript 或本机落后
@@ -86,7 +94,8 @@ Electron user data、应用配置目录和 device identity；切换到设备 B �
 设备 A 的状态。
 
 该 checkpoint 必须验证设备 A 上传加密快照和增量，设备 B 从空状态恢复工作区与完整
-历史，并继续对话、上传下一个 sequence。共享同一本地状态的重启测试不能替代该验证。
+历史，并继续对话、上传下一个 sequence；每个 sequence 还必须产生对应结构化摘要。
+共享同一本地状态的重启测试不能替代该验证。
 两台物理电脑的测试保留为发布验收，用于覆盖真实网络、休眠和操作系统差异，但不作为
 GitHub CI 的执行前提。
 
@@ -103,18 +112,19 @@ GitHub CI 的执行前提。
 
 认证前缀为 `/api/wework-transcripts`：
 
-| 方法与路径                                | 用途                                   |
-| ----------------------------------------- | -------------------------------------- |
-| `GET /`                                   | 列出 transcript 和原生 segment 元数据  |
-| `GET /{id}`                               | 读取一个 transcript                    |
-| `GET /{id}/encryption-key`                | 获取当前用户的 transcript 加解密密钥   |
-| `POST /{id}/lease`                        | 创建 transcript 或获取写租约           |
-| `PUT /{id}/lease/{token}`                 | 续租                                   |
-| `POST /{id}/lease/release`                | 释放租约                               |
-| `POST /{id}/segments/prepare`             | 校验 sequence 并生成预签名 PUT 地址    |
-| `POST /{id}/segments`                     | 校验已上传对象大小并提交不可变对象索引 |
-| `POST /{id}/archive`                      | 标记 transcript 为 archived            |
-| `GET /{id}/archives/{archiveId}/download` | 生成短期签名下载地址                   |
+| 方法与路径                                | 用途                                  |
+| ----------------------------------------- | ------------------------------------- |
+| `GET /`                                   | 列出 transcript 和原生 segment 元数据 |
+| `GET /{id}`                               | 读取一个 transcript                   |
+| `GET /{id}/turns`                         | 分页读取结构化回合摘要                |
+| `GET /{id}/encryption-key`                | 获取当前用户的 transcript 加解密密钥  |
+| `POST /{id}/lease`                        | 创建 transcript 或获取写租约          |
+| `PUT /{id}/lease/{token}`                 | 续租                                  |
+| `POST /{id}/lease/release`                | 释放租约                              |
+| `POST /{id}/segments/prepare`             | 校验 sequence 并生成预签名 PUT 地址   |
+| `POST /{id}/segments`                     | 同事务提交对象索引、回合摘要和 head   |
+| `POST /{id}/archive`                      | 标记 transcript 为 archived           |
+| `GET /{id}/archives/{archiveId}/download` | 生成短期签名下载地址                  |
 
 对象 key 使用 transcript ID 的 SHA-256 摘要，不暴露原始 transcript 标识。
 

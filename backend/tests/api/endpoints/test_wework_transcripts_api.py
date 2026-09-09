@@ -4,7 +4,11 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.models.wework_transcript import WeworkTranscript, WeworkTranscriptArchive
+from app.models.wework_transcript import (
+    WeworkTranscript,
+    WeworkTranscriptArchive,
+    WeworkTranscriptTurn,
+)
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -31,11 +35,19 @@ def _segment(lease, **overrides):
         "sha256": "a" * 64,
         "sizeBytes": 4096,
         "format": "codex-rollout-snapshot.v1.tgz.aes256gcm",
+        "turnId": "turn-1",
+        "summary": {
+            "userMessages": [{"id": "user-1", "text": "Continue"}],
+            "assistantMessage": "Done",
+            "reasoning": "Checked",
+            "completion": {"kind": "completed"},
+            "taskId": "task-1",
+        },
         **overrides,
     }
 
 
-def test_commits_only_native_object_metadata(
+def test_commits_native_object_metadata_and_structured_summary(
     test_client, test_token, test_db, monkeypatch
 ):
     from app.services import wework_transcript_service
@@ -84,11 +96,24 @@ def test_commits_only_native_object_metadata(
 
     transcript = test_db.query(WeworkTranscript).one()
     archive = test_db.query(WeworkTranscriptArchive).one()
+    turn = test_db.query(WeworkTranscriptTurn).one()
     assert transcript.current_sequence == 1
     assert transcript.archived_through_sequence == 1
     assert archive.from_sequence == 0
     assert archive.size_bytes == 4096
     assert archive.storage_key.endswith(f"1-snapshot-{'a' * 64}.tgz.aes256gcm")
+    assert turn.sequence == 1
+    assert turn.turn_id == "turn-1"
+    assert turn.payload["assistantMessage"] == "Done"
+
+    turns = test_client.get(
+        "/api/wework-transcripts/transcript-1/turns?after=0&limit=1",
+        headers=_headers(test_token),
+    )
+    assert turns.status_code == 200
+    assert turns.json()["currentSequence"] == 1
+    assert turns.json()["hasMore"] is False
+    assert turns.json()["turns"][0]["payload"]["taskId"] == "task-1"
 
 
 def test_encryption_keys_are_scoped_to_each_transcript(test_client, test_token):
@@ -127,6 +152,11 @@ def test_prunes_segments_older_than_previous_snapshot(
             baseSequence=sequence - 1,
             sequence=sequence,
             sha256=f"{sequence:064x}",
+            turnId=f"turn-{sequence}",
+            summary={
+                "assistantMessage": f"Done {sequence}",
+                "taskId": "task-1",
+            },
             format=(
                 "codex-rollout-snapshot.v1.tgz.aes256gcm"
                 if is_snapshot
@@ -147,6 +177,7 @@ def test_prunes_segments_older_than_previous_snapshot(
         .all()
     ]
     assert retained_sequences == list(range(10, 21))
+    assert test_db.query(WeworkTranscriptTurn).count() == 20
     assert len(deleted_keys) == 9
     assert all(f"/{sequence}-" in key for sequence, key in enumerate(deleted_keys, 1))
 
@@ -179,6 +210,41 @@ def test_rejects_stale_sequence_before_upload(test_client, test_token, monkeypat
     assert stale.json()["detail"]["code"] == "sequence_conflict"
 
 
+def test_rejects_mismatched_summary_for_committed_segment(
+    test_client, test_token, monkeypatch
+):
+    from app.services import wework_transcript_service
+
+    lease = _lease(test_client, test_token)
+    monkeypatch.setattr(
+        wework_transcript_service.wework_transcript_storage,
+        "size",
+        lambda _key: 4096,
+    )
+    request = _segment(lease)
+    committed = test_client.post(
+        "/api/wework-transcripts/transcript-1/segments",
+        headers=_headers(test_token),
+        json=request,
+    )
+    assert committed.status_code == 200
+
+    conflict = test_client.post(
+        "/api/wework-transcripts/transcript-1/segments",
+        headers=_headers(test_token),
+        json={
+            **request,
+            "summary": {
+                **request["summary"],
+                "assistantMessage": "Different",
+            },
+        },
+    )
+
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "turn_conflict"
+
+
 def test_creates_branch_without_copying_parent_objects(
     test_client, test_token, test_db
 ):
@@ -204,6 +270,7 @@ def test_creates_branch_without_copying_parent_objects(
     assert item["parentTranscriptId"] == "transcript-1"
     assert item["forkedAtSequence"] == 0
     assert test_db.query(WeworkTranscriptArchive).count() == 0
+    assert test_db.query(WeworkTranscriptTurn).count() == 0
 
 
 def test_download_uses_presigned_object_url(

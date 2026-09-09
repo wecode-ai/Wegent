@@ -15,11 +15,13 @@ from app.models.wework_transcript import (
     EPOCH_TIME,
     WeworkTranscript,
     WeworkTranscriptArchive,
+    WeworkTranscriptTurn,
 )
 from app.schemas.wework_transcript import (
     TranscriptArchiveRequest,
     TranscriptLeaseReleaseRequest,
     TranscriptLeaseRequest,
+    TranscriptSegmentCommitRequest,
     TranscriptSegmentRequest,
 )
 from app.services.wework_transcript_storage import (
@@ -229,7 +231,7 @@ def commit_segment(
     *,
     user_id: int,
     transcript_id: str,
-    request: TranscriptSegmentRequest,
+    request: TranscriptSegmentCommitRequest,
 ) -> tuple[WeworkTranscript, bool]:
     transcript = get_transcript(
         db,
@@ -238,7 +240,7 @@ def commit_segment(
         for_update=True,
     )
     _require_lease(transcript, request.client_id, request.fencing_token)
-    existing = (
+    existing_archive = (
         db.query(WeworkTranscriptArchive)
         .filter(
             WeworkTranscriptArchive.transcript_db_id == transcript.id,
@@ -246,20 +248,40 @@ def commit_segment(
         )
         .first()
     )
+    existing_turn = (
+        db.query(WeworkTranscriptTurn)
+        .filter(
+            WeworkTranscriptTurn.transcript_db_id == transcript.id,
+            (
+                (WeworkTranscriptTurn.sequence == request.sequence)
+                | (WeworkTranscriptTurn.turn_id == request.turn_id)
+            ),
+        )
+        .first()
+    )
     from_sequence = 0 if "snapshot" in request.format else request.sequence
     object_key = _segment_object_key(user_id, transcript_id, request)
-    if existing is not None:
-        if (
-            existing.from_sequence == from_sequence
-            and existing.storage_key == object_key
-            and existing.sha256 == request.sha256
-            and existing.size_bytes == request.size_bytes
-            and existing.format == request.format
-        ):
+    if existing_archive is not None or existing_turn is not None:
+        if _segment_matches(
+            existing_archive,
+            from_sequence=from_sequence,
+            object_key=object_key,
+            request=request,
+        ) and _turn_matches(existing_turn, request):
             return transcript, False
+        if existing_archive is None or not _segment_matches(
+            existing_archive,
+            from_sequence=from_sequence,
+            object_key=object_key,
+            request=request,
+        ):
+            raise WeworkTranscriptError(
+                "segment_conflict",
+                "A different native segment already exists at this sequence",
+            )
         raise WeworkTranscriptError(
-            "segment_conflict",
-            "A different native segment already exists at this sequence",
+            "turn_conflict",
+            "A different transcript summary already exists for this turn or sequence",
         )
     _validate_segment_write(transcript, request)
     if wework_transcript_storage.size(object_key) != request.size_bytes:
@@ -277,6 +299,14 @@ def commit_segment(
             sha256=request.sha256,
             size_bytes=request.size_bytes,
             format=request.format,
+        )
+    )
+    db.add(
+        WeworkTranscriptTurn(
+            transcript_db_id=transcript.id,
+            sequence=request.sequence,
+            turn_id=request.turn_id,
+            payload=request.summary,
         )
     )
     transcript.current_sequence = request.sequence
@@ -303,6 +333,25 @@ def list_archives(
         db.query(WeworkTranscriptArchive)
         .filter(WeworkTranscriptArchive.transcript_db_id == transcript_db_id)
         .order_by(WeworkTranscriptArchive.to_sequence)
+        .all()
+    )
+
+
+def list_turns(
+    db: Session,
+    *,
+    transcript_db_id: int,
+    after_sequence: int,
+    limit: int,
+) -> list[WeworkTranscriptTurn]:
+    return (
+        db.query(WeworkTranscriptTurn)
+        .filter(
+            WeworkTranscriptTurn.transcript_db_id == transcript_db_id,
+            WeworkTranscriptTurn.sequence > after_sequence,
+        )
+        .order_by(WeworkTranscriptTurn.sequence)
+        .limit(limit)
         .all()
     )
 
@@ -395,6 +444,33 @@ def _segment_object_key(
     return (
         f"users/{user_id}/transcripts/{transcript_key}/"
         f"{request.sequence}-{kind}-{request.sha256}.tgz.aes256gcm"
+    )
+
+
+def _segment_matches(
+    archive: WeworkTranscriptArchive | None,
+    *,
+    from_sequence: int,
+    object_key: str,
+    request: TranscriptSegmentCommitRequest,
+) -> bool:
+    return archive is not None and (
+        archive.from_sequence == from_sequence
+        and archive.storage_key == object_key
+        and archive.sha256 == request.sha256
+        and archive.size_bytes == request.size_bytes
+        and archive.format == request.format
+    )
+
+
+def _turn_matches(
+    turn: WeworkTranscriptTurn | None,
+    request: TranscriptSegmentCommitRequest,
+) -> bool:
+    return turn is not None and (
+        turn.sequence == request.sequence
+        and turn.turn_id == request.turn_id
+        and turn.payload == request.summary
     )
 
 

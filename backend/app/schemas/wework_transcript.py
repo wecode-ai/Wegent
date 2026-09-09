@@ -5,6 +5,7 @@
 """API contracts for Wework transcript synchronization."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +24,11 @@ class TranscriptSegmentRequest(BaseModel):
         pattern=r"^codex-rollout-(delta|snapshot)\.v1\.tgz\.aes256gcm$",
         max_length=64,
     )
+
+
+class TranscriptSegmentCommitRequest(TranscriptSegmentRequest):
+    turn_id: str = Field(alias="turnId", min_length=1, max_length=100)
+    summary: dict[str, Any]
 
 
 class TranscriptLeaseRequest(BaseModel):
@@ -80,6 +86,15 @@ class TranscriptEncryptionKeyResponse(BaseModel):
     key: str
 
 
+class TranscriptTurnResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    turn_id: str = Field(alias="turnId")
+    sequence: int
+    payload: dict[str, Any]
+    created_at: datetime = Field(alias="createdAt")
+
+
 class TranscriptArchiveResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -115,6 +130,15 @@ class TranscriptListResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     items: list[TranscriptResponse]
+
+
+class TranscriptTurnsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    turns: list[TranscriptTurnResponse]
+    current_sequence: int = Field(alias="currentSequence")
+    archived_through_sequence: int = Field(alias="archivedThroughSequence")
+    has_more: bool = Field(alias="hasMore")
 
 
 class TranscriptAppendResponse(BaseModel):

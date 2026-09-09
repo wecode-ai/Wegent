@@ -237,6 +237,7 @@ export function createDesktopScenario({
           forkedAtSequence: body.forkedAtSequence ?? null,
           currentSequence: 0,
           archives: [],
+          turns: [],
         }
         transcripts.set(transcriptId, transcript)
         fencingToken += 1
@@ -291,6 +292,9 @@ export function createDesktopScenario({
         assert.equal(object.byteLength, body.sizeBytes)
         assert.equal(createHash('sha256').update(object).digest('hex'), body.sha256)
         const existing = transcript.archives.find(archive => archive.toSequence === body.sequence)
+        const existingTurn = transcript.turns.find(turn => turn.sequence === body.sequence)
+        assert.equal(typeof body.turnId, 'string')
+        assert.equal(typeof body.summary, 'object')
         if (!existing) {
           transcript.archives.push({
             id: transcript.archives.length + 1,
@@ -302,7 +306,16 @@ export function createDesktopScenario({
             createdAt: '2026-09-08T00:00:00.000Z',
             objectId,
           })
+          transcript.turns.push({
+            turnId: body.turnId,
+            sequence: body.sequence,
+            payload: structuredClone(body.summary),
+            createdAt: '2026-09-08T00:00:00.000Z',
+          })
           transcript.currentSequence = body.sequence
+        } else {
+          assert.equal(existingTurn.turnId, body.turnId)
+          assert.deepEqual(existingTurn.payload, body.summary)
         }
         if (body.sequence === 1 && !firstCommitResponseDropped) {
           firstCommitResponseDropped = true
@@ -312,6 +325,22 @@ export function createDesktopScenario({
         json(response, 200, {
           currentSequence: transcript.currentSequence,
           appended: existing ? 0 : 1,
+        })
+        return true
+      }
+      const turnsMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/turns$/u)
+      if (request.method === 'GET' && turnsMatch) {
+        const transcript = transcripts.get(decodeURIComponent(turnsMatch[1]))
+        const after = Number(url.searchParams.get('after') ?? 0)
+        const limit = Number(url.searchParams.get('limit') ?? 100)
+        const selected = transcript.turns.filter(turn => turn.sequence > after)
+        json(response, 200, {
+          turns: selected.slice(0, limit),
+          currentSequence: transcript.currentSequence,
+          archivedThroughSequence:
+            transcript.archives.filter(archive => archive.fromSequence === 0).at(-1)?.toSequence ??
+            0,
+          hasMore: selected.length > limit,
         })
         return true
       }
@@ -396,6 +425,7 @@ export function createDesktopScenario({
         'Restart did not reconcile the already committed native snapshot'
       )
       assert.equal(activeTranscript().archives[0].format, 'codex-rollout-snapshot.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().turns[0].payload.assistantMessage, FIRST_COMPLETION)
       await captureScreenshot(control, 'transcript-sync-01-device-a-snapshot-uploaded.png', 'body')
 
       await writeFile(
@@ -417,6 +447,7 @@ export function createDesktopScenario({
         'Second turn did not upload a native rollout delta'
       )
       assert.equal(activeTranscript().archives[1].format, 'codex-rollout-delta.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().turns[1].payload.assistantMessage, SECOND_COMPLETION)
       await captureScreenshot(control, 'transcript-sync-02-device-a-delta-uploaded.png', 'body')
       const snapshotObject = objects.get(activeTranscript().archives[0].objectId)
       const deltaObject = objects.get(activeTranscript().archives[1].objectId)
@@ -516,6 +547,7 @@ export function createDesktopScenario({
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
         'Restored device did not continue and upload the next native delta'
       )
+      assert.equal(activeTranscript().turns[2].payload.assistantMessage, RESTORED_COMPLETION)
       const restoredRequest = modelRequests.find(request =>
         JSON.stringify(request).includes(RESTORED_PROMPT)
       )
@@ -582,6 +614,7 @@ export function createDesktopScenario({
       )
       const persisted = JSON.parse(await readFile(deviceBStatePath, 'utf8'))
       assert.equal(Object.hasOwn(persisted.transcripts[activeTranscriptId], 'turns'), false)
+      assert.equal(activeTranscript().turns[3].payload.assistantMessage, THIRD_COMPLETION)
       assert.ok((await readFile(deviceAStatePath, 'utf8')).includes(activeTranscriptId))
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', '[data-testid="settings-button"]')

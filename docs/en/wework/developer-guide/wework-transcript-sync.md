@@ -5,23 +5,33 @@ sidebar_position: 36
 # Wework Transcript and Preference Cloud Sync
 
 The Wework Core DSH plugin `@wegent/dsh-transcript-sync` synchronizes native
-Codex rollouts, task workspaces, and portable preferences. It no longer
-reduces a session to user/assistant text or reconstructs history through
-`thread/inject_items`.
+Codex rollouts, task workspaces, summaries using the previous schema, and
+portable preferences. Cross-device restore no longer reduces a session to
+user/assistant text or reconstructs history through `thread/inject_items`.
 
 ## Storage boundary
 
-The Backend uses two tables:
+The Backend uses three tables:
 
 | Table                        | Purpose                                                                  |
 | ---------------------------- | ------------------------------------------------------------------------ |
 | `wework_transcripts`         | Transcript identity, branch relation, sequence, state, and writer lease  |
 | `wework_transcript_archives` | Immutable native segment sequence, object key, SHA-256, size, and format |
+| `wework_transcript_turns`    | One structured finalized-turn summary using the previous data contract   |
 
 The Executor encrypts bodies with AES-256-GCM before uploading them directly to
-the private `wework-transcripts` object bucket. MySQL stores no messages,
-reasoning, tool calls, usage, rollout JSONL, or workspace files, so transcript
-size is not constrained by MySQL JSON or VARCHAR field capacity.
+the private `wework-transcripts` object bucket. The
+`wework_transcript_turns.payload` JSON retains the previous protocol's user
+messages, final assistant text, reasoning summary, completion state, and task
+ID, but not the complete tool protocol, usage, rollout JSONL, or workspace
+files. Each turn has its own row instead of appending an entire transcript into
+one field; segmented tgz objects carry full-fidelity capacity and exact restore.
+
+The archive index, turn summary, and transcript head for one sequence commit in
+one MySQL transaction. A retry is idempotent only when both object metadata and
+summary match exactly. A missing or conflicting side is rejected instead of
+leaving a state that claims synchronization while either the tgz or summary is
+absent.
 
 The Backend derives a stable per-transcript key from the server `SECRET_KEY`,
 user ID, and transcript ID and returns it only through the authenticated
@@ -43,6 +53,7 @@ Each cloud sequence maps to exactly one object:
   common cache directories so repository objects and unrelated derived files
   are not uploaded repeatedly.
 - The outbox stores only task, session, turn, sequence, and branch locators.
+- Native object snapshot pruning does not remove the corresponding structured summaries.
 - After a new full snapshot is committed, the Backend retains the previous full
   snapshot and every later segment, then deletes older object bodies and
   metadata. With a snapshot interval of 10, an active transcript normally keeps
@@ -55,8 +66,9 @@ running local task is never overwritten by restore. If both computers complete
 the same sequence concurrently, the first commit remains on the main line and
 the second becomes a deterministic branch, preserving both results.
 
-The migration drops the lossy `wework_transcript_turns` table. Data written by
-the old beta protocol is not used for restore.
+The existing `wework_transcript_turns` table remains in place with the previous
+summary fields. Restore ignores this table, and it cannot replace the native
+tgz.
 
 ## State transitions
 
@@ -68,12 +80,12 @@ stateDiagram-v2
     OfflinePending --> LeaseHeld: connection restored
     LeaseHeld --> SegmentBuilt: build and encrypt snapshot or rollout delta
     SegmentBuilt --> ObjectUploaded: PUT presigned object URL
-    ObjectUploaded --> MetadataCommitted: commit hash, size, and sequence
+    ObjectUploaded --> MetadataCommitted: atomically commit object index, summary, and head
     MetadataCommitted --> LocalReady: record rollout offset, clear outbox, release lease
 
     LeaseHeld --> Reconcile: cloud head differs from baseSequence
-    Reconcile --> LocalReady: same-sequence object hash matches
-    Reconcile --> BranchSnapshot: object missing or hash differs
+    Reconcile --> LocalReady: same-sequence object and summary both match
+    Reconcile --> BranchSnapshot: object or summary missing/mismatched
     BranchSnapshot --> LeaseHeld: create deterministic fork transcript
 
     [*] --> RestoreRequired: transcript missing or behind locally
@@ -101,7 +113,8 @@ not delete or reuse device A's state.
 The checkpoint must verify that device A uploads an encrypted snapshot and
 delta, device B restores the workspace and complete history from an empty
 state, and device B continues the conversation and uploads the next sequence.
-A restart test that shares local state is not an equivalent verification.
+Every sequence must also create its structured summary. A restart test that
+shares local state is not an equivalent verification.
 Testing on two physical computers remains a release acceptance check for real
 network, sleep, and operating-system differences, but is not a prerequisite for
 GitHub CI.
@@ -127,12 +140,13 @@ The authenticated prefix is `/api/wework-transcripts`:
 | ----------------------------------------- | ------------------------------------------------- |
 | `GET /`                                   | List transcripts and native segment metadata      |
 | `GET /{id}`                               | Read one transcript                               |
+| `GET /{id}/turns`                         | Page through structured finalized-turn summaries  |
 | `GET /{id}/encryption-key`                | Obtain the current user's transcript cipher key   |
 | `POST /{id}/lease`                        | Create a transcript or acquire its writer lease   |
 | `PUT /{id}/lease/{token}`                 | Renew a lease                                     |
 | `POST /{id}/lease/release`                | Release a lease                                   |
 | `POST /{id}/segments/prepare`             | Validate sequence and create a presigned PUT URL  |
-| `POST /{id}/segments`                     | Verify object size and commit its immutable index |
+| `POST /{id}/segments`                     | Atomically commit object index, summary, and head |
 | `POST /{id}/archive`                      | Mark a transcript archived                        |
 | `GET /{id}/archives/{archiveId}/download` | Create a short-lived signed download URL          |
 

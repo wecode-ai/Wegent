@@ -7,6 +7,7 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Column,
     DateTime,
@@ -184,6 +185,75 @@ class WeworkTranscript(Base):
         ),
         {
             "comment": "Device-independent Wework transcript synchronization state",
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+        },
+    )
+
+
+class WeworkTranscriptTurn(Base):
+    """One structured finalized transcript summary."""
+
+    __tablename__ = "wework_transcript_turns"
+
+    id = Column(
+        big_integer_id_type(),
+        primary_key=True,
+        autoincrement=True,
+        comment="Wework transcript turn primary key",
+    )
+    transcript_db_id = Column(
+        big_integer_id_type(),
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Owning transcript ID; logical reference without database foreign key",
+    )
+    sequence = Column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Monotonic turn sequence within the transcript",
+    )
+    turn_id = Column(
+        String(100),
+        nullable=False,
+        default="",
+        server_default="",
+        comment="Device-independent finalized turn identity",
+    )
+    payload = Column(
+        JSON,
+        nullable=False,
+        comment="Structured finalized-turn summary",
+    )
+    created_at = Column(
+        _DATETIME,
+        nullable=False,
+        default=utcnow,
+        server_default=_AuditTimestampDefault(),
+        comment="Creation time",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "transcript_db_id",
+            "sequence",
+            name="uniq_wework_transcript_turn_sequence",
+        ),
+        UniqueConstraint(
+            "transcript_db_id",
+            "turn_id",
+            name="uniq_wework_transcript_turn_identity",
+        ),
+        Index(
+            "idx_wework_transcript_turn_range",
+            "transcript_db_id",
+            "sequence",
+        ),
+        {
+            "comment": "Structured finalized Wework transcript summaries",
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
         },
