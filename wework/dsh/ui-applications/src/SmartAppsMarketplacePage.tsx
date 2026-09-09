@@ -69,6 +69,11 @@ import {
   notifyHarnessAppInstallationsChanged,
   type HarnessAppInstallationsChangedDetail,
 } from '@/features/harness-apps/harnessAppInstallationsChanged'
+import {
+  importSmartAppPackage,
+  installMarketplaceSmartApp,
+  prepareMarketplaceSmartApp,
+} from '@/features/harness-apps/smartAppOperations'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
@@ -78,7 +83,6 @@ import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
-import { track } from '@/telemetry/client'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
@@ -472,16 +476,11 @@ export function SmartAppsMarketplacePage({
     setBusy(`download-${item.id}`)
     setError(null)
     try {
-      const descriptor = await api.getDownload(item.id)
-      const preview = await harnessAppsApi.download(descriptor)
-      setPendingInstall({ item, preview, intent })
+      const preparation = await prepareMarketplaceSmartApp(api, item, intent)
+      setPendingInstall(preparation)
       setModelKey(localState(item)?.installation.modelKey ?? '')
       setSelected(null)
     } catch (downloadError) {
-      track('operation_failed', {
-        domain: 'smart_app',
-        operation: 'smart_app_marketplace_download',
-      })
       setError(
         smartAppErrorMessage(
           downloadError,
@@ -506,34 +505,11 @@ export function SmartAppsMarketplacePage({
     setBusy('install')
     setError(null)
     try {
-      const installation = await harnessAppsApi.install(pendingInstall.preview, installModelKey, {
-        smartAppId: pendingInstall.item.id,
-        releaseId: pendingInstall.item.latestReleaseId,
-      })
-      notifyHarnessAppInstallationsChanged({
-        type: 'installed',
-        installationId: installation.id,
-        installation,
-      })
-      if (pendingInstall.intent === 'update') {
-        track('feature_action_completed', { domain: 'smart_app', action: 'update' })
-      } else {
-        track('smart_app_installed', {
-          domain: 'smart_app',
-          install_source: 'marketplace',
-        })
-      }
+      await installMarketplaceSmartApp(pendingInstall, installModelKey)
       setPendingInstall(null)
       setModelKey('')
       await refresh()
     } catch (installError) {
-      track('operation_failed', {
-        domain: 'smart_app',
-        operation:
-          pendingInstall.intent === 'update'
-            ? 'smart_app_marketplace_update'
-            : 'smart_app_marketplace_install',
-      })
       setError(
         getErrorMessage(
           installError,
@@ -678,29 +654,9 @@ export function SmartAppsMarketplacePage({
     setImporting(true)
     setError(null)
     try {
-      const preview = await harnessAppsApi.preview(path)
-      if (!preview.valid || !preview.manifest) {
-        throw new Error(
-          preview.issues.join('；') ||
-            t('workbench.smart_apps_invalid_package', '不是有效的智能工作台安装包')
-        )
-      }
-      const installation = await harnessAppsApi.install(preview, null)
-      notifyHarnessAppInstallationsChanged({
-        type: 'installed',
-        installationId: installation.id,
-        installation,
-      })
-      track('smart_app_installed', {
-        domain: 'smart_app',
-        install_source: 'zip_import',
-      })
+      await importSmartAppPackage(path)
       await refresh()
     } catch (importError) {
-      track('operation_failed', {
-        domain: 'smart_app',
-        operation: 'smart_app_zip_import',
-      })
       setError(
         getErrorMessage(importError, t('workbench.smart_apps_import_failed', '智能工作台导入失败'))
       )
