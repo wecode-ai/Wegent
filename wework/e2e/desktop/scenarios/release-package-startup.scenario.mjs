@@ -298,13 +298,21 @@ async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
     'web',
     'assets'
   )
-  const linkType = await captureCommand('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-Command',
-    '[Console]::Out.Write((Get-Item -LiteralPath $args[0] -Force).LinkType)',
-    assets,
-  ])
+  const linkType = await captureCommand(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '[Console]::Out.Write((Get-Item -LiteralPath $env:WEWORK_E2E_PROFILE_ASSETS -Force).LinkType)',
+    ],
+    {
+      env: {
+        ...process.env,
+        WEWORK_E2E_PROFILE_ASSETS: assets,
+      },
+    }
+  )
   assert.equal(
     linkType.trim(),
     'Junction',
@@ -327,9 +335,10 @@ async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
   )
 }
 
-function captureCommand(command, args) {
+function captureCommand(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
+      ...options,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -344,7 +353,7 @@ function captureCommand(command, args) {
       stderr += String(chunk)
     })
     child.once('error', reject)
-    child.once('exit', code => {
+    child.once('close', code => {
       if (code === 0) resolvePromise(stdout)
       else reject(new Error(`${command} exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
     })
