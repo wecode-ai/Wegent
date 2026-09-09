@@ -45,7 +45,10 @@ def decide_assignment(workflow: dict, decision: IssueAssignmentDecision) -> dict
         if current.get("decision") != payload:
             raise IssueAssignmentConflict(
                 "assignment_request_reused",
-                "Assignment request ID was reused with different content",
+                "This request_id belongs to an earlier decision. Read the Issue, "
+                "generate a new unique request_id, and retry the new decision once. "
+                "Reuse a request_id only when retrying the exact same payload.",
+                next_action="read_issue",
             )
         return workflow
     _validate_assignment_state(workflow, decision)

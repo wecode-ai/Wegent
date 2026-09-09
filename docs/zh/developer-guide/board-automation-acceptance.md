@@ -530,9 +530,9 @@ sequenceDiagram
     participant C as 原协调任务
     H->>I: 回复并继续推进
     I->>I: 保存人工结果和 callback 身份
-    I->>C: 向原 Task 发送 human_continue
+    I->>C: 向原 Task 发送 human_continue，旧 request_id 仅标识已完成交办
     C->>I: 读取动态、交付物和当前状态
-    C->>I: 分派下一步或完成工单
+    C->>I: 使用全新 request_id 分派下一步或完成工单
 ```
 
-回归源码约束：AI 推进不调用流程 `start()`，不创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun` 或 `LoopItemExecution`；自定义 Runtime 地址保持不变，Wegent 的 Task ID 保持不变。普通评论仍只盖楼，不触发调度。
+回归源码约束：AI 推进不调用流程 `start()`，不创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun` 或 `LoopItemExecution`；自定义 Runtime 地址保持不变，Wegent 的 Task ID 保持不变。callback 携带的旧 assignment ID 只用于关联结果，下一次新决策必须生成新的 `request_id`；只有完全相同的请求重试才复用 ID。普通评论仍只盖楼，不触发调度。

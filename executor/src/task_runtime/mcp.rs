@@ -2424,7 +2424,7 @@ fn tools() -> Vec<Value> {
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "request_id": {"type": "string", "minLength": 1},
+                    "request_id": {"type": "string", "minLength": 1, "description": "Generate a new unique ID for every new decision. Reuse an ID only when retrying the exact same payload. After a callback, never reuse the finished assignment ID."},
                     "expected_assignment_version": {"type": "integer", "minimum": 0, "description": "Copy workflow.assignment_version from get_board_item. Do not use the Issue version or workflow.version. On assignment_version_conflict, re-read the Issue and reconsider the decision; never guess or increment versions. Other conflicts require following next_action."},
                     "action": {"enum": ["assign_role", "assign_user", "execute", "complete"]},
                     "node_id": {"type": ["string", "null"], "description": "Required only for assign_role."},
@@ -3634,6 +3634,11 @@ mod tests {
             .unwrap();
         assert!(description.contains("workflow.assignment_version"));
         assert!(description.contains("never guess or increment"));
+        let request_id_description = schema["properties"]["request_id"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(request_id_description.contains("new unique ID"));
+        assert!(request_id_description.contains("exact same payload"));
     }
 
     #[test]

@@ -439,9 +439,9 @@ sequenceDiagram
     participant C as Existing coordinator task
     H->>I: Reply and continue
     I->>I: Persist result and callback identity
-    I->>C: Send human_continue to the existing Task
+    I->>C: Send human_continue; old request_id identifies completed work only
     C->>I: Read comments, deliverables and current state
-    C->>I: Assign the next action or complete the Issue
+    C->>I: Use a fresh request_id to assign or complete the Issue
 ```
 
-Regression source requires AI advancement to avoid workflow `start()` and avoid creating another `ProjectWorkflowRun`, `ProjectAutomationRun`, or `LoopItemExecution`. Custom Runtime addressing remains unchanged and the Wegent Task ID remains unchanged. An ordinary reply still only appends to the thread and does not trigger coordination.
+Regression source requires AI advancement to avoid workflow `start()` and avoid creating another `ProjectWorkflowRun`, `ProjectAutomationRun`, or `LoopItemExecution`. Custom Runtime addressing remains unchanged and the Wegent Task ID remains unchanged. The old assignment ID carried by a callback identifies the completed result; every new decision generates a fresh `request_id`, while only an exact-payload retry reuses one. An ordinary reply still only appends to the thread and does not trigger coordination.

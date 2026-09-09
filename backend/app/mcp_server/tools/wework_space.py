@@ -560,6 +560,11 @@ def get_assignment_candidates(
 @mcp_tool(
     server="wework_space",
     param_descriptions={
+        "request_id": (
+            "Generate a new unique ID for every new decision. Reuse an ID only when "
+            "retrying the exact same payload. After a callback, never reuse the "
+            "finished assignment's ID."
+        ),
         "expected_assignment_version": (
             "Copy workflow.assignment_version from get_board_item, never the Issue "
             "version or workflow.version. On assignment_version_conflict, re-read the "

@@ -94,8 +94,11 @@ def test_human_role_resolves_member(experience):
 def test_duplicate_assignment_is_idempotent_but_reused_id_is_rejected(experience):
     result = decide_assignment(experience, assign())
     assert decide_assignment(result, assign()) is result
-    with pytest.raises(ValueError, match="reused"):
+    with pytest.raises(IssueAssignmentConflict) as caught:
         decide_assignment(result, assign(node_id="develop"))
+    assert caught.value.detail["code"] == "assignment_request_reused"
+    assert caught.value.detail["next_action"] == "read_issue"
+    assert "new unique request_id" in caught.value.detail["message"]
 
 
 def test_stale_decision_and_result_cannot_override_current_assignment(experience):

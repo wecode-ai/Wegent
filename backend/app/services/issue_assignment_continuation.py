@@ -174,7 +174,10 @@ class IssueAssignmentContinuationService:
             f"assignment_id: {assignment_id}\n\n"
             "The assigned person explicitly returned control to you in the existing "
             "Issue discussion. Continue this same conversation. Read get_board_item "
-            "and list_board_item_comments, then decide the next assignment once.\n\n"
+            "and list_board_item_comments, then decide the next assignment once. "
+            f"The previous request_id was {assignment_id}; it identifies the finished "
+            "assignment and MUST NOT be reused. Generate a new unique request_id for "
+            "your next decision.\n\n"
             f"Human reply:\n{summary}"
         )
 

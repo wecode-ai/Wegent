@@ -414,12 +414,19 @@ async def test_inactive_coordinator_cannot_assign_issue(
 
 def test_assignment_tool_publishes_version_source_and_conflict_recovery():
     info = wework_space.decide_issue_assignment._mcp_tool_info
+    request_id = next(
+        parameter
+        for parameter in info["parameters"]
+        if parameter["name"] == "request_id"
+    )
     version = next(
         parameter
         for parameter in info["parameters"]
         if parameter["name"] == "expected_assignment_version"
     )
     assert not any(parameter["name"] == "decision" for parameter in info["parameters"])
+    assert "new unique ID" in request_id["description"]
+    assert "exact same payload" in request_id["description"]
     assert "workflow.assignment_version" in version["description"]
     assert "never guess or increment" in version["description"]
     assert "next_action" in version["description"]

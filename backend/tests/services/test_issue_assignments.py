@@ -398,6 +398,8 @@ async def test_human_continue_reuses_the_original_coordinator_runtime_task(
     assert request.address.device_id == "device-1"
     assert request.address.task_id == "coordinator-task-1"
     assert "Just test it; choose the details" in request.message
+    assert "previous request_id was assignment-1" in request.message
+    assert "MUST NOT be reused" in request.message
     continuation = (
         test_db.query(ProjectChatMessage)
         .filter(
