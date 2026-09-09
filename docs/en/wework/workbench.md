@@ -151,7 +151,13 @@ Process text shown above tool calls while a task is running is also selectable r
 
 ## Review and undo changes
 
-Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the full diff, filter files, change wrapping, or copy a `git apply` command. The original execution device must be online.
+Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the complete diff in the right workspace. Normal review mode keeps every file diff rendered. Selecting a file in the tree, or opening a specific changed file from an assistant message, scrolls the content to that file instead of hiding the other files. The original execution device must be online.
+
+The review toolbar supports unified and split layouts. The file tree can be shown or hidden; showing it again preserves its filter, selected file, and scroll position. Selecting a file name in a diff heading opens the right-side **Files** tab at that file's first changed line. Selecting a line number opens the corresponding source line.
+
+For unstaged changes, use **Stage** or **Revert** on an individual file or hunk. For staged changes, use **Unstage** on an individual file or hunk. These actions affect only the selected file or hunk and leave the other changes from the turn untouched.
+
+Select a code range in the diff to add a comment. The comment returns to the current conversation composer as code context, supporting a review, feedback, AI revision, and re-review loop.
 
 Select **Undo** to reverse only that turn. Wework checks the reverse patch first and will not overwrite conflicting later changes.
 
