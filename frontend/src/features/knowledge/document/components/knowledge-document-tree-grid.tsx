@@ -32,7 +32,7 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { downloadAttachment, isImageExtension, isVideoFileName } from '@/apis/attachments'
+import { isImageExtension, isVideoFileName } from '@/apis/attachments'
 import { Badge } from '@/components/ui/badge'
 import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -41,6 +41,7 @@ import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ReanalyzeIconButton } from '@/features/knowledge/multimodal/components/ReanalyzeActions'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { getProcessingErrorMessage } from '../utils/processing-error'
 import type { SortField, SortOrder } from './FolderTree'
@@ -97,6 +98,8 @@ interface KnowledgeDocumentTreeGridProps {
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  /** Whether this knowledge base permits original document downloads. */
+  allowDownload?: boolean
 }
 
 function formatFileSize(bytes: number) {
@@ -198,9 +201,11 @@ export function KnowledgeDocumentTreeGrid({
   includedInFolderScope,
   onSelect,
   ragConfigured = true,
+  allowDownload = true,
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
+  const downloadDocument = useKnowledgeDocumentDownload()
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({})
 
@@ -266,7 +271,7 @@ export function KnowledgeDocumentTreeGrid({
     async (document: KnowledgeDocument) => {
       if (document.source_type !== 'file' || !document.attachment_id) return
       try {
-        await downloadAttachment(document.attachment_id, document.name)
+        await downloadDocument(document)
       } catch {
         toast({
           title: t('document.document.downloadFailed'),
@@ -274,7 +279,7 @@ export function KnowledgeDocumentTreeGrid({
         })
       }
     },
-    [t]
+    [downloadDocument, t]
   )
 
   const columns = useMemo<ColumnDef<KnowledgeResourceRow>[]>(
@@ -803,7 +808,8 @@ export function KnowledgeDocumentTreeGrid({
             !!document.attachment_id &&
             !!onReanalyze &&
             !showIndexingState
-          const showDownload = document.source_type === 'file' && !!document.attachment_id
+          const showDownload =
+            allowDownload && document.source_type === 'file' && !!document.attachment_id
           const moveLabel = t('document.folder.moveDocument')
           const refreshLabel =
             refreshingDocId === document.id
@@ -935,6 +941,7 @@ export function KnowledgeDocumentTreeGrid({
       selectedDocumentIds,
       selectedFolderIds,
       showSelectionColumn,
+      allowDownload,
       t,
       toggleFolder,
     ]

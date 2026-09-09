@@ -26,8 +26,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { downloadAttachment } from '@/apis/attachments'
-import { getKnowledgeVideoDownloader } from '../video-download-registry'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
@@ -35,6 +33,7 @@ import { getProcessingErrorMessage } from '../utils/processing-error'
 import { getExternalSourceInfo } from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
+import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import {
   ReanalyzeDropdownItem,
   ReanalyzeIconButton,
@@ -74,6 +73,8 @@ interface DocumentItemProps {
   showActionsColumn?: boolean
   /** Indentation for nested documents (in pixels, applied to name column only) */
   indent?: number
+  /** Whether this knowledge base permits original document downloads. */
+  allowDownload?: boolean
 }
 
 export function getDocumentTableGridTemplate(options: {
@@ -111,8 +112,10 @@ export function DocumentItem({
   showActionsColumn: showActionsColumnProp,
   indent = 0,
   onReanalyze,
+  allowDownload = true,
 }: DocumentItemProps) {
   const { t } = useTranslation()
+  const downloadDocument = useKnowledgeDocumentDownload()
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
@@ -182,39 +185,18 @@ export function DocumentItem({
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (document.source_type === 'file' && document.attachment_id) {
-      try {
-        const { isVideoFileName } = await import('@/apis/attachments')
-        if (isVideoFileName(document.name)) {
-          // Video attachments may be backed by a non-local store (e.g. a CDN
-          // proxy) in internal deployments. Ensure the KB extension loader has
-          // run so any registered video downloader is available, then use it;
-          // otherwise fall back to the standard attachment download endpoint.
-          let downloader = getKnowledgeVideoDownloader()
-          if (!downloader) {
-            const { loadKBExtensions } = await import('../extension-loader')
-            await loadKBExtensions()
-            downloader = getKnowledgeVideoDownloader()
-          }
-          if (downloader) {
-            await downloader(document.attachment_id, document.name)
-          } else {
-            await downloadAttachment(document.attachment_id, document.name)
-          }
-        } else {
-          await downloadAttachment(document.attachment_id, document.name)
-        }
-      } catch {
-        toast({
-          title: t('knowledge:document.document.downloadFailed'),
-          variant: 'destructive',
-        })
-      }
+    try {
+      await downloadDocument(document)
+    } catch {
+      toast({
+        title: t('knowledge:document.document.downloadFailed'),
+        variant: 'destructive',
+      })
     }
   }
 
   // Whether to show download button
-  const showDownload = document.source_type === 'file' && !!document.attachment_id
+  const showDownload = allowDownload && document.source_type === 'file' && !!document.attachment_id
   // Check document source type
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
