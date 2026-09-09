@@ -27,7 +27,6 @@ class ContextType(str, Enum):
     ATTACHMENT = "attachment"
     EXTERNAL_WEB_CONTENT = "external_web_content"
     KNOWLEDGE_BASE = "knowledge_base"
-    TABLE = "table"
     SELECTED_DOCUMENTS = "selected_documents"
     EXTERNAL_KNOWLEDGE = "external_knowledge"
 
@@ -111,9 +110,6 @@ class SubtaskContextBrief(BaseModel):
     folder_names: Optional[list[str]] = None
     include_subfolders: Optional[bool] = None
     scope_restricted: Optional[bool] = None
-    # Table fields (from type_data) - nested structure to match frontend expectation
-    document_id: Optional[int] = None
-    source_config: Optional[Dict[str, Any]] = None
     # External knowledge fields (from type_data)
     external_provider: Optional[str] = None
     external_mode: Optional[str] = None
@@ -316,11 +312,3 @@ class KnowledgeBaseContextCreate(BaseModel):
     knowledge_id: int
     name: str
     document_count: Optional[int] = None
-
-
-class TableContextCreate(BaseModel):
-    """Data for creating table context."""
-
-    document_id: int
-    name: str
-    url: Optional[str] = None
