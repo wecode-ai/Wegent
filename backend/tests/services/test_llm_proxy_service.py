@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -444,6 +445,92 @@ def test_build_codex_runtime_model_config_preserves_explicit_catalog(
     assert config["codex_catalog_model_id"] == "operator-selected-catalog"
 
 
+@pytest.mark.parametrize(
+    ("protocol", "api_format", "expected"),
+    [
+        ("openai-responses", None, "openai-responses"),
+        ("openai", "responses", "openai-responses"),
+        ("openai", None, "openai-chat-completions"),
+        ("openai-chat-completions", None, "openai-chat-completions"),
+        ("claude", None, "anthropic-messages"),
+        ("anthropic-messages", None, "anthropic-messages"),
+    ],
+)
+@pytest.mark.parametrize("client_protocol", [None, "openai-responses"])
+def test_cloud_runtime_protocol_comes_from_model_crd(
+    test_db, test_user, monkeypatch, protocol, api_format, expected, client_protocol
+):
+    from app.core.config import settings
+    from app.services.runtime_work_service import _runtime_model_override_values
+
+    model = _model_kind(0, protocol=protocol, api_format=api_format)
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+    options = {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": "0",
+    }
+    if client_protocol is not None:
+        options["weworkCloudModelUpstreamApiFormat"] = client_protocol
+
+    config, _, _ = _runtime_model_override_values(
+        db=test_db,
+        user_id=test_user.id,
+        runtime="codex",
+        model_id=model.name,
+        model_type="public",
+        model_options=options,
+    )
+    legacy_config = build_wework_runtime_model_config(
+        test_db, model_name=model.name, creator=test_user
+    )
+
+    for resolved in (config, legacy_config):
+        assert resolved["upstream_api_format"] == expected
+        assert resolved["model_id"] == model.name
+        assert resolved["protocol"] == "openai-responses"
+        assert resolved["api_key"] and resolved["api_key"] != "sk-test-key"
+        assert "sk-test-key" not in json.dumps(resolved)
+        assert resolved["base_url"] == (
+            "https://wegent.example/api/runtime-work/llm-responses-proxy"
+        )
+        assert resolved["default_headers"]["X-Wegent-Model-User-Id"] == "0"
+
+
+@pytest.mark.parametrize(
+    ("protocol", "api_format"),
+    [(None, None), ("claude", "responses"), ("openai-responses", "chat/completions")],
+)
+def test_cloud_runtime_rejects_invalid_protocol_before_dispatch(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    protocol: str | None,
+    api_format: str | None,
+) -> None:
+    from app.core.config import settings
+    from app.services.chat.trigger.unified import _build_cloud_gateway_model_config
+
+    model = _model_kind(0, protocol=protocol, api_format=api_format)
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+
+    with pytest.raises(HTTPException) as exc_info:
+        _build_cloud_gateway_model_config(
+            test_db,
+            model_name=model.name,
+            creator=test_user,
+            model_type="public",
+            namespace="default",
+            resource_user_id=0,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "protocol/apiFormat" in exc_info.value.detail
+
+
 def test_build_wework_runtime_model_config_preserves_explicit_cloud_catalog(
     test_db: Session,
     test_user: User,
@@ -489,7 +576,7 @@ async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
 
     request_mock = MagicMock(spec=Request)
     request_mock.body = AsyncMock(
-        return_value=b'{"model":"chat-completions-model","input":"hello"}'
+        return_value=b'{"model":"chat-completions-model","messages":[{"role":"user","content":"hello"}],"tool_choice":"auto"}'
     )
     request_mock.headers = Headers(
         {
@@ -524,6 +611,10 @@ async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
     assert str(sent_request.url) == "https://api.example.com/v1/chat/completions"
     assert sent_request.headers["Authorization"] == "Bearer sk-chat-key"
     assert b'"model": "gpt-4-turbo"' in sent_request.content
+    assert json.loads(sent_request.content)["messages"] == [
+        {"role": "user", "content": "hello"}
+    ]
+    assert json.loads(sent_request.content)["tool_choice"] == "auto"
 
 
 async def test_proxy_llm_responses_prefers_responses_format_over_openai_protocol(
@@ -662,7 +753,7 @@ async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
 
     request_mock = MagicMock(spec=Request)
     request_mock.body = AsyncMock(
-        return_value=b'{"model":"anthropic-model","input":"hello"}'
+        return_value=b'{"model":"anthropic-model","messages":[{"role":"user","content":"hello"}],"max_tokens":1024,"tool_choice":{"type":"auto"}}'
     )
     request_mock.headers = Headers(
         {
@@ -698,6 +789,12 @@ async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
     assert sent_request.headers["x-api-key"] == "sk-anthropic-key"
     assert sent_request.headers["anthropic-version"] == "2023-06-01"
     assert "Authorization" not in sent_request.headers
+    assert json.loads(sent_request.content) == {
+        "model": "gpt-4-turbo",
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 1024,
+        "tool_choice": {"type": "auto"},
+    }
 
 
 async def test_proxy_llm_responses_does_not_duplicate_anthropic_version_path(

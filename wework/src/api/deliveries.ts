@@ -119,6 +119,7 @@ export interface CloudLoopItem {
   can_edit?: boolean
   detail_loaded?: boolean
   content_revision?: number
+  has_additional_context?: boolean
   is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
@@ -388,6 +389,8 @@ export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
 export type WorkflowNodeStatus =
   | 'blocked'
   | 'ready'
+  | 'waiting'
+  | 'reacting'
   | 'queued'
   | 'running'
   | 'awaiting_approval'
@@ -424,6 +427,33 @@ export interface WorkflowNodeDefinition {
   name: string
   prompt?: string
   kind?: 'my_task' | 'automation' | 'ai' | null
+  node_type?: 'task' | 'event' | 'loop' | 'loop_start' | 'branch' | 'loop_end'
+  role?: 'start' | null
+  start_config?: {
+    trigger_type?: 'schedule' | 'event' | 'workflow'
+    event_type?: string | null
+    cron_expression?: string | null
+    source_type?: string | null
+  } | null
+  loop_id?: string | null
+  body_node_ids?: string[]
+  loop_config?: {
+    max_attempts?: number
+    timeout_seconds?: number | null
+  } | null
+  branch_conditions?: Array<{
+    source_type: 'github' | 'gitlab'
+    event_type: string
+    handler_node_ids: string[]
+    subscription_id?: string | null
+    collection_mode?: string | null
+  }>
+  event_wait?: {
+    subject_source: 'upstream_pull_request'
+    collection_mode: 'webhook' | 'poll'
+    subscription_id?: string | null
+    poll_interval_seconds?: number | null
+  } | null
   execution_mode?: 'human' | 'robot'
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
@@ -448,6 +478,19 @@ export interface ProjectWorkflowDefinition {
 
 export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   status: WorkflowNodeStatus
+  loop_state?: 'idle' | 'active' | 'completed'
+  attempts?: number
+  active_condition?: string | null
+  pending_events?: Array<{
+    event_type: string
+    event_id?: string
+    subject_id?: string
+  }>
+  loop_deadline?: string | null
+  exit_reason?: 'loop_end' | 'max_attempts' | 'timeout' | 'forced' | null
+  last_event?: Record<string, unknown> | null
+  activated_at?: string | null
+  catch_up_done?: boolean
   task_binding_id?: string | null
   task_ids?: string[]
   task_statuses?: Record<string, string>
@@ -462,6 +505,16 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   execution_id?: number | null
   automation_run_id?: string | null
   execution_error?: string | null
+  collectors?: Record<
+    string,
+    {
+      collector_id: string
+      mode?: string
+      status?: string
+      error?: string | null
+      created_at?: string
+    }
+  >
 }
 
 export interface IssueWorkflowInstance {

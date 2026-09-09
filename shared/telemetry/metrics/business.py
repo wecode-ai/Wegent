@@ -139,6 +139,22 @@ class WegentMetrics:
             unit="ms",
         )
 
+    @property
+    def http_responses(self) -> Counter:
+        """Counter for selected HTTP response status codes."""
+        return self._get_or_create_counter(
+            "wegent.http.responses",
+            "Number of HTTP responses by selected status code",
+        )
+
+    @property
+    def dispatch_waiting(self) -> UpDownCounter:
+        """UpDownCounter for task dispatches waiting to start."""
+        return self._get_or_create_up_down_counter(
+            "wegent.task.dispatch.waiting",
+            "Number of task dispatches waiting to start",
+        )
+
     # User metrics
     @property
     def user_active(self) -> Counter:
@@ -335,6 +351,28 @@ def record_task_failed(
         get_wegent_metrics().task_failed.add(1, attributes)
     except Exception as e:
         logger.debug(f"Failed to record task failed metric: {e}")
+
+
+def record_http_429_response() -> None:
+    """Record an HTTP 429 response using bounded-cardinality attributes."""
+    if not is_telemetry_enabled():
+        return
+
+    try:
+        get_wegent_metrics().http_responses.add(1, {"status_code": "429"})
+    except Exception as e:
+        logger.debug(f"Failed to record HTTP 429 response metric: {e}")
+
+
+def record_dispatch_waiting_change(delta: int) -> None:
+    """Record a change in the number of dispatches waiting to start."""
+    if not is_telemetry_enabled():
+        return
+
+    try:
+        get_wegent_metrics().dispatch_waiting.add(delta)
+    except Exception as e:
+        logger.debug(f"Failed to record dispatch waiting metric: {e}")
 
 
 def record_user_activity(is_new: bool = False) -> None:

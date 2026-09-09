@@ -88,9 +88,7 @@ def verify_api_key(
     )
 
     if not api_key_record:
-        # Log only prefix for security (e.g., wg-abc1...)
-        key_preview = api_key[:10] + "..." if len(api_key) > 10 else api_key
-        logger.warning(f"[auth_utils] API key not found or inactive: {key_preview}")
+        logger.warning("[auth_utils] API key not found or inactive")
         return None
 
     # Check if API key is expired

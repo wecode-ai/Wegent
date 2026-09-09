@@ -37,6 +37,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'click-then-macrotask': 'clickThenMacrotask',
       'context-menu': 'contextMenu',
       'seed-local-project': 'seedLocalProject',
+      'plugin-auth': 'localConnectorAuth',
       'preview-plugin-import': 'previewPluginImport',
       'import-plugin-package': 'importPluginPackage',
       'set-local-proxy-url': 'setLocalProxyUrl',

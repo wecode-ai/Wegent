@@ -21,6 +21,7 @@ import {
   emptyWorkflowExecutionConfig,
   resolveWorkflowExecutionConfig,
   workflowExecutionConfigComplete,
+  workflowNodeExecutionConfigComplete,
 } from './workflowExecutionConfig'
 
 export interface IssueExecutionConfigResult {
@@ -179,14 +180,15 @@ export function IssueExecutionConfigDialog({
     () => workflow?.nodes.filter(node => workflowNodeExecutionMode(node) === 'robot') ?? [],
     [workflow]
   )
+  const sharedWorkspaceRequired = automatedNodes.some(
+    node => !node.execution_config_override && node.workspace_policy === 'composer'
+  )
   const workflowComplete = useMemo(
     () =>
       workflow
         ? workflow.advancement_policy === 'ai'
           ? workflowExecutionConfigComplete(workflow.execution_config)
-          : automatedNodes.every(node =>
-              workflowExecutionConfigComplete(effectiveWorkflowNodeExecutionConfig(workflow, node))
-            )
+          : automatedNodes.every(node => workflowNodeExecutionConfigComplete(workflow, node))
         : true,
     [automatedNodes, workflow]
   )
@@ -255,6 +257,7 @@ export function IssueExecutionConfigDialog({
               localDeviceIds={localDeviceIds}
               models={models}
               localProjects={localProjects}
+              requireBoundWorkspace={sharedWorkspaceRequired}
               testId="issue-execution-config-default"
             />
             {automatedNodes.map(node => (
@@ -318,6 +321,7 @@ export function IssueExecutionConfigDialog({
                       localDeviceIds={localDeviceIds}
                       models={models}
                       localProjects={localProjects}
+                      requireBoundWorkspace={node.workspace_policy === 'composer'}
                       testId={`issue-execution-config-node-${node.id}`}
                     />
                   </div>

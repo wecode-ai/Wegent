@@ -969,8 +969,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
     const blocks = processingBlocks(assistantItems)
     const firstItem = assistantItems[0]
     const createdAt =
-      textItems[0]?.createdAt ??
-      (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : new Date().toISOString())
+      textItems[0]?.createdAt ?? (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : '')
     messages.push({
       id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? 'pending'}:${
         firstItem?.id ?? 'assistant'

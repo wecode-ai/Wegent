@@ -852,16 +852,20 @@ async def materialize_runtime_task_endpoint(
 
 
 @router.post("/llm-responses-proxy/responses")
+@router.post("/llm-responses-proxy/chat/completions")
+@router.post("/llm-responses-proxy/messages")
+@trace_async("runtime_work.llm_proxy", "runtime_work.api")
 async def llm_responses_proxy_endpoint(
     fastapi_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Proxy an LLM responses request to the real provider without exposing api_key.
+    """Proxy a native LLM request without exposing provider credentials.
 
     The Wework local executor authenticates with the user's backend token. The
-    backend resolves the selected Model CRD, attaches its provider credentials,
-    and forwards the request without exposing those credentials to Wework.
+    Runtime converts requests and responses using the Model CRD wire protocol.
+    The backend resolves the same protocol, attaches provider credentials, and
+    forwards the native request and response without further conversion.
     """
     from app.services.llm_proxy_service import proxy_llm_responses
 

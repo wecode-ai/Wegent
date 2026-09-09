@@ -33,6 +33,7 @@ export function WorkflowExecutionConfigFields({
   localDeviceIds,
   models,
   localProjects,
+  requireBoundWorkspace = false,
   testId,
 }: {
   value: WorkflowExecutionConfig
@@ -43,6 +44,7 @@ export function WorkflowExecutionConfigFields({
   localDeviceIds: string[]
   models: UnifiedModel[]
   localProjects: ProjectWithTasks[]
+  requireBoundWorkspace?: boolean
   testId: string
 }) {
   const { t } = useTranslation('common')
@@ -51,7 +53,9 @@ export function WorkflowExecutionConfigFields({
       ? String(value.workspace_binding.projectId)
       : 'standalone'
     : ''
-  const complete = workflowExecutionConfigComplete(value)
+  const complete =
+    workflowExecutionConfigComplete(value) &&
+    !(requireBoundWorkspace && value.workspace_binding?.type === 'standalone')
   const selectedModelKey = value.model ? `${value.model_type ?? ''}:${value.model}` : ''
   const selectedDeviceId = value.execution_device_id?.trim() ?? ''
   const selectedDevice = selectedDeviceId

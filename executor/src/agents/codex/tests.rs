@@ -363,6 +363,9 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
     assert!(config
         .config_overrides
         .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
+    assert!(config
+        .config_overrides
+        .contains(&CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -917,6 +920,9 @@ fn codex_launch_config_enables_streaming_patch_updates() {
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -3121,6 +3127,26 @@ fn codex_permissions_approval_returns_requested_profile_and_scope() {
                 "scope": "turn",
                 "strictAutoReview": false
             })
+        );
+    }
+}
+
+#[test]
+fn codex_thread_launch_enables_user_input_in_default_mode() {
+    let request = ExecutionRequest::default();
+    let launch_config = CodexLaunchConfig {
+        config_overrides: codex_runtime_default_config_overrides(),
+        ..CodexLaunchConfig::default()
+    };
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+    ] {
+        assert_eq!(
+            params["config"]["features.default_mode_request_user_input"],
+            true
         );
     }
 }
