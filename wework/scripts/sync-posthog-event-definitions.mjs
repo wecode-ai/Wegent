@@ -40,6 +40,48 @@ export async function syncEventDefinitions({
   return { created, updated }
 }
 
+export async function syncPropertyDefinitions({
+  apiKey,
+  catalog,
+  dryRun = false,
+  fetchImpl = fetch,
+  host,
+  log = console.info,
+  projectId,
+}) {
+  const definitionsUrl = `${host.replace(/\/$/, '')}/api/projects/${projectId}/property_definitions/`
+  const existing = await listAll(`${definitionsUrl}?type=event`, apiKey, fetchImpl)
+  const definitions = new Map(existing.map(definition => [definition.name, definition]))
+  let pending = 0
+  let updated = 0
+
+  for (const property of publicProperties(catalog)) {
+    const current = definitions.get(property.name)
+    if (!current) {
+      pending += 1
+      log(`property pending first event: ${property.name}`)
+      continue
+    }
+    const payload = propertyPayload(catalog, property)
+    if (samePropertyDefinition(current, payload)) continue
+    updated += 1
+    if (!dryRun) {
+      await request(`${definitionsUrl}${encodeURIComponent(current.id)}/`, apiKey, fetchImpl, {
+        body: payload,
+        method: 'PATCH',
+      })
+    }
+  }
+
+  return { pending, updated }
+}
+
+export async function syncTelemetryDefinitions(options) {
+  const events = await syncEventDefinitions(options)
+  const properties = await syncPropertyDefinitions(options)
+  return { events, properties }
+}
+
 function eventPayload(catalog, event) {
   return {
     default_columns: event.properties.map(property => property.name),
@@ -55,6 +97,40 @@ function sameDefinition(current, expected) {
     current.description === expected.description &&
     current.verified === expected.verified &&
     sameValues(current.default_columns, expected.default_columns) &&
+    sameValues(current.tags, expected.tags)
+  )
+}
+
+function publicProperties(catalog) {
+  const properties = new Map()
+  for (const event of catalog.events) {
+    for (const property of event.properties) {
+      properties.set(property.name, property)
+    }
+  }
+  return [...properties.values()]
+}
+
+function propertyPayload(catalog, property) {
+  return {
+    description: `Public Wework ${catalog.domain} telemetry property: ${property.name}`,
+    property_type: postHogPropertyType(property.type),
+    tags: ['wework', catalog.domain, `schema-v${catalog.schemaVersion}`],
+    verified: true,
+  }
+}
+
+function postHogPropertyType(type) {
+  if (type === 'number') return 'Numeric'
+  if (type === 'boolean') return 'Boolean'
+  return 'String'
+}
+
+function samePropertyDefinition(current, expected) {
+  return (
+    current.description === expected.description &&
+    current.property_type === expected.property_type &&
+    current.verified === expected.verified &&
     sameValues(current.tags, expected.tags)
   )
 }
@@ -103,13 +179,13 @@ async function main() {
     if (!dryRun)
       throw new Error('POSTHOG_HOST, POSTHOG_PROJECT_ID, and POSTHOG_PERSONAL_API_KEY are required')
     console.info(
-      `would sync ${catalog.events.length} telemetry event definitions (credentials unavailable)`
+      `would sync ${catalog.events.length} telemetry event definitions and ${publicProperties(catalog).length} public property definitions (credentials unavailable)`
     )
     return
   }
-  const result = await syncEventDefinitions({ apiKey, catalog, dryRun, host, projectId })
+  const result = await syncTelemetryDefinitions({ apiKey, catalog, dryRun, host, projectId })
   console.info(
-    `${dryRun ? 'would sync' : 'synced'} ${result.created} created and ${result.updated} updated event definitions`
+    `${dryRun ? 'would sync' : 'synced'} ${result.events.created} created and ${result.events.updated} updated event definitions; ${result.properties.updated} updated and ${result.properties.pending} pending property definitions`
   )
 }
 

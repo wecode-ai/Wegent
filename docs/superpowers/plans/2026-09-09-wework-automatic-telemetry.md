@@ -27,7 +27,7 @@ supersedes:
 | 5 | 已完成 | Telemetry Agent 自动观察 Smart App route 和 Operation Bus，旧通用 route 事件不再双写。 |
 | 6 | 已完成 | 市场安装、更新和 ZIP 导入已迁至统一服务边界。 |
 | 7 | 已完成 | UI 直接埋点被 lint 阻止；旧 Smart App 事件类型已删除。 |
-| 8 | 部分完成 | 公共 catalog 可幂等同步 PostHog Event Definitions；工作流仅在主分支显式启用后读取密钥。Property Definitions 的后续更新仍待实现。 |
+| 8 | 已完成 | 公共 catalog 可幂等同步 PostHog Event/Property Definitions；属性只更新已由真实事件创建的公共定义，工作流仅在主分支显式启用后读取密钥。 |
 | 9–10 | 进行中 | 已补 Electron telemetry assertions；真实 checkpoint 在 Electron 下载 GitHub 构件时网络超时，待网络恢复后重跑。 |
 
 实施中做了两项澄清，优先级高于早期步骤中的泛化示例：
@@ -1265,7 +1265,7 @@ git commit -m "test(wework): enforce telemetry boundaries"
 - Modify: `wework/package.json`
 - Create: `.github/workflows/wework-telemetry-catalog.yml`
 
-- [ ] **Step 1: 写 fake fetch 同步失败测试**
+- [x] **Step 1: 写 fake fetch 同步失败测试**
 
 ```js
 test("creates missing event definitions and updates existing descriptions", async () => {
@@ -1291,7 +1291,7 @@ test("creates missing event definitions and updates existing descriptions", asyn
 
 增加 dry-run 不写、401 失败、分页、重复运行不更新、属性尚未出现时跳过并报告的测试。
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 ```bash
 node --test wework/scripts/sync-posthog-event-definitions.test.mjs
@@ -1299,7 +1299,7 @@ node --test wework/scripts/sync-posthog-event-definitions.test.mjs
 
 Expected: FAIL，模块不存在。
 
-- [ ] **Step 3: 实现 Event Definition 同步**
+- [x] **Step 3: 实现 Event Definition 同步**
 
 脚本读取 `telemetry/catalog/public-events.json`，通过以下端点列出、创建和更新：
 
@@ -1327,7 +1327,7 @@ API host，而不是事件 ingest host；Personal API Key 至少具有
 `event_definition:read`、`event_definition:write`、`property_definition:read` 和
 `property_definition:write` scopes。
 
-- [ ] **Step 4: 实现 Property Definition 更新**
+- [x] **Step 4: 实现 Property Definition 更新**
 
 通过：
 
@@ -1340,7 +1340,7 @@ PATCH /api/projects/{projectId}/property_definitions/{definitionId}/
 `property pending first event: <name>`，不视为失败。更新字段为 description、tags、
 property_type 和 verified。
 
-- [ ] **Step 5: 增加 scripts 和 GitHub workflow**
+- [x] **Step 5: 增加 scripts 和 GitHub workflow**
 
 ```json
 {
@@ -1357,7 +1357,7 @@ Workflow 行为固定为：
 - 不把 secrets 传给 pull request job；
 - workflow 日志不输出 Authorization header 或 API key。
 
-- [ ] **Step 6: 本地验证**
+- [x] **Step 6: 本地验证**
 
 ```bash
 node --test wework/scripts/sync-posthog-event-definitions.test.mjs
@@ -1365,9 +1365,9 @@ pnpm --filter wework telemetry:catalog:check
 pnpm --filter wework telemetry:posthog:dry-run
 ```
 
-Expected: 测试和 catalog check 通过；dry-run 列出九个事件且不发送写请求。
+Expected: 测试和 catalog check 通过；无凭据 dry-run 报告九个公共事件和两个公共属性，且不发送写请求。
 
-- [ ] **Step 7: 提交 catalog CI**
+- [x] **Step 7: 提交 catalog CI**
 
 ```bash
 git add wework/scripts/sync-posthog-event-definitions.mjs wework/scripts/sync-posthog-event-definitions.test.mjs wework/package.json .github/workflows/wework-telemetry-catalog.yml
