@@ -1,4 +1,5 @@
 import './host/process-output-bootstrap.js'
+import { SchemeQueue } from './host/scheme-queue.js'
 
 import {
   app,
@@ -31,6 +32,8 @@ import { promisify } from 'node:util'
 import {
   captureWebContentsDataUrl,
   createElectronCapabilityRouter,
+  WEWORK_WORKBENCH_PRINCIPAL,
+  createWorkbenchCapabilityRouter,
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
 import { DesktopHostEventBroker } from './host/desktop-host-events.js'
@@ -39,7 +42,10 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
-import { normalizeWorkbenchMode } from './runtime/workbench-mode.js'
+import {
+  initializeWorkbenchModePreference,
+  normalizeWorkbenchMode,
+} from './runtime/workbench-mode.js'
 import { RendererStorageStore } from './host/renderer-storage-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
@@ -65,7 +71,7 @@ import {
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
-import { createTrayIcon } from './host/tray-icon.js'
+import { createTrayBootstrapIcon, createTrayIcon } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
@@ -239,6 +245,25 @@ const pluginDevelopmentChildRuntime =
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
+const pendingSchemes = new SchemeQueue()
+process.argv.forEach(value => pendingSchemes.enqueue(value))
+
+function queueScheme(url: string): void {
+  if (!pendingSchemes.enqueue(url)) return
+  desktopHostEvents.publish('wework-scheme-requested', {})
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  queueScheme(url)
+  if (mainWindow?.isMinimized()) mainWindow.restore()
+  mainWindow?.show()
+  mainWindow?.focus()
+})
+
+if (app.isPackaged && !process.env.WEWORK_E2E_CONTROL_URL) {
+  app.setAsDefaultProtocolClient('wework')
+}
 const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspaceOpenRequest
   ? [startupWorkspaceOpenRequest]
   : []
@@ -302,7 +327,8 @@ function focusStartupSplashIfActive(): boolean {
   return true
 }
 
-app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+  argv.filter(value => value.startsWith('wework://')).forEach(queueScheme)
   const instanceData =
     additionalData && typeof additionalData === 'object'
       ? (additionalData as Record<string, unknown>)
@@ -351,12 +377,21 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
   installContextMenu(contents, 'app')
   contents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('wework://')) {
+      queueScheme(url)
+      return { action: 'deny' }
+    }
     const target = new URL(url)
     if (target.origin === allowedOrigin) return { action: 'allow' }
     void shell.openExternal(url)
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => {
+    if (url.startsWith('wework://')) {
+      event.preventDefault()
+      queueScheme(url)
+      return
+    }
     if (new URL(url).origin === allowedOrigin) return
     event.preventDefault()
     void shell.openExternal(url)
@@ -1057,7 +1092,7 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
+    createTray: () => new Tray(createTrayBootstrapIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -1240,6 +1275,10 @@ function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
+  await initializeWorkbenchModePreference(requiredPreferences(), {
+    environment: process.env,
+    homeDirectory: app.getPath('home'),
+  })
   const environment = await desktopEnvironment()
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
@@ -1328,6 +1367,10 @@ async function configureDesktopRuntime(): Promise<void> {
     logDirectory: app.getPath('logs'),
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
+    createWorkbenchHostPipe: tabId => {
+      const pipe = new HostPipeServer(createWorkbenchCapabilityRouter(embeddedBrowser, tabId))
+      return { hostPipe: pipe, principal: WEWORK_WORKBENCH_PRINCIPAL }
+    },
     onExecutorEvent: (event, payload) => {
       systemSleep.handleExecutorEvent(event, payload)
       trayNativeStatus?.handleExecutorEvent(event)
@@ -1380,6 +1423,8 @@ async function configureDesktopRuntime(): Promise<void> {
             }),
           secureStorage,
           takePendingWorkspaceOpenRequests,
+          pendingSchemes,
+          openScheme: queueScheme,
           updatePreferences: updateDesktopPreferences,
           weworkSyncRequest: async request => {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)

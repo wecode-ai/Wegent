@@ -1285,7 +1285,6 @@ async def _process_contexts(
         if prepare_provider_native_knowledge
         else ctx.kb.enhanced_system_prompt
     )
-    request.table_contexts = ctx.table_contexts
     request.kb_meta_prompt = (
         "" if prepare_provider_native_knowledge else ctx.kb.kb_meta_prompt
     )
@@ -1317,11 +1316,10 @@ async def _process_contexts(
             request.document_ids = ctx.kb.document_ids
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
-        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, "
+        "user_subtask_id=%d, knowledge_base_ids=%s, "
         "attachments=%d, inline_attachment_content=%s",
         user_subtask_id,
         request.knowledge_base_ids,
-        len(ctx.table_contexts),
         len(request.attachments),
         inline_attachment_content,
     )

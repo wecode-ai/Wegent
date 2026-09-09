@@ -23,6 +23,7 @@ const managedComponentResources = [
 
 module.exports = {
   appId: identity.identifier,
+  protocols: [{ name: 'Wework', schemes: ['wework'] }],
   productName: identity.productName,
   executableName: identity.executableName,
   compression: onlineUpdateBuild ? 'store' : 'normal',
@@ -84,7 +85,6 @@ module.exports = {
     allowToChangeInstallationDirectory: false,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    include: 'scripts/installer.nsh',
   },
   linux: {
     artifactName: `${artifactPrefix}_\${version}_linux_\${arch}.\${ext}`,

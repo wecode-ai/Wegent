@@ -114,13 +114,18 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     collapseComposerWhenIdle,
   }: {
     testId: string
-    initialAddress?: { deviceId: string; taskId: string } | null
+    initialAddress?: {
+      deviceId: string
+      taskId: string
+      runtimeHandle?: { modelSelection?: { modelName?: string } }
+    } | null
     collapseComposerWhenIdle?: boolean
   }) => (
     <div
       data-testid={testId}
       data-device-id={initialAddress?.deviceId}
       data-task-id={initialAddress?.taskId}
+      data-model-name={initialAddress?.runtimeHandle?.modelSelection?.modelName}
       data-collapse-composer={String(collapseComposerWhenIdle)}
     >
       <div
@@ -683,6 +688,46 @@ describe('CloudTodoWorkspace', () => {
     localStorage.clear()
   })
 
+  it('opens the requested Issue after a parent rerender cancels the pending focus effect', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id) }],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: [{ ...item, cloud_project_id: String(project.id) }],
+    })
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: workbenchServices,
+      embedded: true,
+      activeProjectRef: { projectStore: 'backend' as const, projectId: String(project.id) },
+    }
+    const view = render(<CloudTodoWorkspace {...props} />)
+    await screen.findByTestId(`cloud-todo-card-${item.id}`)
+
+    const pending: VoidFunction[] = []
+    const microtasks = vi.spyOn(globalThis, 'queueMicrotask').mockImplementation(callback => {
+      pending.push(callback)
+    })
+    const staleHandled = vi.fn()
+    const handled = vi.fn()
+    view.rerender(
+      <CloudTodoWorkspace {...props} focusedItemId={item.id} onFocusedItemHandled={staleHandled} />
+    )
+    view.rerender(
+      <CloudTodoWorkspace {...props} focusedItemId={item.id} onFocusedItemHandled={handled} />
+    )
+    microtasks.mockRestore()
+    await act(async () => {
+      pending.forEach(callback => callback())
+    })
+
+    expect(staleHandled).not.toHaveBeenCalled()
+    expect(handled).toHaveBeenCalledTimes(1)
+    expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(item.title)
+  })
+
   it('renders only the board content shell when embedded in the workbench', async () => {
     const workbenchServices = services()
     vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
@@ -999,6 +1044,11 @@ describe('CloudTodoWorkspace', () => {
         task_id: 'runtime-2',
         task_title: '验证完整工作流',
         backend_task_id: null,
+        modelSelection: {
+          modelName: 'gpt-5.6-codex',
+          modelType: 'public',
+          options: { reasoning: 'high' },
+        },
         linked_at: '2026-08-16T00:01:00Z',
       },
     ])
@@ -1129,6 +1179,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-collapse-composer',
       'true'
+    )
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-model-name',
+      'gpt-5.6-codex'
     )
     expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
       'max-h-[min(68vh,42rem)]',
@@ -1630,7 +1684,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('私信 AI')
+    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('问AI')
     await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
     expect(requestCatalogs).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('project-space-chat-sidebar')).toHaveAttribute(
@@ -4412,6 +4466,15 @@ describe('CloudTodoWorkspace', () => {
       status: 'completed' as const,
       completed_at: '2026-08-20T00:00:00Z',
     }
+    const secondCompletedIssue = {
+      ...item,
+      cloud_project_id: defaultProject.id,
+      id: 'WEG-5',
+      sequence_number: 5,
+      title: 'Second completed task Issue',
+      status: 'completed' as const,
+      completed_at: '2026-08-22T00:00:00Z',
+    }
     const noResponseIssue = {
       ...item,
       cloud_project_id: defaultProject.id,
@@ -4424,7 +4487,7 @@ describe('CloudTodoWorkspace', () => {
       items: [defaultProject, project],
     })
     workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
-      items: [stoppedIssue, completedIssue, archivedIssue, noResponseIssue],
+      items: [stoppedIssue, completedIssue, archivedIssue, noResponseIssue, secondCompletedIssue],
       task_bindings: [
         {
           id: 1,
@@ -4466,6 +4529,16 @@ describe('CloudTodoWorkspace', () => {
           backend_task_id: null,
           linked_at: '2026-08-21T00:00:00Z',
         },
+        {
+          id: 5,
+          loop_item_id: secondCompletedIssue.id,
+          task_user_id: 1,
+          device_id: 'local-device',
+          task_id: 'second-completed-task',
+          task_title: 'Second completed task',
+          backend_task_id: null,
+          linked_at: '2026-08-22T00:00:00Z',
+        },
       ],
       members: [],
       agents: [],
@@ -4497,7 +4570,17 @@ describe('CloudTodoWorkspace', () => {
       getRuntimeTranscript,
     } as WorkbenchServices['runtimeWorkApi']
     const onOpenRuntimeTask = vi.fn()
-    const onArchiveRuntimeTask = vi.fn(async () => ({ status: 'archived' as const }))
+    const onArchiveRuntimeTasks = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'failed' as const })
+      .mockResolvedValue({ status: 'archived' as const })
+    let secondItemArchiveFailed = false
+    vi.mocked(workbenchServices.deliveryApi!.archiveLoopItem).mockImplementation(async itemId => {
+      if (itemId === 'WEG-5' && !secondItemArchiveFailed) {
+        secondItemArchiveFailed = true
+        throw new Error('archive failed')
+      }
+    })
 
     render(
       <CloudTodoWorkspace
@@ -4554,6 +4637,18 @@ describe('CloudTodoWorkspace', () => {
                         loopItemId: noResponseIssue.id,
                       },
                     },
+                    {
+                      taskId: 'second-completed-task',
+                      workspacePath: '/tmp/project-a',
+                      title: 'Second completed task',
+                      runtime: 'codex',
+                      running: false,
+                      completedAt: 1_700_000_001,
+                      runtimeHandle: {
+                        cloudProjectId: defaultProject.id,
+                        loopItemId: secondCompletedIssue.id,
+                      },
+                    },
                   ],
                 },
               ],
@@ -4566,7 +4661,7 @@ describe('CloudTodoWorkspace', () => {
         embedded
         activeProjectRef={{ projectStore: 'backend', projectId: 'default-work-items' }}
         onOpenRuntimeTask={onOpenRuntimeTask}
-        onArchiveRuntimeTask={onArchiveRuntimeTask}
+        onArchiveRuntimeTasks={onArchiveRuntimeTasks}
       />
     )
 
@@ -4597,6 +4692,9 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
       'Completed task Issue'
     )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Second completed task Issue'
+    )
     await waitFor(() =>
       expect(screen.getByTestId('cloud-todo-column-completed')).not.toHaveTextContent(
         'Archived task Issue'
@@ -4609,18 +4707,67 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('cloud-my-tasks-archive-completed'))
     expect(screen.getByText('归档已完成任务？')).toBeInTheDocument()
+    expect(screen.getByText(/归档 2 个已完成任务/)).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-my-tasks-archive-completed-confirm'))
 
     await waitFor(() =>
-      expect(onArchiveRuntimeTask).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'local-device', taskId: 'completed-task' }),
-        undefined
+      expect(onArchiveRuntimeTasks).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ deviceId: 'local-device', taskId: 'completed-task' }),
+          expect.objectContaining({
+            deviceId: 'local-device',
+            taskId: 'second-completed-task',
+          }),
+        ])
       )
     )
+    expect(workbenchServices.deliveryApi!.archiveLoopItem).not.toHaveBeenCalled()
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Completed task Issue'
+    )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Second completed task Issue'
+    )
+    expect(screen.getByText('归档已完成任务？')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-my-tasks-archive-completed-confirm'))
+
+    await waitFor(() => expect(onArchiveRuntimeTasks).toHaveBeenCalledTimes(2))
+    expect(onArchiveRuntimeTasks).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ deviceId: 'local-device', taskId: 'completed-task' }),
+        expect.objectContaining({
+          deviceId: 'local-device',
+          taskId: 'second-completed-task',
+        }),
+      ])
+    )
     expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-2')
+    expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-5')
     expect(screen.getByTestId('cloud-todo-column-completed')).not.toHaveTextContent(
       'Completed task Issue'
     )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Second completed task Issue'
+    )
+    expect(screen.getByText('归档已完成任务？')).toBeInTheDocument()
+    expect(screen.getByText(/归档 1 个已完成任务/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-my-tasks-archive-completed-confirm'))
+
+    await waitFor(() => expect(onArchiveRuntimeTasks).toHaveBeenCalledTimes(3))
+    expect(onArchiveRuntimeTasks).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        deviceId: 'local-device',
+        taskId: 'second-completed-task',
+      }),
+    ])
+    expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledTimes(3)
+    expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenLastCalledWith('WEG-5')
+    expect(screen.getByTestId('cloud-todo-column-completed')).not.toHaveTextContent(
+      'Second completed task Issue'
+    )
+    expect(screen.queryByText('归档已完成任务？')).not.toBeInTheDocument()
   })
 
   it('uses pointer dragging for TODO cards without starting a native system drag', async () => {

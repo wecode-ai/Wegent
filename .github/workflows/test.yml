@@ -89,6 +89,39 @@ jobs:
           flags: backend
           name: backend-coverage
 
+  test-plugin-auth-mysql:
+    name: Test Plugin Auth MySQL Transactions
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: plugin_auth_test
+          MYSQL_DATABASE: plugin_auth_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -pplugin_auth_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --dev
+      - name: Verify real InnoDB enrollment and transfer races
+        working-directory: backend
+        env:
+          PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py -n 0
+
   test-executor:
     name: Test Executor
     needs: changes
@@ -502,6 +535,7 @@ jobs:
       [
         changes,
         test-backend,
+        test-plugin-auth-mysql,
         test-executor,
         test-executor-local-auth-platforms,
         test-executor-manager,
@@ -530,6 +564,7 @@ jobs:
 
           [[ "${{ needs.changes.result }}" == "success" ]]
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
+          assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor.result }}" "Executor tests"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor-local-auth-platforms.result }}" "Executor local auth platform tests"
           assert_result "${{ needs.changes.outputs.executor_manager }}" "${{ needs.test-executor-manager.result }}" "Executor Manager tests"

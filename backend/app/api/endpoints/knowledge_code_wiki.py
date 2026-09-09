@@ -40,6 +40,8 @@ from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import (
     CodeWikiCreate,
     CodeWikiExisting,
+    CodeWikiGenerationStrategyCapabilities,
+    CodeWikiGenerationStrategyOption,
     CodeWikiListItem,
     CodeWikiListResponse,
     CodeWikiPageNode,
@@ -65,6 +67,12 @@ from app.services.knowledge.code_wiki.generation import (
     GenerationWikiNotFound,
     current_run_state,
     run_history,
+)
+from app.services.knowledge.code_wiki.generation_policy import (
+    ready_selectable_strategies,
+)
+from app.services.knowledge.code_wiki.generation_strategy import (
+    configured_policy,
 )
 from app.services.knowledge.code_wiki.navigation import page_tree
 from app.services.knowledge.code_wiki.publisher import (
@@ -97,6 +105,52 @@ from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get(
+    "/code-wikis/generation-strategies",
+    response_model=CodeWikiGenerationStrategyCapabilities,
+)
+@trace_sync("get_code_wiki_generation_strategies", "knowledge.api")
+def get_code_wiki_generation_strategies(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> CodeWikiGenerationStrategyCapabilities:
+    """Choices enabled by deployment policy and runnable by this caller.
+
+    Team names are intentionally not returned. They are deployment wiring, while this
+    small interface is all a create or settings form needs to render a safe choice.
+    """
+    strategies, readiness = ready_selectable_strategies(db, user=current_user)
+    options = []
+    for strategy in strategies:
+        reason = readiness[strategy.strategy_id]
+        if reason:
+            logger.warning(
+                "[code_wiki] hiding unavailable generation strategy %s for user %s: %s",
+                strategy.strategy_id,
+                current_user.id,
+                reason,
+            )
+            continue
+        options.append(
+            CodeWikiGenerationStrategyOption(
+                id=strategy.strategy_id,
+                revision=strategy.revision,
+                display_name=strategy.definition.display_name,
+                description=strategy.definition.description,
+            )
+        )
+
+    default_strategy = configured_policy(db).default_strategy
+    return CodeWikiGenerationStrategyCapabilities(
+        default_strategy=(
+            default_strategy
+            if any(option.id == default_strategy for option in options)
+            else None
+        ),
+        strategies=options,
+    )
 
 
 @router.post("/code-wikis/resolve", response_model=CodeWikiResolveResponse)
@@ -285,11 +339,13 @@ def create_code_wiki(
             namespace=data.namespace or CODE_WIKI_NAMESPACE,
             language=data.language,
             show_generation_task=data.show_generation_task,
+            generation_strategy=data.generation_strategy,
             # A code wiki is an ordinary knowledge base with a repository attached,
             # so every one of these applies to it. Listing only the ones it "needs"
             # is what silently dropped the summary settings and left the retrieval
             # config to be auto-resolved rather than taken from the form.
             direct_access_requirement=data.direct_access_requirement,
+            allow_document_download=data.allow_document_download,
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
             execution_model_ref=data.execution_model_ref,
@@ -546,6 +602,8 @@ def get_code_wiki_history(
                 published=record.published,
                 task_id=record.task_id,
                 task_status=record.task_status,
+                strategy_id=record.strategy_id,
+                strategy_revision=record.strategy_revision,
             )
             for record in run_history(db, knowledge_base)
         ]
@@ -666,4 +724,6 @@ def start_code_wiki_run(
         reason=started.reason,
         generation_id=started.generation.id if started.generation else 0,
         task_id=started.task_id,
+        strategy_id=started.strategy_id,
+        strategy_revision=started.strategy_revision,
     )

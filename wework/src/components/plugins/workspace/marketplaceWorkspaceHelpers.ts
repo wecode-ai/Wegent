@@ -1,4 +1,5 @@
 import { createHttpClient } from '@/api/http'
+import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
 import {
   peekLocalCodexPluginsReadState,
   type LocalCodexMarketplace,
@@ -326,7 +327,7 @@ export function withMarketplaceDetailComponents(
 export function requiredConnectionNames(item: PluginMarketplaceItem): string[] {
   const pluginName = item.displayName || item.name
   return (item.components.connectors ?? [])
-    .filter(connector => connector.authPolicy === 'on_install')
+    .filter(requiresInstallConnectorAuth)
     .map(connector => connectorDisplayName(connector.slug, { pluginName }))
 }
 

@@ -1,0 +1,91 @@
+name: Plugin Auth SDK
+
+on:
+  pull_request:
+    paths:
+      - "sdk/plugin-auth/**"
+      - "sdk/plugin-auth-go/**"
+      - "sdk/dws-auth/**"
+      - "sdk/plugin-build/**"
+      - "shared/plugin_build.py"
+      - "shared/tests/test_plugin_build.py"
+      - "executor/src/plugin_account_auth/**"
+      - "executor/src/process/mod.rs"
+      - "executor/tests/plugin_account_auth_contract.rs"
+      - ".github/workflows/plugin-auth-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/plugin-auth/**"
+      - "sdk/plugin-auth-go/**"
+      - "sdk/dws-auth/**"
+      - "sdk/plugin-build/**"
+      - "shared/plugin_build.py"
+      - "shared/tests/test_plugin_build.py"
+      - "executor/src/plugin_account_auth/**"
+      - "executor/src/process/mod.rs"
+      - "executor/tests/plugin_account_auth_contract.rs"
+      - ".github/workflows/plugin-auth-sdk.yml"
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  dws-native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache: false
+      - name: Test shared Go credential transport
+        working-directory: sdk/plugin-auth-go
+        run: go test -race ./...
+      - name: Build and test the pinned DWS native companion
+        run: uv run --no-project python sdk/dws-auth/build.py --output executor/target/dws-auth/dws-account-auth --test
+      - name: Test declared plugin builds
+        run: uv run --no-project python -m unittest discover -s shared/tests -p test_plugin_build.py -v
+      - name: Test DWS package assembly and artifact checks
+        run: uv run --no-project python -m unittest discover -s sdk/dws-auth/tests -v
+
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.12"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Test SDK, scaffolds, and isolated plugin processes
+        run: uv run --no-project python -m unittest discover -s sdk/plugin-auth/tests -v
+
+  native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: executor
+      - name: Test native transport, OAuth lifecycle, and process cleanup
+        run: uv run --no-project cargo test --manifest-path executor/Cargo.toml --test plugin_account_auth_contract

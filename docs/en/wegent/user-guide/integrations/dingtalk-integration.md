@@ -147,7 +147,9 @@ Users can chat with the bot directly:
 
 DingTalk AI Cards provide a rich streaming response experience:
 
-- Display content being generated in real-time
+- Display masked, bounded progress summaries while a task is running
+- Replace progress with the final answer when execution completes
+- Keep tool arguments, tool output, and private model reasoning out of the card
 - Support Markdown formatting
 - Code block syntax highlighting
 - Collapsible long content

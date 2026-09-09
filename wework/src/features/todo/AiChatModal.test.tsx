@@ -445,7 +445,7 @@ describe('AiChatModal', () => {
       />
     )
 
-    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('私信 AI')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('问AI')
     expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('WEG-1 · Implement cloud MCP')
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '91')
   })

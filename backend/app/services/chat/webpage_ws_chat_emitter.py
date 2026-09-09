@@ -391,6 +391,11 @@ class WebPageSocketEmitter:
         sender: Dict[str, Any],
         created_at: datetime,
         skip_sid: Optional[str] = None,
+        *,
+        attachment: Optional[Dict[str, Any]] = None,
+        attachments: Optional[list[Dict[str, Any]]] = None,
+        contexts: Optional[list[Dict[str, Any]]] = None,
+        source: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Emit chat:message event to task room (excluding sender).
@@ -404,6 +409,10 @@ class WebPageSocketEmitter:
             sender: Sender info dict
             created_at: Message creation time
             skip_sid: Socket ID to exclude (sender)
+            attachment: Legacy single attachment metadata
+            attachments: Legacy attachment metadata list
+            contexts: Context metadata for the message
+            source: Message source metadata
         """
         await self.sio.emit(
             ServerEvents.CHAT_MESSAGE,
@@ -415,6 +424,10 @@ class WebPageSocketEmitter:
                 "content": content,
                 "sender": sender,
                 "created_at": created_at.isoformat(),
+                "attachment": attachment,
+                "attachments": attachments or [],
+                "contexts": contexts or [],
+                "source": source,
             },
             room=f"task:{task_id}",
             skip_sid=skip_sid,

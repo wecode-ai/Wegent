@@ -43,6 +43,7 @@ import {
   selectE2EModel,
   sendPromptUntilScenarioRequest,
   waitForExecutorRuntimeEvidence,
+  waitForLogPattern,
   withTimeout,
 } from './shared.mjs'
 
@@ -90,10 +91,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   const goalTaskId = goalTaskRowTestId.replace('runtime-local-task-row-', '')
   const goalUnreadTestId = `runtime-local-task-unread-dot-${goalTaskId}`
   const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
+  const goalDotTestId = `runtime-local-task-goal-dot-${goalTaskId}`
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
+      !snapshot.testIds.includes(goalUnreadTestId),
     'The running Goal turn did not render a consistent sidebar state'
   )
   await waitForSnapshot(
@@ -134,7 +138,11 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     DEFAULT_STEP_TIMEOUT_MS,
     'The active Goal did not start its automatic continuation'
   )
-  const goalExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  const goalExecutorLog = (
+    await waitForLogPattern(executorLogPath, /codex shared goal turn awaiting/, {
+      fromOffset: executorLogOffset,
+    })
+  ).slice(executorLogOffset)
   assert.equal(
     (goalExecutorLog.match(/codex shared goal turn awaiting/g) ?? []).length,
     1,
@@ -151,6 +159,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId),
     'The between-turn Goal gap did not preserve the sidebar and unread state'
   )
@@ -216,6 +225,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId),
     'Reloading lost the provider-confirmed sidebar state during Goal continuation',
     WORKBENCH_READY_TIMEOUT_MS
@@ -262,6 +272,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
       snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
@@ -295,7 +306,8 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
-      snapshot.testIds.includes(goalRunningTestId),
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId),
     'The background Goal continuation stopped running or became unread'
   )
   await captureVerificationScreenshot(control, 'goal-idle-04-background-unread-free.png')
@@ -326,7 +338,9 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await waitForSnapshot(
     control,
     snapshot =>
-      !snapshot.testIds.includes(goalUnreadTestId) && !snapshot.testIds.includes(goalRunningTestId),
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes(goalDotTestId),
     'Opening the completed Goal task did not clear its sidebar state'
   )
   await waitForSnapshot(
@@ -354,6 +368,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     false,
     'The completed Goal kept the composer busy'
   )
+  await captureVerificationScreenshot(control, 'goal-idle-06-completed-read.png')
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {
@@ -429,7 +444,11 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
     DEFAULT_STEP_TIMEOUT_MS,
     'The queued Goal did not start after the planning turn completed'
   )
-  const handoffExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  const handoffExecutorLog = (
+    await waitForLogPattern(executorLogPath, /codex shared goal turn awaiting/, {
+      fromOffset: executorLogOffset,
+    })
+  ).slice(executorLogOffset)
   assert.equal(
     (handoffExecutorLog.match(/codex shared turn request started/g) ?? []).length,
     1,
@@ -614,11 +633,27 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     DEFAULT_STEP_TIMEOUT_MS,
     'The supervisor did not inspect the completed auto-correction'
   )
+  const supervisorStatusSelector = '[data-testid="task-supervisor-status"]'
   await control.command('clickWhenEnabled', '[data-testid="task-supervisor-run-now-button"]')
   await withTimeout(
     control.awaitScenarioRequestCount('supervisor', 5),
     DEFAULT_STEP_TIMEOUT_MS,
     'The immediate supervisor review did not reach the evaluator'
+  )
+  await control.command('waitFor', '[data-testid="task-supervisor-run-now-button"]', {
+    enabled: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.doesNotMatch(
+    await control.command('getText', supervisorStatusSelector),
+    /正在检查|Checking the latest progress/,
+    'The immediate supervisor review remained in its intermediate checking state'
+  )
+  assert.match(
+    await control.command('getText', supervisorStatusSelector),
+    /最近检查|Last checked/,
+    'The immediate supervisor review did not publish its completed check state'
   )
   await control.command('waitFor', '[data-testid="task-supervisor-next-check"]', {
     text: '下次巡检',

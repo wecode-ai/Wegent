@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
+import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
@@ -62,10 +63,13 @@ export function EditKnowledgeBaseDialog({
   const { t: tKnowledge } = useTranslation('knowledge')
   const [name, setName] = useState('')
   const [showGenerationTask, setShowGenerationTask] = useState(false)
+  const [generationStrategy, setGenerationStrategy] = useState('')
+  const [generationStrategyTouched, setGenerationStrategyTouched] = useState(false)
   const isCodeWiki = (knowledgeBase?.kb_type || 'notebook') === 'code_wiki'
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
+  const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   // Editable so a wiki created before the field existed can be given a model. Left
@@ -160,6 +164,7 @@ export function EditKnowledgeBaseDialog({
       setName(kb.name)
       setDescription(kb.description || '')
       setDirectAccessRequirement(kb.direct_access_requirement ?? 'read')
+      setAllowDocumentDownload(kb.allow_document_download)
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setExecutionModelRef(kb.execution_model_ref || null)
@@ -173,6 +178,8 @@ export function EditKnowledgeBaseDialog({
         multimodalImagePrompt: kb.multimodal_analysis_image_prompt ?? null,
       })
       setShowGenerationTask(kb.show_generation_task ?? false)
+      setGenerationStrategy(kb.generation_strategy || '')
+      setGenerationStrategyTouched(false)
       setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (kb.retrieval_config) {
@@ -235,6 +242,7 @@ export function EditKnowledgeBaseDialog({
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
         direct_access_requirement: directAccessRequirement,
+        allow_document_download: allowDocumentDownload,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         ...buildMultimodalSubmitFields(),
@@ -250,6 +258,9 @@ export function EditKnowledgeBaseDialog({
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
         ...(isCodeWiki ? { show_generation_task: showGenerationTask } : {}),
+        ...(isCodeWiki && generationStrategyTouched && generationStrategy
+          ? { generation_strategy: generationStrategy }
+          : {}),
         // Applies to the next run. One already going keeps the model it was started
         // with, which is the model its pages were written by. Omitted entirely when
         // untouched on a wiki that had none, so "unset" survives an unrelated save.
@@ -388,10 +399,25 @@ export function EditKnowledgeBaseDialog({
                 <KnowledgeBaseForm
                   advancedExtras={
                     isCodeWiki ? (
-                      <GenerationTaskRow
-                        checked={showGenerationTask}
-                        onChange={setShowGenerationTask}
-                      />
+                      <>
+                        <SimpleConfigRow
+                          label={tKnowledge('codeWiki.strategy.label')}
+                          description={tKnowledge('codeWiki.strategy.settingsDescription')}
+                        >
+                          <GenerationStrategySelect
+                            value={generationStrategy}
+                            onChange={strategy => {
+                              setGenerationStrategy(strategy)
+                              setGenerationStrategyTouched(true)
+                            }}
+                            testId="code-wiki-generation-strategy"
+                          />
+                        </SimpleConfigRow>
+                        <GenerationTaskRow
+                          checked={showGenerationTask}
+                          onChange={setShowGenerationTask}
+                        />
+                      </>
                     ) : undefined
                   }
                   name={name}
@@ -400,6 +426,8 @@ export function EditKnowledgeBaseDialog({
                   onDescriptionChange={value => setDescription(value)}
                   directAccessRequirement={directAccessRequirement}
                   onDirectAccessRequirementChange={setDirectAccessRequirement}
+                  allowDocumentDownload={allowDocumentDownload}
+                  onAllowDocumentDownloadChange={setAllowDocumentDownload}
                   summaryEnabled={summaryEnabled}
                   onSummaryEnabledChange={checked => {
                     setSummaryEnabled(checked)

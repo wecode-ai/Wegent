@@ -3408,6 +3408,11 @@ def test_mark_start_requested_binds_issue_runtime_task_without_workflow_stage(
     assert binding.task_title == item.title
     assert binding.workflow_node_id is None
     assert binding.metadata_json["workspace_device_id"] == "cloud-device-1"
+    assert binding.model_selection == {
+        "modelName": "test-model",
+        "modelType": None,
+        "options": {},
+    }
 
 
 @pytest.mark.parametrize("executor_type", ["project_robot", "generic_robot"])

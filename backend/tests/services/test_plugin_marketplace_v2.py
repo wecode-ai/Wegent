@@ -1891,7 +1891,10 @@ def test_capability_payload_uses_signed_release_url(test_db, test_user, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_all_devices_receive_pending_rows(test_db, test_user, monkeypatch):
+@pytest.mark.parametrize("duplicate_device", [False, True])
+async def test_all_devices_receive_pending_rows(
+    test_db, test_user, monkeypatch, duplicate_device
+):
     plugin = Plugin(
         slug="devices",
         name="devices",
@@ -1928,10 +1931,13 @@ async def test_all_devices_receive_pending_rows(test_db, test_user, monkeypatch)
     test_db.commit()
 
     async def devices(_db, _user_id):
-        return [
+        result = [
             {"device_id": "online-device", "status": "online"},
             {"device_id": "offline-device", "status": "offline"},
         ]
+        if duplicate_device:
+            result.append({"deviceId": " online-device ", "status": "offline"})
+        return result
 
     monkeypatch.setattr(
         "app.services.plugin_device_installation_service.device_service.get_all_devices",

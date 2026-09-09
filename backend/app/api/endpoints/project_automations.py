@@ -412,6 +412,7 @@ def assign_from_ai_manager(
             task_id=str(run.task_id),
             assignee_type=values.assignee_type,
             assignee_id=values.assignee_id,
+            notify_assignee=values.notify_assignee,
         )
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

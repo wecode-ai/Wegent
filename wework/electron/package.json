@@ -1,7 +1,7 @@
 {
   "name": "@wegent/wework-electron",
   "private": true,
-  "version": "0.4.3-beta.1",
+  "version": "0.4.3",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",
@@ -22,7 +22,6 @@
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
-    "@tauri-apps/cli": "2.11.4",
     "@types/archiver": "8.0.0",
     "@types/node": "24.13.3",
     "@types/semver": "7.8.0",

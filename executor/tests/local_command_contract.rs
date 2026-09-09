@@ -5,7 +5,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::Write,
+    io::{Seek, Write},
     process::{Command, Stdio},
     sync::{Mutex, MutexGuard, OnceLock},
 };
@@ -132,25 +132,23 @@ async fn execute_command_returns_completed_process_result() {
 #[cfg(unix)]
 #[test]
 fn execute_command_child_does_not_inherit_executor_stdin_contract() {
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    // Prepare readable input before spawning: the isolated child can exit before
+    // a parent writes to a pipe, which would turn success into a BrokenPipe race.
+    let mut input = tempfile::tempfile().unwrap();
+    input.write_all(b"app-ipc-protocol-frame\n").unwrap();
+    input.rewind().unwrap();
+    let child = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "execute_command_child_does_not_inherit_executor_stdin",
             "--nocapture",
         ])
         .env("WEGENT_TEST_COMMAND_STDIN_CHILD", "1")
-        .stdin(Stdio::piped())
+        .stdin(Stdio::from(input))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"app-ipc-protocol-frame\n")
-        .unwrap();
-
     let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),

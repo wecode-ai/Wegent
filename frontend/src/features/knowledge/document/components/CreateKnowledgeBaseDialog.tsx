@@ -39,6 +39,7 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
+import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
@@ -100,6 +101,7 @@ function createEmptySource(): CodeWikiSource {
     source_type: 'github',
     source_url: '',
     language: 'zh',
+    generation_strategy: '',
     show_generation_task: false,
     resolution: null,
   }
@@ -124,6 +126,7 @@ export function CreateKnowledgeBaseDialog({
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
+  const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
   // Selected KB type (can be changed by user)
   const [selectedKbType, setSelectedKbType] = useState<KnowledgeBaseType>(initialKbType)
   // Which kind of knowledge base is being created. Chosen first because it decides
@@ -187,6 +190,7 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
+      setAllowDocumentDownload(true)
       setRetrievalConfig(createDefaultRetrievalConfig())
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
@@ -272,6 +276,7 @@ export function CreateKnowledgeBaseDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         direct_access_requirement: directAccessRequirement,
+        allow_document_download: allowDocumentDownload,
         retrieval_config:
           ragConfigMode === 'disabled' || !retrievalConfigChangedRef.current
             ? undefined
@@ -290,6 +295,9 @@ export function CreateKnowledgeBaseDialog({
               source_type: source.source_type,
               source_url: source.source_url,
               language: source.language,
+              ...(source.generation_strategy
+                ? { generation_strategy: source.generation_strategy }
+                : {}),
               show_generation_task: source.show_generation_task,
               // Left blank, the repository's own name is used. Sent from what the
               // form already resolved rather than pre-filled into the box, which
@@ -304,6 +312,7 @@ export function CreateKnowledgeBaseDialog({
       setName('')
       setDescription('')
       setDirectAccessRequirement('read')
+      setAllowDocumentDownload(true)
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
       setKind('document')
@@ -328,6 +337,7 @@ export function CreateKnowledgeBaseDialog({
       setName('')
       setDescription('')
       setDirectAccessRequirement('read')
+      setAllowDocumentDownload(true)
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
       setKind('document')
@@ -403,10 +413,25 @@ export function CreateKnowledgeBaseDialog({
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (
-                <GenerationTaskRow
-                  checked={source.show_generation_task}
-                  onChange={checked => setSource({ ...source, show_generation_task: checked })}
-                />
+                <>
+                  <SimpleConfigRow
+                    label={t('knowledge:codeWiki.strategy.label')}
+                    description={t('knowledge:codeWiki.strategy.createDescription')}
+                  >
+                    <GenerationStrategySelect
+                      value={source.generation_strategy}
+                      onChange={generation_strategy =>
+                        setSource({ ...source, generation_strategy })
+                      }
+                      emptyOption="deployment"
+                      testId="code-wiki-generation-strategy"
+                    />
+                  </SimpleConfigRow>
+                  <GenerationTaskRow
+                    checked={source.show_generation_task}
+                    onChange={checked => setSource({ ...source, show_generation_task: checked })}
+                  />
+                </>
               ) : undefined
             }
             nameRequired={kind !== 'code'}
@@ -532,6 +557,8 @@ export function CreateKnowledgeBaseDialog({
             onDescriptionChange={value => setDescription(value)}
             directAccessRequirement={directAccessRequirement}
             onDirectAccessRequirementChange={setDirectAccessRequirement}
+            allowDocumentDownload={allowDocumentDownload}
+            onAllowDocumentDownloadChange={setAllowDocumentDownload}
             summaryEnabled={summaryEnabled}
             onSummaryEnabledChange={checked => {
               setSummaryEnabled(checked)

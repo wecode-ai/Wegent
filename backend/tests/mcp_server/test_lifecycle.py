@@ -144,6 +144,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
     assert {tool["name"] for tool in listed["result"]["tools"]} == {
         "get_current_context",
         "register_external_reference",
+        "send_notification",
         "list_spaces",
         "create_space",
         "update_space",

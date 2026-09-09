@@ -3,6 +3,7 @@ import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
 import type {
   Attachment,
+  ModelSelectionConfig,
   ModelType,
   RuntimeAdditionalContext,
   RuntimeGoalCreateInput,
@@ -118,6 +119,7 @@ export interface CloudLoopItem {
   can_edit?: boolean
   detail_loaded?: boolean
   content_revision?: number
+  has_additional_context?: boolean
   is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
@@ -607,6 +609,7 @@ export interface LoopItemTaskBinding {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
   workflow_node_id?: string | null
   binding_type?: 'system' | 'user'
   linked_at: string
@@ -677,7 +680,7 @@ export function nextTaskTrackingStatus(
   if (executionStatus === 'running' && itemStatus !== 'in_progress') {
     return 'in_progress'
   }
-  if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
+  if (executionStatus === 'succeeded' && itemStatus !== 'completed' && itemStatus !== 'in_review') {
     return 'in_review'
   }
   if (
@@ -1044,6 +1047,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         assigneeType: 'user' | 'agent' | 'team'
         assigneeId: string
+        notifyAssignee?: boolean
       }
     ): Promise<CloudLoopItem> {
       return client.post(
@@ -1146,10 +1150,13 @@ export function createDeliveryApi(client: HttpClient) {
       taskTitle?: string | null,
       workflowNodeId?: string | null
     ): Promise<void> {
+      const modelSelection =
+        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
       })
     },
     decideWorkflowNode(

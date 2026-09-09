@@ -63,6 +63,10 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       logRuntimeChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
     }
     for (const [subscriptionId, subscription] of subscriptionEntries) {
+      if (event.event === 'wework.notification.created') {
+        subscription.handlers.onWeworkNotification?.()
+        continue
+      }
       if (event.event === 'project.task.assigned') {
         const payload = projectTaskAssignedPayload(event.payload)
         if (payload) subscription.handlers.onProjectTaskAssigned?.(payload)
@@ -442,7 +446,8 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onGuidanceApplied ||
     handlers.onRuntimeEventLagged ||
     handlers.onRuntimeTransportReplaced ||
-    handlers.onProjectTaskAssigned
+    handlers.onProjectTaskAssigned ||
+    handlers.onWeworkNotification
   )
 }
 

@@ -1070,6 +1070,62 @@ async function verifyTrackedTaskSettledStatus(control) {
   )
 }
 
+async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-open-board-menu"]')
+  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+    control,
+    'The default Issue context test did not reuse the fixed project-space tab'
+  )
+  const boardCardSelector = [
+    `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
+    ':not([data-testid^="cloud-todo-card-task-"])',
+    ':not([data-testid^="cloud-todo-card-more-"])',
+    ':not([data-testid^="cloud-todo-card-archive-"])',
+    ':not([data-testid^="cloud-todo-card-add-child-"])',
+  ].join('')
+  await control.command('markElementWithText', boardCardSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    value: 'default-issue-context-card',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'click',
+    `${activeBoardContentSelector} [data-e2e-anchor-id="default-issue-context-card"]`
+  )
+  const titleSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
+  await control.command('waitFor', titleSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', titleSelector, { value: title })
+  await control.command(
+    'clickWhenEnabled',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-save"]`,
+    {
+      visible: false,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
@@ -1342,6 +1398,10 @@ async function verifyExistingTaskBoardAssociation(
   }
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="work-item-change-board"]', {
+    visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-change-board"]')
@@ -1916,6 +1976,7 @@ export {
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
+  enrichTrackedDefaultIssueTitle,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   workspaceTabIds,

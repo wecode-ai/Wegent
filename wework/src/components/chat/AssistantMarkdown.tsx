@@ -383,9 +383,14 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
   const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
+  const nodeDataBlock =
+    typeof node?.properties === 'object' &&
+    node.properties !== null &&
+    'dataBlock' in node.properties &&
+    node.properties.dataBlock === 'true'
   const isBlock =
     ('data-block' in props && Boolean(props['data-block'])) ||
-    node?.properties?.dataBlock === 'true' ||
+    nodeDataBlock ||
     Boolean(match) ||
     text.includes('\n')
   if (isBlock) {

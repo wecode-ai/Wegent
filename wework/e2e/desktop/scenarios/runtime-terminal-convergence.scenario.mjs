@@ -96,9 +96,26 @@ async function clearExecutionLease(executorHome, taskId, timeoutMs) {
   )
 }
 
+async function waitForCompletedThread(executorLogPath, taskId, timeoutMs) {
+  return waitForCondition(
+    async () => {
+      const content = await readFile(executorLogPath, 'utf8').catch(() => '')
+      const match = content.match(
+        new RegExp(
+          `codex shared turn request finished task_id=${taskId}[^\\n]* thread_id=([^\\s]+)[^\\n]* outcome=completed`
+        )
+      )
+      return match?.[1] ?? null
+    },
+    timeoutMs,
+    'The completed turn was not recorded in the executor log'
+  )
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   executorHome,
+  resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   workspacePath,
@@ -213,6 +230,16 @@ export function createDesktopScenario({
         uiTimeoutMs,
         'Codex completed, but the local task remained in the running state'
       )
+      const executorLogPath = join(resultDir, 'executor.log')
+      const threadId = await waitForCompletedThread(executorLogPath, taskId, uiTimeoutMs)
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const idleLog = await readFile(executorLogPath, 'utf8')
+      assert.ok(
+        !idleLog.includes(
+          `codex shared thread unsubscribe background started thread_id=${threadId}`
+        ),
+        'The completed Codex thread was unsubscribed before its idle retention window'
+      )
 
       await control.command('fill', COMPOSER_SELECTOR, { value: FOLLOW_UP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
@@ -229,6 +256,21 @@ export function createDesktopScenario({
         text: FOLLOW_UP_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      await waitForCondition(
+        async () => {
+          const content = await readFile(executorLogPath, 'utf8').catch(() => '')
+          return content
+            .split('\n')
+            .some(
+              line =>
+                line.includes('codex shared thread request finished') &&
+                line.includes('operation=thread/resume') &&
+                line.includes(`thread_id=${threadId}`)
+            )
+        },
+        uiTimeoutMs,
+        'The follow-up did not resume the retained Codex thread'
+      )
       const settledSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )

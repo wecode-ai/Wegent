@@ -28,6 +28,7 @@ from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.device import DeviceType
 from app.schemas.project import ProjectConfig
 from app.schemas.runtime_work import (
     ArchivedConversationItem,
@@ -90,6 +91,7 @@ from app.schemas.runtime_work import (
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
+from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.device.runtime_rpc_service import (
     DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
     RuntimeRpcError,
@@ -634,6 +636,7 @@ async def send_runtime_message(
     db: Session,
     user_id: int,
     request: RuntimeSendRequest,
+    allow_app_device_task_messaging: bool = False,
 ) -> RuntimeSendResponse:
     """Continue a LocalTask through the owning local executor."""
 
@@ -661,6 +664,7 @@ async def send_runtime_message(
         payload=payload,
         request=request,
         rpc_method="runtime.tasks.send",
+        allow_app_device_task_messaging=allow_app_device_task_messaging,
     )
 
 
@@ -718,6 +722,7 @@ async def _dispatch_runtime_send(
     payload: dict[str, Any],
     request: RuntimeSendRequest,
     rpc_method: str,
+    allow_app_device_task_messaging: bool = False,
 ) -> RuntimeSendResponse:
     """Send a runtime task message with the required execution request.
 
@@ -762,6 +767,7 @@ async def _dispatch_runtime_send(
             method=rpc_method,
             payload=payload,
             timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
+            allow_app_device_task_messaging=allow_app_device_task_messaging,
         )
     except RuntimeRpcError as exc:
         raise HTTPException(
@@ -825,7 +831,13 @@ async def bind_runtime_task_to_im_sessions(
         user_id=user_id,
         session_keys=request.session_keys,
     )
-    runtime_task = _runtime_task_address_payload(address)
+    runtime_task = _runtime_task_address_payload(
+        canonical_runtime_event_address(
+            db,
+            user_id=user_id,
+            address=address,
+        )
+    )
     if request.model_selection:
         runtime_task["modelSelection"] = request.model_selection.model_dump(
             by_alias=True,
@@ -3776,6 +3788,30 @@ def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
     )
 
 
+def canonical_runtime_event_address(
+    db: Session,
+    *,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskAddress:
+    """Return the task address identity emitted by the owning Runtime socket."""
+
+    normalized = _normalized_address(address)
+    identity = resolve_runtime_route_identity(
+        db,
+        user_id=user_id,
+        submitted_device_id=normalized.device_id,
+    )
+    if identity is None:
+        return normalized
+    event_device_id = (
+        identity.runtime_device_id
+        if identity.device_type == DeviceType.APP
+        else identity.logical_device_id
+    )
+    return normalized.model_copy(update={"device_id": event_device_id})
+
+
 def _runtime_task_address_payload(address: RuntimeTaskAddress) -> dict[str, Any]:
     return address.model_dump(by_alias=True, exclude_none=True)
 
@@ -4761,11 +4797,18 @@ def _runtime_address_team_id(address: RuntimeTaskAddress) -> Optional[int]:
 
 
 def _ensure_owned_device(db: Session, user_id: int, device_id: str) -> None:
-    if not device_service.get_device_by_device_id(db, user_id, device_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found or access denied",
-        )
+    if device_service.get_device_by_device_id(db, user_id, device_id):
+        return
+    if resolve_runtime_route_identity(
+        db,
+        user_id=user_id,
+        submitted_device_id=device_id,
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Device not found or access denied",
+    )
 
 
 def _touch_workspace_mapping(

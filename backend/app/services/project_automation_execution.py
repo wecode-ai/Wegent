@@ -868,6 +868,7 @@ class ProjectAutomationExecution:
         task_id: str,
         assignee_type: str,
         assignee_id: str,
+        notify_assignee: bool = True,
     ) -> LoopItem | dict[str, object]:
         """Apply an MCP manager assignment through the shipped task path."""
 
@@ -949,6 +950,7 @@ class ProjectAutomationExecution:
                     item_id=item.id,
                     user_id=owner.id,
                     values=LoopItemAssign(
+                        notify_assignee=notify_assignee,
                         assignee_type="user",
                         assignee_id=assignee_id,
                         version=item.version,
@@ -963,6 +965,7 @@ class ProjectAutomationExecution:
                     task_id,
                     owner.id,
                     LoopItemAssign(
+                        notify_assignee=notify_assignee,
                         assignee_type="user",
                         assignee_id=assignee_id,
                         version=int(current.get("version") or 0),

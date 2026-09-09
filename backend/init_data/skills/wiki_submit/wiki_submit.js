@@ -474,6 +474,52 @@ async function cmdRemove(args) {
 }
 
 /**
+ * Persist the advisory page plan used by no-review generation strategies.
+ *
+ * This is deliberately a normal content summary, not a Reviewer handoff or a
+ * publish gate. It gives the reader honest page-count progress while the agent is
+ * still writing, and `complete` later replaces it with the final reading order.
+ *
+ * @param {object} args - Command arguments
+ * @returns {Promise<number>}
+ */
+async function cmdPlan(args) {
+  const endpoint = getWikiEndpoint(args.endpoint)
+  const token = getAuthToken(args.token)
+  if (!token) {
+    console.error('Error: Authorization token is required. It can be obtained from TASK_INFO, WIKI_TOKEN env var, or --token argument.')
+    return 1
+  }
+  if (!args.generationId) {
+    console.error('Error: --generation-id is required.')
+    return 1
+  }
+  if (!args.structureOrder.length) {
+    console.error('Error: --structure-order is required for plan command')
+    return 1
+  }
+
+  const result = await submitSections(
+    endpoint,
+    token,
+    parseInt(args.generationId, 10),
+    [],
+    { structure_order: args.structureOrder }
+  )
+  if (result.status === 'error') {
+    if (isTerminalGenerationError(result)) {
+      printTerminalGenerationError(result)
+      return 3
+    }
+    console.error(`❌ Error: ${result.message}`)
+    return 1
+  }
+
+  console.log(`✅ Page plan recorded (${args.structureOrder.length} page(s))`)
+  return 0
+}
+
+/**
  * Persist the Writer handoff for one review attempt.
  * @param {object} args - Command arguments
  * @returns {Promise<number>}
@@ -930,6 +976,7 @@ Commands:
   validate-mermaid  Validate Mermaid blocks in Markdown before submission
   read      Print a page's current content
   remove    Declare wiki pages as gone
+  plan      Record the advisory page plan for a no-review run
   review    Record a full-rebuild plan, plan amendment, QA, or recheck checkpoint
   review-open  Persist the Writer handoff before synchronous Reviewer delegation
   review-status  Print the persisted Reviewer state for one phase
@@ -966,6 +1013,9 @@ Read Options:
 Remove Options:
   --path               Page path to remove. Repeat for several pages.
 
+Plan Options:
+  --structure-order    Ordered planned paths, comma- or whitespace-separated
+
 Review Options:
   --phase              One of: plan, plan_amendment, qa, recheck
   --review-status      One of: passed, changes_requested
@@ -990,6 +1040,7 @@ Examples:
   node wiki_submit.js validate-mermaid --file ./page.md
   node wiki_submit.js read --generation-id 123 --path architecture/backend > current.md
   node wiki_submit.js remove --generation-id 123 --path modules/legacy-sync
+  node wiki_submit.js plan --generation-id 123 --structure-order index,quickstart,architecture
   node wiki_submit.js review-open --generation-id 123 --phase plan --path index --path architecture --summary "Proposed wiki plan" --handoff-file /tmp/wiki-plan.md --writing-plan-file /tmp/wiki-writing-plan.json
   node wiki_submit.js review --generation-id 123 --phase plan --review-status passed --path index --path architecture --focus-path architecture --summary "Plan covers entry points and identifies its core deep dive"
   node wiki_submit.js review-status --generation-id 123 --phase plan
@@ -1033,6 +1084,9 @@ async function main() {
       break
     case 'remove':
       exitCode = await cmdRemove(args)
+      break
+    case 'plan':
+      exitCode = await cmdPlan(args)
       break
     case 'review':
       exitCode = await cmdReview(args)

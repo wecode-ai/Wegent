@@ -1773,6 +1773,16 @@ class LoopItemExecutionService:
                 taskId=execution.runtime_task_id,
                 taskTitle=item.title or "",
                 backendTaskId=execution.backend_task_id or None,
+                modelSelection=(
+                    {
+                        "modelName": execution.runtime_selection["model"],
+                        "modelType": execution.runtime_selection.get("model_type"),
+                        "options": execution.runtime_selection.get("model_options")
+                        or {},
+                    }
+                    if execution.runtime_selection.get("model")
+                    else None
+                ),
                 workflowNodeId=workflow_node_id,
             ),
             user_id=execution.executor_owner_user_id,

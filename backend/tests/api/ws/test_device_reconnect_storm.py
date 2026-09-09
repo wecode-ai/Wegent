@@ -19,10 +19,12 @@ def isolate_execution_reconciliation(monkeypatch):
     from app.tasks import robot_queue_tasks
 
     monkeypatch.setattr(robot_queue_tasks, "reconcile_device_executions", AsyncMock())
+
     @asynccontextmanager
     async def identity_lock(user_id):
         yield
-    monkeypatch.setattr(device_namespace, 'app_identity_lock', identity_lock)
+
+    monkeypatch.setattr(device_namespace, "app_identity_lock", identity_lock)
 
 
 @pytest.mark.asyncio
@@ -387,8 +389,8 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
         user_id=7,
         device_id="app-record-70",
     )
-    assert saved_session['device_id'] == 'app-record-70'
-    assert saved_session['reported_device_id'] == 'local-app-device'
+    assert saved_session["device_id"] == "app-record-70"
+    assert saved_session["reported_device_id"] == "local-app-device"
 
 
 @pytest.mark.asyncio

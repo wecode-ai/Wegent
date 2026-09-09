@@ -1049,12 +1049,15 @@ class KnowledgeOrchestrator:
         name: Optional[str] = None,
         description: Optional[str] = None,
         direct_access_requirement: Optional[Literal["read", "edit"]] = None,
+        allow_document_download: Optional[bool] = None,
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
         execution_model_ref: Optional[Dict[str, str]] = None,
         execution_model_ref_is_set: bool = False,
         show_generation_task: Optional[bool] = None,
+        generation_strategy: Optional[str] = None,
+        generation_strategy_is_set: bool = False,
         guided_questions: Optional[List[str]] = None,
         max_calls_per_conversation: Optional[int] = None,
         exempt_calls_before_check: Optional[int] = None,
@@ -1075,6 +1078,7 @@ class KnowledgeOrchestrator:
             execution_model_ref: Code Wiki execution model reference. Explicit null
                 clears the override, so its presence is tracked separately.
             show_generation_task: Whether Code Wiki generation tasks are visible.
+            generation_strategy: Default Code Wiki orchestration strategy.
             guided_questions: New guided questions list (optional)
             max_calls_per_conversation: Max calls per conversation (optional)
             exempt_calls_before_check: Exempt calls before check (optional)
@@ -1099,6 +1103,8 @@ class KnowledgeOrchestrator:
             update_fields["description"] = description
         if direct_access_requirement is not None:
             update_fields["direct_access_requirement"] = direct_access_requirement
+        if allow_document_download is not None:
+            update_fields["allow_document_download"] = allow_document_download
         if retrieval_config is not None:
             update_fields["retrieval_config"] = retrieval_config
         if summary_enabled is not None:
@@ -1109,6 +1115,16 @@ class KnowledgeOrchestrator:
             update_fields["execution_model_ref"] = execution_model_ref
         if show_generation_task is not None:
             update_fields["show_generation_task"] = show_generation_task
+        if generation_strategy_is_set:
+            from app.services.knowledge.code_wiki.generation_policy import (
+                ready_strategy_for_new_wiki,
+            )
+
+            if generation_strategy is None:
+                raise ValueError("A code wiki generation strategy cannot be cleared")
+            update_fields["generation_strategy"] = ready_strategy_for_new_wiki(
+                db, user=user, requested_id=generation_strategy
+            )
         if guided_questions is not None:
             update_fields["guided_questions"] = guided_questions
         if max_calls_per_conversation is not None:
@@ -1146,6 +1162,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
@@ -1173,6 +1190,7 @@ class KnowledgeOrchestrator:
         source: Optional[SourceRepository] = None,
         show_generation_task: bool = False,
         language: str = "",
+        generation_strategy: Optional[str] = None,
     ) -> int:
         """Resolve defaults, persist a knowledge base, and return its id.
 
@@ -1247,10 +1265,12 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             kb_type=KnowledgeBaseType(kb_type),
             source=source.to_spec() if source else None,
             language=language or None,
             show_generation_task=show_generation_task,
+            generation_strategy=generation_strategy,
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
@@ -1295,6 +1315,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         kb_type: str = KnowledgeBaseType.NOTEBOOK.value,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
@@ -1370,6 +1391,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,
@@ -1397,11 +1419,13 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         # Empty is not "English", it is "fall back to the deployment default", which
         # is also what a wiki created before this field existed does.
         language: str = "",
         # Whether this wiki's generation runs are listed as conversations.
         show_generation_task: bool = False,
+        generation_strategy: Optional[str] = None,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         retrieval_config: Optional[Dict[str, Any]] = None,
@@ -1427,7 +1451,14 @@ class KnowledgeOrchestrator:
         the repository, are decided by the endpoint: they are about who is asking,
         not about what a code wiki is.
         """
+        from app.services.knowledge.code_wiki.generation_policy import (
+            ready_strategy_for_new_wiki,
+        )
         from app.services.knowledge.code_wiki.registry import claim_repository
+
+        generation_strategy = ready_strategy_for_new_wiki(
+            db, user=user, requested_id=generation_strategy
+        )
 
         kb_id = self._create(
             db,
@@ -1437,6 +1468,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,
@@ -1449,6 +1481,7 @@ class KnowledgeOrchestrator:
             source=source,
             show_generation_task=show_generation_task,
             language=language,
+            generation_strategy=generation_strategy,
         )
         claim_repository(db, source, kb_id)
         db.commit()
@@ -1957,11 +1990,6 @@ class KnowledgeOrchestrator:
         )
 
         skip_reason = get_rag_indexing_skip_reason(
-            (
-                data.source_type.value
-                if data.source_type
-                else DocumentSourceType.FILE.value
-            ),
             data.file_extension,
             data.file_size,
         )
@@ -2522,8 +2550,18 @@ class KnowledgeOrchestrator:
 
         assert_user_content_is_mutable(getattr(document, "origin", "user"))
 
+        # Documents whose source type is no longer supported (legacy rows from
+        # removed ingestion paths) cannot be reindexed.
+        from app.schemas.knowledge import DocumentSourceType
+
+        known_source_types = {source_type.value for source_type in DocumentSourceType}
+        if document.source_type not in known_source_types:
+            raise ValueError(
+                f"Unsupported document source type: {document.source_type}"
+            )
+
         skip_reason = get_rag_indexing_skip_reason(
-            document.source_type, document.file_extension, document.file_size
+            document.file_extension, document.file_size
         )
         if skip_reason:
             raise ValueError(skip_reason)

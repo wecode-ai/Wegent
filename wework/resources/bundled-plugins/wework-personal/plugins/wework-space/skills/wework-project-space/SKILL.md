@@ -14,3 +14,5 @@ Use the `wework_space` MCP tools for project-space work.
 5. Do not probe MCP resources, use Shell or `curl`, scrape the browser, or parse `wegent://` attachment URLs.
 6. Never substitute Git or provider APIs when `wework_space` reports an offline, authorization, or capability error.
 7. Do not claim Issue content is unavailable until the matching `wework_space` call returns an error.
+
+Human assignee changes notify the new owner by default. Do not send a duplicate notification. For user-requested alerts or automation conditions, use `send_notification`; omit `recipient_user_id` to notify the authenticated user.
