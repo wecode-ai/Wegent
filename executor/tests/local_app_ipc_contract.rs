@@ -763,6 +763,16 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert_eq!(todos.as_array().unwrap().len(), 2);
     assert_eq!(child["parent_id"], parent["id"]);
 
+    let read_child = server
+        .dispatch(
+            "todos.mark_read",
+            json!({"project_id": project_id, "task_id": child["id"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_child["id"], child["id"]);
+    assert_ne!(read_child["metadata"]["is_unread"], json!(true));
+
     let updated = server
         .dispatch(
             "todos.update",

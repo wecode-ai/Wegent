@@ -402,6 +402,27 @@ impl LocalTaskStore {
         ))
     }
 
+    pub fn mark_task_read(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let item = get_item_from(&connection, task_id, "task")?
+            .filter(|item| item.cloud_project_id.as_deref() == Some(project_id))
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        if item.metadata["is_unread"] == json!(true) {
+            connection.execute(
+                "UPDATE loop_items
+                 SET metadata = json_set(metadata, '$.is_unread', json('false'))
+                 WHERE id = ?1",
+                [task_id],
+            )?;
+        }
+        drop(connection);
+        self.get_task(project_id, task_id)
+    }
+
     pub fn create_task(
         &self,
         project_id: &str,
@@ -1629,8 +1650,9 @@ impl LocalTaskStore {
         // shows it as an active run.
         transaction.execute(
             "UPDATE loop_items
-             SET status = 'in_review', sort_order = 0, version = version + 1,
-                 updated_at = ?1
+             SET status = 'in_review', sort_order = 0,
+                 metadata = json_set(metadata, '$.is_unread', json('true')),
+                 version = version + 1, updated_at = ?1
              WHERE id = (SELECT loop_item_id FROM loop_item_executions WHERE id = ?2)
                AND assignee_agent_id =
                    (SELECT agent_id FROM loop_item_executions WHERE id = ?2)
@@ -2294,6 +2316,10 @@ impl LocalTaskStore {
             "UPDATE loop_items
              SET status = ?1,
                  completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
+                 metadata = CASE
+                     WHEN ?5 THEN json_set(metadata, '$.is_unread', json('true'))
+                     ELSE metadata
+                 END,
                  sort_order = 0, version = version + 1, updated_at = ?2
              WHERE resource_type = 'task'
                AND id IN (
@@ -6303,6 +6329,20 @@ mod tests {
                 .as_deref(),
             Some("in_review")
         );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .metadata["is_unread"],
+            json!(true)
+        );
+        assert_eq!(
+            store
+                .mark_task_read(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .metadata["is_unread"],
+            json!(false)
+        );
 
         assert_eq!(
             store
@@ -6323,6 +6363,13 @@ mod tests {
                 .status
                 .as_deref(),
             Some("in_review")
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .metadata["is_unread"],
+            json!(false)
         );
 
         assert_eq!(

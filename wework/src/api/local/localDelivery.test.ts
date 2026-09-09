@@ -85,6 +85,35 @@ describe('local delivery API', () => {
     })
   })
 
+  test('preserves and clears unread state for local board cards', async () => {
+    const unreadTask = {
+      ...taskRecord,
+      metadata: { ...taskRecord.metadata, is_unread: true },
+    }
+    const readTask = {
+      ...unreadTask,
+      metadata: { ...unreadTask.metadata, is_unread: false },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [unreadTask]
+      if (method === 'todos.mark_read') return readTask
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
+      items: [{ id: 'LOCAL-1', is_unread: true }],
+    })
+    await expect(api.markLoopItemRead('LOCAL-1')).resolves.toMatchObject({
+      id: 'LOCAL-1',
+      is_unread: false,
+    })
+    expect(request).toHaveBeenLastCalledWith('todos.mark_read', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+    })
+  })
+
   test('lists every task execution associated with a work-item project', async () => {
     const execution = {
       id: 7,
