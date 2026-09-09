@@ -2847,7 +2847,14 @@ fn is_automation_manager_tool(name: &str) -> bool {
 }
 
 fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> Vec<Value> {
-    let mut result = tools();
+    let mut result = tools()
+        .into_iter()
+        .filter(|tool| {
+            tool["name"]
+                .as_str()
+                .map_or(true, |name| !is_coordinator_only_tool(name))
+        })
+        .collect::<Vec<_>>();
     if project_id.map_or(true, |id| {
         is_locally_routed_project(runtime, id, "register_external_reference")
     }) {
@@ -2862,6 +2869,13 @@ fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> V
         }, "required":["reference"]
     })));
     result
+}
+
+fn is_coordinator_only_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_assignment_candidates" | "decide_issue_assignment"
+    )
 }
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
@@ -3387,6 +3401,8 @@ mod tests {
         }
         assert!(names.iter().any(|name| name == "list_space_files"));
         assert!(names.iter().any(|name| name == "list_deliveries"));
+        assert!(!names.iter().any(|name| name == "get_assignment_candidates"));
+        assert!(!names.iter().any(|name| name == "decide_issue_assignment"));
         assert!(is_locally_routed_project(
             &runtime,
             "cloud-aitable",

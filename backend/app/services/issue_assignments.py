@@ -218,13 +218,13 @@ class IssueAssignmentService:
             db, issue_id, user_id, for_update=True
         )
         workflow = issue_workflow_planning_service._workflow(issue)
-        next_workflow = decide_assignment(workflow, decision)
-        if next_workflow is workflow:
-            return assignment_handoff(workflow)
         if not manager_run_id:
             raise IssueAssignmentConflict(
                 "coordinator_invalid", "Assignment requires the active AI coordinator"
             )
+        next_workflow = decide_assignment(workflow, decision)
+        if next_workflow is workflow:
+            return assignment_handoff(workflow)
         run_id = workflow.get("active_run_id")
         try:
             project_automation_execution.record_manager_plan_submission(

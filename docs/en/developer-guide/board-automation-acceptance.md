@@ -445,3 +445,5 @@ sequenceDiagram
 ```
 
 Regression source requires AI advancement to avoid workflow `start()` and avoid creating another `ProjectWorkflowRun`, `ProjectAutomationRun`, or `LoopItemExecution`. Custom Runtime addressing remains unchanged and the Wegent Task ID remains unchanged. The old assignment ID carried by a callback identifies the completed result; every new decision generates a fresh `request_id`, while only an exact-payload retry reuses one. An ordinary reply still only appends to the thread and does not trigger coordination.
+
+Coordinator and worker permissions remain separate. Only a coordinator task carrying the current `automation_run_id` can see and call `get_assignment_candidates` or `decide_issue_assignment`. A stage worker completes its assigned work, submits deliverables, or sends notifications; it cannot redistribute work while its own assignment is `running`. The Backend validates coordinator identity before inspecting Issue state so an unauthorized call cannot be misreported as an ordinary state conflict.

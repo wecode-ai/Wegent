@@ -536,3 +536,5 @@ sequenceDiagram
 ```
 
 回归源码约束：AI 推进不调用流程 `start()`，不创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun` 或 `LoopItemExecution`；自定义 Runtime 地址保持不变，Wegent 的 Task ID 保持不变。callback 携带的旧 assignment ID 只用于关联结果，下一次新决策必须生成新的 `request_id`；只有完全相同的请求重试才复用 ID。普通评论仍只盖楼，不触发调度。
+
+协调者与执行者权限必须分离。只有携带当前 `automation_run_id` 的协调任务能看到并调用 `get_assignment_candidates` 和 `decide_issue_assignment`；节点执行 AI 负责完成已交办工作、提交交付物或发送通知，不能在自己的交办仍为 `running` 时重新分活。后端在检查工单状态前先验证协调身份，防止越权调用被误报成普通状态冲突。

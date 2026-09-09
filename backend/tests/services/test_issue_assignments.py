@@ -233,6 +233,25 @@ async def test_stale_coordinator_conflict_ends_turn(test_db, test_user, assigned
 
 
 @pytest.mark.asyncio
+async def test_worker_cannot_make_a_coordinator_decision(
+    test_db, test_user, assigned_issue
+):
+    issue, _manager = assigned_issue
+    with pytest.raises(IssueAssignmentConflict) as caught:
+        await issue_assignment_service.decide(
+            test_db,
+            issue_id=issue.id,
+            user_id=test_user.id,
+            decision=command("assign_user", assignee_user_id=test_user.id),
+            manager_run_id="",
+        )
+    assert caught.value.detail["code"] == "coordinator_invalid"
+    assert "active AI coordinator" in caught.value.detail["message"]
+    test_db.rollback()
+    assert issue.metadata_json["workflow"].get("assignment") is None
+
+
+@pytest.mark.asyncio
 async def test_role_assignment_dispatches_once_without_creating_child_issue(
     test_db,
     test_user,
