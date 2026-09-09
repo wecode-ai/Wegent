@@ -329,6 +329,23 @@ export interface WeworkSecretRegistry {
   scope(namespace: string): WeworkScopedSecrets
 }
 
+export interface WeworkTelemetrySink {
+  readonly id: string
+  readonly protocol: 'telemetry-sink/v1'
+  accept(fact: Readonly<Record<string, unknown>>): void | Promise<void>
+}
+
+export interface WeworkTelemetrySinkRegistry {
+  register(owner: Context, sink: WeworkTelemetrySink): () => void
+  get(id: string): WeworkTelemetrySink | null
+  list(): readonly WeworkTelemetrySink[]
+  subscribe(listener: () => void): () => void
+}
+
+export interface WeworkTelemetryService {
+  readonly sinks: WeworkTelemetrySinkRegistry
+}
+
 export interface WeworkService {
   readonly host: WeworkDesktopService
   readonly backend: WeworkPluginBackendRegistry
@@ -344,6 +361,7 @@ export interface WeworkService {
   readonly configuration: WeworkConfigurationRegistry
   readonly storage: WeworkStorageRegistry
   readonly secrets: WeworkSecretRegistry
+  readonly telemetry: WeworkTelemetryService
   readonly testing: WeworkTestingService
 }
 
@@ -362,6 +380,7 @@ export interface WeworkExtensionHost extends Pick<
   | 'configuration'
   | 'storage'
   | 'secrets'
+  | 'telemetry'
   | 'testing'
 > {
   getRevision(): number
