@@ -1269,7 +1269,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cloudSubmission = prepareSubmission(description)
+      const cloudSubmission = await prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         additionalContext: cloudSubmission.additionalContext,

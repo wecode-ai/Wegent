@@ -40,7 +40,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v7'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v8'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -293,10 +293,7 @@ async function pruneMaterializedRuntimes(descriptors) {
 }
 
 async function buildRuntime(runtime) {
-  const staging = path.join(
-    cacheDirectory,
-    `wework-harness-runtime-${runtime.dshVersion}-${process.pid}`
-  )
+  const staging = path.join(cacheDirectory, `wework-harness-runtime-${runtime.sourceFingerprint}`)
   const temporaryArchive = `${runtime.assetPath}.${process.pid}.tar.gz`
   try {
     await rm(staging, { recursive: true, force: true })
@@ -345,6 +342,7 @@ async function buildRuntime(runtime) {
         cwd: staging,
         file: temporaryArchive,
         gzip: { level: zlibConstants.Z_BEST_SPEED },
+        mtime: new Date(0),
         portable: true,
         strict: true,
       },

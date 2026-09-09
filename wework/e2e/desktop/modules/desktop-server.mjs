@@ -4246,6 +4246,20 @@ class DesktopE2EServer {
     )
     assert.ok(applyPatch, `${matrixCaseId(model)} did not advertise apply_patch`)
     if (model.protocol === 'responses') {
+      const hasNativeToolSearch = tools.some(tool => tool?.type === 'tool_search')
+      if (model.modelId === 'gpt-6-astra') {
+        assert.ok(
+          hasNativeToolSearch,
+          `${matrixCaseId(model)} did not preserve Astra native tool_search`
+        )
+      }
+      if (!hasNativeToolSearch) {
+        assert.equal(
+          tools.some(tool => tool?.defer_loading === true),
+          false,
+          `${matrixCaseId(model)} advertised defer_loading without native tool_search`
+        )
+      }
       assert.equal(
         applyPatch.type,
         model.source === 'local' ? 'function' : 'custom',
