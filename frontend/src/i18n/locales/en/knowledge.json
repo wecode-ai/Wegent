@@ -1312,13 +1312,12 @@
       "current": "Current",
       "none": "No runs yet",
       "mode": {
-        "full": "Full",
-        "incremental": "Incremental",
-        "custom": "Custom"
+        "full": "Full generation",
+        "incremental": "Incremental update",
+        "custom": "Custom generation"
       },
       "commitUnreported": "no commit reported",
       "taskFailed": "The task failed",
-      "strategy": "Strategy: {{strategy}}",
       "republish": "Restore this version",
       "republished": "This version is published again",
       "republishedDescription": "The page content has been refreshed.",
