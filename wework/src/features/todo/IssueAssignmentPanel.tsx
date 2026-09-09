@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CloudLoopItem, IssueWorkflowInstance } from '@/api/deliveries'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 
 interface Props {
@@ -18,11 +19,13 @@ function AssignmentResultForm({
   assignmentId,
   submitResult,
   onUpdated,
+  paused,
 }: {
   itemId: string
   assignmentId: string
   submitResult: NonNullable<Props['submitResult']>
   onUpdated: Props['onUpdated']
+  paused: boolean
 }) {
   const { t } = useTranslation()
   const [summary, setSummary] = useState('')
@@ -68,14 +71,15 @@ function AssignmentResultForm({
           className="mt-1 block min-h-20 w-full rounded-lg border border-border bg-background p-2"
         />
       </label>
-      <button
+      <Button
         type="submit"
         data-testid="issue-assignment-submit-result"
         disabled={busy || !summary.trim()}
-        className="rounded-lg bg-text-primary px-3 py-1.5 text-background disabled:opacity-40"
+        size="sm"
+        className="min-h-11 min-w-11 md:min-h-0"
       >
-        {t('todo.assignment_submit_result')}
-      </button>
+        {t(paused ? 'todo.assignment_save_result' : 'todo.assignment_submit_result')}
+      </Button>
       {error ? (
         <p role="alert" className="text-destructive">
           {error}
@@ -136,7 +140,10 @@ export function IssueAssignmentPanel({ item, currentUserId, submitResult, onUpda
         </p>
       </div>
       {workflow.orchestration_status === 'waiting_human' ? (
-        <p>{t('todo.assignment_waiting_human')}</p>
+        <div data-testid="issue-assignment-human-control" className="space-y-1">
+          <p>{t('todo.assignment_waiting_human')}</p>
+          <p className="text-text-muted">{t('todo.assignment_human_control_help')}</p>
+        </div>
       ) : null}
       {!completed && assignment?.status === 'completed' && assignment.result ? (
         <div data-testid="issue-assignment-submitted-result">
@@ -152,6 +159,7 @@ export function IssueAssignmentPanel({ item, currentUserId, submitResult, onUpda
           assignmentId={assignment.id}
           submitResult={submitResult}
           onUpdated={onUpdated}
+          paused={workflow.orchestration_status === 'paused'}
         />
       ) : null}
     </section>

@@ -569,6 +569,11 @@ def get_assignment_candidates(
             "never the Issue version or workflow.version. On assignment_version_conflict, "
             "re-read the Issue and reconsider; never guess or increment versions. "
             "Follow next_action for other conflicts."
+            " When clarification, approval, or a human decision is required, use "
+            "assign_user with the responsible project member and concrete questions. "
+            "This enters waiting_human until that person explicitly clicks Continue. "
+            "Comments, notifications, events, and task completion do not authorize "
+            "advancement. Never submit a human result on their behalf."
         )
     },
 )

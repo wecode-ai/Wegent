@@ -110,6 +110,7 @@ export async function eventCenterModelResponse(payload, responseId, request) {
     if (requestContainsToolOutput(payload, 'event-flow-decide')) {
       assert.ok(
         serialized.includes('assignment_result_callback') ||
+          serialized.includes('human_continue') ||
           serialized.includes('The Issue is complete. End this turn.'),
         'Coordinator decision did not acknowledge the callback handoff'
       )
@@ -150,6 +151,9 @@ export async function eventCenterModelResponse(payload, responseId, request) {
       issue.workflow.assignment?.node_id === 'role_1' &&
       issue.workflow.assignment.status === 'completed' &&
       issue.workflow.assignment.execution_status === 'succeeded'
+    const humanCompleted =
+      issue.workflow.assignment?.assignee_user_id != null &&
+      issue.workflow.assignment.status === 'completed'
     if (issue.workflow.assignment?.execution_status === 'failed') {
       assert.ok(serialized.includes('交办结果 callback'), 'Failure did not resume through callback')
       assert.ok(serialized.includes('CALLBACK_WORKER_FAILED'), 'Failure callback lost the error')
@@ -162,9 +166,15 @@ export async function eventCenterModelResponse(payload, responseId, request) {
         decision: {
           request_id: `event-flow-${issueId}-${version}`,
           expected_assignment_version: version,
-          action: roleCompleted ? 'complete' : 'assign_role',
-          ...(roleCompleted ? {} : { node_id: 'role_1' }),
-          instruction: 'Verify the requested acceptance result',
+          action: humanCompleted ? 'complete' : roleCompleted ? 'assign_user' : 'assign_role',
+          ...(humanCompleted
+            ? {}
+            : roleCompleted
+              ? { assignee_user_id: Number(issue.created_by_user_id) }
+              : { node_id: 'role_1' }),
+          instruction: roleCompleted
+            ? 'Review the result and decide when to continue. You may start multiple tasks first.'
+            : 'Verify the requested acceptance result',
           reason: ['failed', 'cancelled'].includes(issue.workflow.assignment?.execution_status)
             ? 'CALLBACK_REASSIGNMENT'
             : 'CALLBACK_INITIAL_ASSIGNMENT',
@@ -310,8 +320,8 @@ export async function verifyEventCenter({
   )
   await waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
-    issue => issue.workflow.orchestration_status === 'completed',
-    'Generated flow did not complete through real Runtime',
+    issue => issue.workflow.orchestration_status === 'waiting_human',
+    'Coordinator did not hand control to the responsible person',
     timeoutMs
   )
   const rules = await request(`${base}/automations`)
@@ -320,6 +330,56 @@ export async function verifyEventCenter({
   assert.equal(generatedIssue.workflow.ai_automation_rule_id, null)
   assert.equal(generatedIssue.workflow.nodes[0].name, '结果核对')
   assert.equal(generatedIssue.workflow.assignment_version, initialVersion + 3)
+  assert.equal(generatedIssue.workflow.assignment.status, 'waiting_human')
+  const assertHumanControl = async (
+    expectedVersion = generatedIssue.workflow.assignment_version
+  ) => {
+    const current = await request(`/api/v1/loop-items/${issueId}`)
+    assert.equal(current.workflow.orchestration_status, 'waiting_human')
+    assert.equal(current.workflow.assignment.id, generatedIssue.workflow.assignment.id)
+    assert.equal(current.workflow.assignment_version, expectedVersion)
+  }
+  const personalTasks = []
+  for (let index = 0; index < 2; index++) {
+    const task = await request('/api/runtime-work/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        deviceId: runtimeProfile.executionDeviceId,
+        standaloneChatWorkspace: true,
+        runtime: 'codex',
+        message: `HUMAN_CONTROL_REVIEW_${index}: Help me review this result; I will decide when to continue.`,
+        title: `人工核对任务 ${index + 1}`,
+        modelId: runtimeProfile.model,
+        modelType: runtimeProfile.modelType,
+        modelOptions: runtimeProfile.modelOptions,
+        cloudProjectId: String(project.id),
+      }),
+    })
+    assert.equal(task.accepted, true, task.error)
+    personalTasks.push(task)
+    await request(`/api/v1/loop-items/${issueId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify({ deviceId: task.deviceId, taskId: task.taskId }),
+    })
+    await assertHumanControl()
+  }
+  await waitForValue(
+    () => request('/api/runtime-work'),
+    work => {
+      const tasks = [
+        ...(work.projects ?? []).flatMap(value => value.deviceWorkspaces ?? []),
+        ...(work.chats ?? []),
+      ].flatMap(value => value.tasks ?? [])
+      return personalTasks.every(created =>
+        tasks.some(
+          task => task.taskId === created.taskId && task.turnStatus === 'completed' && !task.running
+        )
+      )
+    },
+    'Both tasks started by the responsible person must actually finish',
+    timeoutMs
+  )
+  await assertHumanControl()
   await captureScreenshot(control, 'event-center-02-created-flow.png')
   const reference = {
     provider: 'generic',
@@ -372,6 +432,36 @@ export async function verifyEventCenter({
   })
   await control.command('waitFor', '[data-testid="event-center-open-issue"]', { visible: true })
   await captureScreenshot(control, 'event-center-03-existing-issue.png')
+  // Incoming context invalidates stale decisions without releasing human control.
+  const eventVersion = generatedIssue.workflow.assignment_version + 1
+  await assertHumanControl(eventVersion)
+  await control.command('click', '[data-testid="event-center-open-issue"]', { visible: true })
+  await control.command('waitFor', '[data-testid="issue-assignment-human-control"]')
+  await control.command('scrollIntoView', '[data-testid="issue-assignment-human-control"]')
+  await control.command('waitFor', '[data-testid="issue-assignment-submit-result"]', {
+    text: '继续推进',
+    visible: true,
+  })
+  await control.command('fill', '[data-testid="issue-assignment-result"]', {
+    value: 'I reviewed both tasks and the incoming event. Proceed with the approved result.',
+  })
+  await assertHumanControl(eventVersion)
+  await captureScreenshot(control, 'event-center-human-controls-advancement.png')
+  await control.command('click', '[data-testid="issue-assignment-submit-result"]', {
+    visible: true,
+  })
+  const completed = await waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    issue => issue.workflow.orchestration_status === 'completed',
+    'Explicit Continue did not return the human result to AI',
+    timeoutMs
+  )
+  assert.equal(completed.workflow.assignment_version, eventVersion + 1)
+  await control.command('waitFor', '[data-testid="issue-assignment-completion"]', {
+    text: '已满足工单要求',
+    visible: true,
+  })
+  await captureScreenshot(control, 'event-center-human-continued.png')
   const config = await request(`${base}/event-center`)
   await request(`${base}/event-center`, {
     method: 'PUT',

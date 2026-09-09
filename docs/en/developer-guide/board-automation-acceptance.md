@@ -190,3 +190,60 @@ Both covered failed-worker reassignment, user stop, paused state with unchanged
 assignment version, explicit resume and completion. Both stopped-state screenshots
 were visually inspected and show the paused state and resume action. Isolated test
 processes were cleaned up; Test-Wegent was neither modified nor restarted.
+
+## Human control of advancement
+
+After assignment to a person, the original Issue remains waiting_human. The assignee may discuss,
+edit the Issue, and start multiple tasks. Replies, notifications, task completion, and incoming
+ events do not authorize advancement. Only the assignee's authenticated Continue action submits
+ the result and returns control to the coordinator. Task tokens cannot submit on their behalf.
+An additional explicit pause still holds submitted results until the user resumes. No new table.
+
+```mermaid
+stateDiagram-v2
+    Coordination --> HumanControl: assign_user
+    HumanControl --> HumanControl: replies, task completion, incoming events
+    HumanControl --> Coordination: assignee submits result through Continue
+```
+
+### QA plan
+
+Use isolated Backend, database, Runtime, protocol model fixtures, and Electron. Preserve the
+failure callback, user stop, and explicit resume cases, then hand the Issue to a person. Complete
+two real Runtime tasks and route another external event to this Issue: its assignment ID and waiting_human
+state must remain unchanged. Ordinary tasks preserve the assignment version; incoming events
+invalidate stale decision versions without returning control to AI. Filling a result does not advance; clicking Continue
+returns control to AI exactly once. Verify rejection of task-token submissions, idempotent result
+submission, ordinary comments, workflow replacement guards, and existing pause recovery. Extend the
+CI-covered event-center checkpoint and repeat it through ai-verify; retain before/after screenshots
+and clean up isolated processes.
+
+### Findings during verification
+
+The new case exposed two incorrect assertions: a continuable Runtime session remains active while
+turnStatus=completed identifies the finished turn; incoming events increment assignment_version to
+invalidate stale decisions while retaining the assignment ID and waiting_human. The assertions now
+follow these existing contracts without accepting failure or authorizing automatic advancement.
+Initial evidence: 2026-09-09T10-12-21-925Z-79103 / 2026-09-09T10-17-01-883Z-89895; second run:
+2026-09-09T10-24-48-342Z-21961 / 2026-09-09T10-25-48-903Z-24396 under wework/test-results/desktop-e2e/.
+
+A real product defect also surfaced: deferred Issue invalidation accessed an expired ORM object
+after its database Session closed, raising DetachedInstanceError. The notification now captures
+scalar payload values before scheduling; a regression that detaches the object before emission passes.
+
+### Final verification
+
+Passed: 140 backend regression cases, one deferred-notification regression, 10 UI tests, and
+31 Rust MCP tests, plus formatting and static checks.
+
+The CI-covered event-center checkpoint passed in 6m26s; evidence:
+wework/test-results/desktop-e2e/2026-09-09T10-34-55-219Z-54310/.
+Independent ai-verify Electron passed the same complete journey; evidence:
+wework/test-results/desktop-e2e/2026-09-09T10-35-58-873Z-56857/.
+Both human-control screenshots and the post-Continue state were inspected. Two completed tasks
+and a routed event retained human control; entering a result alone did not advance, and Continue
+returned control to AI. The final run had no DetachedInstanceError. Isolated environments were cleaned up.
+
+An independent verification startup hit SIGTRAP while using the shared app package during a
+parallel build. Final verification used a separate copy of the completed package and passed;
+no product startup behavior or assertions were bypassed. These changes are not committed, pushed, or deployed.

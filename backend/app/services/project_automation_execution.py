@@ -739,6 +739,13 @@ class ProjectAutomationExecution:
                 "验收要求、参考角色及上次交办结果，再调用 decide_issue_assignment。"
                 "assign_role 将具体工作交给节点并立即启动执行；assign_user 将原工单"
                 "交给项目成员；execute 使用你的执行配置处理图外工作。"
+                "需要用户澄清、确认、审批或决策时，必须使用 assign_user 交给对应项目成员，"
+                "将待决定的问题写入 instruction；仅发通知或说等待回复不代表已转交人工。"
+                "执行者报告等待人工时，不得在没有新的人工决定时再次派 AI 处理同一问题。"
+                "交给人后进入 waiting_human，推进权归负责人；负责人可以回复、修改工单、"
+                "创建并执行多个任务，这些操作及任务结束、外部事件都不代表人工环节完成。"
+                "只有负责人点击“继续推进”提交处理结果后，才允许恢复调度；"
+                "禁止代替负责人提交人工结果、推断其已同意或擅自推进。"
                 "节点和连线是经验，可以跳过不需要的角色，也可以退回已经做过的角色。"
                 "不需要创建子工单。满足工单要求时使用 complete，无需全部角色都做一遍。"
                 "每次提供具体 instruction、reason、唯一 request_id，并使用读取到的"
@@ -749,7 +756,7 @@ class ProjectAutomationExecution:
                 "每轮只提交一次成功的交办决策。"
                 "交办成功后立即结束本轮；禁止 sleep、循环查询或等待执行者完成。"
                 "后端会持久化执行成功、失败或人工结果，通过 callback 启动你的下一轮。"
-                "收到 callback 后先读取结果，再决定重试、换人、换角色或完成。"
+                "收到 callback 后先读取结果，再决定交给人处理、重试、换角色或完成。"
             ),
         ]
         instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()

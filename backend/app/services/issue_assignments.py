@@ -50,19 +50,33 @@ def write_assignment(
 
 def assignment_handoff(workflow: dict) -> dict:
     """Acknowledge a durable decision and release the coordinator turn."""
-    completed = workflow.get("orchestration_status") == "completed"
+    status = workflow.get("orchestration_status")
+    resume_on: str | None
+    if status == "completed":
+        resume_on = None
+        instruction = "The Issue is complete. End this turn."
+    elif status == "waiting_human":
+        resume_on = "human_continue"
+        instruction = (
+            "The assigned person now controls advancement. End this turn. "
+            "Only that person's explicit Continue action submits their result "
+            "and resumes coordination. Comments, notifications, external events, "
+            "and completion of tasks they start are not approval to advance. "
+            "Do not submit a human result on their behalf."
+        )
+    else:
+        resume_on = "assignment_result_callback"
+        instruction = (
+            "The backend owns this assignment. End this turn now; do not "
+            "sleep, poll, or wait for the worker. A result callback will start "
+            "your next coordinator turn with the success or failure result."
+        )
     return {
         **workflow,
         "coordinator_handoff": {
             "end_turn": True,
-            "resume_on": None if completed else "assignment_result_callback",
-            "instruction": (
-                "The Issue is complete. End this turn."
-                if completed
-                else "The backend owns this assignment. End this turn now; do not "
-                "sleep, poll, or wait for the worker. A result callback will start "
-                "your next coordinator turn with the success or failure result."
-            ),
+            "resume_on": resume_on,
+            "instruction": instruction,
         },
     }
 

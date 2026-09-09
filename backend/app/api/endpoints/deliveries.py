@@ -766,7 +766,7 @@ async def submit_loop_item_assignment_result(
     item_id: str,
     values: IssueAssignmentResult,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
     try:
         return await issue_assignment_service.submit_result(

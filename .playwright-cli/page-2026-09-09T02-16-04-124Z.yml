@@ -1,0 +1,67 @@
+- iframe [ref=e2]:
+  - generic "看板事件调度原型" [ref=f1e2]:
+    - banner [ref=f1e3]:
+      - generic [ref=f1e4]: WEGENT
+      - generic [ref=f1e5]: /
+      - generic [ref=f1e6]: 产品研发看板
+      - generic [ref=f1e7]: 交互模拟
+      - navigation "看板导航" [ref=f1e8]:
+        - button "工单" [pressed] [ref=f1e9] [cursor=pointer]
+        - button "经验" [ref=f1e10] [cursor=pointer]
+        - button "Webhook" [ref=f1e11] [cursor=pointer]
+    - main [ref=f1e12]:
+      - generic [ref=f1e13]:
+        - generic [ref=f1e14]:
+          - heading "事情进来，交给合适的 AI" [level=2] [ref=f1e15]
+          - generic [ref=f1e16]: 事件中心机器人 · AI 已开启
+        - generic [ref=f1e17]:
+          - generic [ref=f1e18]:
+            - generic [ref=f1e19]: 模拟外部事件
+            - combobox "模拟外部事件" [ref=f1e20]:
+              - option "已有工单 · 收到 Review"
+              - option "新事情 · 请求代码审查"
+              - option "不明确的新任务 · 处理账单" [selected]
+          - button "发送 Webhook" [ref=f1e21] [cursor=pointer]
+          - generic [ref=f1e22]: 外部任务 FIN-27：帮我处理这批账单。附件：账单与流水。
+        - generic [ref=f1e23]:
+          - generic [ref=f1e24]:
+            - generic [ref=f1e25]:
+              - heading "工单 1" [level=3] [ref=f1e26]
+              - generic [ref=f1e27]: 点击工单查看接管过程
+            - button "#142 · !88 增加登录限流 等待 Review · 需求开发" [pressed] [ref=f1e29] [cursor=pointer]:
+              - generic [ref=f1e30]: "#142 · !88"
+              - generic [ref=f1e31]: 增加登录限流
+              - generic [ref=f1e32]: 等待 Review · 需求开发
+            - region "流程 AI 与经验" [ref=f1e33]:
+              - generic [ref=f1e34]:
+                - heading "#142 增加登录限流" [level=3] [ref=f1e35]
+                - generic [ref=f1e36]: 流程 AI · 执行决策
+              - generic [ref=f1e37]:
+                - generic [ref=f1e38]: 目标 登录接口支持限流，并完成上线
+                - generic [ref=f1e39]: 参考经验 软件交付 · AI 按需选择角色
+              - generic "参考经验中的角色" [ref=f1e40]:
+                - button "需求明确" [ref=f1e41] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e42]: →
+                - button "页面设计" [ref=f1e43] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e44]: →
+                - button "需求开发 · 当前" [pressed] [ref=f1e45] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e46]: →
+                - button "MR Review" [ref=f1e47] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e48]: →
+                - button "需求上线" [ref=f1e49] [cursor=pointer]
+              - generic [ref=f1e50]: 实际起点：需求开发 · 当前负责人：流程 AI
+              - generic [ref=f1e51]: 开发已完成，创建了 MR !88。保留需求、代码和执行上下文，等待审查反馈。
+              - generic [ref=f1e52]: 从上方发送事件，观察这张工单如何继续。
+              - group [ref=f1e54]:
+                - generic "工单动态 · 1 条" [ref=f1e55]
+          - complementary "事件中心机器人" [ref=f1e56]:
+            - generic [ref=f1e57]:
+              - heading "事件中心机器人" [level=3] [ref=f1e58]
+              - generic [ref=f1e59]: 澄清 · 路由 · 创建
+            - list [ref=f1e60]:
+              - listitem [ref=f1e61]:
+                - generic [ref=f1e62]: 已有关联
+                - text: "MR !88 由工单 #142 创建；新事件可以沿这条关联回到原工单。"
+      - generic [ref=f1e63]:
+        - generic [ref=f1e64]: 本地情景模拟 · 不连接 GitLab，不运行真实 AI
+        - status [ref=f1e65]: 等待事件

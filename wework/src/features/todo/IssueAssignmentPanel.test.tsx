@@ -129,6 +129,10 @@ describe('IssueAssignmentPanel', () => {
     const button = screen.getByTestId('issue-assignment-submit-result')
     expect(button).toBeDisabled()
     await user.type(input, 'Checkout verified')
+    expect(submit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('issue-assignment-human-control')).toHaveTextContent(
+      'todo.assignment_human_control_help'
+    )
     await user.click(button)
     expect(await screen.findByRole('alert')).toHaveTextContent('Connection interrupted')
     expect(input).toHaveValue('Checkout verified')

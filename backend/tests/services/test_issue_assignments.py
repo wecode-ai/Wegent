@@ -121,6 +121,36 @@ def command(action="assign_role", **kwargs):
 
 
 @pytest.mark.asyncio
+async def test_issue_change_event_survives_its_database_session(
+    test_db, test_user, assigned_issue, monkeypatch
+):
+    from app.services import loop_item_events
+
+    issue, _ = assigned_issue
+    expected = {
+        "projectId": str(issue.cloud_project_id),
+        "itemId": issue.id,
+        "version": issue.version,
+        "reason": "runtime_status",
+    }
+    loop = MagicMock()
+    loop.is_closed.return_value = False
+    monkeypatch.setattr(loop_item_events, "get_socketio_loop", lambda: loop)
+    schedule = MagicMock()
+    monkeypatch.setattr(loop_item_events.asyncio, "run_coroutine_threadsafe", schedule)
+    socket = SimpleNamespace(emit=AsyncMock())
+    monkeypatch.setattr("app.core.socketio.get_sio", lambda: socket)
+    loop_item_events.publish_loop_item_changed(
+        test_db, item=issue, reason="runtime_status", actor_user_id=test_user.id
+    )
+    test_db.expire(issue)
+    test_db.expunge(issue)
+    await schedule.call_args.args[0]
+    socket.emit.assert_awaited_once()
+    assert socket.emit.call_args.args == ("wework:loop_item:changed", expected)
+
+
+@pytest.mark.asyncio
 async def test_http_assignment_conflict_preserves_state_and_recovers(
     test_db, test_user, test_client, test_token, assigned_issue
 ):
@@ -268,6 +298,8 @@ async def test_human_result_resumes_same_issue_and_preserves_original_goal(
     )
     assert issue.assignee_user_id == test_user.id
     assert result["orchestration_status"] == "waiting_human"
+    assert result["coordinator_handoff"]["resume_on"] == "human_continue"
+    assert "explicit Continue" in result["coordinator_handoff"]["instruction"]
     resumed = await issue_assignment_service.submit_result(
         test_db,
         issue_id=issue.id,
@@ -280,6 +312,121 @@ async def test_human_result_resumes_same_issue_and_preserves_original_goal(
     assert resumed["intent"] == "Meet checkout requirements"
     assert issue.status == "in_progress"
     start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_only_human_session_can_return_control_to_ai(
+    test_db,
+    test_user,
+    test_client,
+    test_token,
+    test_task_token,
+    assigned_issue,
+    monkeypatch,
+):
+    issue, manager = assigned_issue
+    start = AsyncMock(return_value=1)
+    monkeypatch.setattr(issue_workflow_start_service, "start", start)
+    await issue_assignment_service.decide(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision=command("assign_user", assignee_user_id=test_user.id),
+        manager_run_id=manager.id,
+    )
+    path = f"/api/v1/loop-items/{issue.id}/assignment/result"
+    payload = {"assignment_id": "assignment-1", "summary": "I approve this proposal"}
+    response = test_client.post(
+        path, headers={"Authorization": f"Bearer {test_task_token}"}, json=payload
+    )
+    assert response.status_code == 401
+    assert issue.metadata_json["workflow"]["orchestration_status"] == "waiting_human"
+    start.assert_not_awaited()
+
+    for _ in range(2):
+        response = test_client.post(
+            path, headers={"Authorization": f"Bearer {test_token}"}, json=payload
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["orchestration_status"] == "planning"
+    start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_human_control_blocks_coordinator_and_ordinary_workflow_replacement(
+    test_db, test_user, assigned_issue, monkeypatch
+):
+    from fastapi import HTTPException
+
+    from app.schemas.delivery import LoopItemUpdate
+    from app.schemas.project_chat import ProjectChatSend
+    from app.services.issue_workflow_planning import issue_workflow_planning_service
+    from app.services.loop_items.service import loop_item_service
+    from app.services.project_chat.service import project_chat_service
+
+    issue, manager = assigned_issue
+    await issue_assignment_service.decide(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision=command("assign_user", assignee_user_id=test_user.id),
+        manager_run_id=manager.id,
+    )
+    dispatch = AsyncMock(return_value=1)
+    monkeypatch.setattr(issue_workflow_start_service, "_start_ai", dispatch)
+    project = test_db.get(CloudProject, issue.cloud_project_id)
+    assert (
+        await issue_workflow_start_service.start(
+            test_db, item=issue, project=project, user_id=test_user.id
+        )
+        == 0
+    )
+    dispatch.assert_not_awaited()
+    with pytest.raises(ValueError, match="Continue"):
+        issue_workflow_planning_service.ensure_run(
+            test_db, issue=issue, user_id=test_user.id
+        )
+    with pytest.raises(IssueAssignmentConflict, match="waiting_human"):
+        await issue_assignment_service.decide(
+            test_db,
+            issue_id=issue.id,
+            user_id=test_user.id,
+            decision=command("complete").model_copy(
+                update={
+                    "request_id": "premature-complete",
+                    "expected_assignment_version": 1,
+                }
+            ),
+            manager_run_id=manager.id,
+        )
+    loop_item_service.update(
+        test_db,
+        issue.id,
+        test_user.id,
+        LoopItemUpdate(version=issue.version, description="Still reviewing two tasks"),
+    )
+    project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            client_message_id=str(uuid4()),
+            project_id=str(project.id),
+            task_id=str(issue.id),
+            content="The first task looks good. I have not finished reviewing the second.",
+        ),
+    )
+    assert issue.metadata_json["workflow"]["orchestration_status"] == "waiting_human"
+    changed = {**issue.metadata_json["workflow"], "orchestration_status": "planning"}
+    with pytest.raises(HTTPException) as caught:
+        loop_item_service.update(
+            test_db,
+            issue.id,
+            test_user.id,
+            LoopItemUpdate(version=issue.version, workflow=changed),
+        )
+    assert caught.value.status_code == 409
+    assert issue.metadata_json["workflow"]["orchestration_status"] == "waiting_human"
 
 
 @pytest.mark.asyncio

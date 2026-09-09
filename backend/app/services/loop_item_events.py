@@ -58,6 +58,14 @@ def publish_loop_item_changed(
     if loop is None or loop.is_closed() or not recipient_ids:
         return
 
+    # Capture scalar values while the caller still owns the database session.
+    payload = {
+        "projectId": str(item.cloud_project_id),
+        "itemId": item.id,
+        "version": item.version,
+        "reason": reason,
+    }
+
     async def _emit() -> None:
         from app.api.ws.wework_runtime_namespace import (
             WEWORK_RUNTIME_NAMESPACE,
@@ -65,12 +73,6 @@ def publish_loop_item_changed(
         )
         from app.core.socketio import get_sio
 
-        payload = {
-            "projectId": str(item.cloud_project_id),
-            "itemId": item.id,
-            "version": item.version,
-            "reason": reason,
-        }
         for user_id in recipient_ids:
             await get_sio().emit(
                 LOOP_ITEM_CHANGED_EVENT,

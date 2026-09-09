@@ -998,9 +998,21 @@ class LoopItemService:
                 metadata["tags"] = updates.pop("tags") or []
             if "workflow" in values.model_fields_set:
                 workflow = values.workflow
-                metadata["workflow"] = (
+                from app.services.issue_assignment_state import (
+                    validate_human_assignment_update,
+                )
+
+                next_workflow = (
                     workflow.model_dump(mode="json") if workflow is not None else None
                 )
+                try:
+                    validate_human_assignment_update(
+                        metadata.get("workflow") or {},
+                        next_workflow,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+                metadata["workflow"] = next_workflow
                 updates.pop("workflow", None)
             if "execution_config" in values.model_fields_set:
                 execution_config = values.execution_config

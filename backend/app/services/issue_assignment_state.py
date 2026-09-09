@@ -9,6 +9,29 @@ from app.schemas.issue_assignment import IssueAssignmentDecision
 from app.services.issue_assignment_errors import IssueAssignmentConflict
 
 
+def validate_human_assignment_update(current: dict, updated: dict | None) -> None:
+    """Keep ordinary Issue edits from replacing the human-controlled handoff."""
+    if (current.get("assignment") or {}).get("status") != "waiting_human":
+        return
+    control_fields = (
+        "advancement_policy",
+        "orchestration_status",
+        "assignment",
+        "assignment_version",
+        "active_run_id",
+        "active_plan_version",
+        "current_stage_id",
+        "current_work",
+    )
+    if updated is None or any(
+        current.get(key) != updated.get(key) for key in control_fields
+    ):
+        raise IssueAssignmentConflict(
+            "waiting_human",
+            "Only the assigned person's Continue action can return control to AI",
+        )
+
+
 def decide_assignment(workflow: dict, decision: IssueAssignmentDecision) -> dict:
     """Select work without treating reference-graph edges as execution gates."""
     current = workflow.get("assignment") or {}
@@ -89,7 +112,10 @@ def _validate_assignment_state(
         )
     if workflow.get("orchestration_status") == "waiting_human":
         raise IssueAssignmentConflict(
-            "waiting_human", "Wait for the assigned person to submit a result"
+            "waiting_human",
+            "End this turn. Only the assigned person's explicit Continue action "
+            "can return control to AI; comments, events, and task completion "
+            "are not approval to advance.",
         )
     if (
         int(workflow.get("assignment_version") or 0)

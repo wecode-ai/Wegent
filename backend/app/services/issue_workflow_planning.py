@@ -37,6 +37,8 @@ class IssueWorkflowPlanningService:
     ) -> ProjectWorkflowRun:
         workflow = self._workflow(issue)
         self._require_current_experience(workflow)
+        if (workflow.get("assignment") or {}).get("status") == "waiting_human":
+            raise ValueError("Only the assigned person's Continue action can resume AI")
         current = self._active_run(db, issue, workflow)
         if current is not None and current.status not in {"completed", "failed"}:
             return current

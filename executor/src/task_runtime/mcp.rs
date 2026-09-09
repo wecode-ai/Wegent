@@ -2416,7 +2416,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "decide_issue_assignment",
-            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when requirements are met. Submit one decision and end this turn immediately. Do not sleep or poll: the backend resumes coordination through a result callback. Roles can be skipped or revisited.",
+            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when requirements are met. For clarification, approval, or a human decision, use assign_user with the responsible member and concrete questions. This enters waiting_human: only that person's explicit Continue action returns control to AI. Comments, notifications, external events, and completion of tasks they start do not authorize advancement. Never submit a human result on their behalf. Submit one decision and end this turn immediately. Do not sleep or poll: the backend resumes coordination through a result callback. Roles can be skipped or revisited.",
             json!({
                 "type": "object",
                 "properties": {

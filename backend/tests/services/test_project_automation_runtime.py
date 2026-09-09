@@ -583,6 +583,8 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
     assert "assignment_version_conflict" in prompt
     assert "禁止猜测或递增版本号" in prompt
     assert "next_action" in prompt
+    assert "只有负责人点击“继续推进”" in prompt
+    assert "仅发通知或说等待回复不代表已转交人工" in prompt
     assert "子任务" not in prompt
     assert prompt.endswith("Prefer domain ownership.")
 
