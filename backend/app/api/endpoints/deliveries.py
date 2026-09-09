@@ -72,6 +72,7 @@ from app.schemas.issue_workflow import (
 )
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
+from app.services.issue_assignment_errors import IssueAssignmentConflict
 from app.services.issue_assignments import issue_assignment_service
 from app.services.issue_workflow_decision import issue_workflow_decision_service
 from app.services.issue_workflow_planning import issue_workflow_planning_service
@@ -746,6 +747,15 @@ async def decide_loop_item_assignment(
             decision=values,
             manager_run_id=automation_run_id,
         )
+    except IssueAssignmentConflict as exc:
+        db.rollback()
+        logger.info(
+            "Issue assignment rejected item=%s run=%s conflict=%s",
+            item_id,
+            automation_run_id,
+            exc.detail,
+        )
+        raise HTTPException(status.HTTP_409_CONFLICT, exc.detail) from exc
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

@@ -1403,7 +1403,7 @@ def test_assignment_endpoint_preserves_coordinator_identity(
         },
         json={
             "request_id": "decision-1",
-            "expected_version": 0,
+            "expected_assignment_version": 0,
             "action": "complete",
             "reason": "Acceptance verified",
         },

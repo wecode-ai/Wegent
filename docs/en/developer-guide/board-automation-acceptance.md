@@ -87,3 +87,106 @@ Verification plan: backend MCP route coexistence, assignment identity, failure r
 Layered results: 262 backend, 107 frontend, 29 Rust MCP, and 13 packaging-identity tests passed, as did TypeScript, CI checkpoint coverage, and the single-head check. The new upstream Rust notification fixture now includes the event context fields. Frontend tests initially timed out while competing with compilation; reducing workers alone was insufficient. After isolating compilation, the failing diagnostic case took 1.23 seconds and all frontend tests passed in 49 seconds, without relaxing timeouts or assertions. Temporary SQLite verified upgrade, downgrade to explicit parent `580031eb7ddc` restoring both parent heads, and upgrade again. A merge node does not use ambiguous `downgrade -1`.
 
 Desktop results: merged Electron 0.4.3 and the release executor built successfully. Both the CI `event-center` checkpoint and separate packaged-app `scripts/ai-verify.mjs` verification passed the planned failure recovery and event deduplication journey. Evidence: `wework/test-results/desktop-e2e/2026-09-09T07-47-31-672Z-11922/` and `wework/test-results/desktop-e2e/2026-09-09T07-47-27-962Z-11480/`. The final independent event screenshot was visually inspected. The `Test-Wegent` deployment was not changed or restarted.
+
+## Assignment version conflict regression (2026-09-09)
+
+`decide_issue_assignment.expected_assignment_version` must come from
+`get_board_item` → `workflow.assignment_version`. Neither the Issue version nor
+`workflow.version` authorizes an assignment. Update the backend and executor
+together; the ambiguous `expected_version` parameter is no longer accepted.
+Existing assignment history and callback ownership remain intact; no new table is needed.
+
+```mermaid
+sequenceDiagram
+    participant AI as Coordinator
+    participant API as Assignment API
+    participant Issue
+    AI->>Issue: get_board_item
+    Issue-->>AI: workflow.assignment_version
+    AI->>API: expected_assignment_version + decision
+    API->>Issue: Lock, read and validate
+    alt Assignment version mismatch
+        API-->>AI: assignment_version_conflict, both versions, read_issue
+        AI->>Issue: Read current results before reconsidering
+    else Paused, waiting for a human, or invalid coordinator
+        API-->>AI: Specific conflict code, end_turn
+    else Valid decision
+        API->>Issue: Persist one assignment
+        API-->>AI: End turn; resume through a result callback
+    end
+```
+
+Verification plan: isolate the database, FastAPI, Redis, executor and Electron;
+use deterministic model responses with real assignment/read requests. Given
+workflow version 13 and assignment version 1, submit 13/14/15 and verify 409,
+both assignment versions, `read_issue`, and unchanged state. Re-read and submit 1;
+verify success and idempotent replay. Paused, waiting-human, running-assignment,
+and invalid-coordinator cases must return distinct codes with `end_turn`.
+Rust MCP must preserve the response detail; backend MCP must publish the version
+source in its parameter description. The CI `event-center` checkpoint submits
+the wrong workflow version deliberately, reads again through `get_board_item`,
+and recovers before continuing worker-failure callbacks, reassignment, completion,
+and subsequent event routing. Independently verify the desktop journey with
+`scripts/ai-verify.mjs`, capture screenshots, and clean up isolated processes.
+
+Layered results: 106 backend state, service, API, event-center and prompt tests passed.
+The final MCP path then passed 11 tests, including one newly added tool-description test
+(107 distinct tests covered). All 31 Rust tests passed with
+`cargo test --manifest-path executor/Cargo.toml task_runtime::mcp::tests --lib`.
+Black, isort, Prettier and ESLint passed. The first run exposed an outdated error-message
+assertion and a fixture missing priority/sequence_number; both were corrected and
+verified without weakening assertions.
+
+`pnpm --filter wework e2e:desktop --segment event-center` exited 0. Evidence:
+`wework/test-results/desktop-e2e/2026-09-09T08-39-13-270Z-19278/`.
+Real backend logs recorded workflow versions 2/8/15 rejected with 409 against assignment
+versions 1/2/3, each followed by a successful 200 after re-reading. Worker-failure callbacks,
+reassignment, completion, and subsequent events reusing the same Issue all passed.
+The failure-callback and existing-Issue screenshots were visually inspected.
+
+Independent `scripts/ai-verify.mjs` verification exited 0, covering version-conflict recovery, failed-worker callbacks, reassignment and completion. Screenshots: `wework/test-results/desktop-e2e/2026-09-09T08-44-31-456Z-29425/`; the final existing-Issue event screenshot was visually inspected. The script cleaned up isolated Electron, backend and executor processes. `Test-Wegent` was neither changed nor restarted.
+
+## User stop must not trigger automatic reassignment (2026-09-09)
+
+Stopping the current worker or coordinator persists `paused` on its Issue before
+requesting Runtime cancellation. Cancellation is retained as history and emits no
+assignment callback. Late success/failure results, queued callbacks and scheduler
+scans cannot unpause it. Stopping an old execution must not affect current work.
+Only explicit user resume restarts coordination; ordinary execution failure still
+allows callback reassignment. No new table is required.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant API as Stop endpoint
+    participant Issue
+    participant Runtime
+    User->>API: Stop current execution
+    API->>Issue: Lock execution then Issue; persist paused
+    API->>Runtime: Request cancellation
+    Runtime-->>Issue: Cancellation or late terminal result
+    Issue->>Issue: Retain result, remain paused, emit no assignment callback
+    User->>Issue: Explicit resume
+    Issue->>Runtime: Start next coordinator turn
+```
+
+Covered entry points: activity Runtime stop, queue stop/cancel, automation-run stop
+and managed-task cancellation. The QA matrix includes running, cancelling and queued
+work, coordinators and workers, old executions, late success/failure/cancellation,
+failed stop RPC, and explicit resume. Terminal projection refreshes locked Issue
+state so it cannot overwrite user intent.
+
+The broad backend suite passed 224 tests. Final stop/cancel/concurrency verification
+passed 25 tests, including three new repeated-stop cases. An older model fixture
+needed explicit Model spec.protocol/apiFormat under the latest upstream validation;
+its configuration was corrected without weakening product validation. Black, isort,
+Prettier and ESLint passed.
+
+`pnpm --filter wework e2e:desktop --segment event-center` passed in 5m39s. Evidence:
+`wework/test-results/desktop-e2e/2026-09-09T09-03-39-365Z-66153/`.
+Independent `scripts/ai-verify.mjs` verification passed the same journey. Evidence:
+`wework/test-results/desktop-e2e/2026-09-09T09-10-22-197Z-78185/`.
+Both covered failed-worker reassignment, user stop, paused state with unchanged
+assignment version, explicit resume and completion. Both stopped-state screenshots
+were visually inspected and show the paused state and resume action. Isolated test
+processes were cleaned up; Test-Wegent was neither modified nor restarted.

@@ -682,7 +682,11 @@ def _sync_assignment_run(
     from app.services.issue_assignments import write_assignment
 
     issue = (
-        db.query(LoopItem).filter(LoopItem.id == run.task_id).with_for_update().first()
+        db.query(LoopItem)
+        .filter(LoopItem.id == run.task_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
     )
     if issue is None:
         return None
@@ -708,6 +712,8 @@ def _sync_assignment_run(
     summary = (activity.content if activity else "") or run.description or run.status
     next_workflow = finish_assignment(workflow, assignment["id"], summary)
     next_workflow["assignment"]["execution_status"] = run.status
+    if run.status == "cancelled":
+        next_workflow["orchestration_status"] = "paused"
     if run.status != "succeeded":
         for node in next_workflow.get("nodes", []):
             if node["id"] == assignment.get("node_id"):
@@ -730,7 +736,13 @@ def _sync_ai_planning_run(
     if not workflow_run_id or not run.task_id:
         return None
     workflow_run = db.get(ProjectWorkflowRun, workflow_run_id)
-    issue = db.get(LoopItem, str(run.task_id))
+    issue = (
+        db.query(LoopItem)
+        .filter(LoopItem.id == str(run.task_id))
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
     if workflow_run is None or issue is None or workflow_run.parent_id != issue.id:
         return None
     issue_metadata = (
@@ -745,19 +757,23 @@ def _sync_ai_planning_run(
         return issue
     if run.status not in {"failed", "cancelled", "skipped"}:
         return issue
-    workflow_run.status = "failed"
+    workflow_run.status = (
+        "paused"
+        if run.status == "cancelled" or workflow.get("orchestration_status") == "paused"
+        else "failed"
+    )
     workflow_run.description = run.description or "AI manager did not submit a plan"
     workflow_run.version += 1
     next_workflow = dict(workflow)
     next_workflow["version"] = int(workflow.get("version") or 1) + 1
-    next_workflow["orchestration_status"] = "failed"
+    next_workflow["orchestration_status"] = workflow_run.status
     issue_metadata["workflow"] = next_workflow
     issue.metadata_json = issue_metadata
     issue.version += 1
     sync_workflow_automation_status(
         db,
         issue,
-        run_status="failed",
+        run_status="cancelled" if run.status == "cancelled" else "failed",
         description=workflow_run.description,
     )
     return issue

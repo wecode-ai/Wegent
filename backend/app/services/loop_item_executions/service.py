@@ -1100,6 +1100,7 @@ class LoopItemExecutionService:
         commit: bool = True,
         expected_status: Optional[str] = None,
         expected_version: Optional[int] = None,
+        user_initiated: bool = False,
     ) -> LoopItemExecution:
         """Request cancellation and terminalize only when no process can exist.
 
@@ -1108,7 +1109,15 @@ class LoopItemExecutionService:
         reassignment and user cancellation from manufacturing a terminal fact.
         """
 
-        row = db.get(LoopItemExecution, execution_id)
+        row = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id == execution_id)
+            .populate_existing()
+            .with_for_update()
+            .first()
+            if user_initiated
+            else db.get(LoopItemExecution, execution_id)
+        )
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
         if row.status in TERMINAL_STATUSES:
@@ -1117,6 +1126,16 @@ class LoopItemExecutionService:
             return row
         if expected_version is not None and row.version != expected_version:
             return row
+        if user_initiated:
+            from app.services.issue_assignments import pause_assignment_for_user_stop
+
+            pause_assignment_for_user_stop(db, row.automation_run_id)
+            if row.status == STATUS_CANCEL_REQUESTED:
+                if commit:
+                    db.commit()
+                else:
+                    db.flush()
+                return row
         start_was_delivered = not loop_datetime_value_is_unset(row.start_requested_at)
         if row.status in {STATUS_PENDING_APPROVAL, STATUS_QUEUED} or (
             row.status == STATUS_CLAIMED and not start_was_delivered

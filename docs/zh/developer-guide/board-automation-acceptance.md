@@ -196,3 +196,92 @@ sequenceDiagram
 分层结果：后端 262 项、前端 107 项、Rust MCP 29 项及打包身份 13 项测试通过；TypeScript、CI 分片目录和迁移单 head 检查通过。上游新增的 Rust 通知测试已补齐事件上下文字段。首次前端测试与编译争用资源导致超时；仅减少 worker 仍不足，隔离编译后原失败用例耗时 1.23 秒，完整测试耗时 49 秒且全部通过，未延长超时或删除断言。迁移在临时 SQLite 中完成升级、指定父版本 `580031eb7ddc` 回退到两个父 head、再次升级验证；合并节点不使用含糊的 `downgrade -1`。
 
 桌面结果：合并后的 Electron 0.4.3 与 release 执行器构建成功。`event-center` CI 检查点和独立 `scripts/ai-verify.mjs` 打包应用验证均通过，覆盖计划中的失败恢复和事件去重。证据分别为 `wework/test-results/desktop-e2e/2026-09-09T07-47-31-672Z-11922/` 与 `wework/test-results/desktop-e2e/2026-09-09T07-47-27-962Z-11480/`；已查看独立验证的最终事件截图。未修改或重启 `Test-Wegent` 部署。
+
+## 交办版本冲突回归（2026-09-09）
+
+`decide_issue_assignment` 的 `expected_assignment_version` 必须取自
+`get_board_item` 返回的 `workflow.assignment_version`。工单 `version` 与
+`workflow.version` 都不是交办锁版本。后端与执行器需要一起更新；旧参数
+`expected_version` 不再接受。已有交办历史和 callback 结果归属不变，不新增表。
+
+```mermaid
+sequenceDiagram
+    participant AI as 调度 AI
+    participant API as 分配接口
+    participant Issue as 工单
+    AI->>Issue: get_board_item
+    Issue-->>AI: workflow.assignment_version
+    AI->>API: expected_assignment_version + 决策
+    API->>Issue: 加锁读取并校验
+    alt 交办版本不一致
+        API-->>AI: assignment_version_conflict、双方版本、read_issue
+        AI->>Issue: 重读交办结果，再决定下一步
+    else 暂停、人工等待或调度失效
+        API-->>AI: 具体冲突码、end_turn
+    else 可执行
+        API->>Issue: 持久化一次交办
+        API-->>AI: 结束本轮，等待结果 callback
+    end
+```
+
+验证计划：隔离测试数据库、FastAPI、Redis、执行器和 Electron；模型使用确定性响应，
+所有分配与重读走真实接口。先构造流程版本 13、交办版本 1，分别提交 13/14/15，
+确认返回 409、双方交办版本与 `read_issue`，工单保持不变；重读后提交 1 成功，
+重复同一请求不重复交办。暂停、人工等待、执行中和失效调度应返回各自冲突码及
+`end_turn`。Rust MCP 必须透传错误正文，后端 MCP 的公开参数说明必须包含版本来源。
+CI `event-center` 检查点主动提交错误的流程版本，通过 `get_board_item` 重读后恢复，
+继续验证执行失败 callback、重新交办、完成和后续事件路由。单独使用
+`scripts/ai-verify.mjs` 验证相同桌面路径并截图；结束后清理隔离进程。
+
+分层结果：后端状态、服务、API、事件中心与提示词共 106 项测试通过；随后针对最终
+MCP 出口运行 11 项测试通过（包含 1 项新增参数发布测试，合计覆盖 107 项）。
+Rust `cargo test --manifest-path executor/Cargo.toml task_runtime::mcp::tests --lib`
+31 项通过。Black、isort、Prettier、ESLint 检查通过。首轮两处测试失败分别来自旧错误
+文案断言和缺少 priority/sequence_number 的测试夹具，已修正并验证，没有放宽断言。
+
+`pnpm --filter wework e2e:desktop --segment event-center` 退出码 0；证据目录：
+`wework/test-results/desktop-e2e/2026-09-09T08-39-13-270Z-19278/`。
+真实后端记录三轮错误版本 2/8/15 分别对照交办版本 1/2/3 返回 409，随后正确提交
+均返回 200；执行失败 callback、重新交办、完成和后续事件复用原工单全部通过。
+已检查 `event-center-callback-worker-failed.png` 与 `event-center-03-existing-issue.png`。
+
+独立 `scripts/ai-verify.mjs` 验证退出码 0，同样完成错误版本恢复、执行失败 callback、重新交办和最终完成。截图目录为 `wework/test-results/desktop-e2e/2026-09-09T08-44-31-456Z-29425/`，已查看最终事件回到原工单的截图。隔离 Electron、后端和执行器已由验证脚本清理，未修改或重启 `Test-Wegent`。
+
+## 用户停止禁止再次自动分活（2026-09-09）
+
+用户停止当前执行或当前调度 AI 时，先持久化工单的 `paused` 状态，再请求执行器停止。
+取消结果保留在交办历史里，不产生新的分活 callback。迟到的成功、失败回报、已排队
+callback 和定时扫描都不能解除暂停。停止旧执行不得影响当前交办；只有用户明确恢复
+才重新启动调度。普通执行失败仍可通过 callback 重派。不新增表。
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant API as 停止入口
+    participant Issue as 工单状态
+    participant Runtime as 执行器
+    User->>API: 停止当前执行
+    API->>Issue: 锁定执行与工单，持久化 paused
+    API->>Runtime: 请求停止
+    Runtime-->>Issue: 取消或迟到的终态结果
+    Issue->>Issue: 保存结果，保持 paused，不发分活 callback
+    User->>Issue: 明确恢复
+    Issue->>Runtime: 启动下一轮 AI 决策
+```
+
+覆盖入口：动态详情的 Runtime 停止、自动化队列停止/取消、自动化运行停止及托管任务停止。
+验证计划覆盖正在运行、已请求取消、排队未启动、调度员与执行角色、旧执行、迟到的
+成功/失败/取消、停止 RPC 失败，以及明确恢复。保持执行与工单的加锁顺序，终态投影
+重新读取最新工单，避免覆盖用户暂停。
+
+后端广泛回归 224 项通过；最终停止/取消/并发专项 25 项通过，包含 3 项新增重复停止
+测试。旧模型夹具缺少最新上游要求的协议声明，补齐 Model spec.protocol/apiFormat 后
+验证通过，没有放宽产品校验。Black、isort、Prettier、ESLint 检查通过。
+
+真实桌面 `pnpm --filter wework e2e:desktop --segment event-center` 通过（5 分 39 秒），
+证据为 `wework/test-results/desktop-e2e/2026-09-09T09-03-39-365Z-66153/`。
+独立 `scripts/ai-verify.mjs` 同一旅程通过，证据为
+`wework/test-results/desktop-e2e/2026-09-09T09-10-22-197Z-78185/`。
+两次均验证失败重派 → 用户停止 → 暂停且交办版本不变 → 明确恢复 → 完成。
+已查看两次 `event-center-user-stopped.png`，实际界面显示“已暂停 / 继续执行”。
+隔离测试进程已清理；未修改或重启 Test-Wegent 部署。

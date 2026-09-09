@@ -1143,6 +1143,7 @@ class ProjectAutomationService:
                 db,
                 execution_id=execution.id,
                 note="Automation run cancelled by user",
+                user_initiated=True,
             )
             if execution.status == "cancel_requested":
                 from app.tasks.robot_queue_tasks import emit_runtime_cancels
@@ -1163,10 +1164,13 @@ class ProjectAutomationService:
             return self._run_view(run, timezone_name)
 
         if run.backend_task_id:
+            from app.services.issue_assignments import pause_assignment_for_user_stop
             from app.services.project_automation_managed_execution import (
                 project_automation_managed_execution_service,
             )
 
+            pause_assignment_for_user_stop(db, run.id)
+            db.commit()
             cancelled = await project_automation_managed_execution_service.cancel(
                 task_id=int(run.backend_task_id),
                 # Project authorization belongs to the requester, while the

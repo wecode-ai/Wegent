@@ -323,11 +323,25 @@ async def test_ai_coordinator_assigns_same_issue_to_a_person(
         },
     )
 
+    rejected = await wework_space.decide_issue_assignment(
+        _token(test_user),
+        {
+            "request_id": "wrong-snapshot-version",
+            "expected_assignment_version": 13,
+            "action": "complete",
+            "reason": "Test a confused workflow version",
+        },
+    )
+    assert rejected["error"]["code"] == "assignment_version_conflict"
+    assert rejected["error"]["expected_assignment_version"] == 13
+    assert rejected["error"]["current_assignment_version"] == 0
+    assert rejected["error"]["next_action"] == "read_issue"
+
     submitted = await wework_space.decide_issue_assignment(
         _token(test_user),
         {
             "request_id": "assign-member",
-            "expected_version": 0,
+            "expected_assignment_version": 0,
             "action": "assign_user",
             "assignee_user_id": test_user.id,
             "instruction": "Verify release",
@@ -376,18 +390,21 @@ async def test_inactive_coordinator_cannot_assign_issue(
         },
     )
 
-    with pytest.raises(ValueError, match="not active"):
-        await wework_space.decide_issue_assignment(
-            _token(test_user),
-            {
-                "request_id": "assign-member",
-                "expected_version": 0,
-                "action": "assign_user",
-                "assignee_user_id": test_user.id,
-                "instruction": "Verify release",
-                "reason": "Human confirmation required",
-            },
-        )
+    result = await wework_space.decide_issue_assignment(
+        _token(test_user),
+        {
+            "request_id": "assign-member",
+            "expected_assignment_version": 0,
+            "action": "assign_user",
+            "assignee_user_id": test_user.id,
+            "instruction": "Verify release",
+            "reason": "Human confirmation required",
+        },
+    )
+
+    detail = result["error"]
+    assert detail["code"] == "coordinator_invalid"
+    assert detail["next_action"] == "end_turn"
 
     test_db.expire_all()
     restored = issue_workflow_planning_service.get(
@@ -399,6 +416,17 @@ async def test_inactive_coordinator_cannot_assign_issue(
     assert restored.run_id == workflow_run.id
     assert restored.status == "planning"
     assert restored.items == []
+
+
+def test_assignment_tool_publishes_version_source_and_conflict_recovery():
+    info = wework_space.decide_issue_assignment._mcp_tool_info
+    decision = next(
+        parameter for parameter in info["parameters"] if parameter["name"] == "decision"
+    )
+    assert "expected_assignment_version" in decision["description"]
+    assert "workflow.assignment_version" in decision["description"]
+    assert "never guess or increment" in decision["description"]
+    assert "next_action" in decision["description"]
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(

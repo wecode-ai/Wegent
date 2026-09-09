@@ -17,7 +17,14 @@ class IssueAssignmentDecision(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     request_id: str = Field(min_length=1, max_length=64)
-    expected_version: int = Field(ge=0)
+    expected_assignment_version: int = Field(
+        ge=0,
+        description=(
+            "Copy workflow.assignment_version from get_board_item. "
+            "Do not use the Issue version or workflow.version, and never guess or "
+            "increment a version after a conflict. Read the Issue again first."
+        ),
+    )
     action: Literal["assign_role", "assign_user", "execute", "complete"]
     node_id: str | None = Field(default=None, min_length=1, max_length=64)
     assignee_user_id: int | None = Field(default=None, ge=1)

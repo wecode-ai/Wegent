@@ -49,6 +49,7 @@ from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
+from app.services.issue_assignment_errors import IssueAssignmentConflict
 from app.services.issue_assignments import issue_assignment_service
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.issue_workflow_start import issue_workflow_start_service
@@ -558,7 +559,19 @@ def get_assignment_candidates(
         }
 
 
-@mcp_tool(server="wework_space")
+@mcp_tool(
+    server="wework_space",
+    param_descriptions={
+        "decision": (
+            "Assignment decision: request_id, expected_assignment_version, action, "
+            "reason, and action-specific node_id, assignee_user_id, instruction. "
+            "Copy expected_assignment_version from get_board_item.workflow.assignment_version, "
+            "never the Issue version or workflow.version. On assignment_version_conflict, "
+            "re-read the Issue and reconsider; never guess or increment versions. "
+            "Follow next_action for other conflicts."
+        )
+    },
+)
 async def decide_issue_assignment(
     token_info: MCPAuthInfo,
     decision: dict[str, Any],
@@ -574,13 +587,17 @@ async def decide_issue_assignment(
             "source"
         ) != "project_automation" or resolved_item_id != context.get("item_id"):
             raise ValueError("Only the current Issue coordinator can assign work")
-        return await issue_assignment_service.decide(
-            db,
-            issue_id=resolved_item_id,
-            user_id=token_info.user_id,
-            decision=IssueAssignmentDecision.model_validate(decision),
-            manager_run_id=context.get("project_automation_run_id") or "",
-        )
+        try:
+            return await issue_assignment_service.decide(
+                db,
+                issue_id=resolved_item_id,
+                user_id=token_info.user_id,
+                decision=IssueAssignmentDecision.model_validate(decision),
+                manager_run_id=context.get("project_automation_run_id") or "",
+            )
+        except IssueAssignmentConflict as exc:
+            db.rollback()
+            return {"error": exc.detail}
 
 
 @mcp_tool(server="wework_space")

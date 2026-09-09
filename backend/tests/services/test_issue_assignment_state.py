@@ -3,6 +3,7 @@ from copy import deepcopy
 import pytest
 
 from app.schemas.issue_assignment import IssueAssignmentDecision
+from app.services.issue_assignment_errors import IssueAssignmentConflict
 from app.services.issue_assignment_state import decide_assignment, finish_assignment
 
 
@@ -40,7 +41,7 @@ def assign(version=0, request_id="first", **overrides):
     return IssueAssignmentDecision(
         **{
             "request_id": request_id,
-            "expected_version": version,
+            "expected_assignment_version": version,
             "action": "assign_role",
             "node_id": "release",
             "instruction": "Deploy the approved checkout",
@@ -113,6 +114,67 @@ def test_execute_without_graph(experience):
     result = decide_assignment(experience, assign(action="execute", node_id=None))
     assert result["assignment"]["status"] == "dispatching"
     assert result["nodes"] == []
+
+
+@pytest.mark.parametrize("wrong_version", [13, 14, 15])
+def test_workflow_version_is_not_the_assignment_version(experience, wrong_version):
+    experience.update(version=13, assignment_version=1)
+    original = deepcopy(experience)
+    with pytest.raises(IssueAssignmentConflict) as caught:
+        decide_assignment(experience, assign(wrong_version))
+    assert caught.value.detail == {
+        "code": "assignment_version_conflict",
+        "message": (
+            "The Issue assignment changed. Read get_board_item again and reconsider "
+            "the decision using workflow.assignment_version; never guess or increment versions."
+        ),
+        "next_action": "read_issue",
+        "expected_assignment_version": wrong_version,
+        "current_assignment_version": 1,
+    }
+    assert experience == original
+    result = decide_assignment(experience, assign(experience["assignment_version"]))
+    assert result["assignment_version"] == 2
+
+
+@pytest.mark.parametrize(
+    "status,code",
+    [
+        ("paused", "automation_paused"),
+        ("completed", "automation_completed"),
+        ("waiting_human", "waiting_human"),
+    ],
+)
+def test_inactive_state_requires_ending_turn_instead_of_version_retries(
+    experience, status, code
+):
+    experience.update(orchestration_status=status, assignment_version=1)
+    with pytest.raises(IssueAssignmentConflict) as caught:
+        decide_assignment(experience, assign(13))
+    assert caught.value.detail["code"] == code
+    assert caught.value.detail["next_action"] == "end_turn"
+    assert "current_assignment_version" not in caught.value.detail
+
+
+def test_running_assignment_requires_callback(experience):
+    running = decide_assignment(experience, assign())
+    with pytest.raises(IssueAssignmentConflict) as caught:
+        decide_assignment(running, assign(1, "second"))
+    assert caught.value.detail["code"] == "assignment_running"
+    assert caught.value.detail["next_action"] == "end_turn"
+
+
+def test_ambiguous_version_field_is_rejected():
+    from pydantic import ValidationError
+
+    payload = assign().model_dump()
+    payload["expected_version"] = payload.pop("expected_assignment_version")
+    with pytest.raises(ValidationError) as caught:
+        IssueAssignmentDecision.model_validate(payload)
+    assert {error["loc"] for error in caught.value.errors()} == {
+        ("expected_version",),
+        ("expected_assignment_version",),
+    }
 
 
 def test_unknown_role_rejected(experience):

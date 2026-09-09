@@ -2693,7 +2693,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           const humanHandoff = version === 3 && customCoordinator
           const decision = {
             request_id: `assignment-${issueId}-${version}`,
-            expected_version: version,
+            expected_assignment_version: version,
             action:
               version < 2
                 ? 'assign_role'

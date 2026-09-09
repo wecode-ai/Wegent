@@ -361,12 +361,12 @@ async def test_incoming_event_invalidates_stale_coordinator_without_replacing_wo
     assert workflow["assignment"]["id"] == "current-work"
     assert workflow["orchestration_status"] == "running"
     assert workflow["incoming_events"][0]["id"] == event.id
-    with pytest.raises(ValueError, match="changed; read it again"):
+    with pytest.raises(ValueError, match="assignment_version_conflict"):
         decide_assignment(
             workflow,
             IssueAssignmentDecision(
                 request_id="stale",
-                expected_version=5,
+                expected_assignment_version=5,
                 action="complete",
                 reason="Old goal met",
             ),

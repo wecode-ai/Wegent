@@ -7,12 +7,18 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, ProjectWorkflowRun
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    ProjectAutomationRun,
+    ProjectWorkflowRun,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.issue_assignment import IssueAssignmentDecision, IssueAssignmentResult
 from app.schemas.issue_workflow import IssueWorkflowInstance
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.issue_assignment_errors import IssueAssignmentConflict
 from app.services.issue_assignment_state import decide_assignment, finish_assignment
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_events import publish_loop_item_changed
@@ -65,7 +71,7 @@ def assignment_callback_intent(
     db: Session, execution: LoopItemExecution, status: str
 ) -> dict | None:
     """Resume accepted assignment results even when work has no graph node."""
-    if status not in {"succeeded", "failed", "cancelled"}:
+    if status not in {"succeeded", "failed"}:
         return None
     issue = db.get(LoopItem, execution.loop_item_id)
     workflow = (issue.metadata_json or {}).get("workflow", {}) if issue else {}
@@ -73,6 +79,7 @@ def assignment_callback_intent(
     run_id = assignment.get("automation_run_id")
     if (
         workflow.get("advancement_policy") != "ai"
+        or workflow.get("orchestration_status") != "planning"
         or assignment.get("status") != "completed"
         or not run_id
         or str(run_id) != str(execution.automation_run_id)
@@ -85,6 +92,44 @@ def assignment_callback_intent(
         ),
         "stage_ids": [],
     }
+
+
+def pause_assignment_for_user_stop(db: Session, run_id: str | None) -> None:
+    """Persist stop intent before contacting Runtime; only affect the current work."""
+    if not run_id:
+        return
+    run = db.get(ProjectAutomationRun, run_id)
+    if run is None or not run.task_id:
+        return
+    issue = (
+        db.query(LoopItem)
+        .filter(LoopItem.id == run.task_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if issue is None:
+        return
+    workflow = dict((issue.metadata_json or {}).get("workflow") or {})
+    if workflow.get("advancement_policy") != "ai" or workflow.get(
+        "orchestration_status"
+    ) in {"paused", "completed"}:
+        return
+    assignment = workflow.get("assignment") or {}
+    payload = ((run.metadata_json or {}).get("event") or {}).get("payload") or {}
+    current_worker = str(assignment.get("automation_run_id") or "") == str(run.id)
+    current_coordinator = (
+        workflow.get("orchestration_status") == "planning"
+        and workflow.get("active_run_id") is not None
+        and str(payload.get("workflow_run_id") or "") == str(workflow["active_run_id"])
+    )
+    if not current_worker and not current_coordinator:
+        return
+    workflow["orchestration_status"] = "paused"
+    write_assignment(
+        db, issue, workflow, "用户已停止当前执行，自动调度已暂停；恢复后继续。"
+    )
+    db.flush()
 
 
 class IssueAssignmentService:
@@ -111,7 +156,9 @@ class IssueAssignmentService:
         if next_workflow is workflow:
             return assignment_handoff(workflow)
         if not manager_run_id:
-            raise ValueError("Assignment requires the active AI coordinator")
+            raise IssueAssignmentConflict(
+                "coordinator_invalid", "Assignment requires the active AI coordinator"
+            )
         run_id = workflow.get("active_run_id")
         try:
             project_automation_execution.record_manager_plan_submission(
@@ -123,7 +170,7 @@ class IssueAssignmentService:
                 commit=False,
             )
         except RuntimeError as exc:
-            raise ValueError(str(exc)) from exc
+            raise IssueAssignmentConflict("coordinator_invalid", str(exc)) from exc
         assignment = next_workflow["assignment"]
         next_workflow["coordinator_user_id"] = user_id
         member_id = assignment.get("assignee_user_id")
@@ -132,7 +179,9 @@ class IssueAssignmentService:
                 db, int(str(issue.cloud_project_id)), user_id
             )
             if member_id not in {int(member["user_id"]) for member in members}:
-                raise ValueError("The assigned person is not a project member")
+                raise IssueAssignmentConflict(
+                    "assignee_not_member", "The assigned person is not a project member"
+                )
         elif decision.action != "complete":
             snapshot = IssueWorkflowInstance.model_validate(next_workflow)
             node = next((n for n in snapshot.nodes if n.id == decision.node_id), None)
@@ -142,7 +191,10 @@ class IssueAssignmentService:
                 else snapshot.execution_config
             )
             if config is None or not config.is_complete():
-                raise ValueError("The assigned role needs execution configuration")
+                raise IssueAssignmentConflict(
+                    "execution_config_required",
+                    "The assigned role needs execution configuration",
+                )
         issue.assignee_user_id = member_id or None
         issue.assignee_agent_id = ""
         issue.assignee_team_id = None

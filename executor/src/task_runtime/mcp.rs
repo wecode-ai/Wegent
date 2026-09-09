@@ -2427,14 +2427,14 @@ fn tools() -> Vec<Value> {
                         "additionalProperties": false,
                         "properties": {
                             "request_id": {"type": "string"},
-                            "expected_version": {"type": "integer", "minimum": 0},
+                            "expected_assignment_version": {"type": "integer", "minimum": 0, "description": "Copy workflow.assignment_version from get_board_item. Do not use the Issue version or workflow.version. On assignment_version_conflict, re-read the Issue and reconsider the decision; never guess or increment versions. Other conflicts require following next_action."},
                             "action": {"enum": ["assign_role", "assign_user", "execute", "complete"]},
                             "node_id": {"type": ["string", "null"]},
                             "assignee_user_id": {"type": ["integer", "null"]},
                             "instruction": {"type": "string"},
                             "reason": {"type": "string"}
                         },
-                        "required": ["request_id", "expected_version", "action", "reason"]
+                        "required": ["request_id", "expected_assignment_version", "action", "reason"]
                     }
                 },
                 "required": ["space_id", "item_id", "decision"]
@@ -3508,6 +3508,69 @@ mod tests {
         ] {
             assert!(serialized.contains(required), "missing {required}");
         }
+    }
+
+    #[tokio::test]
+    async fn assignment_conflict_preserves_versions_and_recovery_instructions() {
+        use axum::{extract::Json, http::StatusCode, routing::post, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/api/v1/loop-items/ISSUE-1/assignment",
+            post(|Json(body): Json<Value>| async move {
+                assert_eq!(body["expected_assignment_version"], 13);
+                assert!(body.get("expected_version").is_none());
+                (
+                    StatusCode::CONFLICT,
+                    Json(json!({"detail": {
+                        "code": "assignment_version_conflict",
+                        "expected_assignment_version": 13,
+                        "current_assignment_version": 1,
+                        "next_action": "read_issue"
+                    }})),
+                )
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let error = call_backend_tool(
+            &format!("http://{address}"),
+            "unit-token",
+            "12",
+            "decide_issue_assignment",
+            &json!({"item_id": "ISSUE-1", "decision": {
+                "request_id": "decision-1", "expected_assignment_version": 13,
+                "action": "complete", "reason": "Acceptance verified"
+            }}),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("409"), "{error}");
+        let detail: Value = serde_json::from_str(error.split_once(": ").unwrap().1).unwrap();
+        assert_eq!(detail["detail"]["code"], "assignment_version_conflict");
+        assert_eq!(detail["detail"]["expected_assignment_version"], 13);
+        assert_eq!(detail["detail"]["current_assignment_version"], 1);
+        assert_eq!(detail["detail"]["next_action"], "read_issue");
+        server.abort();
+    }
+
+    #[test]
+    fn assignment_schema_identifies_the_assignment_lock_version() {
+        let assignment = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "decide_issue_assignment")
+            .unwrap();
+        let decision = &assignment["inputSchema"]["properties"]["decision"];
+        assert!(decision["properties"].get("expected_version").is_none());
+        assert!(decision["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("expected_assignment_version")));
+        let description = decision["properties"]["expected_assignment_version"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.contains("workflow.assignment_version"));
+        assert!(description.contains("never guess or increment"));
     }
 
     #[tokio::test]

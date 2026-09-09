@@ -116,6 +116,7 @@ from app.stores.tasks.transient import (
     build_transient_task,
 )
 from shared.models.execution import ExecutionRequest
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -1048,6 +1049,7 @@ async def rename_runtime_task(
     return _runtime_archive_response(result, normalized_address)
 
 
+@trace_async()
 async def cancel_runtime_task(
     *,
     db: Session,
@@ -1119,6 +1121,28 @@ async def _call_runtime_task_control(
     _touch_workspace_mapping(db, user_id, normalized_address)
     payload = _runtime_task_address_payload(normalized_address)
     payload.update(payload_patch or {})
+    if method == "runtime.tasks.cancel":
+        from app.models.loop_item_execution import LoopItemExecution
+        from app.services.issue_assignments import pause_assignment_for_user_stop
+
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.executor_owner_user_id == user_id,
+                LoopItemExecution.runtime_device_id == normalized_address.device_id,
+                LoopItemExecution.runtime_task_id == normalized_address.local_task_id,
+                LoopItemExecution.status.in_(
+                    ["queued", "claimed", "running", "cancel_requested"]
+                ),
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+        if execution is not None:
+            pause_assignment_for_user_stop(db, execution.automation_run_id)
+        db.commit()
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,

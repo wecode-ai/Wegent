@@ -120,6 +120,32 @@ export async function eventCenterModelResponse(payload, responseId, request) {
       ]
     }
     const version = issue.workflow.assignment_version ?? 0
+    if (!requestContainsToolOutput(payload, 'event-flow-wrong-version')) {
+      assert.notEqual(issue.workflow.version, version, 'Fixture must distinguish the two versions')
+      return requestTool(
+        payload,
+        responseId,
+        'decide_issue_assignment',
+        {
+          decision: {
+            request_id: `event-wrong-version-${issueId}-${version}`,
+            expected_assignment_version: issue.workflow.version,
+            action: 'complete',
+            reason: 'Verify that a workflow snapshot version cannot authorize assignment',
+          },
+        },
+        'event-flow-wrong-version'
+      )
+    }
+    assert.ok(serialized.includes('assignment_version_conflict'), 'Missing specific conflict code')
+    assert.ok(
+      serialized.includes('current_assignment_version'),
+      'Conflict lost the current version'
+    )
+    assert.ok(serialized.includes('read_issue'), 'Conflict did not require re-reading the Issue')
+    if (!requestContainsToolOutput(payload, 'event-flow-reread')) {
+      return requestTool(payload, responseId, 'get_board_item', {}, 'event-flow-reread')
+    }
     const roleCompleted =
       issue.workflow.assignment?.node_id === 'role_1' &&
       issue.workflow.assignment.status === 'completed' &&
@@ -135,14 +161,13 @@ export async function eventCenterModelResponse(payload, responseId, request) {
       {
         decision: {
           request_id: `event-flow-${issueId}-${version}`,
-          expected_version: version,
+          expected_assignment_version: version,
           action: roleCompleted ? 'complete' : 'assign_role',
           ...(roleCompleted ? {} : { node_id: 'role_1' }),
           instruction: 'Verify the requested acceptance result',
-          reason:
-            issue.workflow.assignment?.execution_status === 'failed'
-              ? 'CALLBACK_REASSIGNMENT'
-              : 'CALLBACK_INITIAL_ASSIGNMENT',
+          reason: ['failed', 'cancelled'].includes(issue.workflow.assignment?.execution_status)
+            ? 'CALLBACK_REASSIGNMENT'
+            : 'CALLBACK_INITIAL_ASSIGNMENT',
         },
       },
       'event-flow-decide'
@@ -248,10 +273,33 @@ export async function verifyEventCenter({
     timeoutMs
   )
   await captureScreenshot(control, 'event-center-callback-worker-failed.png')
-  await waitForValue(
+  const reassigned = await waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
     issue => issue.workflow.assignment_version === initialVersion + 1,
     'Failure callback did not start a new coordinator turn and reassign work',
+    timeoutMs
+  )
+  const executions = await request(`${base}/executions`)
+  const stoppedExecution = executions.items.find(
+    execution =>
+      String(execution.automationRunId) === String(reassigned.workflow.assignment.automation_run_id)
+  )
+  assert.ok(stoppedExecution, 'Reassigned work has no execution to stop')
+  await request(`${base}/executions/${stoppedExecution.id}/stop`, { method: 'POST' })
+  const stopped = await waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    issue => issue.workflow.assignment?.execution_status === 'cancelled',
+    'User stop did not persist its cancelled result',
+    timeoutMs
+  )
+  assert.equal(stopped.workflow.orchestration_status, 'paused', 'User stop restarted AI assignment')
+  assert.equal(stopped.workflow.assignment_version, initialVersion + 1)
+  await captureScreenshot(control, 'event-center-user-stopped.png')
+  await request(`/api/v1/loop-items/${issueId}/workflow-plan/resume`, { method: 'POST' })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    issue => issue.workflow.assignment_version === initialVersion + 2,
+    'Explicit resume did not restart assignment',
     timeoutMs
   )
   await waitForValue(
@@ -271,7 +319,7 @@ export async function verifyEventCenter({
   const generatedIssue = await request(`/api/v1/loop-items/${issueId}`)
   assert.equal(generatedIssue.workflow.ai_automation_rule_id, null)
   assert.equal(generatedIssue.workflow.nodes[0].name, '结果核对')
-  assert.equal(generatedIssue.workflow.assignment_version, initialVersion + 2)
+  assert.equal(generatedIssue.workflow.assignment_version, initialVersion + 3)
   await captureScreenshot(control, 'event-center-02-created-flow.png')
   const reference = {
     provider: 'generic',

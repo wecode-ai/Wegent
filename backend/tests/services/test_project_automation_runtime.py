@@ -578,7 +578,11 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
     assert "project_id: project-1" in prompt
     assert "decide_issue_assignment" in prompt
     assert "assign_role" in prompt
-    assert "expected_version" in prompt
+    assert "expected_assignment_version" in prompt
+    assert "workflow.assignment_version" in prompt
+    assert "assignment_version_conflict" in prompt
+    assert "禁止猜测或递增版本号" in prompt
+    assert "next_action" in prompt
     assert "子任务" not in prompt
     assert prompt.endswith("Prefer domain ownership.")
 
