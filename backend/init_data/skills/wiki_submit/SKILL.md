@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "2.0.5"
+version: "2.0.6"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -176,7 +176,8 @@ node wiki_submit.js plan \
 Report the commit you documented, so the next run knows what has already been covered.
 When `complete` runs inside that checkout, it also records the Git-tracked file count
 for the same commit. This is automatic and lets a later incremental run use a
-proportional change limit; older versions without it continue with absolute limits.
+proportional change limit. For older published versions without that metadata, the
+server reads the repository tree before making the next run-mode decision.
 
 ```bash
 node wiki_submit.js complete \

@@ -630,7 +630,13 @@ def _publish_a_first_wiki(test_db, knowledge_base, test_user, tasks) -> WikiGene
     _write_page(test_db, started.generation, "index")
     _write_page(test_db, started.generation, "architecture")
     _write_page(test_db, started.generation, "architecture/backend")
-    finish_run(test_db, generation=started.generation, succeeded=True, head_commit=HEAD)
+    finish_run(
+        test_db,
+        generation=started.generation,
+        succeeded=True,
+        head_commit=HEAD,
+        tracked_file_count=1_000,
+    )
     return started.generation
 
 
@@ -750,7 +756,7 @@ def test_a_run_belonging_to_no_knowledge_base_is_not_a_code_wiki_run(
 # --- resolving the repository's state when the caller did not supply it ------
 
 
-def _repository_at(monkeypatch, head: str, changed=None):
+def _repository_at(monkeypatch, head: str, changed=None, tracked_file_count=None):
     """Answer as the provider would, without reaching one."""
     from app.services.knowledge.code_wiki import runner
     from app.services.knowledge.code_wiki.repo_state import RepositoryState
@@ -758,8 +764,11 @@ def _repository_at(monkeypatch, head: str, changed=None):
     monkeypatch.setattr(
         runner,
         "read_repository_state",
-        lambda db, *, user_id, source, since_commit: RepositoryState(
-            head_commit=head, branch="main", changed_paths=changed
+        lambda db, **kwargs: RepositoryState(
+            head_commit=head,
+            branch="main",
+            changed_paths=changed,
+            tracked_file_count=tracked_file_count,
         ),
     )
 
@@ -799,6 +808,52 @@ def test_a_changed_repository_is_updated_incrementally_without_being_told(
 
     assert started.mode == "incremental"
     assert "src/one.py" in tasks.prompt
+
+
+def test_a_historical_wiki_uses_the_tree_count_before_applying_the_ratio(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    finish_run(test_db, generation=first.generation, succeeded=True, head_commit=HEAD)
+    _repository_at(
+        monkeypatch,
+        NEXT_HEAD,
+        changed=(ChangedPath("src/one.py", "M"),),
+        tracked_file_count=1_000,
+    )
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert started.mode == "incremental"
+
+
+def test_a_historical_wiki_rebuilds_when_its_tree_cannot_be_counted(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    finish_run(test_db, generation=first.generation, succeeded=True, head_commit=HEAD)
+    _repository_at(monkeypatch, NEXT_HEAD, changed=(ChangedPath("src/one.py", "M"),))
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert started.mode == "full"
+    assert "file count is unavailable" in started.reason
 
 
 def test_a_repository_that_cannot_be_read_falls_back_to_a_rebuild(
@@ -1199,7 +1254,13 @@ def test_a_pinned_commit_lets_the_next_run_be_incremental(
     )
     first = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
     _write_page(test_db, first.generation, "index")
-    finish_run(test_db, generation=first.generation, succeeded=True)
+    finish_run(
+        test_db,
+        generation=first.generation,
+        succeeded=True,
+        head_commit="aaaaaaa",
+        tracked_file_count=1_000,
+    )
 
     # The repository has moved, and one file changed.
     monkeypatch.setattr(

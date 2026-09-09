@@ -95,27 +95,25 @@ def test_commit_moved_but_nothing_documented_changed_is_skipped():
     assert decision.mode is RunMode.SKIP
 
 
-def test_dependency_manifest_change_forces_a_rebuild():
+def test_dependency_manifest_change_stays_incremental():
     decision = decide_run_mode(
         head_commit=HEAD,
         last_commit=PREVIOUS,
         changed_paths=[ChangedPath("backend/pyproject.toml", "M")],
     )
 
-    assert decision.mode is RunMode.FULL
-    assert "manifest" in decision.reason
+    assert decision.mode is RunMode.INCREMENTAL
 
 
-def test_too_many_changed_files_forces_a_rebuild():
+def test_many_changed_files_stay_incremental_when_their_share_is_small():
     decision = decide_run_mode(
         head_commit=HEAD,
         last_commit=PREVIOUS,
-        changed_paths=_edits(51),
-        policy=RunModePolicy(max_changed_files=50),
+        changed_paths=_edits(384),
+        total_source_files=7_211,
     )
 
-    assert decision.mode is RunMode.FULL
-    assert "over the limit" in decision.reason
+    assert decision.mode is RunMode.INCREMENTAL
 
 
 def test_large_share_of_the_repository_forces_a_rebuild():
@@ -124,7 +122,7 @@ def test_large_share_of_the_repository_forces_a_rebuild():
         last_commit=PREVIOUS,
         changed_paths=_edits(30),
         total_source_files=100,
-        policy=RunModePolicy(max_changed_files=50, max_changed_ratio=0.25),
+        policy=RunModePolicy(max_changed_ratio=0.25),
     )
 
     assert decision.mode is RunMode.FULL
@@ -170,30 +168,30 @@ def test_skip_takes_precedence_over_a_due_periodic_rebuild():
     assert decision.mode is RunMode.SKIP
 
 
-def test_many_added_or_removed_files_force_a_rebuild_sooner_than_edits():
-    """Files appearing and disappearing reshape the wiki more than edits do."""
-    moves = [ChangedPath(f"src/new_{i}.py", "A") for i in range(16)]
+def test_many_added_or_removed_files_stay_incremental_when_their_share_is_small():
+    """File statuses inform the agent, but do not replace an impact calculation."""
+    moves = [ChangedPath(f"src/new_{i}.py", "A") for i in range(141)]
 
     decision = decide_run_mode(
         head_commit=HEAD,
         last_commit=PREVIOUS,
         changed_paths=moves,
-        policy=RunModePolicy(max_changed_files=50, max_structural_moves=15),
+        total_source_files=7_211,
     )
 
-    assert decision.mode is RunMode.FULL
-    assert "added, removed or renamed" in decision.reason
+    assert decision.mode is RunMode.INCREMENTAL
 
 
-def test_the_same_number_of_plain_edits_stays_incremental():
+def test_an_existing_wiki_without_a_file_count_rebuilds_instead_of_skipping_ratio():
     decision = decide_run_mode(
         head_commit=HEAD,
         last_commit=PREVIOUS,
         changed_paths=_edits(16),
-        policy=RunModePolicy(max_changed_files=50, max_structural_moves=15),
+        require_total_source_files=True,
     )
 
-    assert decision.mode is RunMode.INCREMENTAL
+    assert decision.mode is RunMode.FULL
+    assert "file count is unavailable" in decision.reason
 
 
 def test_a_mode_stored_as_a_plain_string_still_seeds():

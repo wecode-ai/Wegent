@@ -66,7 +66,10 @@ from app.services.knowledge.code_wiki.quality_gate import (
     PLAN_ONLY_REVIEW_POLICY,
     require_quality_review,
 )
-from app.services.knowledge.code_wiki.repo_state import read_repository_state
+from app.services.knowledge.code_wiki.repo_state import (
+    read_repository_state,
+    read_repository_tracked_file_count,
+)
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.side_effects import build_projection_side_effects
 from app.services.knowledge.code_wiki.source import SourceRepository
@@ -209,6 +212,7 @@ def start_run(
     previous_commit = published_commit(db, knowledge_base)
     if total_source_files is None:
         total_source_files = published_tracked_file_count(db, knowledge_base)
+    needs_repository_size = bool(previous_commit and total_source_files is None)
     # Read on every run, including the first.
     #
     # This used to be skipped when nothing was published, on the grounds that a first
@@ -232,10 +236,20 @@ def start_run(
             user_id=task_user.id,
             source=source,
             since_commit=previous_commit,
+            include_tracked_file_count=needs_repository_size,
         )
         head_commit = state.head_commit
         if changed_paths is None:
             changed_paths = state.changed_paths
+        if total_source_files is None:
+            total_source_files = state.tracked_file_count
+    elif needs_repository_size:
+        total_source_files = read_repository_tracked_file_count(
+            db,
+            user_id=task_user.id,
+            source=source,
+            ref=head_commit,
+        )
 
     started = start_generation(
         db,
@@ -248,6 +262,7 @@ def start_run(
         head_commit=head_commit,
         changed_paths=changed_paths,
         total_source_files=total_source_files,
+        require_total_source_files=needs_repository_size,
         force_full=force_full,
         # A real foreign key on wiki_generations. Resolved here rather than defaulted
         # to zero: MySQL rejects the insert outright, and SQLite does not enforce it,

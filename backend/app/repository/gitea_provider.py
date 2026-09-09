@@ -10,6 +10,7 @@ import asyncio
 import logging
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 from fastapi import HTTPException
@@ -935,6 +936,31 @@ class GiteaProvider(RepositoryProvider):
             for entry in (payload.get("files") or [])
             if entry.get("filename")
         ]
+
+    def get_tracked_file_count(
+        self, token: str, git_domain: str, repo_name: str, ref: str
+    ) -> Optional[int]:
+        """Count files in Gitea's recursive Git tree, rejecting a partial tree."""
+        api_base_url = self._get_api_base_url(git_domain)
+        response = requests.get(
+            f"{api_base_url}/repos/{repo_name}/git/trees/{quote(ref, safe='')}",
+            params={"recursive": "true"},
+            headers=self._build_headers(token),
+            timeout=REPO_STATE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+        if payload.get("truncated"):
+            self.logger.info(
+                "Tree of %s at %s is truncated; repository size is unknown",
+                repo_name,
+                ref,
+            )
+            return None
+        tree = payload.get("tree")
+        if not isinstance(tree, list):
+            return None
+        return sum(entry.get("type") == "blob" for entry in tree)
 
     def describe_repository(
         self, token: str, git_domain: str, repo_name: str

@@ -208,6 +208,7 @@ def start_generation(
     head_commit: str,
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
+    require_total_source_files: bool = False,
     project_id: int = 0,
     team_id: int = 0,
     team_id_for_mode: Optional[Callable[[RunMode], int]] = None,
@@ -226,6 +227,9 @@ def start_generation(
         changed_paths: Diff since the published commit, or ``None`` when unknown —
             in which case a full rebuild is chosen rather than a guess.
         total_source_files: Repository size, used by the change-ratio threshold.
+        require_total_source_files: Whether an existing Wiki without an inherited
+            count must fall back to a full rebuild when its file tree could not be
+            read.
         project_id: Registry row this version belongs to. A real foreign key, so a
             version cannot be written without one.
         team_id: Team the generation task belongs to.
@@ -298,6 +302,7 @@ def start_generation(
         last_commit=last_commit or None,
         changed_paths=changed_paths,
         total_source_files=total_source_files,
+        require_total_source_files=require_total_source_files,
         incrementals_since_full=since_full[0],
         days_since_full=since_full[1],
         force_full=force_full,

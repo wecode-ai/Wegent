@@ -26,6 +26,7 @@ def _response(payload: dict, status_code: int = 200) -> Mock:
     response.status_code = status_code
     response.json.return_value = payload
     response.raise_for_status.return_value = None
+    response.headers = {}
     return response
 
 
@@ -115,6 +116,37 @@ def test_github_reports_a_compare_below_the_cap_normally():
     assert len(changed) == GITHUB_COMPARE_FILE_LIMIT - 1
 
 
+def test_github_counts_blobs_in_a_complete_recursive_tree():
+    provider = GitHubProvider()
+    payload = {
+        "truncated": False,
+        "tree": [{"type": "tree"}, {"type": "blob"}, {"type": "blob"}],
+    }
+
+    with patch(
+        "app.repository.github_provider.requests.get", return_value=_response(payload)
+    ):
+        count = provider.get_tracked_file_count(
+            git_domain="github.com", ref="bbb", **DOMAIN_ARGS
+        )
+
+    assert count == 2
+
+
+def test_github_reports_a_truncated_tree_as_unknown():
+    provider = GitHubProvider()
+
+    with patch(
+        "app.repository.github_provider.requests.get",
+        return_value=_response({"truncated": True, "tree": [{"type": "blob"}]}),
+    ):
+        count = provider.get_tracked_file_count(
+            git_domain="github.com", ref="bbb", **DOMAIN_ARGS
+        )
+
+    assert count is None
+
+
 # --- GitLab -----------------------------------------------------------------
 
 
@@ -180,6 +212,22 @@ def test_gitlab_reports_a_timed_out_compare_as_unknown():
     assert changed is None
 
 
+def test_gitlab_counts_every_page_of_a_recursive_tree():
+    provider = GitLabProvider()
+    first = _response([{"type": "tree"}, {"type": "blob"}])
+    first.headers = {"X-Next-Page": "2"}
+    second = _response([{"type": "blob"}])
+
+    with patch.object(
+        GitLabProvider, "_make_request_with_auth_retry", side_effect=[first, second]
+    ):
+        count = provider.get_tracked_file_count(
+            git_domain="gitlab.com", ref="bbb", **DOMAIN_ARGS
+        )
+
+    assert count == 2
+
+
 # --- Gitea ------------------------------------------------------------------
 
 
@@ -233,3 +281,17 @@ def test_an_older_gitea_without_a_compare_endpoint_reports_unknown():
         )
 
     assert changed is None
+
+
+def test_gitea_counts_blobs_in_a_complete_recursive_tree():
+    provider = GiteaProvider()
+    payload = {"tree": [{"type": "blob"}, {"type": "tree"}, {"type": "blob"}]}
+
+    with patch(
+        "app.repository.gitea_provider.requests.get", return_value=_response(payload)
+    ):
+        count = provider.get_tracked_file_count(
+            git_domain="gitea.com", ref="bbb", **DOMAIN_ARGS
+        )
+
+    assert count == 2
