@@ -264,9 +264,11 @@ describe('bundled plugin resources', () => {
     expect(builderConfig).toContain('executableName: identity.executableName')
     expect(builderConfig).toContain('weworkAppId: identity.identifier')
     expect(workflow).toMatch(
-      /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?MACOS_KEYCHAIN_PATH=/
+      /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?CSC_KEYCHAIN=[\s\S]*?MACOS_KEYCHAIN_PATH=/
     )
     expect(workflow).toContain('security list-keychains -d user -s')
+    expect(workflow).not.toMatch(/^\s+CSC_LINK:/m)
+    expect(workflow).not.toMatch(/^\s+CSC_KEY_PASSWORD:/m)
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
     expect(workflow).toContain('plan-desktop-release.mjs')
     expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
