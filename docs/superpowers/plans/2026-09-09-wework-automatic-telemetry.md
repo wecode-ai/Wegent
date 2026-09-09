@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: Wework 自动统计实施计划
-status: ready
+status: in_progress
 source_spec: ../specs/2026-09-09-wework-automatic-telemetry-design.md
 supersedes:
   - 2026-09-07-wework-smart-app-telemetry.md
@@ -17,6 +17,25 @@ supersedes:
 **Architecture:** 以结构化 Smart App Registry JSON 作为事件名称、路由匹配、操作定义和字典的单一来源，由生成器产生严格 TypeScript 契约和公共 catalog。Telemetry Agent 独立于公共统计同意状态运行，把规范化业务事实投影给 Public Sink 或内部发行版中的 DSH Sink；页面不直接调用 `track()`。
 
 **Tech Stack:** Electron、Vite、React 19、TypeScript 6、Vitest、Node test runner、DeepSeek Harness/Cordis、PostHog、GitHub Actions、真实 Electron desktop E2E。
+
+## 实施进度（2026-09-09）
+
+| Task | 状态 | 说明 |
+| --- | --- | --- |
+| 1–3 | 已完成 | 事件注册源、生成 catalog、Public/Internal dispatcher 与 DSH Sink registry 已实现。 |
+| 4 | 已完成 | `public` / `internal` 发行模式；内部构建隐藏公共同意 UI。 |
+| 5 | 已完成 | Telemetry Agent 自动观察 Smart App route 和 Operation Bus，旧通用 route 事件不再双写。 |
+| 6 | 已完成 | 市场安装、更新和 ZIP 导入已迁至统一服务边界。 |
+| 7 | 已完成 | UI 直接埋点被 lint 阻止；旧 Smart App 事件类型已删除。 |
+| 8 | 部分完成 | 公共 catalog 可幂等同步 PostHog Event Definitions；工作流仅在主分支显式启用后读取密钥。Property Definitions 的后续更新仍待实现。 |
+| 9–10 | 进行中 | 已补 Electron telemetry assertions；真实 checkpoint 在 Electron 下载 GitHub 构件时网络超时，待网络恢复后重跑。 |
+
+实施中做了两项澄清，优先级高于早期步骤中的泛化示例：
+
+- 路由 `smart_app.app` 的规范事件名固定为 `smart_app_opened`，而不是
+  `smart_app_app_opened`；生成器和 catalog 是唯一名称来源。
+- 新生成事件先被接入类型契约，旧 Smart App 通用事件只在统一 Route/Operation 迁移完成后
+  原子删除，避免中间提交既不完整又无法通过类型检查；当前迁移已完成，运行代码没有旧事件。
 
 ---
 
