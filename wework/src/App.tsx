@@ -119,7 +119,8 @@ import type { User } from '@/types/api'
 import { TelemetryAgent } from '@/telemetry/TelemetryAgent'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track } from '@/telemetry/client'
-import { telemetryDomainForFeature, telemetryFeatureForLocation } from '@/telemetry/routes'
+import { resolveTelemetryRoute } from '@/telemetry/routeRegistry'
+import { telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
@@ -569,17 +570,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }, [])
 
   const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
-  const telemetryDomain = telemetryDomainForFeature(telemetryFeature)
+  const smartAppRoute = resolveTelemetryRoute(path, search)
 
   useEffect(() => {
-    if (telemetryDomain === 'smart_app') return
-    track(
-      'feature_opened',
-      telemetryDomain
-        ? { domain: telemetryDomain, feature: telemetryFeature }
-        : { feature: telemetryFeature }
-    )
-  }, [path, telemetryDomain, telemetryFeature])
+    if (smartAppRoute) return
+    track('feature_opened', { feature: telemetryFeature })
+  }, [path, smartAppRoute, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)

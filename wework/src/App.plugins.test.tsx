@@ -1093,14 +1093,10 @@ describe('App plugins route', () => {
     expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
-  test('maps smart app locations to distinct telemetry features', () => {
-    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app')).toBe(
-      'smart_apps_marketplace'
-    )
-    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app&view=owned')).toBe(
-      'smart_apps_owned'
-    )
-    expect(telemetryFeatureForLocation('/app/harness-research-desk', '')).toBe('smart_app')
+  test('does not assign legacy generic features to smart app locations', () => {
+    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app')).toBe('sites')
+    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app&view=owned')).toBe('sites')
+    expect(telemetryFeatureForLocation('/app/harness-research-desk', '')).toBe('apps')
     expect(telemetryFeatureForLocation('/sites', '?app_type=web')).toBe('sites')
     expect(telemetryFeatureForLocation('/app/native-task', '')).toBe('apps')
   })
@@ -1130,8 +1126,7 @@ describe('App plugins route', () => {
     )
 
     expect(telemetryMocks.track).not.toHaveBeenCalledWith('feature_opened', {
-      domain: 'smart_app',
-      feature: 'smart_apps_marketplace',
+      feature: 'sites',
     })
   })
 
