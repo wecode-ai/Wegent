@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
@@ -378,10 +379,12 @@ jobs:
           uv pip install -e ../shared
 
       - name: Download frontend E2E build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: frontend-next-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            frontend-next-build \
+            .ci-artifacts
 
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
@@ -747,10 +750,12 @@ jobs:
           key: ${{ steps.claude-code-cli-cache.outputs.cache-primary-key }}
 
       - name: Download frontend E2E build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: frontend-next-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            frontend-next-build \
+            .ci-artifacts
 
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
