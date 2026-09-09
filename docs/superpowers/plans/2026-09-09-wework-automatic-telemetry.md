@@ -28,7 +28,7 @@ supersedes:
 | 6 | 已完成 | 市场安装、更新和 ZIP 导入已迁至统一服务边界。 |
 | 7 | 已完成 | UI 直接埋点被 lint 阻止；旧 Smart App 事件类型已删除。 |
 | 8 | 已完成 | 公共 catalog 可幂等同步 PostHog Event/Property Definitions；属性只更新已由真实事件创建的公共定义，工作流仅在主分支显式启用后读取密钥。 |
-| 9–10 | 进行中 | 已补 Electron telemetry assertions；代理已使 Electron 下载成功，但 macOS ad-hoc `codesign` 发生系统内部错误，真实 checkpoint 尚未启动。 |
+| 9–10 | 进行中 | 已补 Electron telemetry assertions；代理和 ad-hoc `codesign` 已使桌面构建成功，真实 checkpoint 因本机未安装 `redis-server` / `redis-cli` 而在启动测试云环境前停止。 |
 
 实施中做了两项澄清，优先级高于早期步骤中的泛化示例：
 
