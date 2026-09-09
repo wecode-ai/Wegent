@@ -63,6 +63,31 @@ class TestSettings:
         assert s.ENABLE_API_DOCS is True
         assert s.ALGORITHM == "HS256"
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 10080  # 7 days
+        assert s.DB_POOL_SIZE == 20
+        assert s.DB_MAX_OVERFLOW == 40
+        assert s.DB_ASYNC_POOL_SIZE == 10
+        assert s.DB_ASYNC_MAX_OVERFLOW == 20
+        assert s.DB_POOL_TIMEOUT == 30
+        assert s.DB_POOL_RECYCLE == 3600
+
+    @pytest.mark.parametrize(
+        ("setting_name", "invalid_value"),
+        [
+            ("DB_POOL_SIZE", 0),
+            ("DB_MAX_OVERFLOW", -1),
+            ("DB_ASYNC_POOL_SIZE", 0),
+            ("DB_ASYNC_MAX_OVERFLOW", -1),
+            ("DB_POOL_TIMEOUT", 0),
+            ("DB_POOL_RECYCLE", 0),
+        ],
+    )
+    def test_database_pool_settings_reject_invalid_values(
+        self,
+        setting_name,
+        invalid_value,
+    ):
+        with pytest.raises(ValidationError):
+            build_settings(**{setting_name: invalid_value})
 
     def test_settings_from_env_variables(self, monkeypatch):
         """Test loading settings from environment variables"""

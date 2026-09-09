@@ -30,7 +30,7 @@ WeWork_<version>_windows_x64-setup.exe
 WeWork_<version>_linux_x64.AppImage
 ```
 
-## Automatic updates and the Tauri migration
+## Automatic updates
 
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
@@ -40,34 +40,19 @@ manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
 Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
-and NSIS installer. `electron-updater` compares the previous cached package with
-the old and new blockmaps and downloads only changed blocks. It falls back to
-the full installer only for a first update, a cleared cache, or a differential
-download failure. The release workflow must fail when any required blockmap is
-missing. Differential plans, transferred sizes, and fallback reasons are
-written to `app-update.log` in the application log directory.
+and NSIS installer. On macOS, Wework atomically stores every successful full or
+differential download as a verified baseline containing the ZIP, blockmap,
+version, architecture, URL, and SHA-512. Later updates use only this local
+baseline and never guess the previous blockmap URL from the new artifact name.
+A first update or an incomplete or invalid baseline downloads the full package
+and establishes a new baseline. A failed differential verification performs
+only one full-download recovery. The release workflow must fail when any
+required blockmap is missing. Differential plans, cumulative transferred bytes,
+and fallback reasons are written to `app-update.log`.
 
-The same release also emits signed manifests and artifacts for the legacy Tauri
-updater so installed Tauri builds can migrate through the existing Update UI:
-
-- On macOS, the signed Electron `WeWork.app` is additionally packed as an
-  `.app.tar.gz`. The Tauri updater replaces the bundle in place while the
-  bundle identifier and executable name remain unchanged.
-- On Windows, the Tauri updater downloads the Electron NSIS installer. The
-  installer accepts Tauri's passive `/P` argument and inherits the legacy
-  `Software\you\WeWork` registry entry and `%LOCALAPPDATA%\WeWork` installation
-  directory. It removes the old installation, writes Electron to the same path,
-  and the legacy relaunch starts Electron.
-- Electron directly reuses the legacy Executor Home at `~/.wework`; it does not
-  copy or migrate executor data. Local projects, tasks, sessions, and the Wework
-  Codex Home continue to load from that directory. The application identifier
-  `io.wecode.wework` and product name `WeWork` stay unchanged.
-- Linux continues to use manual AppImage replacement.
-
-Formal releases require the platform signing credentials plus
-`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The Tauri
-key signs only the bridge artifacts consumed by legacy clients. Subsequent
-Electron updates use the SHA-512 values in the YAML manifests.
+The release workflow emits only Electron YAML update manifests and component
+manifests. macOS and Windows use Electron's ZIP and NSIS update paths. Linux
+continues to use manual AppImage replacement.
 
 ## Initial package and component updates
 
@@ -90,10 +75,30 @@ application itself continues to update through `electron-updater`; the other
 seven components use independent
 `components-<channel>-<platform>-<arch>.json` manifests.
 
-The content SHA-256 values in a published component manifest must be computed
-from the final application resources after Electron Builder finishes signing.
-macOS code signing can rewrite nested executables, so publication must not
-reuse the pre-package content hashes from `components.json`.
+For macOS, publication locates immutable signed components by their unsigned
+content, certificate identity, architecture, signing policy, and build-tool
+version. When those inputs are unchanged, the installer and online component
+reuse exactly the same signed bytes. A changed input is signed and verified
+again. Electron Builder skips those already processed managed resources so a
+new signing timestamp alone cannot change their component hashes. Published
+content SHA-256 values are computed from these final resources rather than
+extracting components from a newly re-signed installer.
+
+Re-signing an existing Mach-O file must preserve the entitlements from its
+previous signature. Codex and `codex-code-mode-host` require `allow-jit` and
+`allow-unsigned-executable-memory` to run V8; `codesign --verify` alone does
+not detect removed entitlements. Any signing-argument change must increment
+the signing-policy version so cached components signed under the previous
+policy are invalidated.
+
+The Codex component boundary is the complete `codex/` runtime directory, not
+the standalone `codex` executable. The component must contain
+`WEGENT_CODEX_BINARY.json`, the target architecture's `codex` and
+`codex-code-mode-host` binaries, the `codex-path` tools, and legal resources.
+The client resolves the main executable from the runtime descriptor's
+`binaryPath` and verifies the sibling code-mode host before activation.
+Release scripts must not point the Codex entry in `components.json` at the main
+executable or archive that executable alone.
 
 Component archives are named by their archive SHA-256 and stored as immutable
 assets. Repository-built Wework core plugin/UI, application static asset,
@@ -193,6 +198,16 @@ start successfully. A failed startup, or a process exit before confirmation,
 rolls back to the previous set on the next launch. Packaged resources remain
 the final fallback.
 
+The main process owns one application-update task. Automatic downloads, manual
+downloads, and repeated checks for the same version and channel share that
+task, and a check cannot clear an active download. Missing components download
+with at most three workers; Wework writes the `pending` set only after every
+archive passes size, archive-hash, and extracted-content verification. Progress
+covers component downloads, host download, verification, and installation
+readiness, and includes bytes transferred before a failed differential attempt.
+The local Squirrel.Mac handoff of the cached ZIP is not counted as network
+traffic.
+
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it
 to `PATH`, points `WEWORK_NODE_PATH`, `NODE`, and `npm_node_execpath` at
@@ -233,7 +248,7 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
-The current pin is Codex `0.152.1`. Codex `0.152` disables
+The current pin is Codex `0.153.3`. Codex `0.152` disables
 `tools.update_plan.enabled` by default, while Wework consumes the corresponding
 plan events to render plan blocks, so the Executor must enable the tool
 explicitly when launching Codex. Desktop E2E verifies the lockfile binary by
@@ -314,8 +329,8 @@ locks.
 
 `.github/workflows/wework-app.yml` supports stable and beta channels, an
 optional version override, parallel builds for three platforms, Actions
-artifacts, formal GitHub Releases, and rolling manifests for both Electron and
-legacy Tauri clients. The workflow automatically selects a component or full
+artifacts, formal GitHub Releases, and rolling Electron and component
+manifests. The workflow automatically selects a component or full
 publication from the source changes since the last published state; there is
 no manual release-kind input. Stable releases advance both stable and beta
 channels; beta releases advance only beta. The workflow installs the
@@ -324,9 +339,9 @@ the unified Electron build command. Desktop resource changes belong in
 `wework/resources/` or the Electron packaging scripts, not in a duplicated
 workflow resource list.
 
-A rolling channel may skip an equal-version upload only when both Electron YAML
-manifests, all three legacy Tauri JSON manifests, and component manifests for
-all four build targets exist. The workflow repairs an incomplete equal version
-and fails for an incomplete newer version instead of overwriting it with an
-older release. Component archives are never overwritten and are uploaded only
-when their content-addressed asset name is absent.
+A rolling channel may skip an equal-version upload only when both Electron
+YAML manifests and component manifests for all four build targets exist. The
+workflow repairs an incomplete equal version and fails for an incomplete newer
+version instead of overwriting it with an older release. Component archives
+are never overwritten and are uploaded only when their content-addressed asset
+name is absent.

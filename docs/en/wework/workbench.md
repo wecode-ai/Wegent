@@ -16,6 +16,12 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
+## Configure board automations
+
+Under **Automation** in a project space, choose a scheduled trigger and select daily, weekdays, weekly, or **Hourly**. Hourly schedules support minute 0–59 and use the configured timezone.
+
+Scheduled automations have a **Run** button on both their list card and detail view, including when their schedule is paused. Save configuration changes before running. The button is disabled while a run is starting to prevent duplicate submissions and becomes available again after a failed start. View results in run history.
+
 ## Manage issues and tasks in workspaces
 
 The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
@@ -26,9 +32,13 @@ Selecting **New Issue** in a workspace opens a lightweight composer instead of a
 
 Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. Existing runtime tasks are also linked into **My tasks**, so this board is another view of the Task-page inventory rather than an independent task list.
 
+On local boards, when a linked task finishes and moves to **In review**, its card shows an unread dot, a blue border, and a light blue background, with a muted blue surface in dark mode. Opening the item details marks it as read; returning to the board preserves its normal appearance. A subsequent run with a new result makes the card unread again.
+
 Every runtime task has at least one system-managed **My tasks** issue. A user may additionally link the task to one issue in a local or cloud project space. Task context prefers the user-selected issue and falls back to the system issue when no user link exists. The system issue remains linked and receives runtime status, task-title, and archive-state updates even after the extra project-space link is removed, so unlinking another board never removes the task from **My tasks**. Issues may also exist without a runtime task, which is why an ordinary project-space board is not itself a task inventory.
 
-Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes.
+A newly created system **My tasks** issue contains only a projection of the runtime task title and description, so Wework does not inject it as independent project context into the first model request. If a user later changes the title or description, or adds priority, hierarchy, participants, tags, workflow, a due date, attachments, deliveries, or comments, the Executor marks the issue as containing additional context. Wework reads the current issue again before a later turn and injects that new context. Status changes produced only by the runtime lifecycle do not enable injection.
+
+Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes. Batch archive processes all linked runtime conversations in one operation, removes successfully archived cards from the board, and keeps failed cards in the confirmation dialog for retry.
 
 Hover anywhere on a board card to open a task-progress panel. The panel directly reuses the task conversation component, shows the complete currently loaded conversation, and uses the same composer in its collapsed-by-default state. Message loading, live updates, continuation, and attachments therefore behave exactly as they do on the task page. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Interacting with the composer pins the panel until you use its top-right close button or press `Esc`.
 
@@ -38,7 +48,9 @@ Local projects do not each create a separate board. Their tasks share **My tasks
 
 ## Create issues from external systems
 
-Maintainers of a cloud workspace can generate a hook address under **Manage > External task intake**. Configure this address in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+Maintainers of a cloud workspace can create an event subscription for a source (GitHub, GitLab) from inside the automation rule configuration. Configure the generated Webhook URL in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+
+> Note: Event subscriptions are created and managed together with the automation rule that consumes them. Pick a source (GitHub, GitLab), then add the resource URL; the Webhook URL for the created subscription is shown on the same page, ready to copy into the external system.
 
 The hook address contains its own credential. Treat it as a secret and do not store it in a public repository or log. Select **Rotate address** if it is exposed; the old address becomes invalid immediately. Disable the hook when intake must be paused. This capability currently supports cloud workspaces whose tasks are managed by Wework.
 

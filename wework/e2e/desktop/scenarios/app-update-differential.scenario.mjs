@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { appendFile, cp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -39,7 +40,7 @@ export async function createDesktopScenario({
   const releaseAssets = await readdir(releaseRoot)
   const oldZipName = findSingle(
     releaseAssets,
-    name => /^WeWork_.+_macos_arm64\.zip$/.test(name),
+    name => name === `WeWork_${packagedComponents.appVersion}_macos_arm64.zip`,
     'macOS arm64 ZIP'
   )
   const oldZip = join(releaseRoot, oldZipName)
@@ -48,7 +49,7 @@ export async function createDesktopScenario({
 
   const currentVersion = versionFromMacZip(oldZipName)
   const targetVersion = nextPatchVersion(currentVersion)
-  const targetZipName = `WeWork_${targetVersion}_macos_arm64.zip`
+  const targetZipName = `WeWorkHostUpdate_${targetVersion}_macos_arm64.zip`
   const targetZip = join(resultDir, targetZipName)
   const targetBlockmap = `${targetZip}.blockmap`
   await cp(oldZip, targetZip)
@@ -65,8 +66,16 @@ export async function createDesktopScenario({
   const appUpdateLogs = await captureAppUpdateLogs(electronUserDataDirectory)
   await rm(updaterCache, { recursive: true, force: true })
   await mkdir(updaterCache, { recursive: true })
-  await cp(oldZip, join(updaterCache, 'update.zip'))
-  await cp(oldBlockmap, join(updaterCache, 'current.blockmap'))
+  const electronRequire = createRequire(electronPackage)
+  const { saveBaseline } = electronRequire('electron-updater/out/WeworkUpdateBaseline.js')
+  await saveBaseline(updaterCache, oldZip, oldBlockmapBytes, {
+    version: currentVersion,
+    arch: 'arm64',
+    url: `https://release.invalid/${oldZipName}`,
+    sha512: createHash('sha512')
+      .update(await readFile(oldZip))
+      .digest('base64'),
+  })
 
   let origin = ''
   let rejectManifest = true
@@ -112,7 +121,8 @@ export async function createDesktopScenario({
       return
     }
     if (path === `/${oldZipName}.blockmap`) {
-      sendBytes(response, oldBlockmapBytes, 'application/octet-stream')
+      response.statusCode = 500
+      response.end('The updater must use the verified local baseline blockmap')
       return
     }
     if (path === `/${targetZipName}`) {
@@ -238,6 +248,11 @@ export async function createDesktopScenario({
         zipRequests.some(request => !request.range),
         false,
         'The updater fell back to a full ZIP download'
+      )
+      assert.equal(
+        requests.some(request => request.path === `/${oldZipName}.blockmap`),
+        false,
+        'The updater requested a guessed remote baseline blockmap'
       )
       const downloadedBytes = zipRequests.reduce(
         (total, request) => total + rangeLength(request.range),

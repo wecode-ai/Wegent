@@ -32,7 +32,6 @@ from app.services.device.runtime_task_create_protocol import (
     negotiate_runtime_task_create_payload,
 )
 from app.services.user_runtime_config import user_runtime_config_service
-from shared.telemetry.context import get_request_id
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -66,6 +65,7 @@ RUNTIME_MODEL_CONFIG_METHODS = frozenset(
     }
 )
 RUNTIME_MODEL_CONFIG_KEYS = frozenset({"model_config", "modelConfig"})
+APP_DEVICE_TASK_MESSAGE_METHODS = frozenset({"runtime.tasks.send"})
 
 
 def _load_remote_runtime_proxy_url(user_id: int) -> str:
@@ -113,10 +113,6 @@ def _set_runtime_proxy(model_config: dict[str, Any], proxy_url: str) -> None:
     model_config["runtime_config"] = runtime_config
 
 
-def _uses_backend_cloud_model_gateway(model_config: dict[str, Any]) -> bool:
-    return model_config.get("wework_model_kind") == "cloud"
-
-
 async def _enforce_remote_runtime_proxy(
     *,
     user_id: int,
@@ -136,22 +132,15 @@ async def _enforce_remote_runtime_proxy(
         return payload
 
     proxy_url = await asyncio.to_thread(_load_remote_runtime_proxy_url, user_id)
-    cloud_model_config_count = 0
     for model_config in model_configs:
-        if _uses_backend_cloud_model_gateway(model_config):
-            cloud_model_config_count += 1
-            _set_runtime_proxy(model_config, "")
-        else:
-            _set_runtime_proxy(model_config, proxy_url)
+        _set_runtime_proxy(model_config, proxy_url)
     logger.info(
         "[RuntimeRpcService] Applied account proxy policy: "
-        "user_id=%s method=%s configured=%s model_config_count=%s "
-        "cloud_model_config_count=%s",
+        "user_id=%s method=%s configured=%s model_config_count=%s",
         user_id,
         method,
         bool(proxy_url),
         len(model_configs),
-        cloud_model_config_count,
     )
     return next_payload
 
@@ -193,35 +182,17 @@ class RuntimeRpcService:
         method: str,
         payload: dict[str, Any],
         timeout_seconds: int = DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
+        allow_app_device_task_messaging: bool = False,
     ) -> dict[str, Any]:
         """Call `runtime:rpc` on an online local executor and return its result."""
 
-        request_id = get_request_id()
-        started_at = time.perf_counter()
         normalized_timeout = self._normalize_timeout(timeout_seconds)
-        logger.info(
-            "[RuntimeRpcService] Runtime RPC started: request_id=%s "
-            "user_id=%s submitted_device_id=%s method=%s",
-            request_id or "-",
-            user_id,
-            device_id,
-            method,
-        )
         try:
             route = await runtime_route_resolver.resolve(
                 user_id=user_id,
                 submitted_device_id=device_id,
             )
         except RuntimeRouteError as exc:
-            logger.warning(
-                "[RuntimeRpcService] Runtime RPC route failed: request_id=%s "
-                "user_id=%s submitted_device_id=%s method=%s code=%s",
-                request_id or "-",
-                user_id,
-                device_id,
-                method,
-                exc.code,
-            )
             raise RuntimeRpcError(
                 str(exc),
                 code=exc.code,
@@ -229,7 +200,15 @@ class RuntimeRpcService:
                 details=exc.details,
             ) from exc
 
-        if not remote_control_is_enabled(route.device_type):
+        app_task_messaging_allowed = (
+            allow_app_device_task_messaging
+            and route.device_type == DeviceType.APP
+            and method in APP_DEVICE_TASK_MESSAGE_METHODS
+        )
+        if (
+            not remote_control_is_enabled(route.device_type)
+            and not app_task_messaging_allowed
+        ):
             raise RuntimeRpcError(
                 REMOTE_CONTROL_DISABLED_MESSAGE,
                 code="remote_control_disabled",
@@ -244,16 +223,6 @@ class RuntimeRpcService:
                     route.online_info.get("runtime_features"),
                 )
             except RuntimeTaskCreateProtocolError as exc:
-                logger.warning(
-                    "[RuntimeRpcService] Runtime RPC negotiation failed: "
-                    "request_id=%s user_id=%s logical_device_id=%s "
-                    "method=%s features=%s",
-                    request_id or "-",
-                    user_id,
-                    route.logical_device_id,
-                    method,
-                    sorted(exc.features),
-                )
                 raise RuntimeRpcError(
                     str(exc),
                     code="unsupported_runtime_task_create_features",
@@ -274,8 +243,7 @@ class RuntimeRpcService:
         except Exception as exc:
             logger.exception(
                 "[RuntimeRpcService] Failed to resolve account proxy policy: "
-                "request_id=%s user_id=%s logical_device_id=%s method=%s",
-                request_id or "-",
+                "user_id=%s logical_device_id=%s method=%s",
                 user_id,
                 route.logical_device_id,
                 method,
@@ -288,17 +256,12 @@ class RuntimeRpcService:
             ) from exc
 
         sio = get_sio()
-        request = {
-            "method": method,
-            "payload": payload,
-        }
-        if request_id:
-            request["request_id"] = request_id
+        request = {"method": method, "payload": payload}
+        started_at = time.perf_counter()
         logger.info(
-            "[RuntimeRpcService] Sending runtime RPC: request_id=%s user_id=%s "
+            "[RuntimeRpcService] Sending runtime RPC: user_id=%s "
             "logical_device_id=%s runtime_device_id=%s method=%s "
             "timeout_seconds=%s payload_keys=%s",
-            request_id or "-",
             user_id,
             route.logical_device_id,
             route.runtime_device_id,
@@ -317,10 +280,9 @@ class RuntimeRpcService:
         except Exception as exc:
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.warning(
-                "[RuntimeRpcService] Runtime RPC failed: request_id=%s user_id=%s "
+                "[RuntimeRpcService] Runtime RPC failed: user_id=%s "
                 "logical_device_id=%s runtime_device_id=%s method=%s "
                 "elapsed_ms=%s error_type=%s",
-                request_id or "-",
                 user_id,
                 route.logical_device_id,
                 route.runtime_device_id,
@@ -343,28 +305,9 @@ class RuntimeRpcService:
 
         try:
             result = self._decode_response(result, method=method)
-        except RuntimeRpcError as exc:
-            logger.warning(
-                "[RuntimeRpcService] Runtime RPC response decoding failed: "
-                "request_id=%s user_id=%s logical_device_id=%s method=%s code=%s",
-                request_id or "-",
-                user_id,
-                route.logical_device_id,
-                method,
-                exc.code,
-            )
+        except RuntimeRpcError:
             raise
         if not isinstance(result, dict):
-            logger.warning(
-                "[RuntimeRpcService] Runtime RPC returned invalid response: "
-                "request_id=%s user_id=%s logical_device_id=%s method=%s "
-                "response_type=%s",
-                request_id or "-",
-                user_id,
-                route.logical_device_id,
-                method,
-                type(result).__name__,
-            )
             raise RuntimeRpcError(
                 "Runtime RPC returned an invalid response",
                 code="runtime_rpc_invalid_response",
@@ -375,14 +318,12 @@ class RuntimeRpcService:
             method=method,
             logical_device_id=route.logical_device_id,
             runtime_device_id=route.runtime_device_id,
-            app_device_id=route.app_device_id,
         )
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
-            "[RuntimeRpcService] Runtime RPC completed: request_id=%s user_id=%s "
+            "[RuntimeRpcService] Runtime RPC completed: user_id=%s "
             "logical_device_id=%s runtime_device_id=%s method=%s "
             "elapsed_ms=%s result_keys=%s",
-            request_id or "-",
             user_id,
             route.logical_device_id,
             route.runtime_device_id,
@@ -400,16 +341,12 @@ class RuntimeRpcService:
         method: str,
         logical_device_id: str,
         runtime_device_id: str,
-        app_device_id: str | None,
     ) -> dict[str, Any]:
         """Keep external Runtime responses on the stable logical device identity."""
 
-        device_aliases = frozenset(
-            device_id for device_id in (runtime_device_id, app_device_id) if device_id
-        )
         projected = dict(result)
         for key in DEVICE_ID_RESPONSE_KEYS:
-            if projected.get(key) in device_aliases:
+            if projected.get(key) == runtime_device_id:
                 projected[key] = logical_device_id
 
         if not method.startswith("runtime.worktrees."):
@@ -418,7 +355,7 @@ class RuntimeRpcService:
         return cls._project_nested_device_ids(
             projected,
             logical_device_id=logical_device_id,
-            device_aliases=device_aliases,
+            runtime_device_id=runtime_device_id,
         )
 
     @classmethod
@@ -427,14 +364,14 @@ class RuntimeRpcService:
         value: Any,
         *,
         logical_device_id: str,
-        device_aliases: frozenset[str],
+        runtime_device_id: str,
     ) -> Any:
         if isinstance(value, list):
             return [
                 cls._project_nested_device_ids(
                     item,
                     logical_device_id=logical_device_id,
-                    device_aliases=device_aliases,
+                    runtime_device_id=runtime_device_id,
                 )
                 for item in value
             ]
@@ -443,13 +380,13 @@ class RuntimeRpcService:
 
         projected: dict[str, Any] = {}
         for key, item in value.items():
-            if key in DEVICE_ID_RESPONSE_KEYS and item in device_aliases:
+            if key in DEVICE_ID_RESPONSE_KEYS and item == runtime_device_id:
                 projected[key] = logical_device_id
                 continue
             projected[key] = cls._project_nested_device_ids(
                 item,
                 logical_device_id=logical_device_id,
-                device_aliases=device_aliases,
+                runtime_device_id=runtime_device_id,
             )
         return projected
 

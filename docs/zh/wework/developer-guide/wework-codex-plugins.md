@@ -56,11 +56,11 @@ Renderer 通过白名单 Electron capability 调用列举、安装、更新、�
 
 内置应用插件的身份以 Backend 内置插件注册表为准。当前注册表只包含 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，二者都使用 `visibility=workspace`，因此规范市场名是 `wegent`。`public` 在数据模型中仍然合法，但只保留给系统/官方公开目录；普通用户的企业投稿不能选择它。只有在内置插件安装路径中，系统所有者 `user_id=0` 下的这两个内置插件市场行仍保存为 `visibility=public` 时，才会被视为历史遗留行并在安装前规范化为 `workspace`。这样可以避免同一个内置插件在旧数据中以 `plugin://...@wework`、在当前应用创建流程中以 `plugin://...@wegent` 出现两套身份。
 
-应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。Platform 会按可信用户身份返回用户拥有或参与协作的项目，响应中的 `owner_username` 和 `access_role` 分别标识所有者及当前用户的 `owner` / `collaborator` 角色，`app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`edit`、`delete`、`open_experience`、`configure_environment` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
+应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。Platform 会按可信用户身份返回用户拥有或参与协作的项目，响应中的 `owner_username` 和 `access_role` 分别标识所有者及当前用户的 `owner` / `collaborator` 角色，`app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`edit`、`delete`、`open_experience`、`configure_environment`、`manage_access` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。站点列表中的 URL 始终通过系统外部浏览器打开，不受 Wework 内置浏览器偏好影响。
 
 连接 Wegent 云端时，Wework 会调用 `POST /api/users/me/wegent-runtime-token` 获取本地应用 Skill 访问 Backend runtime API 的 token，并把它作为 `WEGENT_RUNTIME_AUTH_TOKEN` 写入本机 Codex shell 环境配置；该 token 会按响应中的 `expires_in` 提前刷新。`AUTH_TOKEN` 仍表示单次任务的原有 bearer token，`WEGENT_AUTH_TOKEN` 仍保留给 executor 设备连接使用，三者不能混用。
 
-站点管理接口由 Backend 继续作为认证代理，不允许 Wework 直连 Platform。协作者管理使用 `GET/POST /api/sites/{siteid}/collaborators` 和 `DELETE /api/sites/{siteid}/collaborators/{subject}`；只有 owner 在界面中看到管理入口，新增请求必须携带 `Idempotency-Key`。环境配置使用 `GET/PATCH /api/sites/{siteid}/environment-variables`，同时保留单变量的 `PUT/DELETE /api/sites/{siteid}/environment-variables/{key}`；写操作携带幂等键和可选的 `expected_revision_id`，冲突时要求客户端重新加载。Backend 向 Platform 转发认证用户的 `X-Wegent-Username`，并对环境配置响应设置 `Cache-Control: no-store`。环境配置的入站和出站 HTTP body 都不得进入请求日志或遥测，Secret 响应只包含“已配置”元数据，不能返回值。
+站点管理接口由 Backend 继续作为认证代理，不允许 Wework 直连 Platform。协作者管理使用 `GET/POST /api/sites/{siteid}/collaborators` 和 `DELETE /api/sites/{siteid}/collaborators/{subject}`；只有 owner 在界面中看到管理入口，新增请求必须携带 `Idempotency-Key`。内网站点的访问策略使用 `GET/PUT /api/sites/{siteid}/access`，owner 和 collaborator 都可以读取和修改；支持免登录、登录用户、仅项目成员、项目成员及指定成员，写请求必须携带 `Idempotency-Key`。环境配置使用 `GET/PATCH /api/sites/{siteid}/environment-variables`，同时保留单变量的 `PUT/DELETE /api/sites/{siteid}/environment-variables/{key}`；写操作携带幂等键和可选的 `expected_revision_id`，冲突时要求客户端重新加载。Backend 向 Platform 转发认证用户的 `X-Wegent-Username`，并对环境配置响应设置 `Cache-Control: no-store`。环境配置的入站和出站 HTTP body 都不得进入请求日志或遥测，Secret 响应只包含“已配置”元数据，不能返回值。
 
 新增应用类型时，在 Backend 增加响应模型和 `ApplicationTypeHandler`，注册到 `APPLICATION_TYPE_HANDLERS`；在 Wework 的 `applicationTypeDefinitions.tsx` 增加对应 Definition，只声明图标、文案、列和行渲染。创建插件身份由 `GET /api/sites/app-types` 的 `create.plugin_name` 和 `create.marketplace_name` 下发，Wework 会缓存最近一次成功的 app-types descriptor，并在云端短暂不可用时复用缓存。读取缓存时必须先验证 `items` 中每个 descriptor 都是对象，且可选的 `create.plugin_name`、`create.marketplace_name` 在存在时是字符串；缓存不满足契约时返回空缓存并回到服务端发现或默认 Definition。若使用新的内置插件，同时在 Backend 内置插件注册表和 `builtin-plugin-staging.mjs` 增加插件定义。列表工作区和创建流程不应再增加按类型分支。服务端可独立调整类型顺序、开关、能力和创建插件，但未知类型会被旧版客户端安全忽略。
 
@@ -125,6 +125,8 @@ Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模�
 Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型直接接收原始图片；Codex provider、本地模型接口和云端模型属于非官方模型，executor 在发送图片前会生成临时的模型输入文件，并把图片短边等比缩小到最多 `720px`。长边不设上限，因此超长截图会保留完整长边比例，而不会被强制塞入固定的 `1280×720` 边界。短边本来不超过 `720px` 的图片保持原样；原始附件、聊天记录和预览地址都不会被改写。临时输入文件只在当前 turn 使用，并在 turn 结束后清理。
 
 ## 对话运行时
+
+本地 Codex 对话由 Executor 复用同一个 app-server。普通任务的一轮执行完成后，Executor 会继续保留该线程的 owner subscription，空闲 30 分钟后再发送 `thread/unsubscribe`，使该线程内由 Codex 启动的后台终端和 MCP 会话可以在短暂的跨轮间隔中继续工作。新的 follow-up 会重新激活原线程并使旧的空闲计时失效。为限制常驻资源，每个 app-server 最多保留 4 个空闲任务线程；超过上限时优先释放最早进入空闲状态的线程。归档任务仍会立即取消订阅，不等待空闲期限。
 
 新对话的 Composer 会展开显示插件入口和最多三个可用插件预览；进入会话后，插件入口折叠为单个图标以减少工具栏占用，但点击图标仍会打开完整插件选择器。窄工具栏同样使用图标形态。
 

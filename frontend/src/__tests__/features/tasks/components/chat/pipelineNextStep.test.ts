@@ -44,16 +44,6 @@ const aiMessage = (
   status: 'completed',
   content,
   timestamp: 2,
-  contexts: [
-    {
-      id: 300,
-      context_type: 'table',
-      name: 'Roadmap',
-      status: 'ready',
-      document_id: 30,
-      source_config: { url: 'https://example.com/table' },
-    },
-  ],
   ...overrides,
 })
 
@@ -156,7 +146,6 @@ describe('pipeline next-step helpers', () => {
 
     expect(draft.structuredItems.map(item => `${item.context.context_type}:${item.id}`)).toEqual([
       'attachment:attachment:10',
-      'table:table:30',
     ])
   })
 
@@ -263,7 +252,6 @@ describe('pipeline next-step helpers', () => {
     expect(draft.structuredItems.map(item => `${item.context.context_type}:${item.id}`)).toEqual([
       'attachment:attachment:10',
       'knowledge_base:knowledge_base:20:all',
-      'table:table:30',
     ])
   })
 
@@ -347,16 +335,8 @@ describe('pipeline next-step helpers', () => {
           document_count: 3,
         },
       },
-      {
-        type: 'table',
-        data: {
-          document_id: 30,
-          name: 'Roadmap',
-          source_config: { url: 'https://example.com/table' },
-        },
-      },
     ])
-    expect(payload.pendingContexts).toHaveLength(3)
+    expect(payload.pendingContexts).toHaveLength(2)
   })
 
   it('preserves scoped internal and external knowledge contexts for the next step', () => {
@@ -494,7 +474,7 @@ describe('pipeline next-step helpers', () => {
     ])
   })
 
-  it('does not expose knowledge base or table contexts without domain IDs', () => {
+  it('does not expose knowledge base contexts without domain IDs', () => {
     const draft = buildPipelineNextStepDraft([
       userMessage({
         contexts: [
@@ -502,12 +482,6 @@ describe('pipeline next-step helpers', () => {
             id: 200,
             context_type: 'knowledge_base',
             name: 'Legacy KB context',
-            status: 'ready',
-          },
-          {
-            id: 300,
-            context_type: 'table',
-            name: 'Legacy table context',
             status: 'ready',
           },
         ],

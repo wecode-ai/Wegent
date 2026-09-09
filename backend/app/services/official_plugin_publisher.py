@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,8 +24,13 @@ from app.services.plugin_marketplace_service import (
     PublishedRelease,
     plugin_marketplace_service,
 )
-from app.services.plugin_package_parser import plugin_package_parser
+from app.services.plugin_package_parser import (
+    MAX_PLUGIN_PACKAGE_SIZE_BYTES,
+    plugin_package_parser,
+)
 from app.services.plugin_package_scanner import scan_plugin_package
+from app.services.plugin_publication_artifact import release_source_tree
+from shared.plugin_build import run_build
 
 IGNORED_DIRECTORY_NAMES = {".git", ".pytest_cache", "__pycache__", "node_modules"}
 IGNORED_FILE_NAMES = {".DS_Store"}
@@ -55,6 +61,10 @@ class OfficialPluginPublisher:
         root = source_directory.resolve()
         if not root.is_dir():
             raise ValueError(f"Official plugin source is not a directory: {root}")
+        with tempfile.TemporaryDirectory(prefix="wework-official-build-") as temporary:
+            candidate = Path(temporary) / "plugin.zip"
+            if run_build(root, candidate):
+                return self._validated_package(candidate.read_bytes())
         output = io.BytesIO()
         with zipfile.ZipFile(
             output,
@@ -71,8 +81,32 @@ class OfficialPluginPublisher:
                 info.external_attr = (permissions & 0xFFFF) << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
                 archive.writestr(info, path.read_bytes(), compresslevel=9)
-        package = output.getvalue()
+        return self._validated_package(output.getvalue())
+
+    def load_archive(
+        self, archive: Path, *, expected_sha256: str
+    ) -> OfficialPluginPackage:
+        """Preserve the exact CI artifact, verifying its digest before parsing."""
+        expected = expected_sha256.strip().lower()
+        if len(expected) != 64 or any(
+            char not in "0123456789abcdef" for char in expected
+        ):
+            raise ValueError(
+                "A valid expected SHA-256 is required for a prebuilt plugin"
+            )
+        if archive.is_symlink() or not archive.is_file():
+            raise ValueError("Prebuilt plugin must be a regular file")
+        with archive.open("rb") as stream:
+            package = stream.read(MAX_PLUGIN_PACKAGE_SIZE_BYTES + 1)
+        if len(package) > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
+            raise ValueError("Prebuilt plugin exceeds the 50 MiB submission limit")
+        if hashlib.sha256(package).hexdigest() != expected:
+            raise ValueError("Prebuilt plugin SHA-256 mismatch")
+        return self._validated_package(package)
+
+    def _validated_package(self, package: bytes) -> OfficialPluginPackage:
         scan_report = scan_plugin_package(package)
+        release_source_tree(package)
         parsed = plugin_package_parser.parse_package(package)
         if not parsed.version:
             raise ValueError("Official plugin manifest must include a version")

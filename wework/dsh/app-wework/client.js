@@ -23,11 +23,13 @@ window.__ModuleLoader__.load({
       'wework.internal.catalog': {
         'wework.action': { kind: 'list', scope: 'root' },
         'wework.app': { kind: 'list', scope: 'root' },
+        'wework.home': { kind: 'list', scope: 'root' },
         'wework.plugins.action': { kind: 'list', scope: 'root' },
         'wework.project.create.section': { kind: 'list', scope: 'root' },
         'wework.route': { kind: 'list', scope: 'root' },
         'wework.runtime-profile.workspace-policy': { kind: 'list', scope: 'root' },
         'wework.settings.page': { kind: 'list', scope: 'root' },
+        'wework.settings.section': { kind: 'list', scope: 'root' },
         'wework.sidebar.navigation': { kind: 'list', scope: 'root' },
       },
       'wework.internal.shell': {

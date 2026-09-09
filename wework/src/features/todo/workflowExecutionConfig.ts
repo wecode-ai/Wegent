@@ -141,6 +141,21 @@ export function effectiveWorkflowNodeExecutionConfig(
   return workflow.execution_config ?? node.execution_config ?? null
 }
 
+export function workflowNodeExecutionConfigComplete(
+  workflow: Pick<IssueWorkflowInstance, 'execution_config'>,
+  node: Pick<
+    WorkflowNodeDefinition,
+    'execution_config' | 'execution_config_override' | 'workspace_policy'
+  >
+): boolean {
+  const config = effectiveWorkflowNodeExecutionConfig(workflow, node)
+  if (!workflowExecutionConfigComplete(config)) return false
+  if (node.workspace_policy === 'composer') {
+    return config?.workspace_binding?.type !== 'standalone'
+  }
+  return true
+}
+
 export function workflowNeedsExecutionConfiguration(
   workflow: IssueWorkflowInstance | null | undefined
 ): boolean {
@@ -154,7 +169,7 @@ export function workflowNeedsExecutionConfiguration(
     node =>
       workflowNodeExecutionMode(node) === 'robot' &&
       ['blocked', 'ready', 'failed'].includes(node.status) &&
-      !workflowExecutionConfigComplete(effectiveWorkflowNodeExecutionConfig(workflow, node))
+      !workflowNodeExecutionConfigComplete(workflow, node)
   )
 }
 

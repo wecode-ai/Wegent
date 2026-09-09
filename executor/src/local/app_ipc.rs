@@ -77,6 +77,14 @@ pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+
+fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
+    match method {
+        Some("executor.plugin_auth.migrate") => 280,
+        Some("executor.plugin_auth.run") => 200,
+        _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
+    }
+}
 const APP_IPC_AUTH_TIMEOUT_SECONDS: u64 = 5;
 const APP_IPC_MAX_AUTH_FRAME_BYTES: usize = 4096;
 const APP_IPC_BULK_WRITE_BUFFER_CAPACITY: usize = 65_535;
@@ -87,6 +95,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "executor.harnesses",
     "executor.health",
     "executor.plugins",
+    "executor.plugin_auth",
     "runtime.archives",
     "runtime.automations",
     "runtime.codex",
@@ -110,6 +119,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "device.execute_command",
     "dws.*",
     "executions.*",
+    "executor.plugin_auth.migrate",
+    "executor.plugin_auth.run",
     "executor.backend.configure",
     "executor.backend.status",
     "executor.codex_home.config.read",
@@ -227,6 +238,14 @@ pub trait RuntimeWorkHandler: Send + Sync {
 }
 
 pub trait BackendConnectionHandler: Send + Sync {
+    fn execute_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn migrate_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_quota<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
@@ -758,6 +777,20 @@ impl AppIpcServer {
             return Ok(Value::String(saved));
         }
 
+        if method == "executor.plugin_auth.migrate" || method == "executor.plugin_auth.run" {
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                )
+            })?;
+            return if method == "executor.plugin_auth.run" {
+                handler.execute_plugin_auth(params).await
+            } else {
+                handler.migrate_plugin_auth(params).await
+            };
+        }
+
         if method == "executor.backend.configure" {
             let Some(handler) = &self.backend_connection_handler else {
                 return Err(AppIpcError::new(
@@ -1239,8 +1272,9 @@ impl AppIpcServer {
                             None,
                             None,
                         );
+                        let timeout_seconds = app_ipc_request_timeout_seconds(method.as_deref());
                         let response = match tokio::time::timeout(
-                            Duration::from_secs(APP_IPC_REQUEST_TIMEOUT_SECONDS),
+                            Duration::from_secs(timeout_seconds),
                             server.handle_line(&request_line),
                         )
                         .await
@@ -1260,7 +1294,7 @@ impl AppIpcServer {
                                     &AppIpcError::new(
                                         "request_timeout",
                                         format!(
-                                            "app IPC request timed out after {APP_IPC_REQUEST_TIMEOUT_SECONDS}s"
+                                            "app IPC request timed out after {timeout_seconds}s"
                                         ),
                                     ),
                                 ))
@@ -2141,6 +2175,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             serialize_task_value(
                 runtime
                     .get_task(project_id, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.mark_read" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .mark_task_read(project_id, task_id)
                     .await
                     .map_err(task_runtime_error)?,
             )

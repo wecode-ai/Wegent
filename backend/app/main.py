@@ -42,6 +42,7 @@ from app.core.logging import setup_logging
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
+from app.db.pool_observability import log_registered_pool_configurations
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.auth.internal_service_token import (
@@ -76,6 +77,7 @@ SENSITIVE_HTTP_BODY_PATHS = {
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
+log_registered_pool_configurations()
 _logger = logging.getLogger(__name__)
 
 
@@ -495,6 +497,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
 
+    logger.info("Starting terminal session invalidation listener...")
+    from app.services.device.terminal_session_service import terminal_session_service
+
+    await terminal_session_service.start()
+    logger.info("✓ Terminal session invalidation listener started")
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -581,6 +589,9 @@ async def lifespan(app: FastAPI):
         await shutdown_pending_request_registry()
         logger.info("✓ PendingRequestRegistry shutdown completed")
 
+        await terminal_session_service.stop()
+        logger.info("✓ Terminal session invalidation listener stopped")
+
         from app.services.loop_items.external_provider import (
             external_loop_item_provider,
         )
@@ -666,6 +677,16 @@ def create_app():
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     else:
         logger.debug("OpenTelemetry is disabled")
+
+    @app.middleware("http")
+    async def attach_database_request_path(request: Request, call_next):
+        from app.db.pool_observability import reset_request_path, set_request_path
+
+        token = set_request_path(request.url.path)
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_path(token)
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -838,6 +859,11 @@ def create_app():
             logger.debug(response_log_message)
         else:
             logger.info(response_log_message)
+
+        if response.status_code == 429:
+            from shared.telemetry.metrics import record_http_429_response
+
+            record_http_429_response()
 
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id

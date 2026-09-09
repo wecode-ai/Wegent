@@ -27,6 +27,8 @@ export interface CodeWikiSource {
   source_type: CodeWikiSourceType
   source_url: string
   language: string
+  /** Empty means resolve the configured deployment default during creation. */
+  generation_strategy: string
   /** Whether generation runs appear in the conversation list. Off unless asked for. */
   show_generation_task: boolean
   /** Set once resolved; the parent uses it to know the form is usable. */

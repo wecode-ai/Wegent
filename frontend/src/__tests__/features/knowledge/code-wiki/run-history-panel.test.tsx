@@ -81,6 +81,30 @@ describe('restoring a past version', () => {
     })
   })
 
+  it('keeps the confirmation open while the version is being synchronized', async () => {
+    let finishRepublish: (() => void) | undefined
+    ;(codeWikiApi.republish as jest.Mock).mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finishRepublish = resolve
+        })
+    )
+    const button = await openHistory()
+
+    fireEvent.click(button)
+    fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
+
+    expect(await screen.findByTestId('code-wiki-republish-progress')).toBeInTheDocument()
+    expect(screen.getByTestId('code-wiki-republish-confirm')).toBeInTheDocument()
+    expect(screen.getByTestId('code-wiki-republish-cancel')).toBeDisabled()
+
+    finishRepublish?.()
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('code-wiki-republish-confirm')).not.toBeInTheDocument()
+    )
+  })
+
   it('does not report success when the reader fails to reload restored pages', async () => {
     const onRepublished = jest.fn().mockRejectedValue(new Error('Page reload failed'))
     render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} />)

@@ -42,6 +42,8 @@ interface KnowledgeBaseFormProps {
   onDescriptionChange: (value: string) => void
   directAccessRequirement?: DirectAccessRequirement
   onDirectAccessRequirementChange?: (value: DirectAccessRequirement) => void
+  allowDocumentDownload?: boolean
+  onAllowDocumentDownloadChange?: (value: boolean) => void
   summaryEnabled: boolean
   onSummaryEnabledChange: (value: boolean) => void
   summaryModelRef: SummaryModelRef | null
@@ -151,6 +153,8 @@ export function KnowledgeBaseForm({
   onDescriptionChange,
   directAccessRequirement,
   onDirectAccessRequirementChange,
+  allowDocumentDownload = true,
+  onAllowDocumentDownloadChange = () => {},
   summaryEnabled,
   onSummaryEnabledChange,
   summaryModelRef,
@@ -451,6 +455,17 @@ export function KnowledgeBaseForm({
           sectionId="knowledge-access"
         >
           <SimpleConfigGroup>
+            <SimpleConfigRow
+              label={t('knowledge:document.knowledgeBase.allowDocumentDownload')}
+              description={t('knowledge:document.knowledgeBase.allowDocumentDownloadDescription')}
+            >
+              <Switch
+                id="knowledge-base-allow-document-download"
+                checked={allowDocumentDownload ?? true}
+                onCheckedChange={onAllowDocumentDownloadChange}
+                data-testid="knowledge-base-allow-document-download"
+              />
+            </SimpleConfigRow>
             <SimpleConfigRow
               label={t('knowledge:document.knowledgeBase.directAccessRange')}
               description={t('knowledge:document.knowledgeBase.directAccessRangeDescription')}

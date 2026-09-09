@@ -43,6 +43,12 @@ from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
 
 
+@pytest.fixture(autouse=True)
+def isolate_notification_delivery():
+    with patch("app.core.async_utils.schedule_async_task"):
+        yield
+
+
 def _make_gitlab_project(db: Session, user: User) -> CloudProject:
     public_id = str(uuid.uuid4())
     project = CloudProject(
@@ -597,6 +603,8 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
 
     assert response["assignee_user_id"] == member.id
     notify.assert_called_once_with(
+        test_db,
+        actor_user_id=test_user.id,
         user_id=member.id,
         project_id=str(project.id),
         project_name=project.name,

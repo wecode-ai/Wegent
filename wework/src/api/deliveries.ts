@@ -3,6 +3,7 @@ import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
 import type {
   Attachment,
+  ModelSelectionConfig,
   ModelType,
   RuntimeAdditionalContext,
   RuntimeGoalCreateInput,
@@ -118,6 +119,7 @@ export interface CloudLoopItem {
   can_edit?: boolean
   detail_loaded?: boolean
   content_revision?: number
+  has_additional_context?: boolean
   is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
@@ -387,6 +389,8 @@ export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
 export type WorkflowNodeStatus =
   | 'blocked'
   | 'ready'
+  | 'waiting'
+  | 'reacting'
   | 'queued'
   | 'running'
   | 'awaiting_approval'
@@ -423,6 +427,33 @@ export interface WorkflowNodeDefinition {
   name: string
   prompt?: string
   kind?: 'my_task' | 'automation' | 'ai' | null
+  node_type?: 'task' | 'event' | 'loop' | 'loop_start' | 'branch' | 'loop_end'
+  role?: 'start' | null
+  start_config?: {
+    trigger_type?: 'schedule' | 'event' | 'workflow'
+    event_type?: string | null
+    cron_expression?: string | null
+    source_type?: string | null
+  } | null
+  loop_id?: string | null
+  body_node_ids?: string[]
+  loop_config?: {
+    max_attempts?: number
+    timeout_seconds?: number | null
+  } | null
+  branch_conditions?: Array<{
+    source_type: 'github' | 'gitlab'
+    event_type: string
+    handler_node_ids: string[]
+    subscription_id?: string | null
+    collection_mode?: string | null
+  }>
+  event_wait?: {
+    subject_source: 'upstream_pull_request'
+    collection_mode: 'webhook' | 'poll'
+    subscription_id?: string | null
+    poll_interval_seconds?: number | null
+  } | null
   execution_mode?: 'human' | 'robot'
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
@@ -447,6 +478,19 @@ export interface ProjectWorkflowDefinition {
 
 export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   status: WorkflowNodeStatus
+  loop_state?: 'idle' | 'active' | 'completed'
+  attempts?: number
+  active_condition?: string | null
+  pending_events?: Array<{
+    event_type: string
+    event_id?: string
+    subject_id?: string
+  }>
+  loop_deadline?: string | null
+  exit_reason?: 'loop_end' | 'max_attempts' | 'timeout' | 'forced' | null
+  last_event?: Record<string, unknown> | null
+  activated_at?: string | null
+  catch_up_done?: boolean
   task_binding_id?: string | null
   task_ids?: string[]
   task_statuses?: Record<string, string>
@@ -461,6 +505,16 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   execution_id?: number | null
   automation_run_id?: string | null
   execution_error?: string | null
+  collectors?: Record<
+    string,
+    {
+      collector_id: string
+      mode?: string
+      status?: string
+      error?: string | null
+      created_at?: string
+    }
+  >
 }
 
 export interface IssueWorkflowInstance {
@@ -590,6 +644,7 @@ export interface LoopItemTaskBinding {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
   workflow_node_id?: string | null
   binding_type?: 'system' | 'user'
   linked_at: string
@@ -660,7 +715,7 @@ export function nextTaskTrackingStatus(
   if (executionStatus === 'running' && itemStatus !== 'in_progress') {
     return 'in_progress'
   }
-  if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
+  if (executionStatus === 'succeeded' && itemStatus !== 'completed' && itemStatus !== 'in_review') {
     return 'in_review'
   }
   if (
@@ -1010,6 +1065,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         assigneeType: 'user' | 'agent' | 'team'
         assigneeId: string
+        notifyAssignee?: boolean
       }
     ): Promise<CloudLoopItem> {
       return client.post(
@@ -1112,10 +1168,13 @@ export function createDeliveryApi(client: HttpClient) {
       taskTitle?: string | null,
       workflowNodeId?: string | null
     ): Promise<void> {
+      const modelSelection =
+        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
       })
     },
     decideWorkflowNode(

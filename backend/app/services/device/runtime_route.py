@@ -9,11 +9,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+from app.services.device.identity import (
+    device_kind_type,
+    record_route_id,
+    resolve_owned_device_alias,
+)
 from app.services.device_service import device_service
 from shared.telemetry.decorators import trace_async
 
@@ -59,17 +63,14 @@ class RuntimeRoute:
     app_device_id: str | None = None
 
 
-def _device_type(device: Kind) -> DeviceType:
-    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
-    raw_type = spec.get("deviceType", DeviceType.LOCAL.value)
-    try:
-        return DeviceType(raw_type)
-    except (TypeError, ValueError):
-        return DeviceType.LOCAL
+def _device_spec(device: Kind) -> dict[str, Any]:
+    return device.json.get("spec", {}) if isinstance(device.json, dict) else {}
 
 
 def _runtime_device_id(device: Kind) -> str:
-    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+    if device_kind_type(device) == DeviceType.APP:
+        return record_route_id(device)
+    spec = _device_spec(device)
     cloud_config = spec.get("cloudConfig")
     if not isinstance(cloud_config, dict):
         cloud_config = {}
@@ -79,14 +80,12 @@ def _runtime_device_id(device: Kind) -> str:
 
 
 def _runtime_instance_id(device: Kind) -> str | None:
-    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
-    value = str(spec.get("runtimeInstanceId") or "").strip()
+    value = str(_device_spec(device).get("runtimeInstanceId") or "").strip()
     return value or None
 
 
 def _app_device_id(device: Kind) -> str | None:
-    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
-    value = str(spec.get("appDeviceId") or "").strip()
+    value = str(_device_spec(device).get("appDeviceId") or "").strip()
     return value or None
 
 
@@ -94,11 +93,14 @@ def _identity_from_device(device: Kind) -> RuntimeRouteIdentity | None:
     runtime_device_id = _runtime_device_id(device)
     if not runtime_device_id:
         return None
+    device_type = device_kind_type(device)
     return RuntimeRouteIdentity(
-        logical_device_id=device.name,
+        logical_device_id=(
+            record_route_id(device) if device_type == DeviceType.APP else device.name
+        ),
         runtime_device_id=runtime_device_id,
         runtime_instance_id=_runtime_instance_id(device),
-        device_type=_device_type(device),
+        device_type=device_type,
         app_device_id=_app_device_id(device),
     )
 
@@ -109,43 +111,30 @@ def resolve_runtime_route_identity(
     user_id: int,
     submitted_device_id: str,
 ) -> RuntimeRouteIdentity | None:
-    """Resolve a logical, app exposure, or Runtime ID for one user."""
+    """Resolve a record route or legacy alias within one user's active devices."""
 
-    base_filter = and_(
-        Kind.user_id == user_id,
-        Kind.kind == "Device",
-        Kind.namespace == "default",
-        Kind.is_active.is_(True),
+    device = resolve_owned_device_alias(
+        db,
+        user_id=user_id,
+        device_id=submitted_device_id,
     )
-    logical_match = (
-        db.query(Kind)
-        .filter(and_(base_filter, Kind.name == submitted_device_id))
-        .first()
+    return _identity_from_device(device) if device is not None else None
+
+
+def normalize_execution_device_id(
+    db: Session,
+    *,
+    user_id: int,
+    submitted_device_id: str,
+) -> str | None:
+    """Return the canonical Runtime route for a submitted execution target."""
+
+    identity = resolve_runtime_route_identity(
+        db,
+        user_id=user_id,
+        submitted_device_id=submitted_device_id,
     )
-    if logical_match is not None:
-        return _identity_from_device(logical_match)
-
-    devices = db.query(Kind).filter(base_filter).all()
-    app_matches = [
-        device
-        for device in devices
-        if _app_device_id(device) == submitted_device_id
-        and _device_type(device) in {DeviceType.APP, DeviceType.REMOTE}
-    ]
-    if len(app_matches) == 1:
-        return _identity_from_device(app_matches[0])
-    if len(app_matches) > 1:
-        return None
-
-    runtime_matches = [
-        device
-        for device in devices
-        if _runtime_device_id(device) == submitted_device_id
-    ]
-    if len(runtime_matches) != 1:
-        return None
-
-    return _identity_from_device(runtime_matches[0])
+    return identity.runtime_device_id if identity is not None else None
 
 
 class RuntimeRouteResolver:
@@ -200,7 +189,8 @@ class RuntimeRouteResolver:
         if identity is None:
             raise RuntimeRouteError(
                 "device_not_found",
-                "Device not found or access denied",
+                "Device not found, access denied, or ambiguous historical identity; "
+                "select a specific device",
                 details={"deviceId": submitted_device_id},
             )
 

@@ -138,6 +138,57 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     assert!(messages[3]["params"].get("sandboxPolicy").is_none());
 }
 
+async fn codex_app_server_removes_inherited_task_identity_before_starting_threads() {
+    let _lock = env_lock().await;
+    let _auth_token = EnvGuard::set("AUTH_TOKEN", "inherited-task-token");
+    let _runtime_auth_token =
+        EnvGuard::set("WEGENT_RUNTIME_AUTH_TOKEN", "inherited-runtime-token");
+    let _task_id = EnvGuard::set("WEGENT_TASK_ID", "inherited-task");
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-task-env-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_logging_start(
+        &log_path,
+        &["AUTH_TOKEN", "WEGENT_RUNTIME_AUTH_TOKEN", "WEGENT_TASK_ID"],
+    );
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        task_id: "current-task".to_owned(),
+        auth_token: Some("current-task-token".to_owned()),
+        runtime_auth_token: Some("current-runtime-token".to_owned()),
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert!(matches!(outcome, ExecutionOutcome::Completed { .. }));
+    let messages = read_json_lines(&log_path);
+    assert_eq!(messages[0]["env"]["AUTH_TOKEN"], "");
+    assert_eq!(messages[0]["env"]["WEGENT_RUNTIME_AUTH_TOKEN"], "");
+    assert_eq!(messages[0]["env"]["WEGENT_TASK_ID"], "");
+    assert_eq!(
+        messages[3]["params"]["config"]["shell_environment_policy.set.AUTH_TOKEN"],
+        "current-task-token"
+    );
+    assert_eq!(
+        messages[3]["params"]["config"]
+            ["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+        "current-runtime-token"
+    );
+    assert_eq!(
+        messages[3]["params"]["config"]["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "current-task"
+    );
+}
+
 async fn codex_app_server_engine_rejects_a_stale_thread_provider_before_turn_start() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(

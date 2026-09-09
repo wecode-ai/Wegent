@@ -82,6 +82,7 @@ try {
     electronVersion: '43.4.1',
     electronZipDir,
     appBundleId: identity.identifier,
+    protocols: [{ name: 'Wework', schemes: ['wework'] }],
     appVersion: sourcePackage.version,
     buildVersion: sourcePackage.version,
     executableName: identity.executableName,

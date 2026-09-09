@@ -13,7 +13,7 @@ afterEach(async () => {
   )
 })
 
-test('generates Electron and legacy Tauri rolling manifests from one release', async () => {
+test('generates Electron and component rolling manifests from one release', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'wework-release-manifests-'))
   temporaryDirectories.push(root)
   const assets = resolve(root, 'assets')
@@ -28,8 +28,6 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     `WeWork_${version}_macos_arm64.zip.blockmap`,
     `WeWork_${version}_macos_x64.zip.blockmap`,
     `WeWork_${version}_windows_x64-setup.exe.blockmap`,
-    `WeWork_${version}_macos_arm64.app.tar.gz`,
-    `WeWork_${version}_macos_x64.app.tar.gz`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
@@ -68,13 +66,6 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
       })
     )
   }
-  for (const name of [
-    `WeWork_${version}_macos_arm64.app.tar.gz.sig`,
-    `WeWork_${version}_macos_x64.app.tar.gz.sig`,
-    `WeWork_${version}_windows_x64-setup.exe.sig`,
-  ]) {
-    await writeFile(resolve(assets, name), `signature-${name}`)
-  }
   await writeFile(notes, '## Changes\n\n- Smooth migration')
 
   await run([
@@ -95,11 +86,6 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWork_${version}_windows_x64-setup.exe`
   )
-  const legacy = JSON.parse(await readFile(resolve(output, 'stable-darwin-aarch64.json'), 'utf8'))
-  expect(legacy.platforms['stable-darwin']).toEqual({
-    signature: `signature-WeWork_${version}_macos_arm64.app.tar.gz.sig`,
-    url: `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeWork_${version}_macos_arm64.app.tar.gz`,
-  })
   const components = JSON.parse(
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
   )
@@ -132,18 +118,8 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
     `WeWorkHostUpdate_${version}_macos_arm64.zip.blockmap`,
     `WeWorkHostUpdate_${version}_macos_x64.zip.blockmap`,
     `WeWorkHostUpdate_${version}_windows_x64-setup.exe.blockmap`,
-    `WeWork_${version}_macos_arm64.app.tar.gz`,
-    `WeWork_${version}_macos_x64.app.tar.gz`,
-    `WeWork_${version}_windows_x64-setup.exe`,
   ]) {
     await writeFile(resolve(assets, name), name)
-  }
-  for (const name of [
-    `WeWork_${version}_macos_arm64.app.tar.gz.sig`,
-    `WeWork_${version}_macos_x64.app.tar.gz.sig`,
-    `WeWork_${version}_windows_x64-setup.exe.sig`,
-  ]) {
-    await writeFile(resolve(assets, name), `signature-${name}`)
   }
   for (const [platform, arch] of [
     ['macos', 'arm64'],
@@ -178,8 +154,6 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWorkHostUpdate_${version}_windows_x64-setup.exe`
   )
-  const legacy = JSON.parse(await readFile(resolve(output, 'beta-windows-x86_64.json'), 'utf8'))
-  expect(legacy.platforms['beta-windows'].url).toContain(`WeWork_${version}_windows_x64-setup.exe`)
 })
 
 test('rejects a release without every differential update blockmap', async () => {

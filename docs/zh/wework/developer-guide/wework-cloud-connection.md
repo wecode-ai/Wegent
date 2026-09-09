@@ -79,6 +79,46 @@ Wework 云端 runtime 执行使用和本地模式一致的 app IPC 协议。前�
 
 多实例 Backend 通过 Socket.IO Redis manager 把 RPC 转发到持有 executor 连接的 worker。Redis 中带 `socket_id` 的设备在线记录是转发入口；不能用当前 worker 的进程内连接表预判 executor 已断线，否则会把连接在其他 worker 上的设备误标为离线。
 
+## 云端终端兼容与发布
+
+终端通过 `/terminal` → Backend → `/local-executor` 转发；协议以 attach 成功响应为准，不通过设备能力字段重复声明。
+
+| 新建会话组合                                           | 协议 |
+| ------------------------------------------------------ | ---- |
+| Wework、Backend、Executor 均为新版，且 Backend 开启 v2 | v2   |
+| 任一端为旧版，或 Backend 关闭 v2                       | v1   |
+
+- attach 请求或成功响应缺少 `protocol_version` 代表 v1；v2 请求必须带合法 `consumer_id` 和非负 `last_acked_sequence`。首次 attach 固定会话协议，重连不能自动切换版本。
+- v2 在 `xterm.write` callback 后累计 ACK，Executor 据此释放有界回放；旧 consumer 的 ACK 和控制请求不能影响新 consumer。
+- v1 不带 consumer/sequence，也不发送消费 ACK；新版 Executor 在 Backend 确认接收后释放 v1 回放，不保证断线无损补发、去重或端到端背压。新版 Wework 队列超限会明确报错并关闭终端。
+- Backend 重启后的重新 attach 不等于 Executor 重启恢复；PTY 和回放只在 Executor 内存中，Executor 重启会丢失它们。
+
+多副本发布与回滚：
+
+1. 保存 Backend、Executor、Wework 的可回滚产物。新 Backend 显式设置 `TERMINAL_PROTOCOL_V2_ENABLED=false`，再滚动替换所有副本；该开关默认 **true**，不能直接用默认配置混合发布。
+2. 全部 Backend 支持双协议后，排空受影响设备的活跃终端，再分批升级 Executor。
+3. 完成[终端压测与兼容验收](wework-performance-diagnostics.md#云端终端压测与验收)，再为全部 Backend 开启 v2，并灰度发布 Wework。开关只影响新会话协商，旧端继续使用 v1。
+4. 回滚先关闭 v2 新会话协商、排空已有 v2 终端，再降级 Executor/Backend；关闭开关不能把已有 v2 会话透明降为 v1，必要时重新创建终端。
+
+Redis key、session JSON 不变，无 SQL migration，无需扫描或清空 Redis。旧 Backend 不发布缓存失效事件；混合发布窗口的授权重校验最长 5 秒，不保证旧副本撤销立即传播。
+
+维护入口（仓库相对路径）：
+
+- 握手与转发：`backend/app/services/device/terminal_protocol.py`、`backend/app/api/ws/terminal_namespace.py`、`backend/app/api/ws/device_namespace.py`。
+- 路由与授权：`backend/app/services/device/terminal_session_service.py`。
+- PTY、回放与流控：`executor/src/local/pty.rs`、`executor/src/local/session/terminal.rs`、`executor/src/local/backend/{handlers,terminal_relay}.rs`。
+- 显示与消费 ACK：`wework/src/components/layout/workspace-panels/RemoteTerminal.tsx`、`wework/src/lib/remote-terminal-socket.ts`。
+
+### 开源源码参考
+
+以下固定 commit 仅作为机制参考，不代表复制实现或这些项目采用同一套完整协议；v1/v2 兼容是 Wegent 自身的适配。
+
+- VS Code：[输出微批](https://github.com/microsoft/vscode/blob/85ce8ef0824ac5afb363e3fa3483ada007791785/src/vs/platform/terminal/common/terminalDataBuffering.ts)、[PTY 水位](https://github.com/microsoft/vscode/blob/85ce8ef0824ac5afb363e3fa3483ada007791785/src/vs/platform/terminal/node/terminalProcess.ts)、[终端写入与确认](https://github.com/microsoft/vscode/blob/85ce8ef0824ac5afb363e3fa3483ada007791785/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts)。
+- xterm.js：[写入 callback 边界](https://github.com/xtermjs/xterm.js/blob/c58ea3637f3968e0e6e79cd92cf9aace7ef89ee2/src/common/input/WriteBuffer.ts)、[流控指南](https://xtermjs.org/docs/guides/flowcontrol/)。
+- ttyd：[PTY 事件驱动](https://github.com/tsl0922/ttyd/blob/2922cb89f518bae4d0fcf4d757a7419638fc71fc/src/pty.c)、[pause/resume 协议](https://github.com/tsl0922/ttyd/blob/2922cb89f518bae4d0fcf4d757a7419638fc71fc/src/protocol.c)。
+- Coder：[重连会话](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/agent/reconnectingpty/server.go)、[有界缓冲](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/agent/reconnectingpty/buffered.go)、[代理](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/coderd/workspaceapps/proxy.go)与[鉴权](https://github.com/coder/coder/blob/80de54591580c888e750e5f6847e8327ba23a50b/coderd/workspaceapps/token.go)。
+- ShellHub：[控制连接与数据转发](https://github.com/shellhub-io/shellhub/blob/ef2e2056e0ae4e575b60b79d5fde0365799b2a1c/pkg/revdial/revdial.go)。
+
 ## 本机 executor 生命周期
 
 打包 release 版 Wework 必须和本机 executor 保持一对一活跃配套。release app 启动时只允许一个活跃 Wework 实例；重复启动会聚焦已有窗口。app 直接启动并管理 executor 子进程，通过 stdin/stdout JSONL 通道通信，不使用共享 socket、TCP 地址文件或进程发现。

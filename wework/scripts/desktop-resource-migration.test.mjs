@@ -187,6 +187,10 @@ describe('desktop resource migration', () => {
     expect(source).toContain("process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'")
     expect(source).toContain("configured === 'debug' || configured === 'release'")
     expect(source).toContain("profile === 'release' ? ['--release'] : []")
+    expect(source).toContain('resolveExecutorPackageTargetDirectory(process.env, executorRoot)')
+    expect(source).toContain('CARGO_TARGET_DIR: targetDirectory')
+    expect(source).toContain('executorPackageBinaryPath(targetDirectory, target, profile)')
+    expect(source).not.toContain("'metadata',")
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
@@ -194,6 +198,11 @@ describe('desktop resource migration', () => {
     expect(source).toContain("['prepare:harness-runtime', '--materialize']")
     expect(source).toContain('resolveHarnessRuntimeCachePaths(')
     expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
+    expect(harnessRuntimeSource).toContain('`wework-harness-runtime-${runtime.sourceFingerprint}`')
+    expect(harnessRuntimeSource).not.toContain(
+      '`wework-harness-runtime-${runtime.dshVersion}-${process.pid}`'
+    )
+    expect(harnessRuntimeSource).toContain('mtime: new Date(0)')
     expect(source).not.toContain(
       "join(weworkRoot, 'node_modules', '.cache', 'harness-runtime-assets'"
     )
@@ -211,6 +220,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('version: weworkRuntimeVersion')
     expect(source).toContain('sourceSha,')
     expect(source).toContain('path: `bin/${dwsName}`')
+    expect(source).toContain("path: 'codex'")
+    expect(source).toContain('sha256: await hashComponentPath(codexResources)')
+    expect(source).not.toContain('path: `codex/${codexRuntime.binaryPath}`')
     expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('execution-runtime-node-dev')
@@ -256,16 +268,13 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
-  test('creates macOS component archives from the requested packaged application', async () => {
+  test('creates component archives from immutable prepared resources', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
 
-    expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
-    expect(source).toContain(
-      "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
-    )
+    expect(source).toContain('const packagedComponentResourcesRoot = componentResourcesRoot')
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
     expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
@@ -282,16 +291,6 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const blockmap = `${path}.blockmap`')
     expect(source).toContain('await requireFile(blockmap)')
     expect(source).not.toContain('if (await isFile(blockmap))')
-  })
-
-  test('signs legacy updater assets through the Windows command interpreter', async () => {
-    const source = await readFile(
-      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
-      'utf8'
-    )
-
-    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
-    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
   })
 
   test('desktop E2E reuses packaged Harness runtime assets', async () => {

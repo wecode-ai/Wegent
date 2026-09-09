@@ -65,6 +65,7 @@ export function listLocalConnectors(
   const results: LocalConnectorRequirement[] = []
   for (const plugin of plugins) {
     for (const connector of plugin.spec.components.connectors ?? []) {
+      if (connector.accountAuth) continue
       if (!policies.has(connector.authPolicy)) continue
       if (!isLocalConnector(connector) || !connector.localAuth) continue
       results.push({

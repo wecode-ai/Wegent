@@ -1,5 +1,5 @@
 {
   "name": "wework-space",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "Provides project-space, Issue, attachment, and delivery tools to Wework Agent sessions."
 }

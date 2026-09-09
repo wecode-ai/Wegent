@@ -382,8 +382,10 @@ export function CloudTodoBoardCard({
       data-testid={`cloud-todo-card-drop-${item.id}`}
       style={{ transform: CSS.Translate.toString(transform) }}
       className={cn(
-        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
-        item.is_unread ? 'border-blue-500/15 bg-blue-500/[0.04]' : 'border-border bg-background',
+        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition hover:-translate-y-px hover:shadow-md',
+        item.is_unread
+          ? 'border-focus/30 bg-focus/10 hover:border-focus/40 hover:bg-focus/[0.14]'
+          : 'border-border bg-background hover:border-text-primary/15',
         isDragging && 'opacity-25 shadow-none',
         isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
       )}
@@ -804,8 +806,12 @@ function RuntimeTaskProgressPopup({
       className="min-w-0 space-y-2"
     >
       <div className="min-w-0 border-b border-border/60 pb-2">
-        <div className="text-sm font-medium leading-5 text-text-primary">
-          {t('todo.task_progress_details', '当前任务进展')}
+        <div
+          data-testid={`cloud-todo-card-progress-title-${item.id}`}
+          className="truncate text-sm font-medium leading-5 text-text-primary"
+          title={item.title}
+        >
+          {item.title}
         </div>
         {!focusedBindingId && bindings.length > 1 ? (
           <div className="mt-0.5 text-xs leading-5 text-text-secondary">
