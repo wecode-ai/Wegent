@@ -427,3 +427,21 @@ flowchart LR
 Both entry points now share stop recording and reuse the execution cancellation state machine, including device aliases and queued executions. Transport failures preserve committed stop intent. Internal cancellation remains distinct from user Stop.
 
 Regression coverage includes both transports, device aliases, RPC timeout, interrupted callbacks with retries remaining, queued cancellation, and ownership isolation. All 253 backend tests passed. Desktop coverage now clicks Stop in the actual task conversation and observes a complete queue claim window without new executions. At the user's request the running desktop verification was stopped and acceptance was handed to the user in Test-Wegent; the desktop case is not reported as passed.
+
+## 2026-09-10 Continue the original coordinator task after a human reply
+
+Reply and continue is a callback for the existing human assignment rather than a new piece of work. The reply stays in its original comment thread and the AI coordinator continues its original conversation. A custom Runtime reuses the original `deviceId + taskId`; Wegent reuses the original Task and creates only another Subtask turn inside it. If the original coordinator conversation cannot be resolved or messaged, the Issue returns to waiting for the person with an explicit error. The service must not fall back to the new-task launch path.
+
+```mermaid
+sequenceDiagram
+    participant H as Assignee
+    participant I as Existing Issue and thread
+    participant C as Existing coordinator task
+    H->>I: Reply and continue
+    I->>I: Persist result and callback identity
+    I->>C: Send human_continue to the existing Task
+    C->>I: Read comments, deliverables and current state
+    C->>I: Assign the next action or complete the Issue
+```
+
+Regression source requires AI advancement to avoid workflow `start()` and avoid creating another `ProjectWorkflowRun`, `ProjectAutomationRun`, or `LoopItemExecution`. Custom Runtime addressing remains unchanged and the Wegent Task ID remains unchanged. An ordinary reply still only appends to the thread and does not trigger coordination.

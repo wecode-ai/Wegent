@@ -1084,9 +1084,35 @@ class ProjectChatService:
             )
         else:
             return None
+        self._finalize_issue_assignment_continuation(db, row, terminal_status)
         self._commit(db)
         db.refresh(row)
         return self.to_view(row), "snapshot"
+
+    @staticmethod
+    def _finalize_issue_assignment_continuation(
+        db: Session, row: ProjectChatMessage, terminal_status: str | None
+    ) -> None:
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        run_id = str(metadata.get("automation_run_id") or "")
+        if (
+            terminal_status is None
+            or metadata.get("kind") != "issue_assignment_continuation"
+            or metadata.get("manager_type") != "custom"
+            or not run_id
+        ):
+            return
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        project_automation_execution.finalize_manager_result(
+            db,
+            run_id=run_id,
+            content=row.content,
+            activity_message_id=row.message_id,
+            push_activity=False,
+        )
 
     @staticmethod
     def _project_automation_activity_is_terminal(

@@ -321,8 +321,6 @@ class IssueAssignmentService:
         user_id: int,
         result: IssueAssignmentResult,
     ) -> dict:
-        from app.services.issue_workflow_start import issue_workflow_start_service
-
         issue = issue_workflow_planning_service._issue(
             db, issue_id, user_id, for_update=True
         )
@@ -342,8 +340,11 @@ class IssueAssignmentService:
             user_id=user_id,
             content=result.summary,
         )
+        ai_advancement = workflow.get("advancement_policy") == "ai"
+        if ai_advancement:
+            next_workflow["active_run_id"] = workflow.get("active_run_id")
         issue_workflow_planning_service._write_workflow(issue, next_workflow)
-        if workflow.get("advancement_policy") == "manual":
+        if not ai_advancement:
             from app.services.project_workflow_projection import apply_workflow_nodes
 
             apply_workflow_nodes(
@@ -355,14 +356,30 @@ class IssueAssignmentService:
             )
         issue.assignee_user_id = None
         queue_assignment_comment(db, message)
-        db.commit()
-        project = db.get(CloudProject, issue.cloud_project_id)
-        await issue_workflow_start_service.start(
-            db,
-            item=issue,
-            project=project,
-            user_id=int(workflow.get("coordinator_user_id") or user_id),
-        )
+        if ai_advancement and next_workflow["orchestration_status"] != "paused":
+            from app.services.issue_assignment_continuation import (
+                issue_assignment_continuation_service,
+            )
+
+            await issue_assignment_continuation_service.continue_coordinator(
+                db,
+                issue=issue,
+                workflow=next_workflow,
+                assignment_id=result.assignment_id,
+                summary=result.summary,
+            )
+        else:
+            db.commit()
+        if not ai_advancement:
+            from app.services.issue_workflow_start import issue_workflow_start_service
+
+            project = db.get(CloudProject, issue.cloud_project_id)
+            await issue_workflow_start_service.start(
+                db,
+                item=issue,
+                project=project,
+                user_id=int(workflow.get("coordinator_user_id") or user_id),
+            )
         publish_loop_item_changed(
             db, item=issue, reason="issue_assignment_result", actor_user_id=user_id
         )

@@ -518,3 +518,21 @@ flowchart LR
 两种入口共用停止记录服务，复用执行取消状态机；支持逻辑设备别名和排队中的执行。传输失败不能撤销已保存的停止意图。普通内部停止没有被改为人工停止。
 
 回归覆盖 HTTP / WebSocket、设备别名、停止 RPC 超时、中断回调且尚有重试额度、排队取消和其他用户任务隔离。后端 253 项通过。桌面用例已改为进入实际任务对话点击停止，并观察完整队列领取周期无新执行；根据用户要求中止正在运行的桌面验证，交由用户在 Test-Wegent 验收，未声明该桌面用例通过。
+
+## 2026-09-10 人工回复续接原协调任务
+
+“回复并继续推进”是原人工交办的 callback，不代表创建一件新工作。人工回复保留在原评论楼，AI 调度员继续原协调会话。自定义 Runtime 复用原 `deviceId + taskId`；Wegent 复用原 Task，只在该 Task 内新增一轮 Subtask。原协调会话无法定位或发送失败时，工单恢复为等待人工并明确报错，不允许退回创建新任务的启动路径。
+
+```mermaid
+sequenceDiagram
+    participant H as 负责人
+    participant I as 原工单与评论楼
+    participant C as 原协调任务
+    H->>I: 回复并继续推进
+    I->>I: 保存人工结果和 callback 身份
+    I->>C: 向原 Task 发送 human_continue
+    C->>I: 读取动态、交付物和当前状态
+    C->>I: 分派下一步或完成工单
+```
+
+回归源码约束：AI 推进不调用流程 `start()`，不创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun` 或 `LoopItemExecution`；自定义 Runtime 地址保持不变，Wegent 的 Task ID 保持不变。普通评论仍只盖楼，不触发调度。

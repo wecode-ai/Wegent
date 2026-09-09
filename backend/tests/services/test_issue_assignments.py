@@ -13,8 +13,12 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectWorkflowRun,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.issue_assignment import IssueAssignmentDecision, IssueAssignmentResult
+from app.services.issue_assignment_continuation import (
+    issue_assignment_continuation_service,
+)
 from app.services.issue_assignment_errors import IssueAssignmentConflict
 from app.services.issue_assignments import issue_assignment_service
 from app.services.issue_workflow_start import issue_workflow_start_service
@@ -295,8 +299,10 @@ async def test_human_result_resumes_same_issue_and_preserves_original_goal(
     monkeypatch,
 ):
     issue, manager = assigned_issue
-    start = AsyncMock(return_value=1)
-    monkeypatch.setattr(issue_workflow_start_service, "start", start)
+    continuation = AsyncMock(side_effect=lambda db, **_: db.commit())
+    monkeypatch.setattr(
+        issue_assignment_continuation_service, "continue_coordinator", continuation
+    )
     result = await issue_assignment_service.decide(
         test_db,
         issue_id=issue.id,
@@ -319,7 +325,92 @@ async def test_human_result_resumes_same_issue_and_preserves_original_goal(
     assert resumed["orchestration_status"] == "planning"
     assert resumed["intent"] == "Meet checkout requirements"
     assert issue.status == "in_progress"
-    start.assert_awaited_once()
+    continuation.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_human_continue_reuses_the_original_coordinator_runtime_task(
+    test_db, test_user, assigned_issue, monkeypatch
+):
+    from app.services import runtime_work_service
+
+    issue, manager = assigned_issue
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.message_id
+            == manager.metadata_json["activity_message_id"]
+        )
+        .one()
+    )
+    execution = LoopItemExecution(
+        loop_item_id=issue.id,
+        cloud_project_id=str(issue.cloud_project_id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        automation_run_id=manager.id,
+        execution_environment="local",
+        execution_device_id="device-1",
+        runtime_device_id="device-1",
+        runtime_task_id="coordinator-task-1",
+        status="completed",
+    )
+    test_db.add(execution)
+    test_db.flush()
+    activity.runtime_device_id = execution.runtime_device_id
+    activity.runtime_task_id = execution.runtime_task_id
+    activity.metadata_json = {
+        "automation_run_id": manager.id,
+        "assignment_mode": "ai_managed",
+        "manager_type": "custom",
+        "executor_type": "automation_manager",
+        "execution_id": execution.id,
+    }
+    test_db.commit()
+    original_workflow_run_id = issue.metadata_json["workflow"]["active_run_id"]
+    original_workflow_run_count = test_db.query(ProjectWorkflowRun).count()
+    original_automation_run_count = test_db.query(ProjectAutomationRun).count()
+    original_execution_count = test_db.query(LoopItemExecution).count()
+    await issue_assignment_service.decide(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision=command("assign_user", assignee_user_id=test_user.id),
+        manager_run_id=manager.id,
+    )
+    send = AsyncMock(return_value=SimpleNamespace(accepted=True, error=None))
+    monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
+
+    resumed = await issue_assignment_service.submit_result(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        result=IssueAssignmentResult(
+            assignment_id="assignment-1", summary="Just test it; choose the details"
+        ),
+    )
+
+    assert resumed["active_run_id"] == original_workflow_run_id
+    assert test_db.query(ProjectWorkflowRun).count() == original_workflow_run_count
+    assert test_db.query(ProjectAutomationRun).count() == original_automation_run_count
+    assert test_db.query(LoopItemExecution).count() == original_execution_count
+    request = send.await_args.kwargs["request"]
+    assert request.address.device_id == "device-1"
+    assert request.address.task_id == "coordinator-task-1"
+    assert "Just test it; choose the details" in request.message
+    continuation = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.metadata_json["kind"].as_string()
+            == "issue_assignment_continuation"
+        )
+        .one()
+    )
+    assert continuation.runtime_task_id == "coordinator-task-1"
+    assert (
+        continuation.thread_root_message_id
+        == resumed["assignment"]["thread_root_message_id"]
+    )
 
 
 @pytest.mark.asyncio
@@ -333,8 +424,10 @@ async def test_only_human_session_can_return_control_to_ai(
     monkeypatch,
 ):
     issue, manager = assigned_issue
-    start = AsyncMock(return_value=1)
-    monkeypatch.setattr(issue_workflow_start_service, "start", start)
+    continuation = AsyncMock(side_effect=lambda db, **_: db.commit())
+    monkeypatch.setattr(
+        issue_assignment_continuation_service, "continue_coordinator", continuation
+    )
     await issue_assignment_service.decide(
         test_db,
         issue_id=issue.id,
@@ -349,7 +442,7 @@ async def test_only_human_session_can_return_control_to_ai(
     )
     assert response.status_code == 401
     assert issue.metadata_json["workflow"]["orchestration_status"] == "waiting_human"
-    start.assert_not_awaited()
+    continuation.assert_not_awaited()
 
     for _ in range(2):
         response = test_client.post(
@@ -357,7 +450,7 @@ async def test_only_human_session_can_return_control_to_ai(
         )
         assert response.status_code == 200, response.text
         assert response.json()["orchestration_status"] == "planning"
-    start.assert_awaited_once()
+    continuation.assert_awaited_once()
 
 
 @pytest.mark.asyncio

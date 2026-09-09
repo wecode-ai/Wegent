@@ -8,6 +8,9 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.wework_notification import WeworkNotification
 from app.schemas.issue_assignment import IssueAssignmentResult
 from app.schemas.wework_navigation import validate_wework_url
+from app.services.issue_assignment_continuation import (
+    issue_assignment_continuation_service,
+)
 from app.services.issue_assignments import issue_assignment_service
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_unread import is_unread
@@ -132,7 +135,10 @@ async def test_continue_posts_as_the_person_and_ai_followup_stays_in_same_thread
     from app.services.issue_assignments import write_assignment
 
     issue, manager = assigned_issue
-    monkeypatch.setattr(issue_workflow_start_service, "start", AsyncMock())
+    continuation = AsyncMock(side_effect=lambda db, **_: db.commit())
+    monkeypatch.setattr(
+        issue_assignment_continuation_service, "continue_coordinator", continuation
+    )
     await issue_assignment_service.decide(
         test_db,
         issue_id=issue.id,
@@ -151,6 +157,7 @@ async def test_continue_posts_as_the_person_and_ai_followup_stays_in_same_thread
     completed = await issue_assignment_service.submit_result(
         test_db, issue_id=issue.id, user_id=test_user.id, result=result
     )
+    continuation.assert_awaited_once()
     replies = (
         test_db.query(ProjectChatMessage)
         .filter(ProjectChatMessage.thread_root_message_id == root_id)
