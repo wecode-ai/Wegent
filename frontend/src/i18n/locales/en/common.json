@@ -1755,5 +1755,12 @@
       "save_api_key_failed": "Failed to save API key",
       "sync_failed": "Failed to sync servers"
     }
+  },
+  "wework_open": {
+    "title": "Open Wework",
+    "description": "View this notification’s destination in the Wework desktop app.",
+    "open": "Open Wework",
+    "hint": "Install Wework and allow your browser to open the app. If DingTalk blocks opening it, open this page in your system browser.",
+    "invalid": "This link is invalid. Open it again from your notification."
   }
 }

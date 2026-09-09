@@ -10,6 +10,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.wework_notification import NotificationCreate
 from app.services.loop_items.service import loop_item_service
+from app.services.wework_links import browser_link
 from app.services.wework_notifications import (
     create_notification,
     deliver_notification,
@@ -267,7 +268,9 @@ async def test_im_receives_message_even_when_live_push_fails(
         ) as send,
     ):
         await deliver_notification(row.id)
-    expected = f"Review failed\n\n{row.url}" if row.url else "Review failed"
+    expected = (
+        f"Review failed\n\n{browser_link(row.url)}" if row.url else "Review failed"
+    )
     assert send.call_args.args[2] == expected
 
 

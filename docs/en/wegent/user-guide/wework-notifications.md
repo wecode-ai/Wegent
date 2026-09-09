@@ -14,6 +14,12 @@ Notifications belong to Wework users and do not require a project or board. With
 
 An optional `url` specifies the click destination independently of project source. For “send me a hello notification that opens the board homepage when clicked”, use `{ "title": "Hello", "body": "Hello", "url": "wework://boards" }`. Receiving it keeps the current page; clicking opens the board homepage. An explicit URL takes precedence over the source link.
 
+## Open Wework from DingTalk and other IM clients
+
+IM links open `/launch/wework?destination=...` on the Wegent website. Runtime task updates also include their task link. Click “Open Wework” on the page and allow the browser to launch the installed desktop app. The page requires no web login; resource authorization remains in the client. If DingTalk blocks the app launch, open the page in your system browser.
+
+Configure Backend `FRONTEND_URL` to the recipient-accessible Wegent website (HTTPS in production). Route `/launch/wework` to the Wegent frontend, not the separate Wework website. Stored destinations remain `wework://...`; the page and desktop share the same parser and accept only the destinations below.
+
 ## Scheme addresses
 
 | Address                                       | Destination                         |
@@ -39,7 +45,8 @@ flowchart LR
   Inbox --> Live[Live invalidation]
   Inbox --> IM[Private IM delivery]
   Live --> Bell[Notification center]
-  IM --> Scheme[Wework scheme parser]
+  IM --> Web[Wegent launch page]
+  Web -->|User clicks Open Wework| Scheme[Wework scheme parser]
   Bell --> Scheme
   Scheme --> Issue[Board tab and Issue]
 ```

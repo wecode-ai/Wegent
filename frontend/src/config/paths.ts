@@ -9,6 +9,9 @@ export const paths = {
   home: {
     getHref: () => '/',
   },
+  wework: {
+    open: { getHref: () => '/launch/wework' },
+  },
   docs: {
     getHref: () => getRuntimeConfigSync().docsUrl,
   },
