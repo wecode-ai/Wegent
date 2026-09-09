@@ -34,6 +34,7 @@ pub(super) enum RawEventCallError {
         code: Option<String>,
         message: String,
         retryable: bool,
+        terminal_end_dispatched: bool,
     },
 }
 
@@ -247,10 +248,15 @@ where
             .and_then(|value| value.get("retryable"))
             .and_then(Value::as_bool)
             .unwrap_or(true);
+        let terminal_end_dispatched = payload
+            .and_then(|value| value.get("terminal_end_dispatched"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         Err(RawEventCallError::Rejected {
             code,
             message,
             retryable,
+            terminal_end_dispatched,
         })
     }
 

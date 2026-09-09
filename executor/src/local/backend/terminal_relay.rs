@@ -56,6 +56,13 @@ where
                         payload["consumer_id"] = json!(consumer_id);
                         payload["sequence"] = json!(sequence);
                     }
+                    if let Some(browser_socket_id) = handler
+                        .lock()
+                        .expect("session handler lock")
+                        .terminal_browser_socket_id(&session_id, consumer_id.as_deref())
+                    {
+                        payload["browser_socket_id"] = json!(browser_socket_id);
+                    }
                     (
                         TERMINAL_OUTPUT_EVENT,
                         payload,
@@ -75,6 +82,13 @@ where
                     });
                     if let Some(consumer_id) = &consumer_id {
                         payload["consumer_id"] = json!(consumer_id);
+                    }
+                    if let Some(browser_socket_id) = handler
+                        .lock()
+                        .expect("session handler lock")
+                        .terminal_browser_socket_id(&session_id, consumer_id.as_deref())
+                    {
+                        payload["browser_socket_id"] = json!(browser_socket_id);
                     }
                     if let Some(error) = &error {
                         payload["error"] = json!(error);
@@ -117,6 +131,7 @@ where
                     code,
                     message,
                     retryable: false,
+                    terminal_end_dispatched: true,
                 } = &error
                 {
                     handler
@@ -131,6 +146,33 @@ where
                             ("error", message.clone()),
                         ],
                     ));
+                    return Ok(());
+                }
+                if should_defer_terminal_delivery(&error) {
+                    let (delay, notifier) = {
+                        let mut handler = handler.lock().expect("session handler lock");
+                        if let Some(sequence) = sequence {
+                            if !handler.retry_terminal_output_delivery(&session_id, sequence) {
+                                continue;
+                            }
+                        }
+                        let Some(delay) = handler.defer_terminal_delivery(&session_id) else {
+                            continue;
+                        };
+                        (delay, handler.terminal_event_notifier())
+                    };
+                    write_executor_error_line(&format_executor_log(
+                        "terminal session delivery deferred",
+                        &[
+                            ("session_id", session_id),
+                            ("error", error.to_string()),
+                            ("retry_delay_ms", delay.as_millis().to_string()),
+                        ],
+                    ));
+                    tokio::spawn(async move {
+                        sleep(delay).await;
+                        notifier.notify_one();
+                    });
                     return Ok(());
                 }
                 if let Some(sequence) = sequence {
@@ -153,6 +195,22 @@ where
             }
         }
         Ok(())
+    }
+}
+
+fn should_defer_terminal_delivery(error: &RawEventCallError) -> bool {
+    match error {
+        RawEventCallError::Rejected {
+            code,
+            retryable,
+            terminal_end_dispatched,
+            ..
+        } => {
+            (!*retryable && !*terminal_end_dispatched)
+                || code.as_deref() == Some("terminal_session_authorization_unavailable")
+                || code.as_deref() == Some("terminal_end_dispatch_failed")
+        }
+        RawEventCallError::Transport(_) => false,
     }
 }
 

@@ -20,6 +20,9 @@ export interface RemoteTerminalExitPayload {
   session_id: string
   consumer_id: string
   exit_code?: number | null
+  error?: string
+  reason_code?: string
+  output_complete?: boolean
 }
 
 interface TerminalAck {
@@ -73,7 +76,11 @@ export function createRemoteTerminalClient(
   let legacySequence = 0
   let pendingCharacters = 0
   let negotiationError: Error | null = null
-  const pendingEvents: Array<{ event: 'output' | 'exit'; payload: Record<string, unknown> }> = []
+  const pendingEvents: Array<{
+    event: 'output' | 'exit'
+    payload: Record<string, unknown>
+    acknowledge?: () => void
+  }> = []
   const outputHandlers = new Set<(payload: RemoteTerminalOutputPayload) => void>()
   const exitHandlers = new Set<(payload: RemoteTerminalExitPayload) => void>()
   const terminalPayload = (payload: Record<string, unknown>) => ({
@@ -82,25 +89,28 @@ export function createRemoteTerminalClient(
     ...payload,
   })
 
-  const dispatch = (event: 'output' | 'exit', payload: Record<string, unknown>) => {
+  const dispatch = (event: 'output' | 'exit', payload: Record<string, unknown>): boolean => {
     if (payload.protocol_version !== undefined && payload.protocol_version !== protocolVersion) {
-      return
+      return false
     }
     if (protocolVersion === 2) {
-      if (payload.consumer_id !== consumerId) return
+      if (payload.consumer_id !== consumerId) return false
       if (event === 'output') {
-        if (!Number.isSafeInteger(payload.sequence) || (payload.sequence as number) <= 0) return
+        if (!Number.isSafeInteger(payload.sequence) || (payload.sequence as number) <= 0) {
+          return false
+        }
         outputHandlers.forEach(handler =>
           handler(payload as unknown as RemoteTerminalOutputPayload)
         )
       } else {
+        if (exitHandlers.size === 0) return false
         exitHandlers.forEach(handler => handler(payload as unknown as RemoteTerminalExitPayload))
       }
-      return
+      return true
     }
     // A legacy stream has no wire sequence or browser-consumption ACK. The local
     // index only feeds the same ordered xterm queue; it must never be sent upstream.
-    if ('consumer_id' in payload || 'sequence' in payload) return
+    if ('consumer_id' in payload || 'sequence' in payload) return false
     if (event === 'output') {
       const output: RemoteTerminalOutputPayload = {
         session_id: sessionId,
@@ -111,17 +121,23 @@ export function createRemoteTerminalClient(
       }
       outputHandlers.forEach(handler => handler(output))
     } else {
+      if (exitHandlers.size === 0) return false
       exitHandlers.forEach(handler =>
         handler({ ...payload, session_id: sessionId, consumer_id: consumerId })
       )
     }
+    return true
   }
 
-  const receive = (event: 'output' | 'exit', payload: Record<string, unknown>) => {
-    if (disposed || !payload || payload.session_id !== sessionId) return
-    if (event === 'output' && typeof payload.data !== 'string') return
+  const receive = (
+    event: 'output' | 'exit',
+    payload: Record<string, unknown>,
+    acknowledge?: () => void
+  ): boolean => {
+    if (disposed || !payload || payload.session_id !== sessionId) return false
+    if (event === 'output' && typeof payload.data !== 'string') return false
     if (negotiating) {
-      if (negotiationError) return
+      if (negotiationError) return false
       const characters = typeof payload.data === 'string' ? payload.data.length : 0
       if (
         pendingEvents.length >= MAX_ATTACH_EVENTS ||
@@ -130,16 +146,26 @@ export function createRemoteTerminalClient(
         negotiationError = new Error('Terminal output exceeded the bounded attach buffer')
         pendingEvents.length = 0
         pendingCharacters = 0
-        return
+        return false
       }
-      pendingEvents.push({ event, payload })
+      pendingEvents.push({ event, payload, acknowledge })
       pendingCharacters += characters
+      return false
     } else if (protocolVersion !== null) {
-      dispatch(event, payload)
+      return dispatch(event, payload)
     }
+    return false
   }
-  const receiveOutput = (payload: Record<string, unknown>) => receive('output', payload)
-  const receiveExit = (payload: Record<string, unknown>) => receive('exit', payload)
+  const receiveOutput = (payload: Record<string, unknown>) => {
+    receive('output', payload)
+  }
+  const receiveExit = (
+    payload: Record<string, unknown>,
+    acknowledge?: (response: { success: true }) => void
+  ) => {
+    const acknowledgeExit = acknowledge ? () => acknowledge({ success: true }) : undefined
+    if (receive('exit', payload, acknowledgeExit)) acknowledgeExit?.()
+  }
   client.socket.on('terminal:output', receiveOutput)
   client.socket.on('terminal:exit', receiveExit)
 
@@ -169,7 +195,9 @@ export function createRemoteTerminalClient(
           throw new Error('Terminal protocol changed; open a new terminal session')
         }
         protocolVersion = selected
-        pendingEvents.forEach(({ event, payload }) => dispatch(event, payload))
+        pendingEvents.forEach(({ event, payload, acknowledge }) => {
+          if (dispatch(event, payload)) acknowledge?.()
+        })
       } finally {
         negotiating = false
         pendingEvents.length = 0
