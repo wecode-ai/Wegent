@@ -193,6 +193,20 @@ export async function eventCenterModelResponse(payload, responseId, request) {
     )
   }
   if (serialized.includes('Read the Issue and verify its requested result.')) {
+    for (const [tool, callId] of [
+      ['get_board_item', 'event-role-read-item'],
+      ['list_board_item_comments', 'event-role-read-comments'],
+      ['list_deliveries', 'event-role-read-deliveries'],
+    ]) {
+      if (!requestContainsToolOutput(payload, callId)) {
+        return requestTool(payload, responseId, tool, {}, callId)
+      }
+    }
+    assert.ok(
+      !serialized.includes('<workflow_stage_input>'),
+      'Stage content was eagerly embedded in the worker prompt'
+    )
+
     const issueId = serialized.match(/task_id: ([A-Za-z0-9_-]+)/)?.[1]
     const issue = await request(`/api/v1/loop-items/${issueId}`)
     if (issue.workflow.assignment_version === 2) {

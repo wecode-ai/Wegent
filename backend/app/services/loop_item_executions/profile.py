@@ -5,12 +5,11 @@
 
 Project robot configuration and custom automation configuration both remain in
 their canonical records. This module compiles those live values into a runtime
-request only when an execution is claimed.
+request before an execution is dispatched.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,6 +30,7 @@ from app.services.project_chat.workspace_binding import (
     adapt_legacy_workspace_binding,
     read_agent_workspace_binding,
 )
+from shared.telemetry.decorators import trace_sync
 
 
 class WeworkExecutionProfileError(ValueError):
@@ -61,7 +61,7 @@ def build_project_robot_user_input(
     normalized_stage_instruction = stage_instruction.strip()
     if normalized_stage_instruction:
         sections.append(normalized_stage_instruction)
-    elif normalized_prompt:
+    if normalized_prompt:
         sections.append(normalized_prompt)
     return "\n\n".join(sections)
 
@@ -320,20 +320,15 @@ class WeworkExecutionProfile:
         project_id: str,
         task_id: str,
         execution_id: int,
-        workflow_stage_input: dict[str, Any] | None = None,
+        workflow_stage_launch: dict[str, Any] | None = None,
     ) -> str:
         if self.manager_mode:
             return self.instruction.strip()
-        from app.services.workflow_stage_context import compiled_workflow_stage_input
+        from app.services.workflow_stage_launch import workflow_stage_launch_instruction
 
         stage_instruction = (
-            str(
-                compiled_workflow_stage_input(workflow_stage_input).get(
-                    "compiled_task_instruction"
-                )
-                or ""
-            )
-            if workflow_stage_input
+            workflow_stage_launch_instruction(workflow_stage_launch)
+            if workflow_stage_launch
             else ""
         )
         return build_project_robot_user_input(
@@ -344,6 +339,9 @@ class WeworkExecutionProfile:
             stage_instruction=stage_instruction,
         )
 
+    @trace_sync(
+        span_name="workflow.build_runtime_request", tracer_name="backend.workflow"
+    )
     def build_runtime_request(
         self,
         db: Session,
@@ -388,42 +386,16 @@ class WeworkExecutionProfile:
                 "Robot workspace binding is ambiguous; select an exact workspace"
             )
         has_bound_workspace = workspace_binding.type != "standalone"
-        workflow_stage_input = origin_context.get("workflow_stage_input")
-        workspace_policy = ""
-        workspace_source_task: dict[str, str] | None = None
-        if isinstance(workflow_stage_input, dict):
-            target_stage = workflow_stage_input.get("target_stage")
-            if isinstance(target_stage, dict):
-                workspace_policy = str(
-                    target_stage.get("workspace_policy") or "composer"
-                )
-            if workspace_policy == "inherit":
-                dependencies = workflow_stage_input.get("dependencies")
-                for dependency in reversed(
-                    dependencies if isinstance(dependencies, list) else []
-                ):
-                    if not isinstance(dependency, dict):
-                        continue
-                    runtime_tasks = dependency.get("runtime_tasks")
-                    for source in reversed(
-                        runtime_tasks if isinstance(runtime_tasks, list) else []
-                    ):
-                        if not isinstance(source, dict):
-                            continue
-                        device_id = str(source.get("device_id") or "")
-                        source_task_id = str(source.get("task_id") or "")
-                        if device_id and source_task_id:
-                            workspace_source_task = {
-                                "deviceId": device_id,
-                                "taskId": source_task_id,
-                            }
-                            break
-                    if workspace_source_task:
-                        break
-                if workspace_source_task is None:
-                    raise WeworkExecutionProfileError(
-                        "Inherited workflow workspace has no predecessor Runtime task"
-                    )
+        workflow_stage_launch = origin_context.get("workflow_stage_launch")
+        target_stage = (workflow_stage_launch or {}).get("target_stage") or {}
+        workspace_policy = str(target_stage.get("workspace_policy") or "")
+        workspace_source_task = (workflow_stage_launch or {}).get(
+            "workspace_source_task"
+        )
+        if workspace_policy == "inherit" and not workspace_source_task:
+            raise WeworkExecutionProfileError(
+                "Inherited workflow workspace has no predecessor Runtime task"
+            )
         has_stage_workspace = workspace_policy == "inherit" or (
             workspace_policy == "composer" and has_bound_workspace
         )
@@ -431,14 +403,20 @@ class WeworkExecutionProfile:
             project_id=str(project.id),
             task_id=task_id,
             execution_id=execution_id,
-            workflow_stage_input=(
-                workflow_stage_input if isinstance(workflow_stage_input, dict) else None
+            workflow_stage_launch=(
+                workflow_stage_launch
+                if isinstance(workflow_stage_launch, dict)
+                else None
             ),
         )
         title = str(getattr(task, "title", "") or "")
         bot_id: int | str = self.agent_id or 0
         origin = {
-            **origin_context,
+            **{
+                key: value
+                for key, value in origin_context.items()
+                if key != "workflow_stage_launch"
+            },
             "type": (
                 "project_event"
                 if self.event_router
@@ -452,8 +430,8 @@ class WeworkExecutionProfile:
                 f"{str(getattr(task, 'id', ''))}"
             ),
         }
-        if isinstance(workflow_stage_input, dict):
-            target_stage = workflow_stage_input.get("target_stage")
+        if isinstance(workflow_stage_launch, dict):
+            target_stage = workflow_stage_launch.get("target_stage")
             if isinstance(target_stage, dict):
                 workflow_stage_id = str(target_stage.get("id") or "")
                 origin["workflowStageId"] = workflow_stage_id
@@ -476,23 +454,6 @@ class WeworkExecutionProfile:
             if isinstance(configured_additional_context, dict)
             else {}
         )
-        if isinstance(workflow_stage_input, dict):
-            additional_context["workflowStageInput"] = {
-                "kind": "application",
-                "value": "\n".join(
-                    [
-                        "<workflow_stage_input>",
-                        json.dumps(workflow_stage_input, ensure_ascii=False),
-                        "</workflow_stage_input>",
-                        (
-                            "This immutable snapshot is the input for the current "
-                            "workflow stage. Fulfill every required deliverable by "
-                            "its requirement ID before completing the task."
-                        ),
-                    ]
-                ),
-            }
-
         configured_execution = origin_context.get("execution")
         generated_execution = (
             {"workspace": {"source": "git_worktree"}}

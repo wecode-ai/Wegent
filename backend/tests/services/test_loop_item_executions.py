@@ -49,7 +49,6 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
 from app.services.runtime_profiles import runtime_profile_service
-from app.services.workflow_stage_context import workflow_stage_task_instruction
 
 
 @pytest.fixture
@@ -2114,14 +2113,9 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
         ),
         cloud_project_id=str(project.id),
         origin_context={
-            "workflow_stage_input": {
-                "target_stage": {
-                    "id": "build",
-                    "prompt": "Build it",
-                    "workspace_policy": "composer",
-                    "required_deliverables": [],
-                },
-                "dependencies": [],
+            "workflow_stage_launch": {
+                "target_stage": {"id": "build", "workspace_policy": "composer"},
+                "workspace_source_task": None,
             }
         },
         execution_device_id="local-device",
@@ -2826,100 +2820,6 @@ def test_automation_robot_uses_the_same_visible_input_and_board_origin(
     assert "Scan the checkout for reproducible bugs." not in payload["message"]
 
 
-def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> None:
-    instruction = workflow_stage_task_instruction(
-        {
-            "issue": {
-                "id": "PRJ-26",
-                "title": "发布工作流",
-                "description": "完成发布并保留完整上下文。",
-            },
-            "dependencies": [
-                {
-                    "stage_id": "build",
-                    "stage_name": "实现",
-                    "final_results": [
-                        {
-                            "task_id": "runtime-build",
-                            "content": "实现完成",
-                            "completed_at": "2026-08-26T10:00:00Z",
-                        }
-                    ],
-                    "deliveries": [
-                        {
-                            "id": "delivery-build",
-                            "markdown": "代码已提交。",
-                            "content_available": True,
-                            "fulfillments": [
-                                {
-                                    "requirement_id": "source",
-                                    "kind": "git_branch",
-                                    "branch": "feature/build",
-                                    "commit_sha": "abcdef1",
-                                }
-                            ],
-                            "assets": [],
-                        }
-                    ],
-                    "activity": [
-                        {
-                            "message_id": "message-1",
-                            "status": "completed",
-                            "content": "已完成实现与自测",
-                        }
-                    ],
-                }
-            ],
-            "target_stage": {
-                "id": "deploy",
-                "name": "部署",
-                "prompt": "部署并测试，之后交付",
-                "required_deliverables": [
-                    {
-                        "id": "deliverable-1",
-                        "name": "测试报告",
-                        "value_type": "file",
-                        "description": "",
-                        "file_constraints": {
-                            "accepted_types": ["text/markdown"],
-                            "min_files": 1,
-                            "max_files": 2,
-                        },
-                    },
-                    {
-                        "id": "deliverable-2",
-                        "name": "访问地址",
-                        "value_type": "text",
-                        "description": "必须可访问",
-                    },
-                ],
-            },
-        }
-    )
-
-    assert instruction.startswith("## 任务定位")
-    assert "Issue：发布工作流 (`PRJ-26`)" in instruction
-    assert "当前节点：部署 (`deploy`)" in instruction
-    assert "完成发布并保留完整上下文。" in instruction
-    assert "## 当前节点任务\n\n部署并测试，之后交付" in instruction
-    assert "## 上游最终结果" in instruction
-    assert '"content": "实现完成"' in instruction
-    assert "## 上游已交付内容" in instruction
-    assert '"id": "delivery-build"' in instruction
-    assert '"branch": "feature/build"' in instruction
-    assert "## 上游执行过程" in instruction
-    assert '"content": "已完成实现与自测"' in instruction
-    assert "## 当前节点交付要求" in instruction
-    assert "- [deliverable-1] 测试报告 (file)" in instruction
-    assert "允许类型：text/markdown" in instruction
-    assert "文件数量：1–2" in instruction
-    assert "- [deliverable-2] 访问地址 (text)" in instruction
-    assert "要求：必须可访问" in instruction
-    assert "## 提交约束" in instruction
-    assert "finalize_delivery" in instruction
-    assert "requirement_id" in instruction
-
-
 def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
     test_db: Session, test_user: User
 ) -> None:
@@ -2942,24 +2842,12 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
         ),
         cloud_project_id=str(project.id),
         origin_context={
-            "workflow_stage_input": {
-                "target_stage": {
-                    "id": "deploy",
-                    "prompt": "部署并测试",
-                    "workspace_policy": "inherit",
-                    "required_deliverables": [],
+            "workflow_stage_launch": {
+                "target_stage": {"id": "deploy", "workspace_policy": "inherit"},
+                "workspace_source_task": {
+                    "deviceId": "electron-app-device",
+                    "taskId": "previous-runtime-task",
                 },
-                "dependencies": [
-                    {
-                        "stage_id": "develop",
-                        "runtime_tasks": [
-                            {
-                                "device_id": "electron-app-device",
-                                "task_id": "previous-runtime-task",
-                            }
-                        ],
-                    }
-                ],
             }
         },
         execution_device_id="electron-app-device",
@@ -2996,24 +2884,12 @@ def test_inherited_stage_requires_the_executor_that_owns_the_workspace(
         ),
         cloud_project_id=str(project.id),
         origin_context={
-            "workflow_stage_input": {
-                "target_stage": {
-                    "id": "deploy",
-                    "prompt": "Deploy",
-                    "workspace_policy": "inherit",
-                    "required_deliverables": [],
+            "workflow_stage_launch": {
+                "target_stage": {"id": "deploy", "workspace_policy": "inherit"},
+                "workspace_source_task": {
+                    "deviceId": "other-app-device",
+                    "taskId": "previous-runtime-task",
                 },
-                "dependencies": [
-                    {
-                        "stage_id": "develop",
-                        "runtime_tasks": [
-                            {
-                                "device_id": "other-app-device",
-                                "task_id": "previous-runtime-task",
-                            }
-                        ],
-                    }
-                ],
             },
         },
         execution_device_id="electron-app-device",
@@ -3539,25 +3415,15 @@ def test_mark_start_requested_binds_workflow_stage_runtime_task(
         status="queued",
         created_by_user_id=test_user.id,
         metadata_json={
-            "workflow_stage_input": {
-                "version": 1,
-                "issue": {"id": item.id},
+            "workflow_node_id": "deploy",
+            "workflow_stage_launch": {
                 "target_stage": {
                     "id": "deploy",
                     "name": "部署",
-                    "prompt": "部署并测试",
                     "workspace_policy": "none",
-                    "required_deliverables": [
-                        {
-                            "id": "deliverable-1",
-                            "name": "测试报告",
-                            "value_type": "file",
-                        }
-                    ],
                 },
-                "dependencies": [],
-                "sha256": "stage-snapshot",
-            }
+                "workspace_source_task": None,
+            },
         },
     )
     test_db.add(run)
@@ -3618,7 +3484,8 @@ def test_mark_start_requested_binds_workflow_stage_runtime_task(
     )
     assert binding.device_id == "cloud-device-1"
     assert binding.workflow_node_id == "deploy"
-    assert binding.metadata_json["workflow_stage_input_sha256"] == "stage-snapshot"
+    assert "workflow_stage_input" not in binding.metadata_json
+    assert "workflow_stage_input_sha256" not in binding.metadata_json
     assert binding.metadata_json["workspace_device_id"] == "cloud-device-1"
 
 

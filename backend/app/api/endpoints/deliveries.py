@@ -102,7 +102,6 @@ from app.services.project_change_request_bindings import (
     project_change_request_binding_service,
 )
 from app.services.project_incoming_hooks import project_incoming_hook_service
-from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -386,33 +385,18 @@ def get_workflow_stage_input_context(
 ) -> dict:
     external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     item = loop_item_service.get(db, item_id, current_user.id)
-    binding = (
-        db.query(LoopItemTaskBinding)
-        .filter(
-            LoopItemTaskBinding.loop_item_id == item_id,
-            LoopItemTaskBinding.task_user_id == current_user.id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-        )
-        .order_by(LoopItemTaskBinding.linked_at.desc())
-        .all()
+    from app.services.workflow_stage_launch import (
+        resolve_workflow_stage_launch,
+        workflow_stage_launch_instruction,
     )
-    stage_binding = next(
-        (
-            candidate
-            for candidate in binding
-            if candidate.workflow_node_id == workflow_node_id
-        ),
-        None,
+
+    launch = resolve_workflow_stage_launch(
+        db, item=item, target_node_id=workflow_node_id
     )
-    if stage_binding is not None:
-        snapshot = workflow_stage_context_resolver.binding_snapshot(stage_binding)
-        if snapshot is not None:
-            return snapshot
-    return workflow_stage_context_resolver.resolve(
-        db,
-        item=item,
-        target_node_id=workflow_node_id,
-    )
+    return {
+        **launch,
+        "compiled_task_instruction": workflow_stage_launch_instruction(launch),
+    }
 
 
 @router.delete("/runtime-tasks/cloud-context", status_code=status.HTTP_204_NO_CONTENT)

@@ -597,3 +597,77 @@ def test_notification_tool_uses_bound_project_and_current_user(
         wework_space.send_notification(
             _token(test_user), "Review", "Wrong project", space_id="999"
         )
+
+
+def test_comment_reader_paginates_and_keeps_thread_roots(
+    test_db, test_user, monkeypatch
+):
+    from app.mcp_server.tools import wework_space_comments as comments
+
+    project = _project(test_db, test_user, provider="local")
+    item, _ = _workflow_issue(test_db, project, test_user)
+    monkeypatch.setattr(comments, "SessionLocal", lambda: _SessionContext(test_db))
+    rows = []
+    for index in range(3):
+        row = ProjectChatMessage(
+            message_id=f"read-comment-{index}",
+            project_id=str(project.id),
+            task_id=item.id,
+            sender_type="user",
+            sender_id=str(test_user.id),
+            sender_name="User",
+            message_type="text",
+            content=f"Conclusion {index}",
+            status="completed",
+        )
+        if index:
+            row.reply_to_message_id = "read-comment-0"
+            row.thread_root_message_id = "read-comment-0"
+        rows.append(row)
+    other = ProjectChatMessage(
+        message_id="unrelated-comment",
+        project_id=str(project.id),
+        task_id="other-item",
+        sender_type="user",
+        sender_id=str(test_user.id),
+        sender_name="User",
+        message_type="text",
+        content="Unrelated",
+        status="completed",
+    )
+    test_db.add_all([*rows, other])
+    test_db.commit()
+    args = {
+        "token_info": _token(test_user),
+        "space_id": str(project.id),
+        "item_id": item.id,
+        "limit": 1,
+    }
+    page = comments.list_board_item_comments(**args)
+    assert [row["message_id"] for row in page["items"]] == [
+        "read-comment-0",
+        "read-comment-2",
+    ]
+    assert page["next_before_sequence"] == rows[2].id
+    next_page = comments.list_board_item_comments(
+        **args, before_sequence=page["next_before_sequence"]
+    )
+    assert [row["message_id"] for row in next_page["items"]] == [
+        "read-comment-0",
+        "read-comment-1",
+    ]
+    assert "Unrelated" not in str(page)
+    assert test_db.dirty == set()
+
+
+def test_comment_reader_requires_item_access(test_db, test_user, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.mcp_server.tools import wework_space_comments as comments
+
+    project = _project(test_db, test_user, provider="local")
+    monkeypatch.setattr(comments, "SessionLocal", lambda: _SessionContext(test_db))
+    with pytest.raises(HTTPException):
+        comments.list_board_item_comments(
+            _token(test_user), space_id=str(project.id), item_id="missing-item"
+        )

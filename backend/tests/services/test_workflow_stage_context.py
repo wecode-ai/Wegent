@@ -151,7 +151,7 @@ def test_inherit_resolves_predecessor_outside_loop(test_db):
     assert with_runtime[-1]["runtime_tasks"][0]["device_id"] == "desktop-1"
 
 
-def test_trigger_event_is_compiled_into_stage_instruction(test_db):
+def test_trigger_event_is_available_when_reading_stage_context(test_db):
     item = _item(test_db)
     workflow = dict(item.metadata_json["workflow"])
     nodes = [dict(node) for node in workflow["nodes"]]
@@ -182,8 +182,26 @@ def test_trigger_event_is_compiled_into_stage_instruction(test_db):
     )
 
     assert snapshot["trigger_event"]["payload"]["subject"]["number"] == 7
-    instruction = snapshot["compiled_task_instruction"]
-    assert "Provider：gitlab" in instruction
-    assert "MR/PR：7" in instruction
-    assert "https://gitlab.example/acme/app/-/merge_requests/7" in instruction
-    assert "glab" in instruction
+    assert "compiled_task_instruction" not in snapshot
+
+
+def test_launch_inherits_workspace_without_loading_business_content(
+    test_db, monkeypatch
+):
+    from app.services.workflow_stage_context import workflow_stage_context_resolver
+    from app.services.workflow_stage_launch import resolve_workflow_stage_launch
+
+    item = _item(test_db)
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("Launch must not load discussion or delivery content")
+
+    monkeypatch.setattr(workflow_stage_context_resolver, "_messages", unexpected_read)
+    monkeypatch.setattr(workflow_stage_context_resolver, "_deliveries", unexpected_read)
+    launch = resolve_workflow_stage_launch(test_db, item=item, target_node_id="fix")
+    assert launch["workspace_source_task"] == {
+        "deviceId": "desktop-1",
+        "taskId": "runtime-task-A",
+    }
+    assert set(launch) == {"target_stage", "workspace_source_task"}
+    assert set(launch["target_stage"]) == {"id", "name", "workspace_policy"}

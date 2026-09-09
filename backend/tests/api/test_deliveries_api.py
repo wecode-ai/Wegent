@@ -1765,20 +1765,18 @@ def test_workflow_task_binding_survives_missing_dependency_delivery_content(
     assert response.json()["workflow_node_id"] == "deploy"
     binding = test_db.get(LoopItemTaskBinding, response.json()["id"])
     assert binding is not None
-    stage_input = binding.metadata_json["workflow_stage_input"]
-    dependency_delivery = stage_input["dependencies"][0]["deliveries"][0]
-    assert dependency_delivery["id"] == draft["id"]
-    assert dependency_delivery["markdown"] == ""
-    assert dependency_delivery["content_available"] is False
+    assert "workflow_stage_input" not in binding.metadata_json
     context_response = test_client.get(
         f"/api/v1/loop-items/{item['id']}/workflow-nodes/deploy/input-context",
         headers=_auth(test_token),
     )
     assert context_response.status_code == 200
     compiled_instruction = context_response.json()["compiled_task_instruction"]
-    assert "## 任务定位" in compiled_instruction
-    assert "## 上游已交付内容" in compiled_instruction
-    assert f'"id": "{draft["id"]}"' in compiled_instruction
+    assert "workflow_node_id: deploy" in compiled_instruction
+    assert "get_board_item" in compiled_instruction
+    assert "read_delivery" in compiled_instruction
+    assert draft["id"] not in compiled_instruction
+    assert "dependencies" not in context_response.json()
 
 
 def test_binding_subscription_backend_task_uses_task_store(

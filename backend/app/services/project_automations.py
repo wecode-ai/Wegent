@@ -61,7 +61,7 @@ from app.services.project_automation_execution import (
 from app.services.project_chat.service import bot_config
 from app.services.project_event_sources import EXECUTION_TARGETS, event_source
 from app.services.share import team_share_service
-from app.services.workflow_stage_context import workflow_stage_context_resolver
+from app.services.workflow_stage_launch import resolve_workflow_stage_launch
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -722,7 +722,7 @@ class ProjectAutomationService:
             "workflow_execution_config": execution_config.model_dump(
                 mode="json", by_alias=True
             ),
-            "workflow_stage_input": workflow_stage_context_resolver.resolve(
+            "workflow_stage_launch": resolve_workflow_stage_launch(
                 db,
                 item=item,
                 target_node_id=workflow_node_id,
@@ -914,8 +914,8 @@ class ProjectAutomationService:
                 "workflow_execution_config": execution_config.model_dump(
                     mode="json", by_alias=True
                 ),
-                "workflow_stage_input": (
-                    workflow_stage_context_resolver.resolve(
+                "workflow_stage_launch": (
+                    resolve_workflow_stage_launch(
                         db,
                         item=item,
                         target_node_id=workflow_node_id,
@@ -959,7 +959,7 @@ class ProjectAutomationService:
                 if workspace_binding
                 else None
             ),
-            "workflow_stage_input": run_metadata.get("workflow_stage_input"),
+            "workflow_stage_launch": run_metadata.get("workflow_stage_launch"),
             **execution_config.runtime_request_options(),
         }
         execution = loop_item_execution_service.enqueue_generic_robot(

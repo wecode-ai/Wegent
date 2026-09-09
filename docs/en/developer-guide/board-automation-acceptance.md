@@ -4,6 +4,29 @@ sidebar_position: 10
 
 # Board automation interaction and acceptance
 
+## 2026-09-10 AI reads context on demand
+
+Launch requests retain the current instruction, Issue/stage identifiers, execution configuration, and inherited workspace address. Activity, historical conclusions, and delivery content stay in their original stores. Enqueueing, task binding, and dispatch no longer read, freeze, or copy them into execution_payload. The obsolete path that expanded stage content into origin, prompts, and additional context was removed. No database capacity change or content truncation is used.
+
+```mermaid
+sequenceDiagram
+  participant C as Coordinator
+  participant Q as Backend execution queue
+  participant R as AI on target machine
+  participant B as Board tools
+  C->>Q: Instruction, Issue/stage IDs, execution configuration
+  Q->>R: Compact launch request and inherited workspace address
+  R->>B: get_board_item / list_board_item_comments
+  B-->>R: Current Issue, assignment, paginated activity and thread context
+  R->>B: Read requirements, deliveries or files as needed
+  B-->>R: Requested business content
+  R->>B: Write results and deliverables
+```
+
+list_board_item_comments enforces Issue access, pages backward from recent activity, and reuses thread context inclusion. It does not read unrelated Issue activity, reconcile execution state, or dispatch work. get_workflow_stage_context reads current content on invocation without persisting a binding snapshot. Launches still resolve predecessor workspace addresses for inherit and preserve existing execution target validation.
+
+Regression sources cover large Issue content excluded from launch payloads, no eager content reads, bindings without snapshots, comment pagination/access isolation, workspace inheritance, and real MCP reads in the CI event-center scenario. Tests and application verification were not run as requested. The commit is synchronized to Test-Wegent for user deployment and acceptance.
+
 ## 2026-09-09 Work results and orchestration state are independent
 
 A rerun of the same task uses its latest runtime result. A successful AI task marks its stage completed and clears previous failure or cancellation messages, without adding approval, acceptance, or deliverable gates. Historical assignment results remain history. Among multiple bindings, the existing binding order identifies the latest task; an older task cannot override that result.

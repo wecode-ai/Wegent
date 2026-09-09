@@ -928,7 +928,7 @@ def get_delivery_requirements(
 def get_workflow_stage_context(
     token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
 ) -> dict[str, Any]:
-    """Return the immutable predecessor context for the authenticated stage."""
+    """Read current predecessor results and deliveries for the authenticated stage."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
@@ -939,16 +939,9 @@ def get_workflow_stage_context(
         binding = _delivery_binding(db, token_info, resolved_item_id)
         if not binding.workflow_node_id:
             raise ValueError("Authenticated Task is not bound to a workflow stage")
-        snapshot = workflow_stage_context_resolver.binding_snapshot(binding)
-        if snapshot is None:
-            snapshot = workflow_stage_context_resolver.resolve(
-                db,
-                item=item,
-                target_node_id=binding.workflow_node_id,
-            )
-            workflow_stage_context_resolver.freeze_binding(binding, snapshot)
-            db.commit()
-        return snapshot
+        return workflow_stage_context_resolver.resolve(
+            db, item=item, target_node_id=binding.workflow_node_id
+        )
 
 
 @mcp_tool(server="wework_space")

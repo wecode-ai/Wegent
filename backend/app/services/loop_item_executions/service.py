@@ -1881,18 +1881,7 @@ class LoopItemExecutionService:
             if run is not None and isinstance(run.metadata_json, dict)
             else {}
         )
-        snapshot = metadata.get("workflow_stage_input")
-        stage_snapshot = snapshot if isinstance(snapshot, dict) else None
-        workflow_node_id: str | None = None
-        if stage_snapshot is not None:
-            target = stage_snapshot.get("target_stage")
-            workflow_node_id = (
-                str(target.get("id") or "") if isinstance(target, dict) else ""
-            )
-            if not workflow_node_id:
-                raise WeworkRuntimeConfigurationError(
-                    "Workflow stage execution has no target stage"
-                )
+        workflow_node_id = str(metadata.get("workflow_node_id") or "") or None
         item = db.get(LoopItem, execution.loop_item_id)
         if item is None:
             raise WeworkRuntimeConfigurationError("Issue execution task is unavailable")
@@ -1920,7 +1909,6 @@ class LoopItemExecutionService:
                 workflowNodeId=workflow_node_id,
             ),
             user_id=execution.executor_owner_user_id,
-            stage_snapshot=stage_snapshot,
             commit=False,
         )
         binding.metadata_json = {
@@ -2322,9 +2310,9 @@ class LoopItemExecutionService:
                 project_id=execution.cloud_project_id,
                 task_id=execution.loop_item_id,
                 execution_id=execution.id,
-                workflow_stage_input=(
-                    origin_context.get("workflow_stage_input")
-                    if isinstance(origin_context.get("workflow_stage_input"), dict)
+                workflow_stage_launch=(
+                    origin_context.get("workflow_stage_launch")
+                    if isinstance(origin_context.get("workflow_stage_launch"), dict)
                     else None
                 ),
             )
@@ -3934,7 +3922,7 @@ class LoopItemExecutionService:
             "trigger": run_metadata.get("trigger") or getattr(run, "source", None),
             "scheduled_for": run_metadata.get("scheduled_for"),
             "event": run_metadata.get("event") or {},
-            "workflow_stage_input": run_metadata.get("workflow_stage_input"),
+            "workflow_stage_launch": run_metadata.get("workflow_stage_launch"),
             "model": workflow_config.get("model"),
             "model_type": (
                 workflow_config.get("modelType") or workflow_config.get("model_type")

@@ -1617,7 +1617,6 @@ class LoopItemService:
         item_id: str,
         values: LoopItemTaskBind,
         user_id: int,
-        stage_snapshot: dict[str, Any] | None = None,
         commit: bool = True,
     ) -> LoopItemTaskBinding:
         """Bind a trusted Issue execution, optionally to its workflow stage."""
@@ -1628,7 +1627,6 @@ class LoopItemService:
             values=values,
             user_id=user_id,
             allow_automated_stage=True,
-            stage_snapshot=stage_snapshot,
             commit=commit,
         )
 
@@ -1640,7 +1638,6 @@ class LoopItemService:
         values: LoopItemTaskBind,
         user_id: int,
         allow_automated_stage: bool,
-        stage_snapshot: dict[str, Any] | None = None,
         commit: bool = True,
     ) -> LoopItemTaskBinding:
         item = self.get(db, item_id, user_id)
@@ -1683,19 +1680,6 @@ class LoopItemService:
                         ),
                         **metadata_updates,
                     }
-                if values.workflow_node_id:
-                    from app.services.workflow_stage_context import (
-                        workflow_stage_context_resolver,
-                    )
-
-                    if workflow_stage_context_resolver.binding_snapshot(active) is None:
-                        workflow_stage_context_resolver.freeze_binding(
-                            active,
-                            stage_snapshot
-                            or workflow_stage_context_resolver.resolve(
-                                db, item=item, target_node_id=values.workflow_node_id
-                            ),
-                        )
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
@@ -1718,18 +1702,6 @@ class LoopItemService:
             linked_at=self._now(),
             metadata_json=_task_binding_metadata(values) or None,
         )
-        if values.workflow_node_id:
-            from app.services.workflow_stage_context import (
-                workflow_stage_context_resolver,
-            )
-
-            workflow_stage_context_resolver.freeze_binding(
-                binding,
-                stage_snapshot
-                or workflow_stage_context_resolver.resolve(
-                    db, item=item, target_node_id=values.workflow_node_id
-                ),
-            )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
         if commit:
