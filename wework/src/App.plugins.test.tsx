@@ -20,11 +20,13 @@ import './i18n'
 import { telemetryFeatureForLocation } from './telemetry/routes'
 import App from './App'
 
-const telemetryMocks = vi.hoisted(() => ({ track: vi.fn() }))
+const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
 
 vi.mock('@/telemetry/client', async importOriginal => ({
   ...(await importOriginal<typeof import('@/telemetry/client')>()),
   track: telemetryMocks.track,
+  trackEvent: telemetryMocks.trackEvent,
+  useTelemetryEnabled: () => true,
 }))
 
 const TEST_DSH_ROUTES = [
@@ -1046,6 +1048,7 @@ describe('App plugins route', () => {
     }
     desktopHostMocks.invoke.mockClear()
     telemetryMocks.track.mockReset()
+    telemetryMocks.trackEvent.mockReset()
     workbenchValue.state.runtimeWork = null
     workbenchValue.state.currentRuntimeTask = null
     workbenchValue.state.devices = [
@@ -1102,15 +1105,15 @@ describe('App plugins route', () => {
     expect(telemetryFeatureForLocation('/app/native-task', '')).toBe('apps')
   })
 
-  test('tracks a Smart apps view change when only search changes', async () => {
+  test('automatically observes a Smart App view change when only search changes', async () => {
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
     window.history.pushState({}, '', '/sites?app_type=smart_app')
     renderApp()
 
     await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
-        domain: 'smart_app',
-        feature: 'smart_apps_marketplace',
+      expect(telemetryMocks.trackEvent).toHaveBeenCalledWith({
+        name: 'smart_app_marketplace_opened',
+        properties: { domain: 'smart_app' },
       })
     )
 
@@ -1120,22 +1123,27 @@ describe('App plugins route', () => {
     })
 
     await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenLastCalledWith('feature_opened', {
-        domain: 'smart_app',
-        feature: 'smart_apps_owned',
+      expect(telemetryMocks.trackEvent).toHaveBeenLastCalledWith({
+        name: 'smart_app_owned_opened',
+        properties: { domain: 'smart_app' },
       })
     )
+
+    expect(telemetryMocks.track).not.toHaveBeenCalledWith('feature_opened', {
+      domain: 'smart_app',
+      feature: 'smart_apps_marketplace',
+    })
   })
 
-  test('tracks an installed Smart App open with its domain', async () => {
+  test('automatically observes an installed Smart App open', async () => {
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
     window.history.pushState({}, '', '/app/harness-research-desk')
     renderApp()
 
     await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
-        domain: 'smart_app',
-        feature: 'smart_app',
+      expect(telemetryMocks.trackEvent).toHaveBeenCalledWith({
+        name: 'smart_app_opened',
+        properties: { domain: 'smart_app' },
       })
     )
   })
