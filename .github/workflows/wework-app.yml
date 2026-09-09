@@ -281,6 +281,8 @@ jobs:
             exit 1
           }
           echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          # Reuse one keychain so parallel electron-builder processes do not race during cleanup.
+          echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
           echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
 
       - name: Prepare Apple notarization key
@@ -311,8 +313,6 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          CSC_LINK: ${{ matrix.platform == 'macos' && secrets.MACOS_CERTIFICATE_BASE64 || '' }}
           VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
           VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           VITE_WEWORK_RUNTIME_MODE: local-first
