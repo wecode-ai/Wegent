@@ -1,4 +1,4 @@
-import type { SelectedLineRange } from '@pierre/diffs'
+import type { DiffLineEventBaseProps, SelectedLineRange } from '@pierre/diffs'
 import type { GitPatchAction } from '@/api/environment'
 
 export interface DiffCommentSelection {
@@ -54,6 +54,12 @@ export function getFirstChangedLine(lines: string[]): number | undefined {
     if (header) return Number(header[1])
   }
   return undefined
+}
+
+export function getOpenSourceLine(
+  line: Pick<DiffLineEventBaseProps, 'annotationSide' | 'lineNumber'>
+): number | null {
+  return line.annotationSide === 'additions' ? line.lineNumber : null
 }
 
 export function ensureTrailingNewline(value: string) {

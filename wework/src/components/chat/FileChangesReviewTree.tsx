@@ -123,8 +123,11 @@ export function ReviewFileTree({
   return (
     <aside
       data-testid="file-changes-review-file-tree"
+      aria-hidden={!visible}
       hidden={!visible}
-      className="flex h-full min-h-0 w-[34%] min-w-[240px] max-w-[380px] shrink-0 flex-col border-l border-border bg-background"
+      className={`h-full min-h-0 w-[34%] min-w-[240px] max-w-[380px] shrink-0 flex-col border-l border-border bg-background ${
+        visible ? 'flex' : ''
+      }`}
       aria-label={t('file_changes.file_list_label')}
     >
       <div className="px-3 pb-1.5 pt-2">

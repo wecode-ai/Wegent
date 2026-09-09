@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { getDiffSelection, getHunkPatches } from './fileChangesReviewUtils'
+import { getDiffSelection, getHunkPatches, getOpenSourceLine } from './fileChangesReviewUtils'
 
 const patch = [
   'diff --git a/src/example.ts b/src/example.ts',
@@ -37,5 +37,10 @@ describe('fileChangesReviewInteractions', () => {
       startLine: 1,
       endLine: 2,
     })
+  })
+
+  test('opens only addition-side line numbers in the current source file', () => {
+    expect(getOpenSourceLine({ annotationSide: 'additions', lineNumber: 12 })).toBe(12)
+    expect(getOpenSourceLine({ annotationSide: 'deletions', lineNumber: 8 })).toBeNull()
   })
 })

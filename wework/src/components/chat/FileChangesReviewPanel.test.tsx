@@ -120,6 +120,8 @@ describe('FileChangesReviewPanel', () => {
 
     const fileToggles = screen.getAllByTestId('file-changes-review-file-diff-toggle')
     expect(fileToggles).toHaveLength(2)
+    expect(fileToggles[0]).toHaveTextContent('src/alpha.ts')
+    expect(fileToggles[1]).toHaveTextContent('src/beta.ts')
 
     fireEvent.click(fileToggles[0])
     expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'false')
@@ -320,11 +322,13 @@ describe('FileChangesReviewPanel', () => {
       />
     )
 
-    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
     const betaSection = screen
       .getAllByTestId('file-changes-review-file-diff-section')
       .find(section => section.getAttribute('data-review-path') === 'src/beta.ts')
     expect(betaSection).toBeDefined()
+    await waitFor(() =>
+      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(betaSection)
+    )
 
     await userEvent.click(
       within(betaSection as HTMLElement).getByTestId('file-changes-review-open-source-button')

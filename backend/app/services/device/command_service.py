@@ -377,6 +377,7 @@ async def execute_configured_device_command(
         "max_output_bytes": max_output_bytes,
     }
     if command_key in {
+        "git_apply_patch",
         "workspace_tree",
         "workspace_read_text_file",
         "workspace_read_file_chunk",

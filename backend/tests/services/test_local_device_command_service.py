@@ -2818,6 +2818,7 @@ async def test_execute_configured_device_command_rejects_cloud_unsupported_comma
     ("command_key", "path", "expected_runtime_command_key"),
     [
         ("workspace_tree", "/workspace/repo", "workspace_tree"),
+        ("git_apply_patch", "/workspace/repo", "git_apply_patch"),
         ("git_status_porcelain", "/workspace/repo", None),
     ],
 )

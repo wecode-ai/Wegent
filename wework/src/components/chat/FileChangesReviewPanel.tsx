@@ -16,7 +16,6 @@ import {
   WrapText,
 } from 'lucide-react'
 import { PatchDiff } from '@pierre/diffs/react'
-import type { DiffLineEventBaseProps } from '@pierre/diffs'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOptionalAppearance } from '@/features/appearance'
@@ -30,6 +29,7 @@ import {
   ensureTrailingNewline,
   fileNameFromPath,
   getDiffSelection,
+  getOpenSourceLine,
   getFirstChangedLine,
   getHunkPatches,
   getReviewActions,
@@ -260,6 +260,7 @@ export function FileChangesReviewPanel({
           ) : null}
           {actionError ? (
             <p
+              role="alert"
               data-testid="file-changes-review-action-error"
               className="shrink-0 border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
             >
@@ -268,7 +269,7 @@ export function FileChangesReviewPanel({
           ) : null}
           <div
             data-testid="file-changes-review-content"
-            className="flex min-h-0 flex-1 overflow-hidden"
+            className="relative flex min-h-0 flex-1 overflow-hidden"
           >
             {sections.length === 0 ? (
               <div
@@ -698,6 +699,7 @@ function FileDiffSection({
           data-testid="file-changes-review-file-diff-toggle"
           aria-expanded={!collapsed}
           aria-controls={getDiffSectionDomId(index)}
+          aria-label={`${actionLabel}: ${section.path}`}
           title={actionLabel}
           onClick={onToggle}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
@@ -707,6 +709,7 @@ function FileDiffSection({
           ) : (
             <ChevronDown className="h-3.5 w-3.5 text-text-muted" />
           )}
+          <span className="sr-only">{section.path}</span>
         </button>
         <FileText className="h-3.5 w-3.5 shrink-0 text-text-muted" />
         <button
@@ -776,8 +779,11 @@ function FileDiffSection({
                       disableFileHeader: true,
                       enableLineSelection: canComment,
                       lineHoverHighlight: 'both',
-                      onLineNumberClick: (line: DiffLineEventBaseProps) =>
-                        onOpenSourceFile?.(section.path, line.lineNumber, line.lineNumber),
+                      onLineNumberClick: line => {
+                        const sourceLine = getOpenSourceLine(line)
+                        if (sourceLine === null) return
+                        onOpenSourceFile?.(section.path, sourceLine, sourceLine)
+                      },
                       onLineSelectionEnd: range => {
                         if (!range) {
                           onCommentSelectionChange(null)
