@@ -370,11 +370,15 @@ where
                         }
                     },
                 };
+                let browser_socket_id = value_string(payload.get("browser_socket_id"));
                 if protocol_version == 1 {
                     let result = handler
                         .lock()
                         .expect("session handler lock")
-                        .handle_legacy_terminal_attach(&session_id);
+                        .handle_legacy_terminal_attach_with_browser_socket(
+                            &session_id,
+                            browser_socket_id.as_deref(),
+                        );
                     return Some(terminal_attach_result_payload(result, 1));
                 }
                 let Some(consumer_id) = value_string(payload.get("consumer_id")) else {
@@ -388,7 +392,12 @@ where
                 let result = handler
                     .lock()
                     .expect("session handler lock")
-                    .handle_terminal_attach(&session_id, &consumer_id, last_acked_sequence);
+                    .handle_terminal_attach_with_browser_socket(
+                        &session_id,
+                        &consumer_id,
+                        last_acked_sequence,
+                        browser_socket_id.as_deref(),
+                    );
                 Some(terminal_attach_result_payload(result, 2))
             })
         })
