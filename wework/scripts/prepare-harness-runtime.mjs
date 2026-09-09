@@ -50,7 +50,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v9'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v10'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -235,6 +235,8 @@ function runtimeIdentity(runtime) {
   const sourceFingerprint = createHash('sha256')
     .update(archiveFormatVersion)
     .update('\0')
+    .update(runtimePlatform())
+    .update('\0')
     .update(process.versions.modules)
     .update('\0')
     .update(macosSigningFingerprint(process.platform, process.env.APPLE_SIGNING_IDENTITY))
@@ -334,7 +336,9 @@ async function materializeRuntime(runtime, descriptor) {
     const current = JSON.parse(await readFile(identityPath, 'utf8'))
     if (
       current.sourceFingerprint === descriptor.sourceFingerprint &&
-      current.dshVersion === descriptor.dshVersion
+      current.dshVersion === descriptor.dshVersion &&
+      current.role === descriptor.role &&
+      current.runtimePlatform === runtimePlatform()
     ) {
       return
     }
@@ -420,6 +424,7 @@ async function buildRuntime(runtime) {
           dshVersion: runtime.dshVersion,
           role: runtime.role,
           sourceFingerprint: runtime.sourceFingerprint,
+          runtimePlatform: runtimePlatform(),
         },
         null,
         2

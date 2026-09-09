@@ -101,13 +101,14 @@ configure_release_sccache() {
 
 configure_release_build_cache() {
   local cache_root="${WEWORK_RELEASE_CACHE_ROOT:-$HOME/Library/Caches/wegent/release-build}"
+  local harness_cache_root="${WEWORK_HARNESS_RUNTIME_CACHE_ROOT:-$cache_root/harness-runtime/$MACOS_BUILD_TARGET}"
 
   export WEWORK_RELEASE_CACHE_ROOT="$cache_root"
   export ELECTRON_CACHE="${ELECTRON_CACHE:-$cache_root/electron}"
   export ELECTRON_BUILDER_CACHE="${ELECTRON_BUILDER_CACHE:-$cache_root/electron-builder}"
   export ELECTRON_DOWNLOAD_CACHE_MODE="${ELECTRON_DOWNLOAD_CACHE_MODE:-0}"
   export WEGENT_CODEX_CACHE_DIR="${WEGENT_CODEX_CACHE_DIR:-$cache_root/codex}"
-  export WEWORK_HARNESS_RUNTIME_CACHE_ROOT="${WEWORK_HARNESS_RUNTIME_CACHE_ROOT:-$cache_root/harness-runtime}"
+  export WEWORK_HARNESS_RUNTIME_CACHE_ROOT="$harness_cache_root"
   export WEGENT_CARGO_TARGET_ROOT="${WEGENT_CARGO_TARGET_ROOT:-$cache_root/cargo-target}"
   export SCCACHE_DIR="${SCCACHE_DIR:-$cache_root/sccache}"
   export pnpm_config_store_dir="${pnpm_config_store_dir:-$cache_root/pnpm-store}"

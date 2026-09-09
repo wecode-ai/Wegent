@@ -204,6 +204,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('resolveDesktopPackageTargets(process.env)')
     expect(source).toContain('WEWORK_CODEX_TARGET: packageTargets.codexTarget')
     expect(source).toContain('WEWORK_DWS_TARGET: packageTargets.dwsTarget')
+    expect(source).toContain(
+      'process.env.WEWORK_RUNTIME_TARGET?.trim() || packageTargets.cargoTarget'
+    )
     expect(source).toContain("path: 'bundled-plugins'")
     expect(source).toContain(
       "materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))"
@@ -271,6 +274,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain('ELECTRON_DOWNLOAD_CACHE_MODE=')
     expect(source).toContain('WEGENT_CODEX_CACHE_DIR=')
     expect(source).toContain('WEWORK_HARNESS_RUNTIME_CACHE_ROOT=')
+    expect(source).toContain('$cache_root/harness-runtime/$MACOS_BUILD_TARGET')
     expect(source).toContain('WEGENT_CARGO_TARGET_ROOT=')
     expect(source).toContain('pnpm_config_store_dir=')
     expect(source).toContain('configure_wegent_sccache_s3')

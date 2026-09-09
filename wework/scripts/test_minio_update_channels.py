@@ -753,7 +753,9 @@ def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
     script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
 
     assert "WEWORK_RUNTIME_TARGET" in script
-    assert "dsh-runtime-tar-gzip-v9" in script
+    assert "dsh-runtime-tar-gzip-v10" in script
+    assert ".update(runtimePlatform())" in script
+    assert "current.runtimePlatform === runtimePlatform()" in script
     assert "supportedArchitectures" in script
     assert "--config.node-linker=hoisted" in script
     assert "from 'tar'" in script

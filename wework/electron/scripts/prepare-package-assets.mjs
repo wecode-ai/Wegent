@@ -39,6 +39,8 @@ const executorTargetDirectory = resolveExecutorPackageTargetDirectory(process.en
 const packageEnvironment = {
   ...process.env,
   CARGO_BUILD_TARGET: packageTargets.cargoTarget,
+  WEWORK_RUNTIME_TARGET:
+    process.env.WEWORK_RUNTIME_TARGET?.trim() || packageTargets.cargoTarget,
   WEWORK_CODEX_TARGET: packageTargets.codexTarget,
   WEWORK_DWS_TARGET: packageTargets.dwsTarget,
 }
