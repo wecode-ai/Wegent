@@ -580,7 +580,7 @@ async function verifyFilePanel(control, task, markerName, markerText) {
     text: join(task.workspacePath, markerName),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+  await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
     text: markerText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

@@ -8,9 +8,6 @@ import {
   Folder,
   Folders,
   Loader2,
-  Pencil,
-  Save,
-  X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
@@ -28,6 +25,7 @@ import {
   logFilePreviewDiagnostic,
   scheduleFilePreviewMainThreadProbe,
 } from '@/lib/file-preview-diagnostics'
+import { publishSelectedTextSelection } from '@/lib/selected-text-drag'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import {
@@ -57,6 +55,7 @@ import { isLikelyTextContent, isMarkdownFile, workspaceFilePreviewKind } from '.
 
 // Keep the retained preview observable across slower Windows IPC control round trips.
 const ELECTRON_E2E_FILE_TRANSITION_MS = 1_000
+const WORKSPACE_FILE_AUTOSAVE_DELAY_MS = 3_000
 
 async function preserveElectronE2EFileTransition(): Promise<void> {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
@@ -233,7 +232,6 @@ export function FileWorkspacePanel({
   const [editedContent, setEditedContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
   const [openingWorkspace, setOpeningWorkspace] = useState(false)
   const [directoryTreeVisible, setDirectoryTreeVisible] = useState(true)
   const [fileOpeners, setFileOpeners] = useState<(LocalFileOpeners & { filePath: string }) | null>(
@@ -248,9 +246,18 @@ export function FileWorkspacePanel({
   const latestTreeRequestByPath = useRef(new Map<string, number>())
   const directoryLoadedAtByPath = useRef(new Map<string, number>())
   const fileRequestSequence = useRef(0)
+  const previewPathRef = useRef<string | null>(null)
+  const editedContentRef = useRef('')
+  const savingRef = useRef(false)
+  const pendingNavigationRef = useRef<(() => void) | null>(null)
+  const saveFileRef = useRef<() => Promise<boolean>>(async () => false)
   const fileOpenerRequestSequence = useRef(0)
   const fileOpenerMenuRef = useRef<HTMLDivElement>(null)
   const workspaceTargetMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    previewPathRef.current = preview?.path ?? null
+  }, [preview?.path])
 
   const warmFileOpenerIcons = useCallback(async (openers: LocalFileOpener[]) => {
     for (const opener of openers) {
@@ -366,6 +373,11 @@ export function FileWorkspacePanel({
         requestId,
         workspaceSource: stableTarget.workspaceSource ?? null,
       })
+      const previousPreviewPath = previewPathRef.current
+      if (previousPreviewPath && previousPreviewPath !== entry.path) {
+        publishSelectedTextSelection(`workspace-editor:${previousPreviewPath}`, null)
+        publishSelectedTextSelection(`workspace-preview:${previousPreviewPath}`, null)
+      }
       flushSync(() => setPreviewTransitionVisible(true))
       setSelectedFilePath(entry.path)
       onSelectionChange?.({ path: entry.path, isDirectory: false })
@@ -378,8 +390,6 @@ export function FileWorkspacePanel({
       scheduleFilePreviewMainThreadProbe(traceId, 'preview_loading_set')
       setPreviewLoadingProgress(null)
       setPreviewError(null)
-      setEditing(false)
-      setEditedContent('')
       setSaveError(null)
       if (stableTarget.workspaceSource !== 'remote') {
         void loadFileOpeners(entry.path)
@@ -414,6 +424,10 @@ export function FileWorkspacePanel({
           if (fileRequestSequence.current !== requestId) return
           setBinaryPreview(null)
           setPreview(file)
+          setEditedContent(file.content)
+          const editable = Boolean(file.editable && writeWorkspaceTextFile)
+          setEditing(editable)
+          setMarkdownMode(editable && isMarkdownFile(file.name) ? 'source' : 'preview')
           return
         }
         if (!readWorkspaceFileChunk) {
@@ -484,6 +498,8 @@ export function FileWorkspacePanel({
           chunkCount: chunks.length,
         })
         setPreview(null)
+        setEditing(false)
+        setEditedContent('')
         setBinaryPreview({
           path: chunk.path,
           name: chunk.name,
@@ -533,6 +549,7 @@ export function FileWorkspacePanel({
       readWorkspaceTextFile,
       stableTarget,
       t,
+      writeWorkspaceTextFile,
     ]
   )
 
@@ -634,7 +651,8 @@ export function FileWorkspacePanel({
     [listWorkspaceEntries, loadTree, onSelectionChange, openFile, stableTarget]
   )
 
-  const dirty = editing && preview !== null && editedContent !== preview.content
+  const canEditPreview = Boolean(preview?.editable && writeWorkspaceTextFile)
+  const dirty = canEditPreview && preview !== null && editedContent !== preview.content
 
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -648,19 +666,29 @@ export function FileWorkspacePanel({
   )
 
   const saveFile = useCallback(async () => {
-    if (!stableTarget || !preview || !writeWorkspaceTextFile || !dirty || saving) return !dirty
+    if (!stableTarget || !preview || !writeWorkspaceTextFile || !dirty) return !dirty
+    if (savingRef.current) return false
+    const filePath = preview.path
+    const contentToSave = editedContent
+    const expectedRevision = preview.revision
+    editedContentRef.current = contentToSave
+    savingRef.current = true
     setSaving(true)
     setSaveError(null)
     try {
       const saved = await writeWorkspaceTextFile(
         stableTarget.deviceId,
-        preview.path,
-        editedContent,
-        preview.revision
+        filePath,
+        contentToSave,
+        expectedRevision
       )
-      setPreview(saved)
-      setEditedContent(saved.content)
-      setEditing(false)
+      setPreview(current => (current?.path === filePath ? saved : current))
+      setEditedContent(current => (current === contentToSave ? saved.content : current))
+      if (editedContentRef.current === contentToSave && pendingNavigationRef.current !== null) {
+        const action = pendingNavigationRef.current
+        pendingNavigationRef.current = null
+        action()
+      }
       track('feature_action_completed', { domain: 'workspace_file', action: 'update' })
       return true
     } catch (error) {
@@ -670,14 +698,33 @@ export function FileWorkspacePanel({
       )
       return false
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
-  }, [dirty, editedContent, preview, saving, stableTarget, t, writeWorkspaceTextFile])
+  }, [dirty, editedContent, preview, stableTarget, t, writeWorkspaceTextFile])
+
+  useEffect(() => {
+    saveFileRef.current = saveFile
+  }, [saveFile])
+
+  const handleEditedContentChange = useCallback((content: string) => {
+    editedContentRef.current = content
+    setEditedContent(content)
+  }, [])
+
+  useEffect(() => {
+    if (!dirty || saving || saveError) return
+    const timeoutId = window.setTimeout(() => {
+      void saveFile()
+    }, WORKSPACE_FILE_AUTOSAVE_DELAY_MS)
+    return () => window.clearTimeout(timeoutId)
+  }, [dirty, saveError, saveFile, saving])
 
   const navigateWithDirtyGuard = useCallback(
     (action: () => void) => {
-      if (dirty) {
-        setPendingNavigation(() => action)
+      if (dirty || savingRef.current) {
+        pendingNavigationRef.current = action
+        if (dirty && !savingRef.current) void saveFileRef.current()
         return
       }
       action()
@@ -885,6 +932,8 @@ export function FileWorkspacePanel({
     retainedPreview !== null &&
     selectedFilePath !== null &&
     retainedPreview.path !== selectedFilePath
+  const displayedPreview =
+    preview && canEditPreview && !editing ? { ...preview, content: editedContent } : preview
 
   const toggleFileOpenerMenu = async () => {
     if (fileOpenerMenuOpen) {
@@ -978,74 +1027,43 @@ export function FileWorkspacePanel({
               )}
             </div>
           )}
-          {preview?.editable && writeWorkspaceTextFile && !editing && (
-            <button
-              type="button"
-              data-testid="workspace-file-edit-button"
-              onClick={() => {
-                setEditedContent(preview.content)
-                setSaveError(null)
-                setEditing(true)
-              }}
-              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-            >
-              <Pencil className="h-4 w-4" />
-              {t('workbench.workspace_file_edit')}
-            </button>
-          )}
-          {preview && isMarkdownFile(preview.name) && !editing && (
+          {preview && isMarkdownFile(preview.name) && (
             <button
               type="button"
               data-testid="workspace-file-markdown-mode-button"
-              onClick={() => setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))}
+              onClick={() => {
+                if (canEditPreview) {
+                  setEditing(current => !current)
+                  setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))
+                  return
+                }
+                setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))
+              }}
               className="flex h-11 min-w-11 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:min-w-0"
               aria-label={
-                markdownMode === 'preview'
-                  ? t('workbench.workspace_file_show_source')
-                  : t('workbench.workspace_file_show_preview')
+                editing || markdownMode === 'source'
+                  ? t('workbench.workspace_file_show_preview')
+                  : t('workbench.workspace_file_show_source')
               }
             >
-              {markdownMode === 'preview' ? (
-                <Code2 className="h-4 w-4" />
-              ) : (
+              {editing || markdownMode === 'source' ? (
                 <Eye className="h-4 w-4" />
+              ) : (
+                <Code2 className="h-4 w-4" />
               )}
-              {markdownMode === 'preview'
-                ? t('workbench.workspace_file_source')
-                : t('workbench.workspace_file_preview')}
+              {editing || markdownMode === 'source'
+                ? t('workbench.workspace_file_preview')
+                : t('workbench.workspace_file_source')}
             </button>
           )}
-          {editing && (
-            <>
-              <button
-                type="button"
-                data-testid="workspace-file-cancel-edit-button"
-                onClick={() =>
-                  navigateWithDirtyGuard(() => {
-                    setEditing(false)
-                    setEditedContent(preview?.content ?? '')
-                  })
-                }
-                className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted"
-              >
-                <X className="h-4 w-4" />
-                {t('workbench.cancel')}
-              </button>
-              <button
-                type="button"
-                data-testid="workspace-file-save-button"
-                disabled={!dirty || saving}
-                onClick={() => void saveFile()}
-                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-primary-contrast disabled:opacity-50"
-              >
-                {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {t('workbench.workspace_file_save')}
-              </button>
-            </>
+          {canEditPreview && saving && (
+            <span
+              data-testid="workspace-file-saving-status"
+              className="flex h-8 items-center gap-1.5 px-2 text-xs text-text-secondary"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t('workbench.workspace_file_saving')}
+            </span>
           )}
           {canOpenFile && (
             <div
@@ -1133,7 +1151,7 @@ export function FileWorkspacePanel({
       </header>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <WorkspaceFilePreview
-          file={preview}
+          file={displayedPreview}
           binaryFile={binaryPreview}
           loading={previewLoading}
           loadingProgress={previewLoadingProgress}
@@ -1144,7 +1162,7 @@ export function FileWorkspacePanel({
           onAddCodeComment={onAddCodeComment}
           editing={editing}
           editedContent={editedContent}
-          onEditedContentChange={setEditedContent}
+          onEditedContentChange={handleEditedContentChange}
           onSave={() => void saveFile()}
           markdownMode={markdownMode}
         />
@@ -1194,64 +1212,19 @@ export function FileWorkspacePanel({
               {t('workbench.workspace_file_reload')}
             </button>
           )}
-        </div>
-      )}
-      {pendingNavigation && (
-        <div className="fixed inset-0 z-system-modal flex items-center justify-center bg-black/35 p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            data-testid="workspace-file-unsaved-dialog"
-            className="w-full max-w-sm rounded-xl border border-border bg-background p-4 shadow-xl"
-          >
-            <h2 className="text-base font-semibold text-text-primary">
-              {t('workbench.workspace_file_unsaved_title')}
-            </h2>
-            <p className="mt-2 text-sm text-text-secondary">
-              {t('workbench.workspace_file_unsaved_description')}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                data-testid="workspace-file-unsaved-cancel"
-                className="h-8 rounded-md px-3 text-sm hover:bg-muted"
-                onClick={() => setPendingNavigation(null)}
-              >
-                {t('workbench.cancel')}
-              </button>
-              <button
-                type="button"
-                data-testid="workspace-file-unsaved-discard"
-                className="h-8 rounded-md px-3 text-sm text-red-600 hover:bg-muted"
-                onClick={() => {
-                  const action = pendingNavigation
-                  setPendingNavigation(null)
-                  setEditing(false)
-                  action()
-                }}
-              >
-                {t('workbench.workspace_file_discard')}
-              </button>
-              <button
-                type="button"
-                data-testid="workspace-file-unsaved-save"
-                disabled={saving}
-                className="h-8 rounded-md bg-primary px-3 text-sm text-primary-contrast disabled:opacity-50"
-                onClick={() =>
-                  void (async () => {
-                    if (await saveFile()) {
-                      const action = pendingNavigation
-                      setPendingNavigation(null)
-                      setEditing(false)
-                      action()
-                    }
-                  })()
-                }
-              >
-                {t('workbench.workspace_file_save')}
-              </button>
-            </div>
-          </div>
+          {!saveError.toLowerCase().includes('changed on disk') && (
+            <button
+              type="button"
+              data-testid="workspace-file-save-retry-button"
+              className="shrink-0 underline"
+              onClick={() => {
+                setSaveError(null)
+                void saveFile()
+              }}
+            >
+              {t('workbench.workspace_file_retry')}
+            </button>
+          )}
         </div>
       )}
     </div>
