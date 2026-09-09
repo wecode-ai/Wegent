@@ -137,12 +137,10 @@ export async function eventCenterModelResponse(payload, responseId, request) {
         responseId,
         'decide_issue_assignment',
         {
-          decision: {
-            request_id: `event-wrong-version-${issueId}-${version}`,
-            expected_assignment_version: issue.workflow.version,
-            action: 'complete',
-            reason: 'Verify that a workflow snapshot version cannot authorize assignment',
-          },
+          request_id: `event-wrong-version-${issueId}-${version}`,
+          expected_assignment_version: issue.workflow.version,
+          action: 'complete',
+          reason: 'Verify that a workflow snapshot version cannot authorize assignment',
         },
         'event-flow-wrong-version'
       )
@@ -172,22 +170,20 @@ export async function eventCenterModelResponse(payload, responseId, request) {
       responseId,
       'decide_issue_assignment',
       {
-        decision: {
-          request_id: `event-flow-${issueId}-${version}`,
-          expected_assignment_version: version,
-          action: humanCompleted ? 'complete' : roleCompleted ? 'assign_user' : 'assign_role',
-          ...(humanCompleted
-            ? {}
-            : roleCompleted
-              ? { assignee_user_id: Number(issue.created_by_user_id) }
-              : { node_id: 'role_1' }),
-          instruction: roleCompleted
-            ? 'Review the result and decide when to continue. You may start multiple tasks first.'
-            : 'Verify the requested acceptance result',
-          reason: ['failed', 'cancelled'].includes(issue.workflow.assignment?.execution_status)
-            ? 'CALLBACK_REASSIGNMENT'
-            : 'CALLBACK_INITIAL_ASSIGNMENT',
-        },
+        request_id: `event-flow-${issueId}-${version}`,
+        expected_assignment_version: version,
+        action: humanCompleted ? 'complete' : roleCompleted ? 'assign_user' : 'assign_role',
+        ...(humanCompleted
+          ? {}
+          : roleCompleted
+            ? { assignee_user_id: Number(issue.created_by_user_id) }
+            : { node_id: 'role_1' }),
+        instruction: roleCompleted
+          ? 'Review the result and decide when to continue. You may start multiple tasks first.'
+          : 'Verify the requested acceptance result',
+        reason: ['failed', 'cancelled'].includes(issue.workflow.assignment?.execution_status)
+          ? 'CALLBACK_REASSIGNMENT'
+          : 'CALLBACK_INITIAL_ASSIGNMENT',
       },
       'event-flow-decide'
     )

@@ -313,6 +313,12 @@ sequenceDiagram
 `workflow.version` 都不是交办锁版本。后端与执行器需要一起更新；旧参数
 `expected_version` 不再接受。已有交办历史和 callback 结果归属不变，不新增表。
 
+工具参数采用单层结构：`space_id`、`item_id` 只负责定位，`request_id`、
+`expected_assignment_version`、`action` 及对应动作参数直接位于顶层。执行器只提取
+交办字段发送给分配接口，定位字段不会进入请求体。工具定义禁止额外字段；如果仍收到
+旧的 `decision` 包装或缺少必填字段，执行器会直接返回具体字段结构和重试方式，不把
+错误参数转发成后端 422。
+
 ```mermaid
 sequenceDiagram
     participant AI as 调度 AI
@@ -320,7 +326,8 @@ sequenceDiagram
     participant Issue as 工单
     AI->>Issue: get_board_item
     Issue-->>AI: workflow.assignment_version
-    AI->>API: expected_assignment_version + 决策
+    AI->>API: 单层交办参数
+    API->>API: 分离定位字段，只保留交办字段
     API->>Issue: 加锁读取并校验
     alt 交办版本不一致
         API-->>AI: assignment_version_conflict、双方版本、read_issue

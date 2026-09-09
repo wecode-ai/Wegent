@@ -205,6 +205,13 @@ Desktop results: merged Electron 0.4.3 and the release executor built successful
 together; the ambiguous `expected_version` parameter is no longer accepted.
 Existing assignment history and callback ownership remain intact; no new table is needed.
 
+The tool uses one flat argument object. `space_id` and `item_id` locate the target;
+`request_id`, `expected_assignment_version`, `action`, and action-specific fields are
+top-level peers. The executor extracts only assignment fields for the API body, so scope
+identifiers cannot leak into it. The schema rejects extra fields. If an old `decision`
+wrapper or required field is missing, the executor reports the exact expected shape and
+retry instruction instead of forwarding malformed input into a backend 422.
+
 ```mermaid
 sequenceDiagram
     participant AI as Coordinator
@@ -212,7 +219,8 @@ sequenceDiagram
     participant Issue
     AI->>Issue: get_board_item
     Issue-->>AI: workflow.assignment_version
-    AI->>API: expected_assignment_version + decision
+    AI->>API: Flat assignment arguments
+    API->>API: Separate scope fields; retain assignment fields only
     API->>Issue: Lock, read and validate
     alt Assignment version mismatch
         API-->>AI: assignment_version_conflict, both versions, read_issue

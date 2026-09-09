@@ -325,12 +325,10 @@ async def test_ai_coordinator_assigns_same_issue_to_a_person(
 
     rejected = await wework_space.decide_issue_assignment(
         _token(test_user),
-        {
-            "request_id": "wrong-snapshot-version",
-            "expected_assignment_version": 13,
-            "action": "complete",
-            "reason": "Test a confused workflow version",
-        },
+        request_id="wrong-snapshot-version",
+        expected_assignment_version=13,
+        action="complete",
+        reason="Test a confused workflow version",
     )
     assert rejected["error"]["code"] == "assignment_version_conflict"
     assert rejected["error"]["expected_assignment_version"] == 13
@@ -339,14 +337,12 @@ async def test_ai_coordinator_assigns_same_issue_to_a_person(
 
     submitted = await wework_space.decide_issue_assignment(
         _token(test_user),
-        {
-            "request_id": "assign-member",
-            "expected_assignment_version": 0,
-            "action": "assign_user",
-            "assignee_user_id": test_user.id,
-            "instruction": "Verify release",
-            "reason": "Human confirmation required",
-        },
+        request_id="assign-member",
+        expected_assignment_version=0,
+        action="assign_user",
+        assignee_user_id=test_user.id,
+        instruction="Verify release",
+        reason="Human confirmation required",
     )
 
     test_db.refresh(workflow_run)
@@ -392,14 +388,12 @@ async def test_inactive_coordinator_cannot_assign_issue(
 
     result = await wework_space.decide_issue_assignment(
         _token(test_user),
-        {
-            "request_id": "assign-member",
-            "expected_assignment_version": 0,
-            "action": "assign_user",
-            "assignee_user_id": test_user.id,
-            "instruction": "Verify release",
-            "reason": "Human confirmation required",
-        },
+        request_id="assign-member",
+        expected_assignment_version=0,
+        action="assign_user",
+        assignee_user_id=test_user.id,
+        instruction="Verify release",
+        reason="Human confirmation required",
     )
 
     detail = result["error"]
@@ -420,13 +414,15 @@ async def test_inactive_coordinator_cannot_assign_issue(
 
 def test_assignment_tool_publishes_version_source_and_conflict_recovery():
     info = wework_space.decide_issue_assignment._mcp_tool_info
-    decision = next(
-        parameter for parameter in info["parameters"] if parameter["name"] == "decision"
+    version = next(
+        parameter
+        for parameter in info["parameters"]
+        if parameter["name"] == "expected_assignment_version"
     )
-    assert "expected_assignment_version" in decision["description"]
-    assert "workflow.assignment_version" in decision["description"]
-    assert "never guess or increment" in decision["description"]
-    assert "next_action" in decision["description"]
+    assert not any(parameter["name"] == "decision" for parameter in info["parameters"])
+    assert "workflow.assignment_version" in version["description"]
+    assert "never guess or increment" in version["description"]
+    assert "next_action" in version["description"]
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(

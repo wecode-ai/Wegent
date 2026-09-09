@@ -3009,9 +3009,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             return true
           }
           if (requestContainsToolOutput(payload, searchSubmitCallId)) {
-            const tool = selectMcpTool(payload, 'wework_space', 'decide_issue_assignment', {
-              decision,
-            })
+            const tool = selectMcpTool(payload, 'wework_space', 'decide_issue_assignment', decision)
             managerToolCalls += 1
             writeEvents([
               responseCreated(responseId),
@@ -3023,7 +3021,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           if (requestContainsToolOutput(payload, candidatesCallId)) {
             const mode = requestManagerTool({
               toolName: 'decide_issue_assignment',
-              argumentsValue: { decision },
+              argumentsValue: decision,
               searchCallId: searchSubmitCallId,
               toolCallId: submitCallId,
             })

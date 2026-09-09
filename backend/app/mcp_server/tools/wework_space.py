@@ -12,7 +12,7 @@ from __future__ import annotations
 import base64
 import logging
 from io import BytesIO
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
@@ -560,28 +560,33 @@ def get_assignment_candidates(
 @mcp_tool(
     server="wework_space",
     param_descriptions={
-        "decision": (
-            "Assignment decision: request_id, expected_assignment_version, action, "
-            "reason, and action-specific node_id, assignee_user_id, instruction. "
-            "Copy expected_assignment_version from get_board_item.workflow.assignment_version, "
-            "never the Issue version or workflow.version. On assignment_version_conflict, "
-            "re-read the Issue and reconsider; never guess or increment versions. "
-            "Follow next_action for other conflicts."
-            " When clarification, approval, or a human decision is required, use "
-            "assign_user with the responsible project member and concrete questions. "
-            "This enters waiting_human until that person explicitly clicks Continue. "
+        "expected_assignment_version": (
+            "Copy workflow.assignment_version from get_board_item, never the Issue "
+            "version or workflow.version. On assignment_version_conflict, re-read the "
+            "Issue and reconsider; never guess or increment versions. Follow "
+            "next_action for other conflicts."
+        ),
+        "action": (
+            "Use assign_user for clarification, approval, or a human decision. This "
+            "enters waiting_human until that person explicitly clicks Continue. "
             "Comments, notifications, events, and task completion do not authorize "
             "advancement. Never submit a human result on their behalf."
-        )
+        ),
     },
 )
 async def decide_issue_assignment(
     token_info: MCPAuthInfo,
-    decision: dict[str, Any],
+    request_id: str,
+    expected_assignment_version: int,
+    action: Literal["assign_role", "assign_user", "execute", "complete"],
+    reason: str,
+    node_id: str | None = None,
+    assignee_user_id: int | None = None,
+    instruction: str = "",
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Assign once, then end this turn. A result callback resumes coordination."""
+    """Assign once with top-level fields, then end until the result callback."""
     with SessionLocal() as db:
         _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
@@ -595,7 +600,15 @@ async def decide_issue_assignment(
                 db,
                 issue_id=resolved_item_id,
                 user_id=token_info.user_id,
-                decision=IssueAssignmentDecision.model_validate(decision),
+                decision=IssueAssignmentDecision(
+                    request_id=request_id,
+                    expected_assignment_version=expected_assignment_version,
+                    action=action,
+                    reason=reason,
+                    node_id=node_id,
+                    assignee_user_id=assignee_user_id,
+                    instruction=instruction,
+                ),
                 manager_run_id=context.get("project_automation_run_id") or "",
             )
         except IssueAssignmentConflict as exc:

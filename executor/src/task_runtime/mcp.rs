@@ -1578,9 +1578,10 @@ async fn call_backend_tool(
             return Ok(normalize_assignment_candidates(members, robots));
         }
         "decide_issue_assignment" => {
+            let decision = assignment_decision_body(arguments)?;
             let request = client
                 .post(format!("{base}/loop-items/{}/assignment", encode_segment(task_id()?)))
-                .json(arguments.get("decision").unwrap_or(arguments));
+                .json(&decision);
             with_automation_run_header(request, grant)
         }
         "assign_board_item" => {
@@ -2416,28 +2417,22 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "decide_issue_assignment",
-            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when requirements are met. For clarification, approval, or a human decision, use assign_user with the responsible member and concrete questions. This enters waiting_human: only that person's explicit Continue action returns control to AI. Comments, notifications, external events, and completion of tasks they start do not authorize advancement. Never submit a human result on their behalf. Submit one decision and end this turn immediately. Do not sleep or poll: the backend resumes coordination through a result callback. Roles can be skipped or revisited.",
+            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when requirements are met. Pass every decision field directly at the top level; there is no decision wrapper. For clarification, approval, or a human decision, use assign_user with the responsible member and concrete questions. This enters waiting_human: only that person's explicit Continue action returns control to AI. Comments, notifications, external events, and completion of tasks they start do not authorize advancement. Never submit a human result on their behalf. Submit one decision and end this turn immediately. Do not sleep or poll: the backend resumes coordination through a result callback. Roles can be skipped or revisited.",
             json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "decision": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "request_id": {"type": "string"},
-                            "expected_assignment_version": {"type": "integer", "minimum": 0, "description": "Copy workflow.assignment_version from get_board_item. Do not use the Issue version or workflow.version. On assignment_version_conflict, re-read the Issue and reconsider the decision; never guess or increment versions. Other conflicts require following next_action."},
-                            "action": {"enum": ["assign_role", "assign_user", "execute", "complete"]},
-                            "node_id": {"type": ["string", "null"]},
-                            "assignee_user_id": {"type": ["integer", "null"]},
-                            "instruction": {"type": "string"},
-                            "reason": {"type": "string"}
-                        },
-                        "required": ["request_id", "expected_assignment_version", "action", "reason"]
-                    }
+                    "request_id": {"type": "string", "minLength": 1},
+                    "expected_assignment_version": {"type": "integer", "minimum": 0, "description": "Copy workflow.assignment_version from get_board_item. Do not use the Issue version or workflow.version. On assignment_version_conflict, re-read the Issue and reconsider the decision; never guess or increment versions. Other conflicts require following next_action."},
+                    "action": {"enum": ["assign_role", "assign_user", "execute", "complete"]},
+                    "node_id": {"type": ["string", "null"], "description": "Required only for assign_role."},
+                    "assignee_user_id": {"type": ["integer", "null"], "minimum": 1, "description": "Required only for assign_user."},
+                    "instruction": {"type": "string", "description": "Required for assign_role, assign_user, and execute."},
+                    "reason": {"type": "string", "minLength": 1}
                 },
-                "required": ["space_id", "item_id", "decision"]
+                "required": ["space_id", "item_id", "request_id", "expected_assignment_version", "action", "reason"]
             }),
         ),
         tool(
@@ -2884,6 +2879,70 @@ fn string_argument<'a>(value: &'a Value, key: &str) -> Result<&'a str, super::Ta
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| super::TaskRuntimeError::Invalid(format!("{key} is required")))
+}
+
+fn assignment_decision_body(arguments: &Value) -> Result<Value, String> {
+    if arguments.get("decision").is_some() {
+        return Err(
+            "Invalid decide_issue_assignment call: put request_id, expected_assignment_version, action, node_id, assignee_user_id, instruction, and reason directly at the top level; do not use a decision wrapper. Re-read the tool schema and retry once."
+                .to_owned(),
+        );
+    }
+    let request_id = non_empty_assignment_string(arguments, "request_id")?;
+    let reason = non_empty_assignment_string(arguments, "reason")?;
+    let action = non_empty_assignment_string(arguments, "action")?;
+    let expected_version = arguments
+        .get("expected_assignment_version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            assignment_shape_error("expected_assignment_version must be an integer >= 0")
+        })?;
+    if !matches!(
+        action,
+        "assign_role" | "assign_user" | "execute" | "complete"
+    ) {
+        return Err(assignment_shape_error(
+            "action must be assign_role, assign_user, execute, or complete",
+        ));
+    }
+    if action == "assign_role" {
+        non_empty_assignment_string(arguments, "node_id")?;
+    } else if action == "assign_user"
+        && arguments
+            .get("assignee_user_id")
+            .and_then(Value::as_u64)
+            .map_or(true, |value| value == 0)
+    {
+        return Err(assignment_shape_error(
+            "assignee_user_id must be an integer >= 1 for assign_user",
+        ));
+    }
+    if action != "complete" {
+        non_empty_assignment_string(arguments, "instruction")?;
+    }
+    Ok(json!({
+        "request_id": request_id,
+        "expected_assignment_version": expected_version,
+        "action": action,
+        "node_id": arguments.get("node_id"),
+        "assignee_user_id": arguments.get("assignee_user_id"),
+        "instruction": arguments.get("instruction").cloned().unwrap_or_else(|| json!("")),
+        "reason": reason,
+    }))
+}
+
+fn non_empty_assignment_string<'a>(arguments: &'a Value, key: &str) -> Result<&'a str, String> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| assignment_shape_error(&format!("{key} must be a non-empty string")))
+}
+
+fn assignment_shape_error(detail: &str) -> String {
+    format!(
+        "Invalid decide_issue_assignment call: {detail}. Use top-level fields from the tool schema, copy expected_assignment_version from get_board_item.workflow.assignment_version, and retry once."
+    )
 }
 
 fn cells_argument(
@@ -3520,6 +3579,9 @@ mod tests {
             post(|Json(body): Json<Value>| async move {
                 assert_eq!(body["expected_assignment_version"], 13);
                 assert!(body.get("expected_version").is_none());
+                assert!(body.get("item_id").is_none());
+                assert!(body.get("space_id").is_none());
+                assert!(body.get("decision").is_none());
                 (
                     StatusCode::CONFLICT,
                     Json(json!({"detail": {
@@ -3537,10 +3599,10 @@ mod tests {
             "unit-token",
             "12",
             "decide_issue_assignment",
-            &json!({"item_id": "ISSUE-1", "decision": {
+            &json!({"space_id": "12", "item_id": "ISSUE-1",
                 "request_id": "decision-1", "expected_assignment_version": 13,
                 "action": "complete", "reason": "Acceptance verified"
-            }}),
+            }),
             None,
         )
         .await
@@ -3560,17 +3622,31 @@ mod tests {
             .into_iter()
             .find(|tool| tool["name"] == "decide_issue_assignment")
             .unwrap();
-        let decision = &assignment["inputSchema"]["properties"]["decision"];
-        assert!(decision["properties"].get("expected_version").is_none());
-        assert!(decision["required"]
+        let schema = &assignment["inputSchema"];
+        assert!(schema["properties"].get("decision").is_none());
+        assert!(schema["properties"].get("expected_version").is_none());
+        assert!(schema["required"]
             .as_array()
             .unwrap()
             .contains(&json!("expected_assignment_version")));
-        let description = decision["properties"]["expected_assignment_version"]["description"]
+        let description = schema["properties"]["expected_assignment_version"]["description"]
             .as_str()
             .unwrap();
         assert!(description.contains("workflow.assignment_version"));
         assert!(description.contains("never guess or increment"));
+    }
+
+    #[test]
+    fn assignment_input_error_explains_the_exact_shape_to_retry() {
+        let error = assignment_decision_body(&json!({
+            "item_id": "ISSUE-1",
+            "decision": {"action": "complete"}
+        }))
+        .unwrap_err();
+
+        assert!(error.contains("directly at the top level"));
+        assert!(error.contains("do not use a decision wrapper"));
+        assert!(error.contains("retry once"));
     }
 
     #[tokio::test]
