@@ -166,6 +166,18 @@ def test_pause_preserves_current_work_and_resume_returns_to_coordinator(
     first_id = first.id
     workflow = dict(issue.metadata_json["workflow"])
     workflow.update(intent="Stable requirements", current_work="Verify release")
+    workflow["nodes"] = [
+        {
+            "id": "design",
+            "name": "Design",
+            "execution_mode": "robot",
+            "status": "failed",
+            "execution_error": "cancelled",
+            "depends_on": [],
+            "task_ids": ["device:task"],
+            "task_statuses": {"device:task": "succeeded"},
+        }
+    ]
     issue.metadata_json = {"workflow": workflow}
     test_db.commit()
     issue_workflow_planning_service.pause(
@@ -178,6 +190,8 @@ def test_pause_preserves_current_work_and_resume_returns_to_coordinator(
     assert next_turn.run_id != first_id
     assert issue.metadata_json["workflow"]["intent"] == "Stable requirements"
     assert issue.metadata_json["workflow"]["current_work"] == "Verify release"
+    assert issue.metadata_json["workflow"]["nodes"][0]["status"] == "completed"
+    assert issue.metadata_json["workflow"]["nodes"][0]["execution_error"] is None
     assert test_db.query(LoopItem).filter(LoopItem.parent_id == issue.id).count() == 0
 
 

@@ -4,24 +4,27 @@ sidebar_position: 10
 
 # Board automation interaction and acceptance
 
-## 2026-09-09 Stage state and explicit resume
+## 2026-09-09 Work results and orchestration state are independent
 
-For AI progression, the Issue orchestration record owns stage state. Runtime status remains execution detail and cannot imply human approval or release another stage. Paused workflows likewise cannot advance from task results. Sequential workflows use execution_mode to distinguish human approval from AI execution. Resume controls live beside the stage graph and call the existing resume endpoint.
+A rerun of the same task uses its latest runtime result. A successful AI task marks its stage completed and clears previous failure or cancellation messages, without adding approval, acceptance, or deliverable gates. Historical assignment results remain history. Among multiple bindings, the existing binding order identifies the latest task; an older task cannot override that result.
+
+Result updates do not mutate assignments, Issue status, orchestration state, or dependent stages. After a manual stop, even a successful rerun leaves dispatch paused until the user clicks Resume progression. A new assignment being dispatched cannot be completed by its old task result, and human-owned work still requires explicit human continuation. Existing successful-task snapshots with stale failed stages are corrected for display and persisted when resuming so the coordinator reads current results.
 
 ```mermaid
 flowchart TD
-  T[Task status or deliverable update] --> P{AI progression or paused?}
-  P -->|Yes| K[Preserve authoritative stage state]
-  P -->|No| M{Stage execution mode}
-  M -->|Human succeeds| H[Await human approval]
-  M -->|AI succeeds| D[Evaluate required deliverables]
-  S[User stops execution] --> W[Paused with visible resume action]
-  W -->|User clicks Resume progression| R[Existing resume endpoint]
-  R --> C[Coordinator continues]
-  W -->|New task or comment| W
+  S[User stops task] --> P[Automatic dispatch paused]
+  S --> H[Preserve historical cancellation]
+  R[User reruns the same task] --> T[Update latest task result]
+  T -->|Running| N[Stage running, clear old error]
+  T -->|Success| D[Stage completed, clear old error]
+  T -->|Failure| F[Stage failed]
+  N --> P
+  D --> P
+  F --> P
+  P -->|User clicks Resume progression| C[Coordinator reads latest results and decides next step]
 ```
 
-Regression coverage: AI nodes without rule IDs never offer human approval; explicit human nodes retain approval; late runtime results preserve AI and paused stage state; resume is visible and unique, and failed requests leave the Issue paused. The CI event-center scenario now resumes through the UI. Test sources were updated but tests and Electron verification were not run, as requested; acceptance is delegated to Test-Wegent.
+Regression sources cover cancellation followed by a successful same-task rerun, another failed attempt after success, stale error cleanup, latest binding precedence, human ownership, no automatic dispatch while paused, and explicit UI resume. Backend/frontend tests and the CI event-center scenario were updated but not run, as requested. Test-Wegent owns acceptance. Resume remains beside the stage graph and uses the existing endpoint.
 
 ## 2026-09-09 Continue the same work in its comment thread
 

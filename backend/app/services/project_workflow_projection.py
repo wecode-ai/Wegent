@@ -29,6 +29,7 @@ from app.schemas.issue_workflow import (
 from app.services.loop_item_status_history import later_project_status
 from app.services.loop_item_unread import advance_content_revision
 from app.services.project_automation_domain import utcnow
+from shared.telemetry.decorators import trace_sync
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
@@ -187,6 +188,45 @@ def reconcile_workflow_task_nodes(
     return reconciled
 
 
+def project_ai_task_result(workflow: dict, node: dict) -> dict:
+    """Update work results without transferring orchestration or human ownership."""
+    if workflow.get("advancement_policy") != "ai":
+        return node
+    if workflow_node_execution_mode(node) != "robot":
+        return node
+    assignment = workflow.get("assignment") or {}
+    if assignment.get("node_id") == node.get("id") and assignment.get("status") in {
+        "dispatching",
+        "waiting_human",
+    }:
+        return node
+    task_ids = node.get("task_ids") or []
+    latest_status = (
+        (node.get("task_statuses") or {}).get(task_ids[0]) if task_ids else None
+    )
+    node_status = {
+        "running": "running",
+        "succeeded": "completed",
+        "archived": "completed",
+        "failed": "failed",
+        "cancelled": "failed",
+    }.get(latest_status)
+    if node_status is None:
+        return node
+    return {
+        **node,
+        "status": node_status,
+        "execution_error": (
+            None
+            if node_status in {"running", "completed"}
+            else node.get("execution_error")
+        ),
+    }
+
+
+@trace_sync(
+    span_name="issue_workflow.update_task_status", tracer_name="backend.workflow"
+)
 def update_workflow_task_status(
     db: Session,
     *,
@@ -300,18 +340,27 @@ def update_workflow_task_status(
                     ]
                 )
             )
-            # AI role state belongs to the assignment lifecycle, not its tasks.
-            node_status = (
-                node["status"]
-                if workflow.get("advancement_policy") == "ai"
-                else _project_task_status(
+            if workflow.get("advancement_policy") == "ai":
+                projected_node = project_ai_task_result(
+                    workflow,
+                    {
+                        **node,
+                        "task_ids": ordered_task_ids,
+                        "task_statuses": task_statuses,
+                    },
+                )
+                node_status = projected_node["status"]
+                if projected_node.get("execution_error") != node.get("execution_error"):
+                    node["execution_error"] = projected_node.get("execution_error")
+                    changed = True
+            else:
+                node_status = _project_task_status(
                     db,
                     node,
                     task_statuses=task_statuses,
                     ordered_task_ids=ordered_task_ids,
                     loop_item_id=str(item.id),
                 )
-            )
             if (
                 node.get("status") != node_status
                 or node.get("task_ids") != ordered_task_ids

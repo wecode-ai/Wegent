@@ -81,11 +81,27 @@ function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[
 }
 
 function projectWorkflowNodeTaskStatus(
+  workflow: IssueWorkflowInstance,
   node: WorkflowNodeInstance,
   taskStatuses: Record<string, string>,
   orderedTaskIds: string[],
   fallbackStatus?: RuntimeWorkflowStatus
 ): WorkflowNodeInstance['status'] {
+  if (workflow.advancement_policy === 'ai') {
+    if (workflowNodeExecutionMode(node) !== 'robot') return node.status
+    const assignment = workflow.assignment
+    if (
+      assignment?.node_id === node.id &&
+      ['dispatching', 'waiting_human'].includes(assignment.status)
+    )
+      return node.status
+    const latestStatus = orderedTaskIds[0] ? taskStatuses[orderedTaskIds[0]] : fallbackStatus
+    if (latestStatus === 'running') return 'running'
+    if (['succeeded', 'archived'].includes(latestStatus ?? '')) return 'completed'
+    if (['failed', 'cancelled'].includes(latestStatus ?? '')) return 'failed'
+    return node.status
+  }
+  if (workflow.orchestration_status === 'paused') return node.status
   if (['completed', 'forced_completed'].includes(node.status)) return node.status
   if (orderedTaskIds.some(taskId => taskStatuses[taskId] === 'running')) return 'running'
   const latestStatus = orderedTaskIds[0] ? taskStatuses[orderedTaskIds[0]] : fallbackStatus
@@ -109,7 +125,6 @@ export function reconcileIssueWorkflowForTaskBindings(
   workflow: IssueWorkflowInstance,
   bindings: WorkflowTaskBinding[]
 ): IssueWorkflowInstance {
-  if (!projectsTaskProgress(workflow)) return workflow
   const orderedBindings = [...bindings].sort((left, right) => {
     const timeOrder = (right.linked_at ?? '').localeCompare(left.linked_at ?? '')
     if (timeOrder !== 0) return timeOrder
@@ -125,8 +140,10 @@ export function reconcileIssueWorkflowForTaskBindings(
     const knownTaskIds = Array.from(new Set([...stageTaskIds, ...(node.task_ids ?? [])]))
     const taskStatuses = node.task_statuses ?? {}
     if (knownTaskIds.every(taskId => taskStatuses[taskId] === undefined)) return node
-    const status = projectWorkflowNodeTaskStatus(node, taskStatuses, knownTaskIds)
+    const status = projectWorkflowNodeTaskStatus(workflow, node, taskStatuses, knownTaskIds)
+    const executionError = ['running', 'completed'].includes(status) ? null : node.execution_error
     if (
+      executionError === node.execution_error &&
       status === node.status &&
       knownTaskIds.length === (node.task_ids?.length ?? 0) &&
       knownTaskIds.every((taskId, index) => taskId === node.task_ids?.[index])
@@ -134,7 +151,7 @@ export function reconcileIssueWorkflowForTaskBindings(
       return node
     }
     changed = true
-    return { ...node, status, task_ids: knownTaskIds }
+    return { ...node, status, execution_error: executionError, task_ids: knownTaskIds }
   })
   return changed ? { ...workflow, nodes } : workflow
 }
@@ -166,10 +183,20 @@ export function updateIssueWorkflowForRuntime(
         ...knownTaskIds,
       ])
     )
-    const status = projectProgress
-      ? projectWorkflowNodeTaskStatus(node, taskStatuses, orderedTaskIds, executionStatus)
-      : node.status
-    return { ...node, status, task_ids: knownTaskIds, task_statuses: taskStatuses }
+    const status = projectWorkflowNodeTaskStatus(
+      workflow,
+      node,
+      taskStatuses,
+      orderedTaskIds,
+      executionStatus
+    )
+    return {
+      ...node,
+      status,
+      execution_error: ['running', 'completed'].includes(status) ? null : node.execution_error,
+      task_ids: knownTaskIds,
+      task_statuses: taskStatuses,
+    }
   })
   return {
     ...workflow,

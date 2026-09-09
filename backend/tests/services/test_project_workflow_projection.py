@@ -556,15 +556,17 @@ def test_workflow_projection_matches_binding_through_device_identity(
     assert node["task_statuses"]["app-device-1:identity-task"] == "succeeded"
 
 
-@pytest.mark.parametrize("task_status", ["running", "succeeded", "failed"])
+@pytest.mark.parametrize("task_status", ["running", "succeeded", "failed", "cancelled"])
+@pytest.mark.parametrize("execution_mode", ["robot", "human"])
 @pytest.mark.parametrize(
     "orchestration_status,node_status",
     [("waiting_human", "running"), ("completed", "completed"), ("paused", "failed")],
 )
-def test_task_progress_preserves_ai_assignment_state(
+def test_task_progress_updates_results_without_resuming_ai(
     test_db: Session,
     workflow_project: CloudProject,
     task_status: str,
+    execution_mode: str,
     orchestration_status: str,
     node_status: str,
 ) -> None:
@@ -572,12 +574,21 @@ def test_task_progress_preserves_ai_assignment_state(
         "version": 1,
         "advancement_policy": "ai",
         "orchestration_status": orchestration_status,
-        "assignment": {"id": "assignment-1", "status": orchestration_status},
+        "assignment": {
+            "id": "assignment-1",
+            "node_id": "review",
+            "status": (
+                "waiting_human"
+                if orchestration_status == "waiting_human"
+                else "completed"
+            ),
+        },
         "nodes": [
             {
                 "id": "review",
-                "execution_mode": "robot",
+                "execution_mode": execution_mode,
                 "status": node_status,
+                "execution_error": "cancelled",
                 "task_statuses": {"local-device:old-task": "running"},
             }
         ],
@@ -619,9 +630,49 @@ def test_task_progress_preserves_ai_assignment_state(
     projected = updated.metadata_json["workflow"]
     assert projected["orchestration_status"] == orchestration_status
     assert projected["assignment"] == workflow["assignment"]
-    assert projected["nodes"][0]["status"] == node_status
+    expected_status = node_status
+    if execution_mode == "robot" and orchestration_status != "waiting_human":
+        expected_status = {
+            "running": "running",
+            "succeeded": "completed",
+            "failed": "failed",
+            "cancelled": "failed",
+        }[task_status]
+    assert projected["nodes"][0]["status"] == expected_status
+    if (
+        execution_mode == "robot"
+        and orchestration_status != "waiting_human"
+        and task_status in {"running", "succeeded"}
+    ):
+        assert projected["nodes"][0]["execution_error"] is None
     assert (
         projected["nodes"][0]["task_statuses"]["local-device:current-task"]
         == task_status
     )
     assert updated.status == original_status
+
+
+def test_repeated_ai_task_attempts_replace_cancelled_result_without_advancing() -> None:
+    from app.services.project_workflow_projection import project_ai_task_result
+
+    workflow = {"advancement_policy": "ai", "orchestration_status": "paused"}
+    node = {
+        "id": "design",
+        "execution_mode": "robot",
+        "status": "failed",
+        "execution_error": "cancelled",
+        "task_ids": ["device:task"],
+    }
+    for runtime_status, expected_status in [
+        ("running", "running"),
+        ("succeeded", "completed"),
+        ("running", "running"),
+        ("failed", "failed"),
+        ("succeeded", "completed"),
+    ]:
+        node = project_ai_task_result(
+            workflow, {**node, "task_statuses": {"device:task": runtime_status}}
+        )
+        assert node["status"] == expected_status
+        assert node["execution_error"] is None
+        assert workflow["orchestration_status"] == "paused"

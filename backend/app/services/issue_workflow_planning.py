@@ -23,6 +23,7 @@ from app.schemas.issue_workflow import (
     WorkflowPlanView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from shared.telemetry.decorators import trace_sync
 
 
 class IssueWorkflowPlanningService:
@@ -138,12 +139,18 @@ class IssueWorkflowPlanningService:
         db.commit()
         return self._view(db, issue, run)
 
+    @trace_sync(span_name="issue_workflow.resume", tracer_name="backend.workflow")
     def resume(self, db: Session, *, issue_id: str, user_id: int) -> WorkflowPlanView:
         issue = self._issue(db, issue_id, user_id, for_update=True)
         workflow = self._workflow(issue)
         self._require_current_experience(workflow)
         if workflow.get("orchestration_status") != "paused":
             raise ValueError("The Issue automation is not paused")
+        from app.services.project_workflow_projection import project_ai_task_result
+
+        workflow["nodes"] = [
+            project_ai_task_result(workflow, node) for node in workflow.get("nodes", [])
+        ]
         assignment = workflow.get("assignment") or {}
         if assignment.get("status") in {"running", "dispatching", "waiting_human"}:
             workflow["orchestration_status"] = assignment["status"]

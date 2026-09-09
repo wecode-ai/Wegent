@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { sendPrompt } from './conversation-navigation.mjs'
+import { ACTIVE_COMPOSER_SELECTOR } from './shared.mjs'
 import {
   assistantMessage,
   responseCreated,
@@ -37,6 +39,13 @@ function requestTool(payload, responseId, name, args, id) {
 
 export async function eventCenterModelResponse(payload, responseId, request) {
   const serialized = JSON.stringify(payload)
+  if (serialized.includes('EVENT_CENTER_MANUAL_TASK_RERUN')) {
+    return [
+      responseCreated(responseId),
+      assistantMessage('手动重跑成功。'),
+      responseCompleted(responseId),
+    ]
+  }
   if (serialized.includes("this board's event-center router")) {
     const projectId = serialized.match(/project_id: ([A-Za-z0-9_-]+)/)?.[1]
     const eventId = serialized.match(/event_id: ([A-Za-z0-9_-]+)/)?.[1]
@@ -332,6 +341,29 @@ export async function verifyEventCenter({
   // Observe a full queue claim window: neither a retry nor a coordinator may start.
   await new Promise(resolve => setTimeout(resolve, 35000))
   assert.equal((await request(`${base}/executions`)).total, executionCount)
+  assert.equal(
+    (await request(`/api/v1/loop-items/${issueId}`)).workflow.orchestration_status,
+    'paused'
+  )
+  await sendPrompt(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    'EVENT_CENTER_MANUAL_TASK_RERUN: Complete this same task successfully.'
+  )
+  const rerun = await waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    issue => issue.workflow.nodes.find(node => node.id === 'role_1')?.status === 'completed',
+    'Successful manual rerun did not replace the cancelled stage result',
+    timeoutMs
+  )
+  const rerunNode = rerun.workflow.nodes.find(node => node.id === 'role_1')
+  assert.equal(rerunNode.task_statuses[`${binding.device_id}:${binding.task_id}`], 'succeeded')
+  assert.equal(rerunNode.execution_error, null)
+  assert.equal(rerun.workflow.orchestration_status, 'paused')
+  assert.equal(rerun.workflow.assignment_version, initialVersion + 1)
+  const afterRerunCount = (await request(`${base}/executions`)).total
+  await new Promise(resolve => setTimeout(resolve, 35000))
+  assert.equal((await request(`${base}/executions`)).total, afterRerunCount)
   assert.equal(
     (await request(`/api/v1/loop-items/${issueId}`)).workflow.orchestration_status,
     'paused'
