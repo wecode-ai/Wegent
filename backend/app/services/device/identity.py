@@ -43,7 +43,12 @@ def lock_device_owner(db: Session, user_id: int) -> None:
     """Serialize registration and deletion without a new schema constraint."""
     if db.get_bind().dialect.name == "sqlite":
         # SQLite ignores FOR UPDATE; a write reserves its database write lock.
-        db.execute(update(User).where(User.id == user_id).values(id=User.id))
+        db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(id=User.id, updated_at=User.updated_at)
+            .execution_options(synchronize_session=False)
+        )
     else:
         db.query(User.id).filter(User.id == user_id).with_for_update().first()
 
@@ -79,6 +84,7 @@ def find_registration_device(
     devices = (
         db.query(Kind)
         .filter_by(user_id=user_id, kind="Device", namespace="default", name=device_id)
+        .populate_existing()
         .with_for_update()
         .order_by(Kind.id)
         .all()

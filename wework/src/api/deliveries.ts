@@ -1012,6 +1012,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         assigneeType: 'user' | 'agent' | 'team'
         assigneeId: string
+        notifyAssignee?: boolean
       }
     ): Promise<CloudLoopItem> {
       return client.post(

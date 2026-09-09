@@ -705,6 +705,10 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.apply_backend_connection(&mut turn.request);
+        turn.request.extra.insert(
+            "runtimeLocalTaskId".to_owned(),
+            Value::String(turn.local_task_id.clone()),
+        );
         let SpawnTurnRequest {
             local_task_id,
             runtime: _,

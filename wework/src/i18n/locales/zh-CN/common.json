@@ -599,6 +599,7 @@
     "archive_runtime_task_remove_failed": "任务已归档，但删除工作树失败",
     "archive_runtime_task_remove_failed_detail": "任务已归档，但删除工作树失败：{{message}}",
     "runtime_task_running": "运行中",
+    "runtime_task_running_with_goal": "运行中，有目标",
     "runtime_task_queue_paused": "追问队列已暂停",
     "task_plan_progress": "第 {{current}} / {{total}} 步",
     "task_plan_completed": "任务步骤已完成",
@@ -1062,6 +1063,25 @@
     "project_empty_title_suffix": "中做些什么？",
     "change_project": "更改项目",
     "project_select_placeholder": "请选择项目",
+    "focus_suggestions": {
+      "description": "从一个常见任务开始，或直接描述你的目标",
+      "research": {
+        "label": "整理和总结资料",
+        "prompt": "帮我整理并总结以下资料："
+      },
+      "writing": {
+        "label": "撰写或润色内容",
+        "prompt": "帮我撰写或润色以下内容："
+      },
+      "analysis": {
+        "label": "分析问题并给出建议",
+        "prompt": "帮我分析这个问题并给出可执行建议："
+      },
+      "planning": {
+        "label": "制定计划和拆解任务",
+        "prompt": "帮我制定计划并拆解以下任务："
+      }
+    },
     "task_suggestions": {
       "back": "返回全部建议",
       "explore": {
@@ -4478,5 +4498,23 @@
     "minutes": "分钟",
     "hours": "小时",
     "days": "天"
+  },
+  "notifications": {
+    "title": "通知",
+    "refresh": "刷新",
+    "read_all": "全部已读",
+    "invalid_link": "通知链接无效",
+    "failed": "更新通知失败，请重试。",
+    "loading": "加载中…",
+    "empty": "暂无通知",
+    "assignment_title": "你有新的看板任务",
+    "assignment_body": "{{assigner}} 将「{{project}}」看板的「{{item}}」分配给了你",
+    "unread": "未读",
+    "more": "加载更多",
+    "ask_title": "是否通知对方？",
+    "ask_body": "保存分配后，将发送站内通知，并推送到对方已连接的 IM。",
+    "without_notification": "不通知",
+    "with_notification": "通知对方",
+    "connect": "连接云端后查看通知"
   }
 }

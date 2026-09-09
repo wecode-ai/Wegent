@@ -97,6 +97,7 @@ cloud_segments=(
   automation-lifecycle
   project-automation
   plugin-auto-update
+  plugin-account-auth
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -116,7 +117,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-auto-update,plugin-workspace-publication
+  plugin-auto-update,plugin-workspace-publication,plugin-account-auth
   cloud-worktree-queued-cancel
   workspace-attachments
 )
@@ -236,6 +237,19 @@ validate_registered_checkpoint_coverage() {
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local repository_root
   repository_root="$(cd "$script_dir/../.." && pwd)"
+  local registered_checkpoints
+  if ! registered_checkpoints="$(
+    cd "$repository_root"
+    node --input-type=module -e \
+      "import { DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.join('\\n'))"
+  )"; then
+    printf 'Could not load registered desktop checkpoints\n' >&2
+    return 1
+  fi
+  if [[ -z "$registered_checkpoints" ]]; then
+    printf 'Registered desktop checkpoint catalog is empty\n' >&2
+    return 1
+  fi
   local registered
   while IFS= read -r registered; do
     [[ "$registered" == "cloud-git-worktree" || "$registered" == "browser-annotation" ]] && continue
@@ -243,11 +257,7 @@ validate_registered_checkpoint_coverage() {
       printf 'Registered desktop checkpoint missing from CI catalogs: %s\n' "$registered" >&2
       return 1
     fi
-  done < <(
-    cd "$repository_root"
-    node --input-type=module -e \
-      "import { DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.join('\\n'))"
-  )
+  done <<< "$registered_checkpoints"
 }
 
 validate_registered_checkpoint_coverage
@@ -278,6 +288,16 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/components/plugins/PluginAccountConnections* | \
+      wework/src/api/cloud/pluginAccountConnections* | \
+      wework/e2e/desktop/modules/dws-account-auth.mjs | \
+      wework/e2e/desktop/modules/account-auth-command.mjs | \
+      wework/e2e/desktop/fixtures/dws-account-auth.py | \
+      wework/e2e/desktop/fixtures/dws-store/* | \
+      wework/e2e/desktop/scenarios/plugin-account-auth.scenario.mjs)
+      select_target "cloud:plugin-account-auth"
+      return
+      ;;
     wework/e2e/desktop/modules/terminal-compatibility-flows.mjs)
       select_target "cloud:core-task-flow"
       return
@@ -721,6 +741,14 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
+      executor/tests/plugin_account_auth_contract.rs | \
+      backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \
+      backend/app/services/plugin_oauth* | backend/app/services/plugin_credential* | \
+      backend/app/schemas/plugin_account_auth.py | backend/app/api/ws/plugin_auth_broker.py | \
+      backend/app/api/endpoints/plugin_connections.py)
+      select_target "cloud:plugin-account-auth"
+      ;;
     backend/app/api/ws/terminal_namespace.py | \
       backend/app/services/device/terminal_protocol.py | \
       backend/app/services/device/terminal_session_record.py | \

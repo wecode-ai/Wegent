@@ -126,6 +126,8 @@ Wework includes the current model category in local runtime requests. Official C
 
 ## Chat Runtime
 
+The Executor reuses one app-server for local Codex conversations. After a normal task turn completes, the Executor retains that thread's owner subscription and sends `thread/unsubscribe` only after 30 minutes of inactivity, allowing background terminals and MCP sessions started by Codex to remain available across short gaps between turns. A follow-up reactivates the same thread and invalidates its previous idle timer. To bound resident resources, each app-server retains at most four idle task threads and releases the oldest idle thread when the limit is exceeded. Archiving a task still unsubscribes immediately instead of waiting for the idle window.
+
 For a new chat, the composer shows the plugin entry with previews for up to three available plugins. After the conversation starts, the entry collapses to a single icon to reduce toolbar usage, while clicking the icon still opens the complete plugin picker. Narrow toolbars use the icon form as well.
 
 When a user selects a skill, app, or plugin in the composer, the editor inserts an indivisible inline mention. The cursor can only stop before or after the mention; copy and submit serialize it as Codex app-server-compatible Markdown:

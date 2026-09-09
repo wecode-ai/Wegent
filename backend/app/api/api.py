@@ -37,6 +37,7 @@ from app.api.endpoints import (
     oidc,
     openapi_responses,
     pet,
+    plugin_connections,
     plugin_publications,
     project_automations,
     project_incoming_hooks,
@@ -61,6 +62,7 @@ from app.api.endpoints import (
     utils,
     web_scraper,
     wework_auth,
+    wework_notifications,
     wework_transcripts,
     wiki,
     wizard,
@@ -145,6 +147,9 @@ api_router.include_router(
 )
 api_router.include_router(
     connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
+)
+api_router.include_router(
+    plugin_connections.router, prefix="/plugin-connections", tags=["plugin-connections"]
 )
 api_router.include_router(
     connector_app_projection.router, prefix="/apps", tags=["apps"]
@@ -447,4 +452,10 @@ api_router.include_router(
     api_keys_internal_router,
     prefix="/internal",
     tags=["internal-api-keys"],
+)
+
+api_router.include_router(
+    wework_notifications.router,
+    prefix="/v1/wework-notifications",
+    tags=["wework-notifications"],
 )
