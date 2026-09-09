@@ -42,7 +42,10 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
-import { normalizeWorkbenchMode } from './runtime/workbench-mode.js'
+import {
+  initializeWorkbenchModePreference,
+  normalizeWorkbenchMode,
+} from './runtime/workbench-mode.js'
 import { RendererStorageStore } from './host/renderer-storage-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
@@ -1272,6 +1275,10 @@ function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
+  await initializeWorkbenchModePreference(requiredPreferences(), {
+    environment: process.env,
+    homeDirectory: app.getPath('home'),
+  })
   const environment = await desktopEnvironment()
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({

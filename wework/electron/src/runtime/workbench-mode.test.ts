@@ -1,6 +1,11 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, test, vi } from 'vitest'
 import {
   applyWorkbenchModeToCorePlugins,
+  initializeWorkbenchModePreference,
   MODE_MANAGED_DEVELOPER_HOME_PLUGIN,
   MODE_MANAGED_FOCUS_HOME_PLUGIN,
   MODE_MANAGED_GIT_PLUGIN,
@@ -28,6 +33,129 @@ describe('workbench mode runtime policy', () => {
     expect(normalizeWorkbenchMode('developer')).toBe('developer')
     expect(normalizeWorkbenchMode('unknown')).toBe('developer')
     expect(normalizeWorkbenchMode(undefined)).toBe('developer')
+  })
+
+  test('selects and persists developer mode when a development command is available', async () => {
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+    const probeCommand = vi.fn(async command => command === 'git')
+
+    await expect(
+      initializeWorkbenchModePreference(preferences, {
+        environment: { PATH: '/custom/bin' },
+        homeDirectory: '/home/alice',
+        probeCommand,
+      })
+    ).resolves.toBe('developer')
+
+    expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'developer' })
+    expect(probeCommand).toHaveBeenCalledWith(
+      'git',
+      expect.objectContaining({
+        PATH: expect.stringContaining('/custom/bin'),
+      })
+    )
+  })
+
+  test('selects and persists focus mode when no development command is available', async () => {
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+
+    await expect(
+      initializeWorkbenchModePreference(preferences, {
+        environment: {},
+        homeDirectory: '/home/alice',
+        probeCommand: vi.fn().mockResolvedValue(false),
+      })
+    ).resolves.toBe('focus')
+
+    expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'focus' })
+  })
+
+  test('checks executable files without running development commands', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-mode-'))
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+    try {
+      await writeFile(join(root, 'git.exe'), '')
+
+      await expect(
+        initializeWorkbenchModePreference(preferences, {
+          environment: { PATH: root, PATHEXT: '.EXE' },
+          homeDirectory: root,
+          platform: 'win32',
+        })
+      ).resolves.toBe('developer')
+
+      expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'developer' })
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  test('uses focus mode when the executable search path is empty', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-mode-'))
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+    try {
+      await expect(
+        initializeWorkbenchModePreference(preferences, {
+          environment: { PATH: root, PATHEXT: '.EXE' },
+          homeDirectory: root,
+          platform: 'win32',
+        })
+      ).resolves.toBe('focus')
+
+      expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'focus' })
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  test('does not treat Python alone as a development environment', async () => {
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+    const probeCommand = vi.fn(async command => command === 'python3')
+
+    await expect(
+      initializeWorkbenchModePreference(preferences, {
+        environment: {},
+        homeDirectory: '/home/alice',
+        probeCommand,
+      })
+    ).resolves.toBe('focus')
+
+    expect(probeCommand).not.toHaveBeenCalledWith('python3', expect.anything())
+    expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'focus' })
+  })
+
+  test('preserves a stored mode without probing the machine again', async () => {
+    const preferences = {
+      read: vi.fn().mockResolvedValue({ workbenchMode: 'focus' }),
+      update: vi.fn(),
+    }
+    const probeCommand = vi.fn()
+
+    await expect(
+      initializeWorkbenchModePreference(preferences, {
+        environment: {},
+        homeDirectory: '/home/alice',
+        probeCommand,
+      })
+    ).resolves.toBe('focus')
+
+    expect(probeCommand).not.toHaveBeenCalled()
+    expect(preferences.update).not.toHaveBeenCalled()
   })
 
   test('disables the Git plugin in focus mode', async () => {
