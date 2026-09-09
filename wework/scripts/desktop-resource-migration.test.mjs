@@ -198,6 +198,11 @@ describe('desktop resource migration', () => {
     expect(source).toContain("['prepare:harness-runtime', '--materialize']")
     expect(source).toContain('resolveHarnessRuntimeCachePaths(')
     expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
+    expect(harnessRuntimeSource).toContain('`wework-harness-runtime-${runtime.sourceFingerprint}`')
+    expect(harnessRuntimeSource).not.toContain(
+      '`wework-harness-runtime-${runtime.dshVersion}-${process.pid}`'
+    )
+    expect(harnessRuntimeSource).toContain('mtime: new Date(0)')
     expect(source).not.toContain(
       "join(weworkRoot, 'node_modules', '.cache', 'harness-runtime-assets'"
     )

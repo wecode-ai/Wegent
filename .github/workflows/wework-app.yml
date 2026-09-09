@@ -484,6 +484,19 @@ jobs:
           gh release view wework-updater \
             --json assets \
             --jq '.assets[].name' > "$existing_component_assets"
+          harness_runtime_assets="$RUNNER_TEMP/harness-runtime-assets"
+          node wework/scripts/collect-harness-runtime-release-assets.mjs \
+            release-assets \
+            "$harness_runtime_assets"
+          while IFS= read -r runtime_asset; do
+            runtime_name="$(basename "$runtime_asset")"
+            if grep -Fqx "$runtime_name" "$existing_component_assets"; then
+              echo "Reusing immutable Harness Runtime asset $runtime_name."
+              continue
+            fi
+            gh release upload wework-updater "$runtime_asset"
+            echo "$runtime_name" >> "$existing_component_assets"
+          done < <(find "$harness_runtime_assets" -maxdepth 1 -type f | sort)
           while IFS= read -r component_asset; do
             component_name="$(basename "$component_asset")"
             if grep -Fqx "$component_name" "$existing_component_assets"; then
