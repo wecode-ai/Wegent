@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
@@ -22,8 +23,30 @@ from app.services.execution.agents.image.providers.base import (
 
 
 @pytest.mark.asyncio
-async def test_generated_image_returns_one_hour_download_url() -> None:
+@pytest.mark.parametrize(
+    "reference_images", [None, ["42"], [42, "https://example.com/ref.png", "42"]]
+)
+async def test_generated_image_returns_one_hour_download_url(
+    reference_images: list[str | int] | None,
+) -> None:
     token_info = SimpleNamespace(user_id=7, task_id=8, subtask_id=9)
+    db = MagicMock()
+    attachment = SimpleNamespace(
+        id=42,
+        user_id=7,
+        context_type="attachment",
+        mime_type="image/png",
+        file_extension=".png",
+        image_base64="aW1hZ2U=",
+        storage_backend="mysql",
+        storage_key="attachments/42",
+        updated_at=datetime(2026, 1, 1),
+        original_filename="image.png",
+        file_size=5,
+        type_data={},
+    )
+    db.query.return_value.filter.return_value.first.return_value = attachment
+    db.get.return_value = attachment
     provider = MagicMock()
     provider.generate = AsyncMock(
         return_value=ImageGenerationResult(
@@ -45,11 +68,6 @@ async def test_generated_image_returns_one_hour_download_url() -> None:
         ),
         patch(
             "app.services.execution.agents.image.generation_service."
-            "normalize_reference_materials",
-            return_value=[],
-        ),
-        patch(
-            "app.services.execution.agents.image.generation_service."
             "get_image_provider",
             return_value=provider,
         ),
@@ -65,10 +83,19 @@ async def test_generated_image_returns_one_hour_download_url() -> None:
         ),
     ):
         result = await ImageGenerationService().generate(
-            db=MagicMock(),
+            db=db,
             token_info=token_info,
             prompt="draw a lighthouse",
+            reference_images=reference_images,
         )
+
+    expected_references = [
+        "data:image/png;base64,aW1hZ2U=" if str(value) == "42" else value
+        for value in reference_images or []
+    ]
+    provider.generate.assert_awaited_once_with(
+        prompt="draw a lighthouse", reference_images=expected_references
+    )
 
     image = result["images"][0]
     parsed_url = urlparse(image["url"])
@@ -86,6 +113,70 @@ async def test_generated_image_returns_one_hour_download_url() -> None:
         "/api/attachments/42/download"
     ]
     assert result["result_data"]["blocks"][0]["image_download_urls"] == [image["url"]]
+
+
+@pytest.mark.parametrize(
+    "attachment",
+    [
+        None,
+        SimpleNamespace(
+            context_type="attachment", file_extension=".png", image_base64=""
+        ),
+    ],
+)
+def test_reference_attachment_without_image_data_has_actionable_error(
+    attachment: SimpleNamespace | None,
+) -> None:
+    db = MagicMock()
+    db.get.return_value = attachment
+    with pytest.raises(
+        ValueError, match="Reference attachment 42 has no readable image data"
+    ):
+        ImageGenerationService._resolve_reference_images(db, [{"attachment_id": 42}])
+
+
+@pytest.mark.asyncio
+async def test_inaccessible_reference_attachment_never_reaches_provider() -> None:
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    with (
+        patch(
+            "app.services.execution.agents.image.generation_service.resolve_generation_context"
+        ),
+        patch(
+            "app.services.execution.agents.image.generation_service.resolve_generation_model",
+            return_value={},
+        ),
+        patch(
+            "app.services.execution.agents.image.generation_service.get_image_provider"
+        ) as provider,
+        pytest.raises(ValueError, match="Reference attachment not found: 42"),
+    ):
+        await ImageGenerationService().generate(
+            db=db,
+            token_info=SimpleNamespace(user_id=7, task_id=8, subtask_id=9),
+            prompt="edit",
+            reference_images=["42"],
+        )
+    provider.assert_not_called()
+    db.get.assert_not_called()
+
+
+def test_reference_data_url_is_preserved() -> None:
+    data_url = "data:image/png;base64,aW1hZ2U="
+    assert ImageGenerationService._resolve_reference_images(
+        MagicMock(), [{"url": data_url}]
+    ) == [data_url]
+
+
+def test_reference_descriptor_url_is_preserved_without_attachment_lookup() -> None:
+    db = MagicMock()
+    url = "https://cdn.example/ref.png"
+
+    assert ImageGenerationService._resolve_reference_images(
+        db, [{"attachment_id": 42, "url": url}]
+    ) == [url]
+    db.get.assert_not_called()
 
 
 def test_reference_image_format_uses_model_capabilities() -> None:

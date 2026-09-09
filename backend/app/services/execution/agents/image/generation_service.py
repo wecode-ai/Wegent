@@ -12,6 +12,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.mcp_server.auth import TaskTokenInfo
+from app.models.subtask_context import SubtaskContext
 from app.services.context import context_service
 from app.services.execution.agents.generation_context import (
     resolve_generation_context,
@@ -20,6 +21,7 @@ from app.services.execution.agents.generation_context import (
 from app.services.execution.agents.video.materials import (
     normalize_reference_materials,
 )
+from shared.telemetry.decorators import trace_async
 
 from .attachment_uploader import upload_image_attachment
 from .download_url import (
@@ -30,6 +32,7 @@ from .providers import get_image_provider
 
 
 class ImageGenerationService:
+    @trace_async(span_name="image.generate", tracer_name=__name__)
     async def generate(
         self,
         db: Session,
@@ -66,11 +69,12 @@ class ImageGenerationService:
             token_info.user_id,
         )
         self._validate_reference_images(image_config, descriptors)
+        references = self._resolve_reference_images(db, descriptors)
 
         protocol = model_config.get("protocol") or "seedream"
         result = await get_image_provider(protocol, model_config).generate(
             prompt=prompt_text,
-            reference_images=[item["url"] for item in descriptors],
+            reference_images=references,
         )
         if not result.images:
             raise ValueError("No images generated")
@@ -143,6 +147,33 @@ class ImageGenerationService:
             "persisted": True,
             "result_data": result_data,
         }
+
+    @staticmethod
+    def _resolve_reference_images(
+        db: Session, descriptors: list[dict[str, Any]]
+    ) -> list[str]:
+        """Inline authorized attachments using the same image data as chat inputs."""
+        references: list[str] = []
+        for descriptor in descriptors:
+            if descriptor.get("url"):
+                references.append(descriptor["url"])
+                continue
+            attachment_id = descriptor.get("attachment_id")
+            if attachment_id is None:
+                raise ValueError("Reference image has no readable image data")
+            # normalize_reference_materials has already checked ownership and MIME type.
+            context = db.get(SubtaskContext, attachment_id)
+            block = (
+                context_service.build_vision_content_block(context)
+                if context is not None
+                else None
+            )
+            if block is None:
+                raise ValueError(
+                    f"Reference attachment {attachment_id} has no readable image data"
+                )
+            references.append(block["image_url"]["url"])
+        return references
 
     @staticmethod
     def _validate_reference_images(

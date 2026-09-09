@@ -1,7 +1,7 @@
 ---
 description: "当用户需要生成或修改图片时使用，例如制作海报、商品图、社交媒体配图、插画、信息图，或参考一张或多张已有图片进行改图和创作。"
 displayName: "图片生成"
-version: "1.3.1"
+version: "1.3.2"
 author: "Wegent Team"
 tags: ["image", "generation", "creative"]
 bindShells: ["Chat", "ClaudeCode"]
@@ -68,7 +68,10 @@ or repeat the request before generating.
 
 - Use `reference_images` only for images the user supplied or explicitly selected,
   including an image generated earlier in the conversation.
-- Pass attachment IDs or HTTP/HTTPS URLs. Never pass local sandbox paths.
+- Pass attachment IDs, public HTTP/HTTPS URLs, or base64 data URLs. Never pass local
+  sandbox paths.
+- For uploaded or previously generated images, pass attachment IDs. Do not pass Wegent
+  attachment download URLs or relative `/api/attachments/...` paths as remote references.
 - Preserve the user's reference-image order and pass every image needed for the request.
 - Use `max_images` for multiple variants or a coherent series from one prompt. Use separate
   calls with tailored prompts for distinct unrelated assets. Otherwise default to `1`.

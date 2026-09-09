@@ -321,6 +321,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain('releaseScope: componentReleaseScope(id)')
     expect(source).not.toContain('async function findDirectory')
     expect(minioMacRelease).toContain('WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app')
+    expect(minioMacRelease).toContain('export APPLE_SIGNING_IDENTITY="$component_signing_identity"')
   })
 
   test('requires differential update blockmaps in formal release assets', async () => {
