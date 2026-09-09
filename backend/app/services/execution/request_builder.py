@@ -2300,8 +2300,9 @@ Response template:
         receives a freshly signed Wegent identity token in the ``auth`` and
         ``headers`` maps under the ``X-Wegent-Token`` header when building the
         task request, so it can resolve the current user through
-        ``GET /external/mcp-identity/userinfo``. A dedicated header is used so the
-        business server's own ``Authorization`` configuration is preserved.
+        ``GET /api/external/mcp-identity/userinfo``. A dedicated header is used
+        so the business server's own ``Authorization`` configuration is
+        preserved.
         The option is consumed here and never forwarded to the executor.
 
         Args:

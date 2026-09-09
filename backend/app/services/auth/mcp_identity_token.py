@@ -6,8 +6,8 @@
 
 These tokens are signed for outbound business MCP servers that opt in with
 ``inject_wegent_token`` in their Ghost ``mcpServers`` configuration. The
-business server verifies the token by calling ``GET /external/mcp-identity/userinfo`` with
-it as a bearer token.
+business server verifies the token by calling
+``GET /api/external/mcp-identity/userinfo`` with it as a bearer token.
 """
 
 import logging
