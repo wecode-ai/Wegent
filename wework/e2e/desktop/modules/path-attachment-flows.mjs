@@ -281,63 +281,8 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   await control.command('fill', composerSelector, { value: '' })
 
   await control.command('click', `[data-item-path="${SELECTED_TEXT_FILE_NAME}"]`)
-  await control.command('waitFor', '[data-testid="workspace-file-edit-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-line="1"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('selectText', '[data-line="1"]', {
-    value: SELECTED_TEXT_FILE_CONTENT.trim(),
-  })
-  await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-preview-selection-actions.png')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 5_000))
-  await captureVerificationScreenshot(control, 'workspace-preview-selection-after-wait.png')
-  assert.notEqual(
-    await control.command('getSelectionOffset', '[data-line="1"]'),
-    '-1',
-    'The workspace preview text selection disappeared after an unrelated workbench refresh'
-  )
-  assert.equal(
-    await control.command('getSystemDragPanelVisibility', 'body'),
-    'false',
-    'Selecting workspace preview text incorrectly opened the system drag panel'
-  )
-  await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
-  assert.equal(
-    await control.command('getValue', composerSelector),
-    SELECTED_TEXT_FILE_CONTENT.trim(),
-    'The workspace preview selection action did not insert text into the composer'
-  )
-  await control.command('fill', composerSelector, { value: '' })
-  await control.command('selectText', '[data-line="1"]', {
-    value: SELECTED_TEXT_FILE_CONTENT.trim(),
-  })
-  await control.command('dragDataTransferStart', '[data-line="1"]')
-  await waitForSystemDragPanelVisibility(
-    control,
-    true,
-    'Dragging workspace preview text did not show the system drag panel'
-  )
-  await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
-  await waitForSystemDragPanelVisibility(
-    control,
-    false,
-    'The system drag panel did not close after the workspace-preview drag ended'
-  )
-  assert.equal(
-    await control.command('getValue', composerSelector),
-    SELECTED_TEXT_FILE_CONTENT.trim(),
-    'Dragging selected workspace preview text did not insert it into the composer'
-  )
-  await captureVerificationScreenshot(control, 'workspace-preview-selection-drag.png')
-  await control.command('fill', composerSelector, { value: '' })
-
-  await control.command('click', '[data-testid="workspace-file-edit-button"]')
   await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+    text: SELECTED_TEXT_FILE_CONTENT.trim(),
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {

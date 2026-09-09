@@ -8,28 +8,22 @@ import {
   Ellipsis,
   Flag,
   ListTodo,
+  Pin,
+  Target,
   UserRound,
 } from 'lucide-react'
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { ActivityShimmerText } from '@/components/chat/ActivityShimmerText'
-import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
-import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import {
   getToolActivityFilePaths,
   getToolActivityKind,
   getToolActivitySearchItem,
+  unwrapShellCommand,
 } from '@/components/chat/blocks/toolBlockActivity'
 import { getInputField } from '@/components/chat/blocks/toolBlockKinds'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -46,8 +40,8 @@ import {
 } from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { ModelSelectionConfig, RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
 import {
@@ -71,6 +65,8 @@ export interface BoardCardDisplaySettings {
   showTags: boolean
   showDate: boolean
 }
+
+export type BoardCardProgressDisplay = 'compact' | 'focused'
 
 const priorityLabels: Record<CloudLoopItem['priority'], string> = {
   none: '普通',
@@ -296,6 +292,8 @@ export interface CloudTodoBoardTaskBinding {
   changeRequestTarget?: TaskChangeRequestTarget | null
   finalResponsePreview?: string | null
   modelSelection?: ModelSelectionConfig | null
+  runtimeGoal?: RuntimeGoal | null
+  runtimeGoalLoaded?: boolean
 }
 
 interface CloudTodoBoardCardProps {
@@ -304,13 +302,16 @@ interface CloudTodoBoardCardProps {
   onClick: () => void
   onConfigureExecution?: () => void
   onArchive: () => void
-  onOpenActivity?: () => void
+  previewPinned?: boolean
+  onPreviewPinnedChange?: (pinned: boolean) => void
+  onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
   display: BoardCardDisplaySettings
   processingStatus: boolean
   agentNames?: Record<string, string>
   dragDisabled?: boolean
   previewDisabled?: boolean
   archiveDisabled?: boolean
+  progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
   onContinueChangeRequestRepair?: (
     binding: CloudTodoBoardTaskBinding,
@@ -324,13 +325,16 @@ export function CloudTodoBoardCard({
   onClick,
   onConfigureExecution,
   onArchive,
-  onOpenActivity,
+  previewPinned = false,
+  onPreviewPinnedChange,
+  onLoadRuntimeGoal,
   display,
   processingStatus,
   agentNames,
   dragDisabled = false,
   previewDisabled = false,
   archiveDisabled = false,
+  progressDisplay = 'compact',
   changeRequestMonitor = null,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
@@ -386,7 +390,7 @@ export function CloudTodoBoardCard({
       data-testid={`cloud-todo-card-drop-${item.id}`}
       style={{ transform: CSS.Translate.toString(transform) }}
       className={cn(
-        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition hover:-translate-y-px hover:shadow-md',
+        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition-shadow hover:shadow-md',
         item.is_unread
           ? 'border-focus/30 bg-focus/10 hover:border-focus/40 hover:bg-focus/[0.14]'
           : 'border-border bg-background hover:border-text-primary/15',
@@ -485,19 +489,18 @@ export function CloudTodoBoardCard({
 
       {progressTaskBindings.length > 0 && item.workflow?.assignment?.status !== 'waiting_human' ? (
         <div
-          role={onOpenActivity ? 'button' : undefined}
-          tabIndex={onOpenActivity ? 0 : undefined}
-          aria-label={
-            onOpenActivity
-              ? currentTaskBinding?.task_title || currentTaskBinding?.task_id
-              : undefined
-          }
+          role={onPreviewPinnedChange ? 'button' : undefined}
+          tabIndex={onPreviewPinnedChange ? 0 : undefined}
+          aria-label={t('todo.pin_task_progress_named', '固定任务进展：{{task}}', {
+            task: currentTaskBinding?.task_title || currentTaskBinding?.task_id,
+          })}
+          data-hover-card-pin-trigger
           data-testid={`cloud-todo-card-tasks-${item.id}`}
-          onClick={onOpenActivity}
+          onClick={() => onPreviewPinnedChange?.(true)}
           onKeyDown={event => {
-            if (!onOpenActivity || (event.key !== 'Enter' && event.key !== ' ')) return
+            if (!onPreviewPinnedChange || (event.key !== 'Enter' && event.key !== ' ')) return
             event.preventDefault()
-            onOpenActivity()
+            onPreviewPinnedChange(true)
           }}
           className="w-full px-3.5 pb-3"
         >
@@ -507,6 +510,7 @@ export function CloudTodoBoardCard({
               item={item}
               binding={binding}
               compact
+              progressDisplay={progressDisplay}
               active={binding.running || (binding.id === currentTaskBinding?.id && hasActiveTask)}
               changeRequestSnapshot={
                 binding.id === currentTaskBinding?.id ? changeRequestSnapshot : null
@@ -542,10 +546,14 @@ export function CloudTodoBoardCard({
       interactive
       openOnFocus
       pinOnInteraction
-      pinOnInteractionSelector="[data-hover-card-pin-region]"
+      pinOnInteractionSelector="[data-hover-card-pin-region], [data-hover-card-pin-trigger]"
+      pinned={previewPinned}
+      onPinnedChange={onPreviewPinnedChange}
       closeLabel={t('common.close', '关闭')}
       estimatedWidth={480}
       estimatedHeight={620}
+      placement="viewport-right"
+      viewportTop={48}
       cardClassName="w-[480px] max-w-[calc(100vw-1rem)]"
       content={
         <RuntimeTaskProgressPopup
@@ -554,6 +562,9 @@ export function CloudTodoBoardCard({
           activeBindingId={hasActiveTask ? (currentTaskBinding?.id ?? null) : null}
           focusedBindingId={hoveredTaskBindingId}
           onFocusBinding={setHoveredTaskBindingId}
+          pinned={previewPinned}
+          onPin={() => onPreviewPinnedChange?.(true)}
+          onLoadRuntimeGoal={onLoadRuntimeGoal}
         />
       }
     >
@@ -562,127 +573,47 @@ export function CloudTodoBoardCard({
   )
 }
 
-function RuntimeTaskLiveActivity({
-  itemId,
-  activity,
-  expanded = false,
-}: {
-  itemId: string
-  activity: RuntimeLiveActivity
-  expanded?: boolean
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const lastTool = activity.tools.at(-1)
-  const completedTools = activity.tools.filter(
-    block => block.status === 'done' || block.status === 'error'
-  )
-  const activeTools = activity.tools.filter(
-    block => block.status !== 'done' && block.status !== 'error'
-  )
-  const processingBlocks = useMemo<ProcessingBlock[]>(
-    () =>
-      activity.tools.map(block => ({
-        ...block,
-        type: 'tool',
-        subtaskId: `board:${itemId}`,
-      })),
-    [activity.tools, itemId]
-  )
-
-  useLayoutEffect(() => {
-    const scrollArea = scrollRef.current
-    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [activity.thinking, activity.tools.length, lastTool?.status, lastTool?.toolInput])
-
-  return (
-    <div
-      ref={scrollRef}
-      data-testid={
-        expanded ? `cloud-todo-card-popup-activity-${itemId}` : `cloud-todo-card-activity-${itemId}`
-      }
-      className={cn(
-        'scrollbar-none min-w-0 overflow-y-auto',
-        expanded
-          ? 'max-h-44 text-chat text-text-primary'
-          : 'ml-5 mt-1.5 max-h-15 border-l border-border/70 pl-2 text-xs leading-5 text-text-muted'
-      )}
-    >
-      {expanded ? (
-        processingBlocks.length > 0 ? (
-          <ToolBlocksDisplay
-            blocks={processingBlocks}
-            isStreaming={activity.active}
-            processingPhase="live"
-            showInterToolThinking
-            thinkingContent={activity.thinking}
-            stateKey={`cloud-todo-card:${itemId}:progress-popup`}
-          />
-        ) : activity.thinking ? (
-          <AssistantThinkingIndicator
-            content={activity.thinking}
-            testId={`cloud-todo-card-popup-thinking-${itemId}`}
-          />
-        ) : null
-      ) : (
-        <>
-          {completedTools.map(block => (
-            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
-          ))}
-          {activity.thinking ? (
-            <div className="flex h-5 min-w-0 items-center">
-              <AssistantThinkingIndicator
-                content={activity.thinking}
-                testId={`cloud-todo-card-thinking-${itemId}`}
-                className="text-xs leading-5"
-              />
-            </div>
-          ) : null}
-          {activeTools.map(block => (
-            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
-          ))}
-        </>
-      )}
-    </div>
-  )
-}
-
 function RuntimeTaskCompactActivity({
   itemId,
   activity,
   responsePreview,
   reserveTrailingAction,
+  focused,
 }: {
   itemId: string
   activity: RuntimeLiveActivity
   responsePreview: string | null
   reserveTrailingAction: boolean
+  focused: boolean
 }) {
-  const latestTool = activity.tools.at(-1)
+  const processText = activity.processText || responsePreview
+  const visibleTools = focused ? activity.tools.slice(-3) : activity.tools.slice(-1)
 
   return (
     <div data-testid={`cloud-todo-card-activity-${itemId}`} className="min-w-0 text-xs">
-      {responsePreview ? (
+      {processText ? (
         <div
-          data-testid={`cloud-todo-card-response-${itemId}`}
-          className={cn('h-5 truncate leading-5 text-text-muted', reserveTrailingAction && 'pr-7')}
+          data-testid={`cloud-todo-card-process-${itemId}`}
+          className={cn(
+            'whitespace-pre-wrap leading-5 text-text-secondary',
+            focused ? 'line-clamp-[8]' : 'line-clamp-3',
+            reserveTrailingAction && 'pr-7'
+          )}
         >
-          {responsePreview}
-        </div>
-      ) : activity.thinking ? (
-        <div className={cn('flex h-5 min-w-0 items-center', reserveTrailingAction && 'pr-7')}>
-          <AssistantThinkingIndicator
-            content={activity.thinking}
-            testId={`cloud-todo-card-thinking-${itemId}`}
-            className="text-xs leading-5"
-          />
+          {processText}
         </div>
       ) : null}
-      {latestTool ? (
+      {visibleTools.length > 0 ? (
         <div
           data-testid={`cloud-todo-card-tool-line-${itemId}`}
-          className="ml-2 min-w-0 border-l border-border pl-3 text-text-muted"
+          className={cn(
+            'ml-2 min-w-0 border-l border-border pl-3 text-text-muted',
+            processText && 'mt-1'
+          )}
         >
-          <RuntimeTaskToolActivity itemId={itemId} block={latestTool} />
+          {visibleTools.map(block => (
+            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
+          ))}
         </div>
       ) : null}
     </div>
@@ -693,18 +624,22 @@ function RuntimeTaskProgressSummary({
   item,
   binding,
   compact,
+  progressDisplay = 'compact',
   active,
   changeRequestSnapshot,
   repairingChangeRequest,
   onContinueChangeRequestRepair,
+  onLoadRuntimeGoal,
 }: {
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
   compact: boolean
+  progressDisplay?: BoardCardProgressDisplay
   active: boolean
   changeRequestSnapshot: TaskChangeRequestSnapshot | null
   repairingChangeRequest: boolean
   onContinueChangeRequestRepair?: () => Promise<void>
+  onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
 }) {
   const { t } = useTranslation('common')
   const taskAddress = useMemo<RuntimeTaskAddress>(
@@ -718,16 +653,19 @@ function RuntimeTaskProgressSummary({
     [binding.device_id, binding.modelSelection, binding.task_id]
   )
   const activityAddress = active ? taskAddress : null
+  useEffect(() => {
+    if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
+    void onLoadRuntimeGoal(taskAddress)
+  }, [binding.runtimeGoalLoaded, onLoadRuntimeGoal, taskAddress])
   const activity = useRuntimeTaskActivity(activityAddress)
   const liveMessage = useRuntimeTaskLatestAssistantMessage(taskAddress)
   const cachedFinalResponse = useRuntimeTaskFinalResponse(
     item.status === 'in_review' ? taskAddress : null
   )
   const finalResponseText = binding.finalResponsePreview ?? cachedFinalResponse
-  const responseText =
-    activity.active && liveMessage?.content?.trim()
-      ? liveMessage.content
-      : liveMessage?.content || finalResponseText
+  const responseText = activity.active
+    ? liveMessage?.content?.trim() || null
+    : liveMessage?.content || finalResponseText
   const responsePreview = responseText ? latestResponseLine(responseText) : null
   const taskTitle = binding.task_title || binding.task_id
   const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
@@ -761,12 +699,36 @@ function RuntimeTaskProgressSummary({
           </span>
         </div>
       ) : null}
+      {!compact && binding.runtimeGoal?.objective.trim() ? (
+        <div
+          data-testid={`cloud-todo-card-popup-goal-${item.id}-${binding.id}`}
+          className="mt-2 flex min-w-0 gap-2 rounded-lg bg-muted/55 px-2.5 py-2"
+        >
+          <Target className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
+          <div className="min-w-0">
+            <div className="text-xs font-medium leading-5 text-text-secondary">
+              {t('todo.current_conversation_goal', '当前会话目标')}
+            </div>
+            <p className="line-clamp-3 text-xs leading-5 text-text-primary">
+              {binding.runtimeGoal.objective}
+            </p>
+          </div>
+        </div>
+      ) : !compact && !binding.runtimeGoalLoaded && onLoadRuntimeGoal ? (
+        <div
+          data-testid={`cloud-todo-card-popup-goal-loading-${item.id}-${binding.id}`}
+          className="mt-2 text-xs leading-5 text-text-muted"
+        >
+          {t('todo.current_conversation_goal_loading', '正在加载会话目标…')}
+        </div>
+      ) : null}
       {compact && activity.active ? (
         <RuntimeTaskCompactActivity
           itemId={item.id}
           activity={activity}
           responsePreview={responsePreview}
           reserveTrailingAction={showCompactChangeRequest}
+          focused={progressDisplay === 'focused'}
         />
       ) : !compact ? (
         <div
@@ -783,6 +745,7 @@ function RuntimeTaskProgressSummary({
             runtimeContext={{ cloudProjectId: String(item.cloud_project_id) }}
             sendEphemeral={false}
             collapseComposerWhenIdle
+            initialScrollPosition="latest"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}
             placeholder={t('workbench.task_activity_inline_placeholder')}
           />
@@ -798,8 +761,6 @@ function RuntimeTaskProgressSummary({
         >
           {responsePreview}
         </div>
-      ) : activity.active ? (
-        <RuntimeTaskLiveActivity itemId={item.id} activity={activity} />
       ) : null}
     </div>
   )
@@ -811,12 +772,18 @@ function RuntimeTaskProgressPopup({
   activeBindingId,
   focusedBindingId,
   onFocusBinding,
+  pinned,
+  onPin,
+  onLoadRuntimeGoal,
 }: {
   item: CloudLoopItem
   bindings: CloudTodoBoardTaskBinding[]
   activeBindingId: number | null
   focusedBindingId: number | null
   onFocusBinding: (bindingId: number | null) => void
+  pinned: boolean
+  onPin: () => void
+  onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
 }) {
   const { t } = useTranslation('common')
   const visibleBindings = focusedBindingId
@@ -828,18 +795,33 @@ function RuntimeTaskProgressPopup({
       data-testid={`cloud-todo-card-progress-popup-content-${item.id}`}
       className="min-w-0 space-y-2"
     >
-      <div className="min-w-0 border-b border-border/60 pb-2">
-        <div
-          data-testid={`cloud-todo-card-progress-title-${item.id}`}
-          className="truncate text-sm font-medium leading-5 text-text-primary"
-          title={item.title}
-        >
-          {item.title}
-        </div>
-        {!focusedBindingId && bindings.length > 1 ? (
-          <div className="mt-0.5 text-xs leading-5 text-text-secondary">
-            {t('todo.task_progress_count', '{{count}} 个任务', { count: bindings.length })}
+      <div className="flex min-w-0 items-start gap-2 border-b border-border/60 pb-2">
+        <div className="min-w-0 flex-1">
+          <div
+            data-testid={`cloud-todo-card-progress-title-${item.id}`}
+            className="truncate text-sm font-medium leading-5 text-text-primary"
+            title={item.title}
+          >
+            {item.title}
           </div>
+          {!focusedBindingId && bindings.length > 1 ? (
+            <div className="mt-0.5 text-xs leading-5 text-text-secondary">
+              {t('todo.task_progress_count', '{{count}} 个任务', { count: bindings.length })}
+            </div>
+          ) : null}
+        </div>
+        {!pinned ? (
+          <Tooltip label={t('todo.pin_task_progress', '固定任务进展')} side="bottom" align="end">
+            <button
+              type="button"
+              data-testid={`cloud-todo-card-progress-pin-${item.id}`}
+              onClick={onPin}
+              aria-label={t('todo.pin_task_progress', '固定任务进展')}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            >
+              <Pin className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         ) : null}
       </div>
       {visibleBindings.length > 0 ? (
@@ -861,6 +843,7 @@ function RuntimeTaskProgressPopup({
                 active={binding.running || binding.id === activeBindingId}
                 changeRequestSnapshot={null}
                 repairingChangeRequest={false}
+                onLoadRuntimeGoal={onLoadRuntimeGoal}
               />
             </div>
           ))}
@@ -966,7 +949,10 @@ function runtimeToolActivityText(
   const running = block.status !== 'done' && block.status !== 'error'
 
   if (kind === 'command') {
-    return activityLabel(t('tool_activity.command_action'), command)
+    return activityLabel(
+      t('tool_activity.command_action'),
+      command ? unwrapShellCommand(command) : undefined
+    )
   }
   if (kind === 'file') {
     return activityLabel(t('tool_activity.file_action'), path)

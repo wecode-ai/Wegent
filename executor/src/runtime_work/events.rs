@@ -191,6 +191,30 @@ pub(crate) fn emit_response_event(
     }
 }
 
+pub(crate) fn emit_runtime_work_changed(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+) {
+    let Some(event_tx) = event_tx else {
+        return;
+    };
+    let _ = event_tx.send(json!({
+        "type": "event",
+        "event": "runtime.work.changed",
+        "payload": {
+            "event_type": "runtime.work.changed",
+            "taskId": local_task_id,
+            "data": {
+                "taskId": local_task_id,
+            },
+            "deviceId": device_id,
+            "runtime": "codex",
+            "eventSeq": next_runtime_event_sequence(),
+        },
+    }));
+}
+
 fn is_terminal_response_event(event: &str) -> bool {
     matches!(
         event,

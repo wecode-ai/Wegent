@@ -13,6 +13,7 @@ core_segments=(
   project-event-sources
   project-assignment-notification
   offline-local-project-space
+  board-focus-view
   cloud-context-resilience
   core-dsh-plugin-management
   plugin-development
@@ -118,9 +119,9 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-auto-update,plugin-workspace-publication,plugin-account-auth
+  plugin-account-auth
   cloud-worktree-queued-cancel
-  workspace-attachments
+  plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
 # Group checkpoints by observed Core CI duration so every serial shard stays
 # below the desktop suite's critical-path budget while reusing the same
@@ -138,7 +139,7 @@ core_shards=(
   project-automation
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
@@ -466,6 +467,10 @@ classify_wework_path() {
       select_target "core:cloud-space-mention"
       return
       ;;
+    wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
+      select_target "core:board-focus-view"
+      return
+      ;;
     wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
       wework/src/api/projectAutomations*)
@@ -760,6 +765,22 @@ classify_path() {
       backend/app/schemas/plugin_account_auth.py | backend/app/api/ws/plugin_auth_broker.py | \
       backend/app/api/endpoints/plugin_connections.py)
       select_target "cloud:plugin-account-auth"
+      ;;
+    executor/src/runtime_work/codex_transcript_page.rs)
+      select_target "core:transcript-sync"
+      select_target "core:environment-panel-scroll"
+      ;;
+    backend/alembic/versions/*wework_transcript* | \
+      backend/app/api/endpoints/wework_transcripts.py | \
+      backend/app/core/wework_transcript_encryption.py | \
+      backend/app/models/wework_transcript.py | \
+      backend/app/schemas/wework_transcript.py | \
+      backend/app/services/wework_transcript_* | \
+      backend/tests/api/endpoints/test_wework_transcripts_api.py | \
+      backend/tests/models/test_wework_transcript_schema.py | \
+      executor/src/runtime_work/native_transcript.rs | \
+      executor/src/runtime_work/handler/transcript_sync.rs)
+      select_target "core:transcript-sync"
       ;;
     backend/app/api/ws/terminal_namespace.py | \
       backend/app/services/device/terminal_protocol.py | \

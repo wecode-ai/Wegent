@@ -37,6 +37,11 @@ export interface RuntimeEventLaggedPayload {
   skipped: number
 }
 
+export interface RuntimeWorkChangedPayload {
+  deviceId?: string
+  taskId: string
+}
+
 export interface ProjectTaskAssignedPayload {
   projectId: string
   projectName: string
@@ -58,6 +63,7 @@ export interface ChatStreamHandlers {
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void
+  onRuntimeWorkChanged?: (payload: RuntimeWorkChangedPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void

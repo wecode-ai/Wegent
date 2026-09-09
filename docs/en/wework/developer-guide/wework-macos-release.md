@@ -8,6 +8,20 @@ The Wework desktop application uses Electron. Formal builds and releases are
 handled by `.github/workflows/wework-app.yml`, which produces Electron
 installers for macOS, Windows, and Linux.
 
+Both macOS arm64 and x64 releases use the Apple Silicon `macos-14` runner. The
+x64 build verifies Rosetta 2 and then installs x64 Node.js through
+`actions/setup-node`. Before installing dependencies, the workflow checks that
+the running Node.js architecture matches the target. Harness Runtime native
+dependencies follow the running Node.js architecture, so selecting an Electron
+Builder target alone cannot cross-build the complete runtime. If the
+architectures differ, correct the Node.js architecture and rebuild; do not
+reuse artifacts built for the wrong architecture or rerun only publication.
+
+When formal macOS arm64 package verification fails, the workflow prunes large
+temporary runtime directories and uploads desktop E2E diagnostics retained for
+seven days. Use those logs to establish the root cause instead of hiding a
+failure through reruns or weaker E2E assertions.
+
 ## Version and artifacts
 
 The release version is written to `wework/package.json` and

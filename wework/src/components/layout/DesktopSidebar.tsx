@@ -58,6 +58,8 @@ import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
+import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -1493,6 +1495,7 @@ function RuntimeTaskRow({
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const conversationMenuActions = useDshMenuCommands('conversation.context')
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
@@ -2122,6 +2125,26 @@ function RuntimeTaskRow({
             disabled: !workspace.available || !onRenameRuntimeTask,
             onSelect: () => setRenameOpen(true),
           },
+          ...conversationMenuActions.map(action => ({
+            label: action.title,
+            testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
+            disabled: !workspace.available || !action.enabled,
+            onSelect: async () => {
+              await executeDshCommand(
+                action.command,
+                {
+                  deviceId: taskAddress.deviceId,
+                  taskId: taskAddress.taskId,
+                  workspacePath: taskAddress.workspacePath,
+                },
+                {
+                  menuId: action.id,
+                  menuLocation: 'conversation.context',
+                  source: 'menu',
+                }
+              )
+            },
+          })),
           ...(experimentalFeaturesEnabled
             ? [
                 {

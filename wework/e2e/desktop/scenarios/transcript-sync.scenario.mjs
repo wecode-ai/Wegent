@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -10,24 +10,18 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
 } from '../modules/shared.mjs'
-import { WeworkSync } from '../../../dsh/transcript-sync/index.js'
-import { MemorySyncOutbox } from '../../../dsh/transcript-sync/outbox.js'
 
-const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_COMMIT_RESPONSE_LOST'
-const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_COMMIT_RESPONSE_LOST_COMPLETE'
-const DEVICE_B_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_CONTINUES'
-const DEVICE_B_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_CONTINUES_COMPLETE'
-const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE'
-const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE_COMPLETE'
-const THIRD_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_A_CONTINUES_WHILE_B_FAILED'
-const THIRD_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_A_CONTINUES_WHILE_B_FAILED_COMPLETE'
-const DEVICE_B_OFFLINE_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_OFFLINE'
-const DEVICE_B_SECOND_OFFLINE_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_SECOND_OFFLINE'
-const FOURTH_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_MAINLINE_AFTER_BRANCH'
-const FOURTH_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_MAINLINE_AFTER_BRANCH_COMPLETE'
-const FIFTH_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DISABLED_LOCAL_CONTINUATION'
-const FIFTH_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DISABLED_LOCAL_CONTINUATION_COMPLETE'
+const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_SNAPSHOT'
+const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_SNAPSHOT_COMPLETE'
+const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_DELTA'
+const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_DELTA_COMPLETE'
+const RESTORED_PROMPT = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_RESTORED_DEVICE'
+const RESTORED_COMPLETION = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_RESTORED_DEVICE_COMPLETE'
+const THIRD_PROMPT = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_DISABLED_QUEUE'
+const THIRD_COMPLETION = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_DISABLED_QUEUE_COMPLETE'
+const RESTORED_WORKSPACE_MARKER = 'restored-from-encrypted-cloud-segments'
 const SYNC_POLL_INTERVAL_MS = 5_000
+const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
@@ -66,29 +60,29 @@ function completedResponse(id, text) {
   ]
 }
 
-function modelInputTexts(request) {
-  return (Array.isArray(request?.input) ? request.input : [])
-    .flatMap(item => (Array.isArray(item?.content) ? item.content : []))
-    .map(content => content?.text)
-    .filter(text => typeof text === 'string')
-}
-
-function modelInputContains(texts, expected) {
-  return texts.some(text => text.includes(expected))
-}
-
-function modelInputMessageIndex(texts, expected) {
-  return texts.findIndex(text => text === expected || text.endsWith(`\n\n${expected}`))
-}
-
-function modelInputMessageCount(texts, expected) {
-  return texts.filter(text => text === expected || text.endsWith(`\n\n${expected}`)).length
-}
-
 async function requestBody(request) {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+async function rawBody(request) {
+  const chunks = []
+  for await (const chunk of request) chunks.push(chunk)
+  return Buffer.concat(chunks)
+}
+
+async function multipartFile(request) {
+  const contentType = String(request.headers['content-type'] || '')
+  const boundary = contentType.match(/boundary=([^;]+)/u)?.[1]
+  assert.ok(boundary, 'Transcript upload must include a multipart boundary')
+  const body = await rawBody(request)
+  const fileHeader = body.indexOf(Buffer.from('name="file"'))
+  assert.notEqual(fileHeader, -1, 'Transcript multipart upload must include the file field')
+  const contentStart = body.indexOf(Buffer.from('\r\n\r\n'), fileHeader) + 4
+  const contentEnd = body.indexOf(Buffer.from(`\r\n--${boundary}`), contentStart)
+  assert.ok(contentStart >= 4 && contentEnd > contentStart, 'Transcript file part is malformed')
+  return body.subarray(contentStart, contentEnd)
 }
 
 function seedCloudCredential(electronUserDataDirectory, apiBaseUrl) {
@@ -129,101 +123,6 @@ async function waitFor(predicate, timeoutMs, message) {
   throw new Error(message)
 }
 
-function transcriptSummary(transcriptId, currentSequence, archives = [], relation = {}) {
-  return {
-    transcriptId,
-    parentTranscriptId: relation.parentTranscriptId ?? null,
-    forkedAtSequence: relation.forkedAtSequence ?? null,
-    title: transcriptId,
-    state: 'active',
-    currentSequence,
-    archivedThroughSequence: archives.at(-1)?.toSequence ?? 0,
-    writerClientId: null,
-    writerLeaseExpiresAt: null,
-    archives,
-    createdAt: '2026-09-04T00:00:00.000Z',
-    updatedAt: '2026-09-04T00:00:00.000Z',
-    archivedAt: null,
-  }
-}
-
-function createSimulatedDevice(apiBaseUrl, clientId) {
-  const outbox = new MemorySyncOutbox()
-  const payloads = new Map()
-  const source = {
-    read(turn) {
-      const payload = payloads.get(turn.turnId)
-      assert.ok(payload, `Simulated ${clientId} session lost ${turn.turnId}`)
-      return { ...turn, payload: structuredClone(payload) }
-    },
-  }
-  const importedThrough = new Map()
-  const target = {
-    async status(transcript) {
-      return {
-        available: true,
-        importedThrough: importedThrough.get(transcript.transcriptId) ?? 0,
-      }
-    },
-    async import(transcript, turns) {
-      const sequence = turns.at(-1)?.sequence ?? importedThrough.get(transcript.transcriptId) ?? 0
-      importedThrough.set(transcript.transcriptId, sequence)
-      return { available: true, importedThrough: sequence }
-    },
-    async acknowledge(turn) {
-      importedThrough.set(turn.transcriptId, turn.cloudSequence)
-      return { available: true, importedThrough: turn.cloudSequence }
-    },
-  }
-  const state = {
-    value: { version: 3, transcripts: {}, preferencesHash: null },
-    async save() {},
-  }
-  const desktop = {
-    preferences: {
-      async get() {
-        return {}
-      },
-      async update() {},
-    },
-    weworkSync: {
-      async request(request) {
-        const response = await fetch(`${request.apiBaseUrl}${request.path}`, {
-          method: request.method,
-          headers: {
-            authorization: `Bearer ${clientId}`,
-            ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
-          },
-          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-        })
-        return {
-          status: response.status,
-          body: await response.json(),
-        }
-      },
-    },
-  }
-  const sync = new WeworkSync({
-    apiBaseUrl,
-    clientId,
-    desktop,
-    outbox,
-    source,
-    state,
-    target,
-    pollIntervalMs: 60_000,
-  })
-  return {
-    async enqueue(turn) {
-      payloads.set(turn.turnId, structuredClone(turn.payload))
-      await sync.enqueue(turn)
-    },
-    outbox,
-    state,
-    sync,
-  }
-}
-
 function sqliteOutboxCount(path) {
   const database = new DatabaseSync(path, { readOnly: true })
   try {
@@ -233,29 +132,52 @@ function sqliteOutboxCount(path) {
   }
 }
 
-export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, workspacePath }) {
+function summary(transcriptId, transcript) {
+  const latestSnapshot = transcript.archives
+    .filter(archive => archive.format.includes('snapshot'))
+    .at(-1)
+  return {
+    transcriptId,
+    parentTranscriptId: transcript.parentTranscriptId,
+    forkedAtSequence: transcript.forkedAtSequence,
+    title: transcript.title,
+    state: 'active',
+    currentSequence: transcript.currentSequence,
+    archivedThroughSequence: latestSnapshot?.toSequence ?? 0,
+    writerClientId: null,
+    writerLeaseExpiresAt: null,
+    archives: transcript.archives,
+    createdAt: '2026-09-08T00:00:00.000Z',
+    updatedAt: '2026-09-08T00:00:00.000Z',
+    archivedAt: null,
+  }
+}
+
+export function createDesktopScenario({
+  captureScreenshot,
+  electronUserDataDirectory,
+  resultDir,
+  uiTimeoutMs,
+  workspacePath,
+}) {
   const port = process.env.WEWORK_E2E_MODEL_SERVER_PORT
   assert.ok(port, 'Transcript sync E2E requires a reserved model server port')
-  const apiBaseUrl = `http://127.0.0.1:${port}/api`
+  const origin = `http://127.0.0.1:${port}`
+  const apiBaseUrl = `${origin}/api`
   seedCloudCredential(electronUserDataDirectory, apiBaseUrl)
 
   const transcripts = new Map()
+  const objects = new Map()
+  const prepared = new Map()
   const requestLog = []
   const modelRequests = []
-  const appendAttempts = []
-  let modelSequence = 0
-  let preferenceValue = null
   let activeTranscriptId = null
-  let firstCommitResponseDropped = false
-  let secondLeaseRejected = false
-  let secondFencingRejected = false
-  let deviceAClientId = null
-  let failNextDeviceBAppend = false
-  let deviceBAppendFailed = false
+  let preferenceValue = null
   let fencingToken = 0
   let lease = null
+  let firstCommitResponseDropped = false
   let restartDesktopApp = null
-  const deviceB = createSimulatedDevice(apiBaseUrl, 'device-b')
+  let modelSequence = 0
 
   function activeTranscript() {
     assert.ok(activeTranscriptId, 'The active transcript ID was not observed')
@@ -272,17 +194,11 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
     },
 
     async handleHttp(request, response, url) {
-      if (url.pathname.startsWith('/api/')) {
-        requestLog.push(`${request.method} ${url.pathname}${url.search}`)
-      }
+      requestLog.push(`${request.method} ${url.pathname}${url.search}`)
 
       if (request.method === 'POST' && url.pathname === '/api/auth/wework/refresh') {
         const body = await requestBody(request)
-        assert.equal(
-          body.refresh_token,
-          'desktop-e2e-transcript-sync-refresh',
-          'Transcript sync did not refresh the seeded desktop credential'
-        )
+        assert.equal(body.refresh_token, 'desktop-e2e-transcript-sync-refresh')
         json(response, 200, {
           access_token: 'wework-desktop-e2e-cloud-token',
           token_type: 'bearer',
@@ -290,223 +206,214 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         })
         return true
       }
-
       if (request.method === 'POST' && url.pathname.includes('/dsh-plugin-storage/units/')) {
         json(response, 200, { global: preferenceValue })
         return true
       }
       if (request.method === 'PUT' && url.pathname.includes('/dsh-plugin-storage/units/')) {
-        const body = await requestBody(request)
-        preferenceValue = body.value
+        preferenceValue = (await requestBody(request)).value
         json(response, 200, { global: preferenceValue })
         return true
       }
-
       if (request.method === 'GET' && url.pathname === '/api/wework-transcripts') {
-        const items = [
-          ...[...transcripts.entries()].map(([transcriptId, transcript]) =>
-            transcriptSummary(transcriptId, transcript.turns.length, [], transcript)
-          ),
-        ]
-        json(response, 200, { items })
+        json(response, 200, {
+          items: [...transcripts].map(([id, transcript]) => summary(id, transcript)),
+        })
         return true
       }
 
+      const transcriptMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)$/u)
+      if (request.method === 'GET' && transcriptMatch) {
+        const transcriptId = decodeURIComponent(transcriptMatch[1])
+        json(response, 200, summary(transcriptId, transcripts.get(transcriptId)))
+        return true
+      }
+      const encryptionKeyMatch = url.pathname.match(
+        /^\/api\/wework-transcripts\/([^/]+)\/encryption-key$/u
+      )
+      if (request.method === 'GET' && encryptionKeyMatch) {
+        json(response, 200, {
+          version: 1,
+          algorithm: 'aes-256-gcm',
+          key: TEST_ENCRYPTION_KEY,
+        })
+        return true
+      }
       const leaseMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/lease$/u)
       if (request.method === 'POST' && leaseMatch) {
         const transcriptId = decodeURIComponent(leaseMatch[1])
         const body = await requestBody(request)
         activeTranscriptId ??= transcriptId
-        if (body.clientId !== 'device-b') deviceAClientId ??= body.clientId
         const transcript = transcripts.get(transcriptId) ?? {
-          turns: [],
+          title: body.title ?? transcriptId,
           parentTranscriptId: body.parentTranscriptId ?? null,
           forkedAtSequence: body.forkedAtSequence ?? null,
+          currentSequence: 0,
+          archives: [],
+          turns: [],
         }
         transcripts.set(transcriptId, transcript)
-        if (
-          transcript.parentTranscriptId !== (body.parentTranscriptId ?? null) ||
-          transcript.forkedAtSequence !== (body.forkedAtSequence ?? null)
-        ) {
-          json(response, 409, {
-            detail: {
-              code: 'fork_identity_conflict',
-              message: 'Transcript already exists with a different parent',
-            },
-          })
-          return true
-        }
-        const nextSequence = transcript.turns.length + 1
-        if (
-          transcriptId === activeTranscriptId &&
-          body.clientId === deviceAClientId &&
-          nextSequence === 3 &&
-          !secondLeaseRejected
-        ) {
-          secondLeaseRejected = true
-          json(response, 409, {
-            detail: {
-              code: 'lease_held',
-              message: 'Wework transcript is being edited on another device',
-            },
-          })
-          return true
-        }
         fencingToken += 1
         lease = { clientId: body.clientId, fencingToken }
         json(response, 200, {
           transcriptId,
           clientId: body.clientId,
           fencingToken,
-          expiresAt: '2026-09-04T01:00:00.000Z',
-          currentSequence: transcript.turns.length,
+          expiresAt: '2026-09-08T01:00:00.000Z',
+          currentSequence: transcript.currentSequence,
         })
         return true
       }
-
-      const turnsMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/turns$/u)
-      if (request.method === 'POST' && turnsMatch) {
-        const transcriptId = decodeURIComponent(turnsMatch[1])
+      const prepareMatch = url.pathname.match(
+        /^\/api\/wework-transcripts\/([^/]+)\/segments\/prepare$/u
+      )
+      if (request.method === 'POST' && prepareMatch) {
+        const transcriptId = decodeURIComponent(prepareMatch[1])
         const body = await requestBody(request)
         const transcript = transcripts.get(transcriptId)
-        assert.ok(transcript, 'Append arrived before transcript lease acquisition')
-        appendAttempts.push(structuredClone(body))
-        assert.equal(body.turns.length, 1, 'Transcript sync uploaded more than one finalized turn')
-
-        if (
-          transcriptId === activeTranscriptId &&
-          body.clientId === deviceAClientId &&
-          body.turns[0].sequence === 3 &&
-          !secondFencingRejected
-        ) {
-          secondFencingRejected = true
-          fencingToken += 1
-          lease = { clientId: 'competing-device', fencingToken }
-          json(response, 409, {
-            detail: {
-              code: 'lease_invalid',
-              message: 'Wework transcript write lease is missing, expired, or stale',
-            },
+        assert.equal(body.baseSequence, transcript.currentSequence)
+        assert.deepEqual({ clientId: body.clientId, fencingToken: body.fencingToken }, lease)
+        const objectId = `${transcriptId}-${body.sequence}-${body.sha256}`
+        prepared.set(objectId, structuredClone(body))
+        json(response, 200, {
+          uploadUrl: `${origin}/transcript-objects/${encodeURIComponent(objectId)}`,
+          uploadFields: { key: objectId, policy: 'desktop-e2e-size-bounded' },
+          expiresAt: '2026-09-08T01:00:00.000Z',
+        })
+        return true
+      }
+      const objectMatch = url.pathname.match(/^\/transcript-objects\/([^/]+)$/u)
+      if (request.method === 'POST' && objectMatch) {
+        objects.set(decodeURIComponent(objectMatch[1]), await multipartFile(request))
+        response.writeHead(200)
+        response.end()
+        return true
+      }
+      if (request.method === 'GET' && objectMatch) {
+        const object = objects.get(decodeURIComponent(objectMatch[1]))
+        response.writeHead(200, { 'content-type': 'application/octet-stream' })
+        response.end(object)
+        return true
+      }
+      const commitMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/segments$/u)
+      if (request.method === 'POST' && commitMatch) {
+        const transcriptId = decodeURIComponent(commitMatch[1])
+        const body = await requestBody(request)
+        const transcript = transcripts.get(transcriptId)
+        const objectId = `${transcriptId}-${body.sequence}-${body.sha256}`
+        const object = objects.get(objectId)
+        assert.ok(object, 'Segment metadata committed before object upload')
+        assert.equal(object.byteLength, body.sizeBytes)
+        assert.equal(createHash('sha256').update(object).digest('hex'), body.sha256)
+        const existing = transcript.archives.find(archive => archive.toSequence === body.sequence)
+        const existingTurn = transcript.turns.find(turn => turn.sequence === body.sequence)
+        assert.equal(typeof body.turnId, 'string')
+        assert.equal(typeof body.summary, 'object')
+        if (!existing) {
+          transcript.archives.push({
+            id: transcript.archives.length + 1,
+            fromSequence: body.format.includes('snapshot') ? 0 : body.sequence,
+            toSequence: body.sequence,
+            sha256: body.sha256,
+            sizeBytes: body.sizeBytes,
+            format: body.format,
+            createdAt: '2026-09-08T00:00:00.000Z',
+            objectId,
           })
-          lease = null
-          return true
-        }
-
-        if (body.clientId === 'device-b' && failNextDeviceBAppend) {
-          failNextDeviceBAppend = false
-          deviceBAppendFailed = true
-          lease = null
-          json(response, 503, {
-            detail: {
-              code: 'device_offline',
-              message: 'Device B lost its network before append completed',
-            },
+          transcript.turns.push({
+            turnId: body.turnId,
+            sequence: body.sequence,
+            payload: structuredClone(body.summary),
+            createdAt: '2026-09-08T00:00:00.000Z',
           })
-          return true
-        }
-
-        assert.deepEqual(
-          { clientId: body.clientId, fencingToken: body.fencingToken },
-          lease,
-          'Transcript append bypassed the active writer fencing token'
-        )
-        const incoming = body.turns[0]
-        const existing = transcript.turns.find(turn => turn.turnId === incoming.turnId)
-        if (existing) {
-          assert.deepEqual(incoming, existing, 'Idempotent replay changed the committed turn')
-        } else if (body.baseSequence !== transcript.turns.length) {
-          json(response, 409, {
-            detail: {
-              code: 'sequence_conflict',
-              message: 'Transcript sequence has changed; pull remote turns before retrying',
-            },
-          })
-          return true
+          transcript.currentSequence = body.sequence
         } else {
-          transcript.turns.push(structuredClone(incoming))
+          assert.equal(existingTurn.turnId, body.turnId)
+          assert.deepEqual(existingTurn.payload, body.summary)
         }
-
-        if (incoming.sequence === 1 && !firstCommitResponseDropped) {
+        if (body.sequence === 1 && !firstCommitResponseDropped) {
           firstCommitResponseDropped = true
           response.destroy()
           return true
         }
         json(response, 200, {
-          currentSequence: transcript.turns.length,
+          currentSequence: transcript.currentSequence,
           appended: existing ? 0 : 1,
         })
         return true
       }
-
+      const turnsMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/turns$/u)
+      if (request.method === 'GET' && turnsMatch) {
+        const transcript = transcripts.get(decodeURIComponent(turnsMatch[1]))
+        const after = Number(url.searchParams.get('after') ?? 0)
+        const limit = Number(url.searchParams.get('limit') ?? 100)
+        const selected = transcript.turns.filter(turn => turn.sequence > after)
+        json(response, 200, {
+          turns: selected.slice(0, limit),
+          currentSequence: transcript.currentSequence,
+          archivedThroughSequence:
+            transcript.archives.filter(archive => archive.fromSequence === 0).at(-1)?.toSequence ??
+            0,
+          hasMore: selected.length > limit,
+        })
+        return true
+      }
       const releaseMatch = url.pathname.match(
         /^\/api\/wework-transcripts\/([^/]+)\/lease\/release$/u
       )
       if (request.method === 'POST' && releaseMatch) {
         const body = await requestBody(request)
-        assert.deepEqual(
-          { clientId: body.clientId, fencingToken: body.fencingToken },
-          lease,
-          'Transcript sync released a lease owned by another writer'
-        )
+        assert.deepEqual({ clientId: body.clientId, fencingToken: body.fencingToken }, lease)
         lease = null
-        const transcriptId = decodeURIComponent(releaseMatch[1])
-        const transcript = transcripts.get(transcriptId)
-        json(
-          response,
-          200,
-          transcriptSummary(transcriptId, transcript?.turns.length ?? 0, [], transcript)
-        )
+        json(response, 200, { released: true })
         return true
       }
-
-      if (request.method === 'GET' && turnsMatch) {
-        const transcript = transcripts.get(decodeURIComponent(turnsMatch[1])) ?? { turns: [] }
-        const after = Number(url.searchParams.get('after') ?? 0)
+      const downloadMatch = url.pathname.match(
+        /^\/api\/wework-transcripts\/([^/]+)\/archives\/(\d+)\/download$/u
+      )
+      if (request.method === 'GET' && downloadMatch) {
+        const transcript = transcripts.get(decodeURIComponent(downloadMatch[1]))
+        const archive = transcript.archives.find(item => item.id === Number(downloadMatch[2]))
         json(response, 200, {
-          turns: transcript.turns.filter(turn => turn.sequence > after),
-          currentSequence: transcript.turns.length,
-          archivedThroughSequence: 0,
-          hasMore: false,
+          downloadUrl: `${origin}/transcript-objects/${encodeURIComponent(archive.objectId)}`,
         })
         return true
       }
-
       if (request.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
-        const parsedBody = await requestBody(request)
-        modelRequests.push(structuredClone(parsedBody))
-        const body = JSON.stringify(parsedBody)
-        const completion = body.includes(FIFTH_PROMPT)
-          ? FIFTH_COMPLETION
-          : body.includes(FOURTH_PROMPT)
-            ? FOURTH_COMPLETION
-            : body.includes(THIRD_PROMPT)
-              ? THIRD_COMPLETION
-              : body.includes(SECOND_PROMPT)
-                ? SECOND_COMPLETION
-                : body.includes(DEVICE_B_PROMPT)
-                  ? DEVICE_B_COMPLETION
-                  : body.includes(FIRST_PROMPT)
-                    ? FIRST_COMPLETION
-                    : null
+        const body = await requestBody(request)
+        modelRequests.push(structuredClone(body))
+        const serialized = JSON.stringify(body)
+        const completion = serialized.includes(THIRD_PROMPT)
+          ? THIRD_COMPLETION
+          : serialized.includes(RESTORED_PROMPT)
+            ? RESTORED_COMPLETION
+            : serialized.includes(SECOND_PROMPT)
+              ? SECOND_COMPLETION
+              : serialized.includes(FIRST_PROMPT)
+                ? FIRST_COMPLETION
+                : null
         if (!completion) return false
         modelSequence += 1
-        const responseId = `wework-transcript-sync-${modelSequence}`
         response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-        response.end(sse(completedResponse(responseId, completion)))
+        response.end(sse(completedResponse(`transcript-sync-${modelSequence}`, completion)))
         return true
       }
-
       return false
     },
 
     async verify(control) {
-      const statePath = join(electronUserDataDirectory, 'dsh-core', 'wework-transcript-sync.json')
-      const outboxPath = join(
+      const deviceAStatePath = join(
+        electronUserDataDirectory,
+        'dsh-core',
+        'wework-transcript-sync.json'
+      )
+      const deviceAOutboxPath = join(
         electronUserDataDirectory,
         'dsh-core',
         'wework-transcript-sync-outbox.sqlite3'
       )
       await createSingleRootLocalProject(control, workspacePath, 'transcript-sync')
+      await writeFile(join(workspacePath, 'transcript-sync-restore-marker.txt'), 'snapshot\n')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FIRST_PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -515,86 +422,29 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         timeoutMs: uiTimeoutMs,
       })
       await waitFor(
-        () => {
-          if (!activeTranscriptId) return null
-          const transcript = transcripts.get(activeTranscriptId)
-          return (
-            transcript?.turns.length === 1 &&
-            firstCommitResponseDropped &&
-            sqliteOutboxCount(outboxPath) === 1
-          )
-        },
+        () =>
+          activeTranscriptId &&
+          activeTranscript()?.currentSequence === 1 &&
+          firstCommitResponseDropped &&
+          sqliteOutboxCount(deviceAOutboxPath) === 1,
         uiTimeoutMs,
-        'Device A did not retain the committed turn before restart after losing its response'
+        'Native snapshot was not retained after losing the commit response'
       )
-      assert.equal(
-        typeof restartDesktopApp,
-        'function',
-        'Transcript sync E2E cannot restart Wework'
-      )
-      const requestCountBeforeRestart = requestLog.length
+      assert.equal(typeof restartDesktopApp, 'function')
       await restartDesktopApp()
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await waitFor(
-        () => {
-          const restartRequests = requestLog.slice(requestCountBeforeRestart)
-          return (
-            restartRequests.some(
-              value =>
-                value ===
-                `POST /api/wework-transcripts/${encodeURIComponent(activeTranscriptId)}/lease`
-            ) &&
-            restartRequests.some(value =>
-              value.startsWith(
-                `GET /api/wework-transcripts/${encodeURIComponent(activeTranscriptId)}/turns?`
-              )
-            ) &&
-            lease === null &&
-            sqliteOutboxCount(outboxPath) === 0
-          )
-        },
+        () => lease === null && sqliteOutboxCount(deviceAOutboxPath) === 0,
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Restarted device A did not reconcile the committed turn idempotently'
+        'Restart did not reconcile the already committed native snapshot'
       )
+      assert.equal(activeTranscript().archives[0].format, 'codex-snapshot.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().turns[0].payload.assistantMessage, FIRST_COMPLETION)
+      await captureScreenshot(control, 'transcript-sync-01-device-a-snapshot-uploaded.png', 'body')
 
-      const transcriptId = activeTranscriptId
-      assert.ok(transcriptId, 'Device A did not establish the shared transcript')
-      await deviceB.sync.flush()
-      assert.equal(
-        deviceB.state.value.transcripts[transcriptId].downloadedThrough,
-        1,
-        'Device B did not import device A transcript before continuing'
-      )
-      await deviceB.enqueue({
-        transcriptId,
-        taskId: 'device-b-local-task',
-        title: 'Shared transcript',
-        sequence: 1,
-        turnId: 'device-b-turn-1',
-        sessionId: 'device-b-session',
-        payload: {
-          userMessages: [{ id: 'device-b-user-1', text: DEVICE_B_PROMPT }],
-          assistantMessage: DEVICE_B_COMPLETION,
-          completion: { kind: 'completed' },
-        },
-      })
-      await deviceB.sync.flush()
-      assert.deepEqual(
-        activeTranscript().turns.map(turn => [turn.sequence, turn.turnId]),
-        [
-          [1, activeTranscript().turns[0].turnId],
-          [2, 'device-b-turn-1'],
-        ],
-        'Device B did not append after device A'
-      )
-
-      await waitFor(
-        async () => {
-          const state = JSON.parse(await readFile(statePath, 'utf8'))
-          return state.transcripts[transcriptId]?.downloadedThrough === 2
-        },
-        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Device A did not observe device B before continuing the shared mainline'
+      await writeFile(
+        join(workspacePath, 'transcript-sync-restore-marker.txt'),
+        `${RESTORED_WORKSPACE_MARKER}\n`
       )
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: SECOND_PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -602,308 +452,155 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         text: SECOND_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
-      const secondModelRequest = modelRequests.find(request =>
+      await waitFor(
+        () =>
+          activeTranscript().currentSequence === 2 &&
+          sqliteOutboxCount(deviceAOutboxPath) === 0 &&
+          lease === null,
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Second turn did not upload a native rollout delta'
+      )
+      assert.equal(activeTranscript().archives[1].format, 'codex-delta.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().turns[1].payload.assistantMessage, SECOND_COMPLETION)
+      await captureScreenshot(control, 'transcript-sync-02-device-a-delta-uploaded.png', 'body')
+      const snapshotObject = objects.get(activeTranscript().archives[0].objectId)
+      const deltaObject = objects.get(activeTranscript().archives[1].objectId)
+      assert.ok(snapshotObject.byteLength > 0)
+      assert.ok(deltaObject.byteLength > 0)
+      assert.equal(snapshotObject.subarray(0, 4).toString('ascii'), 'WTRN')
+      assert.equal(deltaObject.subarray(0, 4).toString('ascii'), 'WTRN')
+      assert.notDeepEqual([...snapshotObject.subarray(0, 2)], [0x1f, 0x8b])
+
+      const secondRequest = modelRequests.find(request =>
         JSON.stringify(request).includes(SECOND_PROMPT)
       )
-      assert.ok(secondModelRequest, 'Device A continuation did not reach the model')
-      const secondModelTexts = modelInputTexts(secondModelRequest)
-      for (const expected of [
-        FIRST_PROMPT,
-        FIRST_COMPLETION,
-        DEVICE_B_PROMPT,
-        DEVICE_B_COMPLETION,
-      ]) {
-        assert.equal(
-          modelInputMessageCount(secondModelTexts, expected),
-          1,
-          `Response-loss recovery did not reach the model exactly once: ${expected}`
-        )
-      }
-      assert.ok(
-        secondModelTexts.indexOf(DEVICE_B_PROMPT) < secondModelTexts.indexOf(DEVICE_B_COMPLETION) &&
-          secondModelTexts.indexOf(DEVICE_B_COMPLETION) <
-            secondModelTexts.findIndex(text => text.includes(SECOND_PROMPT)),
-        'Device A model request did not preserve the imported B turn before its continuation'
+      assert.ok(JSON.stringify(secondRequest).includes(FIRST_COMPLETION))
+
+      const transcriptId = activeTranscriptId
+      const deviceBRoot = join(resultDir, 'simulated-device-b')
+      const deviceBHome = join(deviceBRoot, 'home')
+      const deviceBExecutorHome = join(deviceBRoot, 'executor-home')
+      const deviceBCodexSqliteHome = join(deviceBRoot, 'codex-sqlite')
+      const deviceBUserDataDirectory = join(deviceBRoot, 'electron-user-data')
+      const deviceBStatePath = join(
+        deviceBUserDataDirectory,
+        'dsh-core',
+        'wework-transcript-sync.json'
       )
+      const deviceBOutboxPath = join(
+        deviceBUserDataDirectory,
+        'dsh-core',
+        'wework-transcript-sync-outbox.sqlite3'
+      )
+      await restartDesktopApp({
+        afterStop: async () => {
+          await Promise.all([
+            mkdir(deviceBHome, { recursive: true }),
+            mkdir(deviceBCodexSqliteHome, { recursive: true }),
+          ])
+          await writeFile(join(deviceBHome, '.zshrc'), '# Wework simulated device B shell\n')
+          seedCloudCredential(deviceBUserDataDirectory, apiBaseUrl)
+        },
+        appEnvironmentOverrides: {
+          CODEX_SQLITE_HOME: deviceBCodexSqliteHome,
+          HOME: deviceBHome,
+          WEGENT_STANDALONE_WORKSPACE_ROOT: join(deviceBHome, 'Documents', 'Codex'),
+          WEGENT_CODEX_HOME: join(deviceBExecutorHome, 'codex'),
+          WEGENT_EXECUTOR_HOME: deviceBExecutorHome,
+          WEGENT_EXECUTOR_LOG_FILE: 'executor-device-b.log',
+          WEWORK_APP_CONFIG_DIR: join(deviceBHome, 'app-config'),
+          WEWORK_USER_DATA_DIR: deviceBUserDataDirectory,
+        },
+        expectNewDeviceIdentity: true,
+      })
+      await control.command('waitFor', '[data-testid="telemetry-consent-overlay"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const restoredTask = await waitFor(
+        async () => {
+          try {
+            const index = JSON.parse(
+              await readFile(join(deviceBExecutorHome, 'runtime-work', 'index.json'), 'utf8')
+            )
+            const task = index.tasks?.[transcriptId]
+            return task?.runtime_handle?.cloudTranscript?.importedThrough === 2 ? task : null
+          } catch (error) {
+            if (error?.code === 'ENOENT') return null
+            throw error
+          }
+        },
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Fresh native state did not restore the encrypted snapshot and delta'
+      )
+      assert.equal(
+        await readFile(
+          join(restoredTask.workspace_path, 'transcript-sync-restore-marker.txt'),
+          'utf8'
+        ),
+        `${RESTORED_WORKSPACE_MARKER}\n`
+      )
+      await control.command('click', `[data-testid="runtime-local-task-row-${transcriptId}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: SECOND_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'transcript-sync-03-device-b-restored-history.png', 'body')
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: RESTORED_PROMPT })
+      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: RESTORED_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
       await waitFor(
-        () => {
-          const transcript = activeTranscript()
-          return (
-            transcript.turns.length === 3 &&
-            secondLeaseRejected &&
-            secondFencingRejected &&
-            lease === null
-          )
-        },
-        uiTimeoutMs + SYNC_POLL_INTERVAL_MS * 2,
-        'The pending turn did not survive lease contention and a stale fencing token'
+        () =>
+          activeTranscript().currentSequence === 3 && sqliteOutboxCount(deviceBOutboxPath) === 0,
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Restored device did not continue and upload the next native delta'
+      )
+      assert.equal(activeTranscript().turns[2].payload.assistantMessage, RESTORED_COMPLETION)
+      const restoredRequest = modelRequests.find(request =>
+        JSON.stringify(request).includes(RESTORED_PROMPT)
+      )
+      assert.ok(JSON.stringify(restoredRequest).includes(FIRST_COMPLETION))
+      assert.ok(JSON.stringify(restoredRequest).includes(SECOND_COMPLETION))
+      await captureScreenshot(
+        control,
+        'transcript-sync-04-device-b-continued-sequence-3.png',
+        'body'
       )
 
-      const transcript = activeTranscript()
-      assert.deepEqual(
-        transcript.turns.map(turn => turn.sequence),
-        [1, 2, 3],
-        'A→B→A continuation committed duplicate or non-contiguous turns'
-      )
-      assert.equal(
-        transcript.turns[2].payload.assistantMessage,
-        SECOND_COMPLETION,
-        'Device A did not continue after pulling the device B turn'
-      )
-      assert.equal(
-        appendAttempts.filter(item => item.turns[0].sequence === 1).length,
-        1,
-        'The response-loss case duplicated an already committed turn during reconciliation'
-      )
-      assert.equal(
-        appendAttempts.filter(
-          item => item.clientId === deviceAClientId && item.turns[0].sequence === 3
-        ).length,
-        2,
-        'The fencing race did not retry exactly once with a fresh lease'
-      )
-
-      await deviceB.sync.flush()
-      assert.equal(
-        deviceB.state.value.transcripts[transcriptId].downloadedThrough,
-        3,
-        'Device B did not observe the A→B→A continuation before going offline'
-      )
-      failNextDeviceBAppend = true
-      await deviceB.enqueue({
-        transcriptId,
-        taskId: 'device-b-local-task',
-        title: 'Shared transcript',
-        sequence: 2,
-        turnId: 'device-b-turn-2',
-        sessionId: 'device-b-session',
-        payload: {
-          userMessages: [{ id: 'device-b-user-2', text: DEVICE_B_OFFLINE_PROMPT }],
-          assistantMessage: 'Device B pending while offline',
-        },
+      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('click', '[data-testid="settings-nav-connections"]')
+      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+        text: '同步已开启',
+        timeoutMs: uiTimeoutMs,
       })
-      await assert.rejects(deviceB.sync.flush(), /Device B lost its network/u)
-      await deviceB.enqueue({
-        transcriptId,
-        taskId: 'device-b-local-task',
-        title: 'Shared transcript',
-        sequence: 3,
-        turnId: 'device-b-turn-3',
-        sessionId: 'device-b-session',
-        payload: {
-          userMessages: [{ id: 'device-b-user-3', text: DEVICE_B_SECOND_OFFLINE_PROMPT }],
-          assistantMessage: 'Device B second offline continuation',
-        },
+      await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
+      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+        text: '同步已关闭',
+        timeoutMs: uiTimeoutMs,
       })
-      assert.equal(deviceB.outbox.count(), 2, 'Device B lost its offline outbox chain')
-
+      const syncRequestsAfterDisable = requestLog.filter(value =>
+        value.includes('/api/wework-transcripts')
+      ).length
+      await control.command('click', '[data-testid="settings-back-button"]')
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: THIRD_PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: THIRD_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
-      const thirdModelRequest = modelRequests.find(request =>
-        JSON.stringify(request).includes(THIRD_PROMPT)
-      )
-      assert.ok(thirdModelRequest, 'Device A offline-race continuation did not reach the model')
-      const thirdModelTexts = modelInputTexts(thirdModelRequest)
-      const expectedMainlineHistory = [
-        FIRST_PROMPT,
-        FIRST_COMPLETION,
-        DEVICE_B_PROMPT,
-        DEVICE_B_COMPLETION,
-        SECOND_PROMPT,
-        SECOND_COMPLETION,
-      ]
-      for (const expected of expectedMainlineHistory) {
-        assert.equal(
-          modelInputMessageCount(thirdModelTexts, expected),
-          1,
-          `Lease/fencing recovery did not reach the model exactly once: ${expected}`
-        )
-      }
-      assert.deepEqual(
-        expectedMainlineHistory.map(expected => modelInputMessageIndex(thirdModelTexts, expected)),
-        expectedMainlineHistory
-          .map(expected => modelInputMessageIndex(thirdModelTexts, expected))
-          .toSorted((left, right) => left - right),
-        'Lease/fencing recovery changed the causal order sent to the model'
-      )
-      await waitFor(
-        () => activeTranscript().turns.length === 4 && lease === null,
-        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Device A did not continue while device B retained a failed outbox turn'
-      )
-
-      await deviceB.sync.flush()
-      const branches = [...transcripts.entries()].filter(
-        ([, value]) => value.parentTranscriptId === transcriptId
-      )
-      assert.equal(branches.length, 1, 'Concurrent device B work did not create one branch')
-      const [branchTranscriptId, branch] = branches[0]
-      assert.deepEqual(
-        activeTranscript().turns.map(turn => [turn.sequence, turn.turnId]),
-        [
-          [1, activeTranscript().turns[0].turnId],
-          [2, 'device-b-turn-1'],
-          [3, activeTranscript().turns[2].turnId],
-          [4, activeTranscript().turns[3].turnId],
-        ],
-        'Recovered device B changed the mainline instead of preserving device A'
-      )
-      assert.equal(branch.forkedAtSequence, 3, 'Device B branch used the wrong causal fork point')
-      assert.deepEqual(
-        branch.turns.map(turn => [turn.sequence, turn.turnId]),
-        [
-          [1, 'device-b-turn-2'],
-          [2, 'device-b-turn-3'],
-        ],
-        'Device B offline chain did not stay together on one automatic branch'
-      )
-      assert.equal(deviceBAppendFailed, true, 'The device B offline failure was not exercised')
-      assert.equal(deviceB.outbox.count(), 0, 'Device B outbox remained stuck after branching')
-
-      await waitFor(
-        async () => {
-          const state = JSON.parse(await readFile(statePath, 'utf8'))
-          return state.transcripts[branchTranscriptId]?.parentTranscriptId === transcriptId
-            ? state
-            : null
-        },
-        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Device A did not discover device B automatic branch'
-      )
-      const finalState = JSON.parse(await readFile(statePath, 'utf8'))
-      assert.equal(
-        sqliteOutboxCount(outboxPath),
-        0,
-        'Successfully synchronized turns remained in the SQLite outbox'
-      )
-      assert.equal(
-        finalState.transcripts[transcriptId].downloadedThrough,
-        4,
-        'Device A native mainline cursor changed after device B branched'
-      )
-      assert.equal(
-        Object.hasOwn(finalState.transcripts[transcriptId], 'turns'),
-        false,
-        'Transcript sync state duplicated native Codex message bodies'
-      )
-      assert.equal(
-        finalState.transcripts[branchTranscriptId].parentTranscriptId,
-        transcriptId,
-        'Device A mirror lost the automatic branch parent'
-      )
-      assert.equal(
-        Object.hasOwn(finalState.transcripts[branchTranscriptId], 'turns'),
-        false,
-        'Automatic branch bodies were duplicated outside the native transcript'
-      )
-      assert.equal(
-        finalState.transcripts[branchTranscriptId].downloadedThrough,
-        0,
-        'Device B branch was injected into device A mainline without a local branch binding'
-      )
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FOURTH_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: FOURTH_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
-      const fourthModelRequest = modelRequests.find(request =>
-        JSON.stringify(request).includes(FOURTH_PROMPT)
-      )
-      assert.ok(fourthModelRequest, 'Device A post-branch continuation did not reach the model')
-      const fourthModelTexts = modelInputTexts(fourthModelRequest)
-      for (const expected of [...expectedMainlineHistory, THIRD_PROMPT, THIRD_COMPLETION]) {
-        assert.equal(
-          modelInputMessageCount(fourthModelTexts, expected),
-          1,
-          `Post-branch model request lost or duplicated mainline history: ${expected}`
-        )
-      }
-      for (const excluded of [DEVICE_B_OFFLINE_PROMPT, DEVICE_B_SECOND_OFFLINE_PROMPT]) {
-        assert.equal(
-          modelInputContains(fourthModelTexts, excluded),
-          false,
-          `Post-branch model request was polluted by device B branch history: ${excluded}`
-        )
-      }
-
-      await waitFor(
-        () => activeTranscript().turns.length === 5 && sqliteOutboxCount(outboxPath) === 0,
-        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Device A did not synchronize its final mainline turn before disabling cloud sync'
-      )
-      await control.command('click', '[data-testid="settings-button"]')
-      await control.command('click', '[data-testid="settings-menu-button"]')
-      await control.command('click', '[data-testid="settings-nav-connections"]')
-      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
-        text: '同步已开启',
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
-      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
-        text: '同步已关闭',
-        timeoutMs: uiTimeoutMs,
-      })
-      const syncRequestsAfterDisable = requestLog.filter(
-        value =>
-          value.includes('/api/wework-transcripts') || value.includes('/api/v1/dsh-plugin-storage/')
-      ).length
-      await control.command('click', '[data-testid="settings-back-button"]')
-      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FIFTH_PROMPT })
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: FIFTH_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
       await new Promise(resolve => setTimeout(resolve, SYNC_POLL_INTERVAL_MS + 500))
       assert.equal(
-        requestLog.filter(
-          value =>
-            value.includes('/api/wework-transcripts') ||
-            value.includes('/api/v1/dsh-plugin-storage/')
-        ).length,
-        syncRequestsAfterDisable,
-        'Disabled transcript sync still contacted the backend'
+        requestLog.filter(value => value.includes('/api/wework-transcripts')).length,
+        syncRequestsAfterDisable
       )
-      assert.equal(
-        sqliteOutboxCount(outboxPath),
-        1,
-        'Disabled transcript sync did not retain the native turn locator for later synchronization'
-      )
-      const disabledModelRequest = modelRequests.find(request =>
-        JSON.stringify(request).includes(FIFTH_PROMPT)
-      )
-      assert.ok(
-        disabledModelRequest,
-        'The disabled-sync local continuation did not reach the model'
-      )
-      const disabledModelTexts = modelInputTexts(disabledModelRequest)
-      for (const expected of [
-        ...expectedMainlineHistory,
-        THIRD_PROMPT,
-        THIRD_COMPLETION,
-        FOURTH_PROMPT,
-        FOURTH_COMPLETION,
-        FIFTH_PROMPT,
-      ]) {
-        assert.equal(
-          modelInputMessageCount(disabledModelTexts, expected),
-          1,
-          `Disabled sync changed the native history sent to the model: ${expected}`
-        )
-      }
-      for (const excluded of [DEVICE_B_OFFLINE_PROMPT, DEVICE_B_SECOND_OFFLINE_PROMPT]) {
-        assert.equal(
-          modelInputContains(disabledModelTexts, excluded),
-          false,
-          `Disabled-sync model request was polluted by branch history: ${excluded}`
-        )
-      }
-
+      assert.equal(sqliteOutboxCount(deviceBOutboxPath), 1)
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
       await control.command('click', '[data-testid="settings-nav-connections"]')
@@ -911,6 +608,12 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         text: '同步已关闭',
         timeoutMs: uiTimeoutMs,
       })
+      await captureScreenshot(
+        control,
+        'transcript-sync-05-device-b-sync-disabled-queued.png',
+        'body'
+      )
+
       await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
       await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
         text: '同步已开启',
@@ -918,28 +621,37 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       })
       await control.command('click', '[data-testid="settings-back-button"]')
       await waitFor(
-        () => activeTranscript().turns.length === 6 && sqliteOutboxCount(outboxPath) === 0,
+        () =>
+          activeTranscript().currentSequence === 4 && sqliteOutboxCount(deviceBOutboxPath) === 0,
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Re-enabled transcript sync did not upload the queued native turn'
+        'Re-enabled sync did not upload the queued native delta'
       )
+      const persisted = JSON.parse(await readFile(deviceBStatePath, 'utf8'))
+      assert.equal(Object.hasOwn(persisted.transcripts[activeTranscriptId], 'turns'), false)
+      assert.equal(activeTranscript().turns[3].payload.assistantMessage, THIRD_COMPLETION)
+      assert.ok((await readFile(deviceAStatePath, 'utf8')).includes(activeTranscriptId))
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('click', '[data-testid="settings-nav-connections"]')
+      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+        text: '同步已开启',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(
+        control,
+        'transcript-sync-06-device-b-sync-reenabled-flushed.png',
+        'body'
+      )
     },
 
     diagnostics() {
       return {
         activeTranscriptId,
-        appendAttempts,
-        branches: Object.fromEntries(
-          [...transcripts].filter(([, value]) => value.parentTranscriptId !== null)
-        ),
-        deviceAClientId,
-        deviceBAppendFailed,
-        deviceBPending: deviceB.outbox.list(),
         firstCommitResponseDropped,
         modelRequests,
+        objectSizes: Object.fromEntries([...objects].map(([key, value]) => [key, value.length])),
         requestLog,
-        secondFencingRejected,
-        secondLeaseRejected,
         transcripts: Object.fromEntries(transcripts),
       }
     },
