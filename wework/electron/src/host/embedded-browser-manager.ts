@@ -19,7 +19,10 @@ import {
   type BrowserHistorySearch,
 } from './browser-history-store.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
-import { captureWebContentsDataUrl } from './web-contents-capture.js'
+import {
+  captureWebContentsDataUrl,
+  type WebContentsCaptureOptions,
+} from './web-contents-capture.js'
 
 export interface BrowserBounds {
   x: number
@@ -34,6 +37,8 @@ export interface BrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
   visible: boolean
   navigationError: {
     code: number
@@ -139,6 +144,9 @@ export interface BrowserBackgroundPageState {
 }
 
 const AGENT_CURSOR_IDLE_HIDE_MS = 4_000
+// Chromium's ERR_ABORTED: the load was superseded by a newer navigation, which
+// is a normal race, not a user-facing failure.
+const NAVIGATION_ABORTED_ERROR_CODE = -3
 export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
 export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
@@ -447,6 +455,9 @@ export class EmbeddedBrowserManager {
       if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
     })
     contents.on('did-navigate', (_event, url) => {
+      // A committed main-frame navigation means a page is on screen again, so
+      // any failure recorded by a superseded load is now stale.
+      entry.navigationError = null
       if (url !== entry.previewDisplayUrl) {
         entry.requestedUrl = url
         entry.previewDisplayUrl = null
@@ -463,7 +474,7 @@ export class EmbeddedBrowserManager {
       emitPageState()
     })
     contents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
-      if (!isMainFrame || code === -3) return
+      if (!isMainFrame || code === NAVIGATION_ABORTED_ERROR_CODE) return
       this.recordNavigationFailure(entry, code, message, validatedURL || entry.requestedUrl)
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
@@ -615,6 +626,8 @@ export class EmbeddedBrowserManager {
       title: contents.getTitle() || null,
       url: pendingUrl || visibleCurrentUrl || entry.requestedUrl,
       isLoading: contents.isLoading(),
+      canGoBack: contents.navigationHistory.canGoBack(),
+      canGoForward: contents.navigationHistory.canGoForward(),
       visible: entry.visible,
       navigationError: entry.navigationError,
     }
@@ -991,9 +1004,13 @@ export class EmbeddedBrowserManager {
     return this.history.remove(ids)
   }
 
-  async capture(label: string, rect?: BrowserBounds): Promise<string> {
+  async capture(
+    label: string,
+    rect?: BrowserBounds,
+    options: Omit<WebContentsCaptureOptions, 'rect'> = {}
+  ): Promise<string> {
     const entry = this.required(label)
-    return captureWebContentsDataUrl(entry.contents, { rect })
+    return captureWebContentsDataUrl(entry.contents, { ...options, rect })
   }
 
   labelForContentsId(contentsId: number): string | null {
@@ -1186,6 +1203,10 @@ export class EmbeddedBrowserManager {
       if (!entry.navigationError) {
         const message = error instanceof Error ? error.message : String(error)
         const code = Number(message.match(/\((-?\d+)\)/)?.[1] ?? -2)
+        // loadURL rejects with ERR_ABORTED when a newer navigation supersedes
+        // this one. The winning navigation reports its own outcome, so an
+        // aborted load must not leave a sticky failure on the entry.
+        if (code === NAVIGATION_ABORTED_ERROR_CODE) return
         this.recordNavigationFailure(entry, code, message, url)
       }
     }

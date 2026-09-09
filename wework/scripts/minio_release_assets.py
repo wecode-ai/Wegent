@@ -59,6 +59,7 @@ def load_component_assets(
         asset_name = component.get("assetName")
         archive_sha256 = component.get("archiveSha256")
         release_scope = component.get("releaseScope")
+        reused = component.get("reused") is True
         if (
             not isinstance(asset_name, str)
             or Path(asset_name).name != asset_name
@@ -70,6 +71,8 @@ def load_component_assets(
                 f"Invalid component asset metadata for {component_id}: {descriptor_path}"
             )
         archive = output_dir / asset_name
+        if reused:
+            continue
         archive_bytes = archive.stat().st_size if archive.is_file() else 0
         if archive_bytes <= 0 or _file_sha256(archive) != archive_sha256:
             raise SystemExit(

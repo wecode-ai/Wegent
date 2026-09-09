@@ -87,7 +87,9 @@ def test_execution_view_normalizes_zero_sentinels() -> None:
     assert view.backend_task_id is None
 
 
-def test_upgrade_restores_not_null_sentinel_contract() -> None:
+def test_upgrade_restores_not_null_sentinel_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     migration = _load_migration()
     operation = MagicMock()
     inspector = MagicMock()
@@ -111,7 +113,7 @@ def test_upgrade_restores_not_null_sentinel_contract() -> None:
         ]
     )
     migration.op = operation
-    migration.sa.inspect = MagicMock(return_value=inspector)
+    monkeypatch.setattr(migration.sa, "inspect", MagicMock(return_value=inspector))
 
     migration.upgrade()
 

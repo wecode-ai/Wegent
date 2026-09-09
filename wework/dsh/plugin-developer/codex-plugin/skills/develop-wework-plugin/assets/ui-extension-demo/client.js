@@ -107,6 +107,13 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoSettingsSection() {
+      return createElement(DemoPanel, {
+        testId: 'dsh-extension-demo-settings-section',
+        title: 'DSH settings section',
+      })
+    }
+
     function DemoWorkspaceTab({ tab, visible }) {
       return createElement(
         'div',
@@ -261,6 +268,23 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoHome({ heading, onSelectSuggestion }) {
+      return createElement(
+        'section',
+        { 'data-testid': 'dsh-extension-demo-home' },
+        heading,
+        createElement(
+          'button',
+          {
+            'data-testid': 'dsh-extension-demo-home-suggestion',
+            onClick: () => onSelectSuggestion('Describe the work you want to complete'),
+            type: 'button',
+          },
+          'Start with a suggestion'
+        )
+      )
+    }
+
     const contributions = [
       {
         slot: 'wework.action',
@@ -303,6 +327,14 @@ window.__ModuleLoader__.load({
           order: 90,
         },
         component: DemoBoardCardStatus,
+      },
+      {
+        slot: 'wework.home',
+        descriptor: {
+          id: 'dsh-extension-demo.home',
+          order: 90,
+        },
+        component: DemoHome,
       },
       {
         slot: 'wework.workspace.menu.section',
@@ -407,6 +439,16 @@ window.__ModuleLoader__.load({
           path: '/settings/dsh-extension-demo',
         },
         component: DemoSettings,
+      },
+      {
+        slot: 'wework.settings.section',
+        descriptor: {
+          id: 'dsh-extension-demo.settings-section',
+          label: 'DSH Demo',
+          order: 90,
+          page: 'connections',
+        },
+        component: DemoSettingsSection,
       },
       {
         slot: 'wework.workspace.tab',

@@ -685,6 +685,23 @@ class ExternalLoopItemProvider:
         issue = current if not payload else self._update_issue(project, number, payload)
         if payload:
             self._invalidate_issue_page_cache(project.id)
+        if (
+            values.notify_assignee
+            and values.assignee_user_id
+            and values.assignee_user_id != user_id
+            and values.assignee_user_id != current_response.get("assignee_user_id")
+        ):
+            actor = db.get(User, user_id)
+            notify_project_task_assignee(
+                db,
+                actor_user_id=user_id,
+                user_id=values.assignee_user_id,
+                project_id=str(project.id),
+                project_name=project.name,
+                item_id=item_id,
+                item_title=str(issue.get("title") or item_id),
+                assigner_name=actor.user_name,
+            )
         if assignee_change:
             self._apply_assignee_executions(
                 db,
@@ -736,6 +753,8 @@ class ExternalLoopItemProvider:
             team = runnable_wegent_team(db, user_id, values.assignee_team_id)
             return self._assignee_label("team", str(team.id), team.name)
         if values.assignee_user_id:
+            if values.assignee_user_id not in self._project_member_ids(db, project):
+                raise HTTPException(422, "Assignee is not a member of this project")
             target = db.get(User, values.assignee_user_id)
             return self._assignee_label(
                 "user",
@@ -1038,16 +1057,14 @@ class ExternalLoopItemProvider:
                 assigner_user_id=user_id,
                 priority=self._priority(current_labels),
             )
-        db.commit()
-        if cancelled_runs:
-            from app.services.board_team_execution import (
-                request_execution_cancellations,
-            )
-
-            request_execution_cancellations(cancelled_runs)
         if (
-            values.assignee_type == "user"
-            and target_user_id != user_id
+            values.notify_assignee
+            and values.assignee_type == "user"
+            and (
+                target_user_id != user_id
+                or automation_context is not None
+                or values.notify_self
+            )
             and (
                 previous_assignee is None
                 or previous_assignee["type"] != "user"
@@ -1056,6 +1073,8 @@ class ExternalLoopItemProvider:
         ):
             assigner = db.get(User, user_id)
             notify_project_task_assignee(
+                db,
+                actor_user_id=user_id,
                 user_id=target_user_id,
                 project_id=str(project.id),
                 project_name=project.name or "",
@@ -1063,6 +1082,13 @@ class ExternalLoopItemProvider:
                 item_title=str(issue.get("title") or item_id),
                 assigner_name=assigner.user_name if assigner else str(user_id),
             )
+        db.commit()
+        if cancelled_runs:
+            from app.services.board_team_execution import (
+                request_execution_cancellations,
+            )
+
+            request_execution_cancellations(cancelled_runs)
         return self._response(db, project, issue, access, user_id)
 
     def _ensure_index_row(

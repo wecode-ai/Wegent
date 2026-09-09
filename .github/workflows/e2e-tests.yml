@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
@@ -378,10 +379,12 @@ jobs:
           uv pip install -e ../shared
 
       - name: Download frontend E2E build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: frontend-next-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            frontend-next-build \
+            .ci-artifacts
 
       - name: Install Knowledge Runtime dependencies
         run: uv sync --project knowledge_runtime --frozen
@@ -486,6 +489,20 @@ jobs:
         run: |
           curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
 
+      - name: Run DingTalk private-chat AI Card E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
+
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
@@ -493,6 +510,7 @@ jobs:
       - name: Run E2E tests (Sharded)
         working-directory: ./frontend
         env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
@@ -581,6 +599,10 @@ jobs:
 
   executor-e2e-tests:
     name: Executor E2E Tests
+    permissions:
+      actions: read
+      contents: read
+      packages: read
     needs:
       [
         build-frontend-e2e,
@@ -728,10 +750,12 @@ jobs:
           key: ${{ steps.claude-code-cli-cache.outputs.cache-primary-key }}
 
       - name: Download frontend E2E build
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: frontend-next-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            frontend-next-build \
+            .ci-artifacts
 
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
@@ -749,10 +773,12 @@ jobs:
 
       - name: Download fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: executor-e2e-runtime
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            executor-e2e-runtime \
+            .ci-artifacts
 
       - name: Restore fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
@@ -828,7 +854,7 @@ jobs:
           WEGENT_BACKEND_URL: http://localhost:8000
           DEVICE_ID: e2e-claudecode-device
           DEVICE_NAME: E2E ClaudeCode Device
-          DEVICE_TYPE: local
+          DEVICE_TYPE: app
           BIND_SHELL: claudecode
           WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor
           LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace

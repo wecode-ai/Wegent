@@ -26,6 +26,7 @@ Beat Scheduler Storage:
 import logging
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import (
     after_setup_logger,
     after_setup_task_logger,
@@ -83,6 +84,11 @@ def build_beat_schedule() -> dict:
             "task": "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams",
             "schedule": 6 * 60 * 60,
         },
+        "sync-xiaoxin-hr-knowledge-daily": {
+            "task": "app.tasks.xiaoxin_knowledge_tasks.sync_xiaoxin_hr_knowledge",
+            # Celery uses UTC; 19:00 UTC is 03:00 the next day in Asia/Shanghai.
+            "schedule": crontab(hour=19, minute=0),
+        },
     }
 
 
@@ -97,6 +103,7 @@ celery_app = Celery(
         "app.tasks.project_automation_tasks",
         "app.tasks.plugin_marketplace_tasks",
         "app.tasks.video_tasks",
+        "app.tasks.xiaoxin_knowledge_tasks",
     ],
 )
 

@@ -144,6 +144,7 @@ async def test_runtime_event_forwards_im_progress_events_to_channel_callbacks(
     assert event.type == expected_type
     if expected_type == "thinking":
         assert event.content == "Inspecting the workspace"
+        assert event.data == {"thinking_kind": "reasoning_summary"}
     else:
         assert event.data["block"]["tool_name"] == "Read"
 
@@ -166,7 +167,10 @@ async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
         {
             "event_type": "response.completed",
             "taskId": "runtime-375023196",
-            "data": {"value": "Hi! What would you like to work on?"},
+            "data": {
+                "value": "Hi! What would you like to work on?",
+                "valueOrigin": "final",
+            },
             "source": _im_source(),
         },
     )
@@ -176,7 +180,49 @@ async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     kwargs = registry.handle_task_completed.await_args.kwargs
     assert kwargs["task_id"] == "runtime:local-device:runtime-375023196"
     assert kwargs["status"] == "COMPLETED"
-    assert kwargs["result"] == {"value": "Hi! What would you like to work on?"}
+    assert kwargs["result"] == {
+        "value": "Hi! What would you like to work on?",
+        "value_origin": "final",
+    }
+    runtime_notification_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runtime_waiting_result_preserves_terminal_metadata(
+    monkeypatch,
+    runtime_notification_sender,
+):
+    namespace = DeviceNamespace()
+    registry = MagicMock()
+    registry.handle_task_completed = AsyncMock()
+    monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.completed",
+            "taskId": "runtime-375023196",
+            "data": {
+                "value": "",
+                "valueOrigin": "empty",
+                "stop_reason": "Need input",
+                "silent_exit": True,
+                "silent_exit_reason": "waiting_for_user_input",
+            },
+            "source": _im_source(),
+        },
+    )
+
+    assert result == {"success": True}
+    kwargs = registry.handle_task_completed.await_args.kwargs
+    assert kwargs["result"] == {
+        "value": "",
+        "value_origin": "empty",
+        "stop_reason": "Need input",
+        "silent_exit": True,
+        "silent_exit_reason": "waiting_for_user_input",
+    }
     runtime_notification_sender.assert_not_awaited()
 
 

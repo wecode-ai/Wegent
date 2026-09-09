@@ -92,27 +92,19 @@ def normalize_document_extension(file_extension: Optional[str]) -> str:
 
 
 def get_rag_indexing_skip_reason(
-    source_type: Optional[str],
     file_extension: Optional[str],
     file_size: Optional[int] = None,
 ) -> Optional[str]:
     """Return the reason why a document should skip RAG indexing, if any.
 
     Args:
-        source_type: The source type of the document (e.g., "file", "table")
         file_extension: The file extension (e.g., ".xlsx", "pdf")
         file_size: The file size in bytes (optional, used for Excel file size check)
 
     Returns:
         A string describing the reason to skip indexing, or None if indexing is allowed
     """
-    normalized_source_type = (source_type or "").strip().lower()
     normalized_extension = normalize_document_extension(file_extension)
-
-    if normalized_source_type == "table":
-        return (
-            "Table documents are queried in real-time and do not support RAG indexing"
-        )
 
     # Check Excel file size limit (2MB)
     if normalized_extension in EXCEL_EXTENSIONS:
@@ -236,7 +228,6 @@ def _prepare_indexing_runtime(
     kb_index_info: Optional[KnowledgeBaseIndexInfo],
 ) -> _IndexingPreparation:
     file_extension = None
-    source_type = None
     file_size = None
 
     if document_id is not None:
@@ -249,7 +240,6 @@ def _prepare_indexing_runtime(
         )
         if document:
             file_extension = document.file_extension
-            source_type = document.source_type
             file_size = document.file_size
     elif attachment_id:
         attachment = (
@@ -264,7 +254,7 @@ def _prepare_indexing_runtime(
             file_extension = attachment.file_extension
             file_size = attachment.file_size
 
-    skip_reason = get_rag_indexing_skip_reason(source_type, file_extension, file_size)
+    skip_reason = get_rag_indexing_skip_reason(file_extension, file_size)
     if skip_reason:
         logger.info(
             f"[Indexing] Skipping: kb_id={knowledge_base_id}, "

@@ -205,7 +205,20 @@ async function assertReleasePackageResources() {
   assert.match(appUpdateConfiguration, /^provider: generic$/m)
   assert.match(appUpdateConfiguration, /^url: /m)
   assert.match(appUpdateConfiguration, /^updaterCacheDirName: /m)
-  await readFile(join(resourcesRoot, components.components.codex.path))
+  const codexRoot = join(resourcesRoot, components.components.codex.path)
+  const codexRuntime = JSON.parse(
+    await readFile(join(codexRoot, 'WEGENT_CODEX_BINARY.json'), 'utf8')
+  )
+  const codexBinary = join(codexRoot, codexRuntime.binaryPath)
+  await Promise.all([
+    readFile(codexBinary),
+    readFile(
+      join(
+        dirname(codexBinary),
+        process.platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
+      )
+    ),
+  ])
 }
 
 export async function createDesktopScenario({

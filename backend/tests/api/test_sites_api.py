@@ -83,6 +83,21 @@ def _environment_revision(**overrides: Any) -> dict[str, Any]:
     return revision
 
 
+def _access_policy(**overrides: Any) -> dict[str, Any]:
+    policy = {
+        "id": "pol_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "target": "inner",
+        "audience": "owner",
+        "subjects": [],
+        "revision_number": 2,
+        "created_by": "testuser",
+        "created_at": "2026-09-08T08:00:00Z",
+    }
+    policy.update(overrides)
+    return policy
+
+
 def test_list_sites_requires_authentication(
     test_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -116,6 +131,7 @@ def test_list_site_app_types_returns_ordered_capabilities(
                     "edit",
                     "delete",
                     "configure_environment",
+                    "manage_access",
                 ],
                 "create": {
                     "plugin_name": "wegent-sites",
@@ -753,6 +769,77 @@ def test_list_site_collaborators_forwards_trusted_owner_identity(
     assert response.status_code == 200
     assert response.json()["items"][0]["subject"] == "member"
     assert httpx_mock.get_requests()[0].headers["x-wegent-username"] == "testuser"
+
+
+def test_get_site_access_policy_forwards_collaborator_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/access?target=inner"
+        ),
+        json=_access_policy(audience="custom", subjects=["member"]),
+    )
+
+    response = test_client.get(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/access",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["audience"] == "custom"
+    assert response.json()["subjects"] == ["member"]
+    assert httpx_mock.get_requests()[0].headers["x-wegent-username"] == "testuser"
+
+
+def test_update_site_access_policy_forwards_idempotency_and_normalized_subjects(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="PUT",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/access"
+        ),
+        json=_access_policy(
+            audience="custom",
+            subjects=["member-a", "member-b"],
+            revision_number=3,
+        ),
+    )
+
+    response = test_client.put(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/access",
+        json={"audience": "custom", "subjects": ["member-b", "member-a"]},
+        headers={
+            **_authorization(test_token),
+            "Idempotency-Key": "site-access-12345678",
+            "X-Request-ID": "req-site-access",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["revision_number"] == 3
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["x-wegent-username"] == "testuser"
+    assert request.headers["idempotency-key"] == "site-access-12345678"
+    assert request.headers["x-request-id"] == "req-site-access"
+    assert _json_body(request) == {
+        "username": "testuser",
+        "target": "inner",
+        "audience": "custom",
+        "subjects": "member-a,member-b",
+    }
 
 
 def test_add_site_collaborator_forwards_idempotency_and_request_identity(

@@ -277,12 +277,21 @@ def _resolve_existing_task_team(
     client-selected team cannot move a turn onto another agent. For legacy
     tasks without a usable teamRef the client team is used as-is; a missing
     client team is corrected to the bound team when available.
+
+    The task lookup must accept subscription tasks (``STATE_SUBSCRIPTION``)
+    as well as regular active ones: subscription-triggered conversations are
+    normal chats that users keep sending follow-up messages to. Using
+    ``get_regular_active_task`` here rejected every follow-up in such
+    conversations with "Task not found". ``TaskResource.is_active_query()``
+    mirrors the states accepted by the REST read path
+    (``get_active_non_deleted_task`` in the sharded store).
     """
-    existing_task = task_stores.task_store.get_regular_active_task(
+    existing_task = task_stores.task_store.get_task_by_states(
         db,
         task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
-    if not existing_task:
+    if not existing_task or existing_task.namespace == "system":
         return None, None, {"error": "Task not found"}
 
     try:
@@ -1347,14 +1356,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Use Pydantic's model_dump to ensure all fields are serialized correctly
         contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
 
-        # DEBUG: Log contexts being sent via WebSocket
-        for ctx_dict in contexts_list:
-            if ctx_dict.get("context_type") == "table":
-                logger.info(
-                    f"[WS] Sending table context via WebSocket: id={ctx_dict.get('id')}, "
-                    f"name={ctx_dict.get('name')}, source_config={ctx_dict.get('source_config')}"
-                )
-
         # Build legacy attachment info for backward compatibility
         # Note: attachments field is kept for backward compatibility but set to empty
         # All context data should be read from the 'contexts' field
@@ -1489,6 +1490,32 @@ class ChatNamespace(socketio.AsyncNamespace):
             cancel_success = await execution_dispatcher.cancel(
                 cancel_request, device_id
             )
+
+            # When the streaming runtime is already gone (e.g. backend restart
+            # killed the SSE consumer), no callback will ever arrive. Finalize
+            # the cancellation locally instead of leaving the task stuck in
+            # CANCELLING forever.
+            from app.services.chat.operations.cancel import (
+                is_stream_alive,
+                publish_task_cancelled_events,
+            )
+
+            if not await is_stream_alive(subtask_info["task_id"], payload.subtask_id):
+                finalized_subtask_ids = await run_sync_in_executor(
+                    _finalize_stuck_cancellation, payload.subtask_id
+                )
+                if finalized_subtask_ids is not None:
+                    await publish_task_cancelled_events(
+                        subtask_info["task_id"], finalized_subtask_ids, user_id
+                    )
+                    logger.info(
+                        "[WS] chat:cancel finalized locally (stream runtime gone): "
+                        "task_id=%s, subtask_id=%s, finalized_subtasks=%s",
+                        subtask_info["task_id"],
+                        payload.subtask_id,
+                        finalized_subtask_ids,
+                    )
+                    return {"success": True, "finalized": True}
 
             if not cancel_success:
                 logger.error(
@@ -2265,6 +2292,17 @@ def _mark_task_and_board_cancelling(subtask_id: int) -> None:
             subtask_id=subtask.id,
             user_id=task.user_id,
         )
+
+
+def _finalize_stuck_cancellation(subtask_id: int) -> Optional[list[int]]:
+    """Finalize cancellation locally when the streaming runtime is gone."""
+    from app.services.chat.operations.cancel import finalize_stuck_cancellation
+
+    with get_db_session() as db:
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+        if not subtask:
+            return None
+        return finalize_stuck_cancellation(db, task_id=subtask.task_id)
 
 
 def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[dict]:

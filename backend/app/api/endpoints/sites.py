@@ -26,6 +26,8 @@ from app.schemas.site import (
     EnvironmentVariableDeleteRequest,
     EnvironmentVariablePutRequest,
     EnvironmentVariablesPatchRequest,
+    SiteAccessPolicy,
+    SiteAccessPolicyUpdateRequest,
     SiteAppType,
     SiteCollaborator,
     SiteCollaboratorAddRequest,
@@ -117,6 +119,55 @@ async def list_site_collaborators(
     try:
         return await sites_service.list_collaborators(
             siteid, username=current_user.user_name
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.get("/{siteid}/access", response_model=SiteAccessPolicy)
+async def get_site_access_policy(
+    siteid: str,
+    current_user: User = Depends(security.get_current_user),
+) -> SiteAccessPolicy:
+    """Return the latest inner access policy for an accessible Project."""
+    try:
+        return await sites_service.get_access_policy(
+            siteid, username=current_user.user_name
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.put("/{siteid}/access", response_model=SiteAccessPolicy)
+async def update_site_access_policy(
+    siteid: str,
+    payload: SiteAccessPolicyUpdateRequest,
+    request: Request,
+    idempotency_key: str = Header(
+        ...,
+        alias="Idempotency-Key",
+        min_length=8,
+        max_length=128,
+    ),
+    current_user: User = Depends(security.get_current_user),
+) -> SiteAccessPolicy:
+    """Replace the inner access policy for an accessible Project."""
+    try:
+        return await sites_service.update_access_policy(
+            siteid,
+            username=current_user.user_name,
+            audience=payload.audience,
+            subjects=payload.subjects,
+            idempotency_key=idempotency_key,
+            request_id=request.state.request_id,
         )
     except (
         SitesNotAvailableError,

@@ -10,7 +10,6 @@ import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -18,6 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -110,7 +110,6 @@ function RunRow({
   const [confirming, setConfirming] = useState(false)
   const [showingFailure, setShowingFailure] = useState(false)
   const republish = async () => {
-    setConfirming(false)
     setWorking(true)
     try {
       await codeWikiApi.republish(knowledgeBaseId, run.generation_id)
@@ -122,6 +121,7 @@ function RunRow({
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
       setWorking(false)
+      setConfirming(false)
     }
   }
 
@@ -139,6 +139,11 @@ function RunRow({
           {run.mode && (
             <span className="text-[11px] text-text-tertiary">
               {t(`codeWiki.history.mode.${run.mode}`)}
+            </span>
+          )}
+          {run.strategy_id && (
+            <span className="text-[11px] text-text-tertiary" data-testid="code-wiki-run-strategy">
+              {t('codeWiki.history.strategy', { strategy: run.strategy_id })}
             </span>
           )}
           {run.published && (
@@ -185,22 +190,65 @@ function RunRow({
             {t('codeWiki.history.republish')}
           </button>
         )}
-        <AlertDialog open={confirming} onOpenChange={setConfirming}>
-          <AlertDialogContent data-testid="code-wiki-republish-confirm">
+        <AlertDialog
+          open={confirming}
+          onOpenChange={open => {
+            if (!working) setConfirming(open)
+          }}
+        >
+          <AlertDialogContent
+            data-testid="code-wiki-republish-confirm"
+            onEscapeKeyDown={event => {
+              if (working) event.preventDefault()
+            }}
+          >
             <AlertDialogHeader>
-              <AlertDialogTitle>{t('codeWiki.history.republishConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogTitle>
+                {t(
+                  working
+                    ? 'codeWiki.history.republishSyncingTitle'
+                    : 'codeWiki.history.republishConfirmTitle'
+                )}
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                {t('codeWiki.history.republishConfirmBody')}
+                {t(
+                  working
+                    ? 'codeWiki.history.republishSyncingBody'
+                    : 'codeWiki.history.republishConfirmBody'
+                )}
               </AlertDialogDescription>
+              {!working && (
+                <p className="text-sm text-text-secondary">
+                  {t('codeWiki.history.republishConfirmSlow')}
+                </p>
+              )}
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={republish}
+              <AlertDialogCancel disabled={working} data-testid="code-wiki-republish-cancel">
+                {t('common:actions.cancel')}
+              </AlertDialogCancel>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => void republish()}
+                disabled={working}
                 data-testid={`code-wiki-republish-confirm-${run.generation_id}`}
               >
-                {t('codeWiki.history.republish')}
-              </AlertDialogAction>
+                {working ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <span
+                      data-testid="code-wiki-republish-progress"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      {t('codeWiki.history.republishSyncing')}
+                    </span>
+                  </>
+                ) : (
+                  t('codeWiki.history.republish')
+                )}
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

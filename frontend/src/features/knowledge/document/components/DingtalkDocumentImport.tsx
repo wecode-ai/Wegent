@@ -21,14 +21,16 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
+import { getKnowledgeConfig } from '@/apis/knowledge'
 import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 import { cn } from '@/lib/utils'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import { DingtalkImportTree, collectImportableIds, filterImportTree } from './DingtalkImportTree'
 import { useExternalImportStatuses } from '../hooks/useExternalImportStatuses'
 
-// Maximum documents one batch import may create; mirrors the backend cap.
-const MAX_IMPORT_DOCUMENTS = 50
+// Initial batch-import cap used until the backend config arrives; the backend
+// value (KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX) is authoritative.
+const DEFAULT_MAX_IMPORT_DOCUMENTS = 50
 
 type DingtalkSourceKey = 'docs' | 'wikispace'
 
@@ -98,6 +100,20 @@ export function DingtalkDocumentImport({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [result, setResult] = useState<DingtalkBatchImportSummary | null>(null)
+  const [maxImportDocuments, setMaxImportDocuments] = useState(DEFAULT_MAX_IMPORT_DOCUMENTS)
+  useEffect(() => {
+    let cancelled = false
+    getKnowledgeConfig()
+      .then(config => {
+        if (!cancelled) setMaxImportDocuments(config.external_batch_import_max)
+      })
+      .catch(() => {
+        // Keep the default cap when the config endpoint is unavailable.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   useEffect(() => {
     onDraftChange(result === null && selectedIds.size > 0)
   }, [onDraftChange, result, selectedIds])
@@ -211,7 +227,7 @@ export function DingtalkDocumentImport({
     })
   }, [availableIds])
   const expandedIds = availableIds.filter(id => selectedIds.has(id))
-  const overLimit = expandedIds.length > MAX_IMPORT_DOCUMENTS
+  const overLimit = expandedIds.length > maxImportDocuments
   // Ancestor documents retained for context are not search matches themselves.
   const visibleIds = collectImportableIds(visibleNodes, searchQuery, source.status)
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
@@ -284,7 +300,7 @@ export function DingtalkDocumentImport({
       >
         <div className="flex shrink-0 items-center text-xs text-text-secondary">
           <p>
-            {t('document.upload.dingtalk.compactHint')} ·{' '}
+            {t('document.upload.dingtalk.compactHint', { max: maxImportDocuments })} ·{' '}
             <span data-testid="dingtalk-import-shared-hint">
               {t('document.upload.dingtalk.sharedHint')}
             </span>
@@ -548,7 +564,7 @@ export function DingtalkDocumentImport({
               data-testid="dingtalk-import-limit-error"
             >
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{t('document.upload.dingtalk.limitError')}</span>
+              <span>{t('document.upload.dingtalk.limitError', { max: maxImportDocuments })}</span>
             </div>
           )}
 

@@ -1154,6 +1154,29 @@ class TaskOperationsMixin:
         db.commit()
         return None
 
+    @staticmethod
+    def _is_cancellation_stuck(task_dict: Dict[str, Any]) -> bool:
+        """Return True when a task has sat in CANCELLING beyond the timeout.
+
+        The CANCELLING timestamp lives in status.updatedAt, which
+        _mark_task_and_board_cancelling refreshes when persisting the intent.
+        """
+        updated_at = task_dict.get("updated_at")
+        if isinstance(updated_at, str):
+            try:
+                updated_at = datetime.fromisoformat(updated_at)
+            except ValueError:
+                return False
+        if not isinstance(updated_at, datetime):
+            return False
+        if updated_at.tzinfo is not None:
+            idle_seconds = (
+                datetime.now(updated_at.tzinfo) - updated_at
+            ).total_seconds()
+        else:
+            idle_seconds = (datetime.now() - updated_at).total_seconds()
+        return idle_seconds > settings.CANCELLING_STUCK_TIMEOUT_SECONDS
+
     async def cancel_task(
         self,
         db: Session,
@@ -1184,6 +1207,24 @@ class TaskOperationsMixin:
             )
 
         if current_status == "CANCELLING":
+            if self._is_cancellation_stuck(task_dict):
+                logger.warning(
+                    f"Task {task_id} stuck in CANCELLING over "
+                    f"{settings.CANCELLING_STUCK_TIMEOUT_SECONDS}s, finalizing locally"
+                )
+                from app.services.chat.operations.cancel import (
+                    finalize_stuck_cancellation,
+                    publish_task_cancelled_events,
+                )
+
+                finalized_subtask_ids = finalize_stuck_cancellation(db, task_id=task_id)
+                await publish_task_cancelled_events(
+                    task_id, finalized_subtask_ids, user_id
+                )
+                return {
+                    "message": "Task cancellation finalized",
+                    "status": "CANCELLED",
+                }
             logger.info(f"Task {task_id} is already being cancelled")
             return {
                 "message": "Task is already being cancelled",

@@ -29,7 +29,9 @@ from app.api.ws.chat_namespace import _resolve_task_bound_team  # noqa: E402
 
 def _task(team_ref: dict | None) -> SimpleNamespace:
     spec = {"teamRef": team_ref} if team_ref else {}
-    return SimpleNamespace(id=390051750105148, user_id=2838, json={"spec": spec})
+    return SimpleNamespace(
+        id=390051750105148, user_id=2838, namespace="default", json={"spec": spec}
+    )
 
 
 def _db_returning_team(bound_team: object | None) -> Mock:
@@ -151,7 +153,7 @@ def test_missing_bound_team_raises() -> None:
 def test_existing_task_missing_returns_error(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
         task_stores.task_store,
-        "get_regular_active_task",
+        "get_task_by_states",
         Mock(return_value=None),
     )
     client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
@@ -174,7 +176,7 @@ def test_existing_task_uses_bound_team(monkeypatch: MonkeyPatch) -> None:
     bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
     monkeypatch.setattr(
         task_stores.task_store,
-        "get_regular_active_task",
+        "get_task_by_states",
         Mock(return_value=existing_task),
     )
     monkeypatch.setattr(
@@ -206,7 +208,7 @@ def test_existing_task_corrects_inactive_client_team(
     bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
     monkeypatch.setattr(
         task_stores.task_store,
-        "get_regular_active_task",
+        "get_task_by_states",
         Mock(return_value=existing_task),
     )
     monkeypatch.setattr(
@@ -228,7 +230,7 @@ def test_legacy_task_without_team_ref_and_client_team_errors(
     existing_task = _task(None)
     monkeypatch.setattr(
         task_stores.task_store,
-        "get_regular_active_task",
+        "get_task_by_states",
         Mock(return_value=existing_task),
     )
 
@@ -250,7 +252,7 @@ def test_bound_team_same_as_client_returns_team(monkeypatch: MonkeyPatch) -> Non
     bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
     monkeypatch.setattr(
         task_stores.task_store,
-        "get_regular_active_task",
+        "get_task_by_states",
         Mock(return_value=existing_task),
     )
     monkeypatch.setattr(
@@ -278,7 +280,7 @@ def test_bound_team_resolution_error_is_returned(monkeypatch: MonkeyPatch) -> No
     )
     monkeypatch.setattr(
         task_stores.task_store,
-        "get_regular_active_task",
+        "get_task_by_states",
         Mock(return_value=existing_task),
     )
     monkeypatch.setattr(
@@ -295,3 +297,63 @@ def test_bound_team_resolution_error_is_returned(monkeypatch: MonkeyPatch) -> No
     assert task is None
     assert result is None
     assert error == {"error": "Team missing"}
+
+
+def test_subscription_task_followup_is_accepted(monkeypatch: MonkeyPatch) -> None:
+    """Regression: subscription-triggered conversations (is_active=STATE_SUBSCRIPTION)
+    must accept follow-up messages instead of returning "Task not found"."""
+    from app.models.task import TaskResource
+
+    existing_task = _task(
+        {
+            "name": "creator-php-workflow",
+            "namespace": "default",
+            "user_id": 2838,
+        }
+    )
+    bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
+    store_lookup = Mock(return_value=existing_task)
+    monkeypatch.setattr(task_stores.task_store, "get_task_by_states", store_lookup)
+    monkeypatch.setattr(
+        chat_namespace,
+        "_resolve_task_bound_team",
+        Mock(return_value=bound_team),
+    )
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
+
+    task, result, error = _resolve_existing_task_team(
+        Mock(), existing_task.id, client_team
+    )
+
+    assert error is None
+    assert task is existing_task
+    assert result is bound_team
+    # The lookup must cover both regular active and subscription tasks.
+    states = store_lookup.call_args.kwargs["states"]
+    assert TaskResource.STATE_ACTIVE in states
+    assert TaskResource.STATE_SUBSCRIPTION in states
+
+
+def test_system_namespace_task_is_rejected(monkeypatch: MonkeyPatch) -> None:
+    existing_task = _task(
+        {
+            "name": "creator-php-workflow",
+            "namespace": "default",
+            "user_id": 2838,
+        }
+    )
+    existing_task.namespace = "system"
+    monkeypatch.setattr(
+        task_stores.task_store,
+        "get_task_by_states",
+        Mock(return_value=existing_task),
+    )
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
+
+    task, result, error = _resolve_existing_task_team(
+        Mock(), existing_task.id, client_team
+    )
+
+    assert task is None
+    assert result is None
+    assert error == {"error": "Task not found"}

@@ -16,6 +16,7 @@ import {
   type WorkbenchRuntimeLaunch,
   type WorkbenchRuntimeSnapshot,
 } from './workbench-runtime.js'
+import { applyWorkbenchModeToCorePlugins, type WorkbenchMode } from './workbench-mode.js'
 
 const CORE_APP_PATH = '/'
 const CORE_DSH_START_TIMEOUT_MS = 120_000
@@ -25,6 +26,11 @@ export interface DesktopRuntimeOptions {
   dataDirectory: string
   logDirectory: string
   hostPipe: HostPipeServer
+  readWorkbenchMode?: () => Promise<WorkbenchMode>
+  createWorkbenchHostPipe?: (tabId: string) => {
+    hostPipe: HostPipeServer
+    principal: string
+  }
   onExecutorEvent?: (event: string, payload: Record<string, unknown>) => void
   createCoreDsh?: (options: DshRuntimeOptions) => CoreDshHandle
 }
@@ -128,7 +134,20 @@ export class DesktopRuntime {
     if (!this.started) {
       return Promise.reject(new Error('Core desktop runtime is not ready'))
     }
-    return this.workbench.open(launch)
+    const existing = this.workbench.get(launch.tabId)
+    if (existing) return Promise.resolve(existing)
+    return this.workbench.open(this.enrichWorkbenchLaunch(launch))
+  }
+
+  private enrichWorkbenchLaunch(launch: WorkbenchRuntimeLaunch): WorkbenchRuntimeLaunch {
+    if (launch.hostPipe) return launch
+    const host = this.options.createWorkbenchHostPipe?.(launch.tabId)
+    if (!host) return launch
+    return {
+      ...launch,
+      hostPipe: host.hostPipe,
+      hostPrincipal: host.principal,
+    }
   }
 
   listCoreDshPlugins(): Promise<CoreDshPlugin[]> {
@@ -272,6 +291,10 @@ export class DesktopRuntime {
         nodeCommand: launch.command,
         environment: launch.environment,
       })
+      if (this.options.readWorkbenchMode) {
+        await applyWorkbenchModeToCorePlugins(await this.options.readWorkbenchMode(), plugins)
+        if (this.lifecycleGeneration !== generation) return
+      }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
       if (developmentRoot && this.developmentPlugin?.sourceRoot !== resolve(developmentRoot)) {
         const developmentPlugin = await plugins.ensureDevelopmentPlugin(developmentRoot)

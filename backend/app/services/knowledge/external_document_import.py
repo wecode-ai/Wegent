@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
+from app.core.config import settings
 from app.models.knowledge import (
     DocumentIndexStatus,
     KnowledgeDocument,
@@ -44,11 +46,10 @@ from app.services.knowledge.index_state_machine import (
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.processing_errors import build_processing_error
+from shared.telemetry.decorators import set_span_attribute
 
 logger = logging.getLogger(__name__)
 
-# Maximum external documents a single batch import may create.
-MAX_EXTERNAL_BATCH_IMPORT = 50
 MAX_DOCUMENT_NAME_LENGTH = 255
 
 
@@ -63,6 +64,16 @@ class ExternalDocumentRefreshResult:
 
     document: KnowledgeDocument
     started: bool
+
+
+@dataclass(frozen=True)
+class ExternalImportObservabilityContext:
+    """Stable identity used to correlate one external import attempt."""
+
+    document_id: int
+    knowledge_base_id: int
+    provider_id: str
+    generation: int
 
 
 @dataclass
@@ -184,14 +195,18 @@ class ExternalDocumentImportService:
 
         # Deduplicate by external identity while preserving request order.
         resource_ids = list(dict.fromkeys(external_resource_ids))
-        if len(resource_ids) > MAX_EXTERNAL_BATCH_IMPORT:
+        max_batch = settings.KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX
+        if len(resource_ids) > max_batch:
             raise ExternalDocumentImportError(
-                f"At most {MAX_EXTERNAL_BATCH_IMPORT} documents can be imported "
-                "in one batch"
+                f"At most {max_batch} documents can be imported in one batch"
             )
 
         resolved, refreshable, processing = self._resolve_batch_items(
-            db, user, provider, knowledge_base_id, resource_ids
+            db,
+            user,
+            provider,
+            knowledge_base_id,
+            resource_ids,
         )
         updated: list[KnowledgeDocument] = []
         for document, external_meta in refreshable:
@@ -506,7 +521,17 @@ def run_external_document_import(
     provider_id = document.external_provider
     resource_id = document.external_resource_id
     owner_user_id = document.user_id
+    knowledge_base_id = document.kind_id
     provider = get_external_document_provider(provider_id or "")
+    fetch_started_at = time.perf_counter()
+    failure_stage = "fetch"
+    observability = ExternalImportObservabilityContext(
+        document_id=document_id,
+        knowledge_base_id=knowledge_base_id,
+        provider_id=provider_id or "unknown",
+        generation=generation,
+    )
+    _set_external_import_span_context(observability)
     try:
         if provider is None:
             raise ExternalDocumentFetchError(
@@ -519,6 +544,11 @@ def run_external_document_import(
         content: ExternalDocumentContent = asyncio.run(
             provider.fetch_content(db, user, resource_id)
         )
+        _record_external_content_fetched(
+            observability,
+            fetch_elapsed_ms=round((time.perf_counter() - fetch_started_at) * 1000, 3),
+        )
+        failure_stage = "publish"
         knowledge_orchestrator.attach_external_document_content(
             db=db,
             document=document,
@@ -534,6 +564,11 @@ def run_external_document_import(
             generation,
         )
     except ExternalSourceUnavailableError as exc:
+        _record_external_import_failure(
+            observability,
+            failure_stage=failure_stage,
+            error_code="external_source_unavailable",
+        )
         _mark_external_source_unavailable(db, document_id, provider_id, generation)
         logger.warning(
             "[External Import] Source of document %s is no longer accessible: %s",
@@ -541,6 +576,12 @@ def run_external_document_import(
             exc,
         )
     except Exception as exc:
+        error_code = str(getattr(exc, "error_code", "external_import_failed"))
+        _record_external_import_failure(
+            observability,
+            failure_stage=failure_stage,
+            error_code=error_code,
+        )
         db.rollback()
         _mark_external_import_failed(db, document_id, provider_id, generation)
         logger.error(
@@ -549,6 +590,56 @@ def run_external_document_import(
             exc,
             exc_info=True,
         )
+
+
+def _set_external_import_span_context(
+    context: ExternalImportObservabilityContext,
+) -> None:
+    attributes = {
+        "knowledge.document_id": context.document_id,
+        "knowledge.knowledge_base_id": context.knowledge_base_id,
+        "knowledge.provider": context.provider_id,
+        "knowledge.index_generation": context.generation,
+    }
+    for key, value in attributes.items():
+        set_span_attribute(key, value)
+
+
+def _record_external_content_fetched(
+    context: ExternalImportObservabilityContext,
+    *,
+    fetch_elapsed_ms: float,
+) -> None:
+    details = {
+        "knowledge_base_id": context.knowledge_base_id,
+        "document_id": context.document_id,
+        "provider": context.provider_id,
+        "index_generation": context.generation,
+        "fetch_elapsed_ms": fetch_elapsed_ms,
+    }
+    for key, value in details.items():
+        if value is not None:
+            set_span_attribute(f"knowledge.{key}", value)
+    logger.info("[External Import] Content fetched", extra=details)
+
+
+def _record_external_import_failure(
+    context: ExternalImportObservabilityContext,
+    *,
+    failure_stage: str,
+    error_code: str,
+) -> None:
+    set_span_attribute("knowledge.failure_stage", failure_stage)
+    set_span_attribute("knowledge.error_code", error_code)
+    logger.error(
+        "[External Import] Attempt failed",
+        extra={
+            "knowledge_base_id": context.knowledge_base_id,
+            "document_id": context.document_id,
+            "failure_stage": failure_stage,
+            "error_code": error_code,
+        },
+    )
 
 
 def _mark_external_source_unavailable(

@@ -154,7 +154,6 @@ const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_ty
   'attachment',
   'external_web_content',
   'knowledge_base',
-  'table',
 ])
 
 function getVideoInputSupport(model: Model | null | undefined): boolean | null {
@@ -2058,58 +2057,6 @@ function ChatAreaContent({
     []
   )
 
-  // Callback for re-selecting a context from a message badge
-  const handleContextReselect = useCallback(
-    (context: SubtaskContextBrief) => {
-      // Convert SubtaskContextBrief to ContextItem format
-      let contextItem: ContextItem | null = null
-
-      if (context.context_type === 'knowledge_base') {
-        if (!context.knowledge_id) return
-        contextItem = {
-          id: context.knowledge_id,
-          name: context.name,
-          type: 'knowledge_base',
-          document_count: context.document_count ?? undefined,
-          document_ids: context.document_ids ?? undefined,
-          folder_ids: context.folder_ids ?? undefined,
-          folder_names: context.folder_names ?? undefined,
-          include_subfolders: context.include_subfolders ?? undefined,
-          scope_restricted: context.scope_restricted ?? undefined,
-        }
-      } else if (context.context_type === 'table') {
-        if (!context.document_id) return
-        contextItem = {
-          id: `table-${context.document_id}`,
-          name: context.name,
-          type: 'table',
-          document_id: context.document_id,
-          source_config: context.source_config ?? undefined,
-        }
-      } else if (context.context_type === 'external_knowledge') {
-        const ref = buildExternalRefFromContext(context)
-        if (!ref) return
-        contextItem = {
-          id: buildExternalContextId(ref),
-          name: context.name,
-          type: 'external_knowledge',
-          ref,
-        }
-      }
-
-      if (!contextItem) return
-
-      const currentContexts = selectedContextsRef.current
-      const isAlreadySelected = currentContexts.some(
-        c => c.type === contextItem!.type && c.id === contextItem!.id
-      )
-      if (isAlreadySelected) return
-
-      setSelectedContexts([...currentContexts, contextItem])
-    },
-    [setSelectedContexts]
-  )
-
   const handlePipelineNextStepClick = useCallback(() => {
     setIsPipelineNextStepOpen(true)
   }, [])
@@ -2316,7 +2263,7 @@ function ChatAreaContent({
         }
       }
 
-      // Restore knowledge base and table contexts
+      // Restore knowledge base contexts
       const restoredContextItems: ContextItem[] = []
       for (const ctx of rawContexts) {
         if (ctx.context_type === 'knowledge_base') {
@@ -2331,15 +2278,6 @@ function ChatAreaContent({
             folder_names: ctx.folder_names ?? undefined,
             include_subfolders: ctx.include_subfolders ?? undefined,
             scope_restricted: ctx.scope_restricted ?? undefined,
-          })
-        } else if (ctx.context_type === 'table') {
-          if (!ctx.document_id) continue
-          restoredContextItems.push({
-            id: `table-${ctx.document_id}`,
-            name: ctx.name,
-            type: 'table',
-            document_id: ctx.document_id,
-            source_config: ctx.source_config ?? undefined,
           })
         } else if (ctx.context_type === 'external_knowledge') {
           const ref = buildExternalRefFromContext(ctx)
@@ -2664,7 +2602,6 @@ function ChatAreaContent({
               hasMessages={hasMessages}
               pendingTaskId={streamHandlers.pendingTaskId}
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
-              onContextReselect={handleContextReselect}
               hideGroupChatOptions={taskType === 'knowledge'}
               onUseAsReference={handleUseAsReference}
               onReEdit={handleReEdit}

@@ -113,6 +113,7 @@ class SiteApplicationHandler(ApplicationTypeHandler):
         "edit",
         "delete",
         "configure_environment",
+        "manage_access",
     )
     create_plugin_name = BUILTIN_SITES_PLUGIN_NAME
 

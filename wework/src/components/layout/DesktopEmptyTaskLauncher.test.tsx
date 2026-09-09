@@ -1,9 +1,15 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import { installDshUiTestContributions, preloadDefaultDshUiTestModules } from '@/test/setup'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+
+beforeEach(async () => {
+  await preloadDefaultDshUiTestModules(['plugins/wework-ui-home-developer.js'])
+})
 
 function LauncherHarness({
   projectName = 'Wegent',
@@ -110,6 +116,37 @@ describe('DesktopEmptyTaskLauncher', () => {
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('我们该做什么？')
     expect(screen.queryByTestId('empty-project-title-button')).not.toBeInTheDocument()
+  })
+
+  test('renders focus-mode suggestions without developer categories', async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.home]: [{ id: 'focus-home', module: 'plugins/wework-ui-home-focus.js' }],
+      },
+      {
+        'plugins/wework-ui-home-focus.js': () => import('../../../dsh/ui-home-focus/src/home'),
+      }
+    )
+
+    render(<LauncherHarness />)
+
+    expect(await screen.findByTestId('focus-home')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
+      '我们应该在 Wegent 中做些什么？'
+    )
+    expect(within(screen.getByTestId('focus-suggestions')).getAllByRole('button')).toHaveLength(4)
+    expect(screen.getByText('整理和总结资料')).toBeInTheDocument()
+    expect(screen.getByText('撰写或润色内容')).toBeInTheDocument()
+    expect(screen.getByText('分析问题并给出建议')).toBeInTheDocument()
+    expect(screen.getByText('制定计划和拆解任务')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-suggestion-categories')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('focus-suggestion-analysis'))
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '帮我分析这个问题并给出可执行建议：'
+    )
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
   })
 
   test('passes the title button as the project chooser anchor', async () => {

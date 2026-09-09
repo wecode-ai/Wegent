@@ -1,3 +1,4 @@
+import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import {
   ComponentUpdateManager,
   type ComponentPaths,
@@ -8,7 +9,12 @@ export interface DesktopComponentUpdateController {
   confirmStartup(): Promise<void>
   rollbackStartup(): Promise<boolean>
   stageAvailableUpdate(): Promise<boolean>
-  stageUpdateForApp(appVersion: string, channel: string): Promise<boolean>
+  stageUpdateForApp(
+    appVersion: string,
+    channel: string,
+    ignoreDifferentAppVersion?: boolean,
+    onProgress?: (progress: ComponentDownloadProgress) => void
+  ): Promise<boolean>
 }
 
 interface PrepareDesktopComponentsOptions {

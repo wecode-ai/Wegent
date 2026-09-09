@@ -95,8 +95,8 @@ describe('PluginCreateWorkspace', () => {
 
     expect(screen.getByTestId('plugin-create-workspace')).toHaveClass('overflow-hidden')
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '我们该做什么？' })).toBeInTheDocument()
-    expect(screen.getByTestId('task-suggestion-categories')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '我们该做什么？' })).toBeInTheDocument()
+    expect(await screen.findByTestId('task-suggestion-categories')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
     expect(screen.getByTestId('composer-toolbar')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-create-prompt-input')).toBeInTheDocument()

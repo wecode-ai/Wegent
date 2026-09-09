@@ -244,11 +244,11 @@ export function completeRuntimeConversationHydration(
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
 
-  const localTurns = turnsByConversation.get(key) ?? []
-  let turns = mergeRuntimeConversationTurns(localTurns, snapshotTurns)
+  let turns = turnsByConversation.get(key) ?? []
   for (const action of hydration.bufferedActions) {
     turns = reduceRuntimeConversationTurns(turns, action)
   }
+  turns = mergeRuntimeConversationTurns(turns, snapshotTurns)
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)

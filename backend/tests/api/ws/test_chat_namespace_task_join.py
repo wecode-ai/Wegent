@@ -144,6 +144,10 @@ async def test_chat_cancel_waits_for_runtime_ack_without_faking_terminal_state()
             "app.services.execution.dispatcher.execution_dispatcher.cancel",
             AsyncMock(return_value=True),
         ) as cancel_mock,
+        patch(
+            "app.services.chat.operations.cancel.is_stream_alive",
+            AsyncMock(return_value=True),
+        ),
     ):
         result = await namespace.on_chat_cancel(
             "sid-1",
@@ -189,6 +193,10 @@ async def test_chat_cancel_reports_runtime_rejection() -> None:
             "app.services.execution.dispatcher.execution_dispatcher.cancel",
             AsyncMock(return_value=False),
         ),
+        patch(
+            "app.services.chat.operations.cancel.is_stream_alive",
+            AsyncMock(return_value=True),
+        ),
     ):
         result = await namespace.on_chat_cancel(
             "sid-1",
@@ -196,6 +204,55 @@ async def test_chat_cancel_reports_runtime_rejection() -> None:
         )
 
     assert result == {"error": "Runtime did not acknowledge cancellation"}
+
+
+@pytest.mark.asyncio
+async def test_chat_cancel_finalizes_when_stream_runtime_is_gone() -> None:
+    """A dead stream has no consumer for the cancel flag and no terminal
+    callback, so the request path must finalize the cancellation itself."""
+
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+
+    async def run_sync_side_effect(func, *args):
+        if func.__name__ == "_get_subtask_for_cancel":
+            return {
+                "task_id": 101,
+                "status": SubtaskStatus.RUNNING,
+                "executor_name": None,
+            }
+        if func.__name__ == "_mark_task_and_board_cancelling":
+            return None
+        if func.__name__ == "_finalize_stuck_cancellation":
+            return [55]
+        raise AssertionError(f"Unexpected sync function: {func.__name__}")
+
+    with (
+        patch(
+            "app.api.ws.chat_namespace.run_sync_in_executor",
+            AsyncMock(side_effect=run_sync_side_effect),
+        ),
+        patch(
+            "app.services.execution.dispatcher.execution_dispatcher.cancel",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.chat.operations.cancel.is_stream_alive",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.chat.operations.cancel.publish_task_cancelled_events",
+            AsyncMock(),
+        ) as publish_mock,
+    ):
+        result = await namespace.on_chat_cancel(
+            "sid-1",
+            {"subtask_id": 55, "shell_type": "Chat"},
+        )
+
+    assert result == {"success": True, "finalized": True}
+    publish_mock.assert_awaited_once_with(101, [55], 1)
 
 
 def test_native_cancel_atomically_records_linked_board_intent(

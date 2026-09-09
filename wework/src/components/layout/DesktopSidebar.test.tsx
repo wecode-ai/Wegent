@@ -36,6 +36,7 @@ import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
+import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -1988,6 +1989,37 @@ describe('DesktopSidebar', () => {
     expect(window.location.pathname).toBe('/sites')
   })
 
+  test('opens a contributed workspace sidebar tab without changing the current route', async () => {
+    const runtime = window.__WEWORK_DSH_UI__
+    expect(runtime).toBeDefined()
+    const openTab = vi.spyOn(rightWorkspaceDshSidebar, 'openTab').mockImplementation(() => {})
+    const navigation = [
+      ...runtime!.getEntries(WEWORK_DSH_SLOTS.sidebarNavigation),
+      {
+        id: 'reference-website.navigation',
+        label: 'Reference website',
+        icon: 'globe',
+        workspaceSidebarTab: 'reference-website',
+        testId: 'reference-website-button',
+      },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      ...runtime!,
+      getEntries: slotName =>
+        slotName === WEWORK_DSH_SLOTS.sidebarNavigation
+          ? navigation
+          : runtime!.getEntries(slotName),
+    }
+    window.history.replaceState({}, '', '/')
+
+    renderSidebar()
+    await userEvent.click(screen.getByTestId('reference-website-button'))
+
+    expect(openTab).toHaveBeenCalledWith({ type: 'reference-website' })
+    expect(window.location.pathname).toBe('/')
+    openTab.mockRestore()
+  })
+
   test('keeps a dynamic DSH navigation icon mounted across unrelated sidebar rerenders', async () => {
     const runtime = window.__WEWORK_DSH_UI__
     expect(runtime).toBeDefined()
@@ -3498,7 +3530,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalTasks: 2,
+            totalTasks: 3,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -3514,7 +3546,16 @@ describe('DesktopSidebar', () => {
                     title: 'Investigate stream',
                     runtime: 'codex',
                     running: true,
+                    goalStatus: 'active',
                     updatedAt: '2026-06-20T03:00:00Z',
+                  },
+                  {
+                    taskId: 'codex-running-without-goal',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Investigate logs',
+                    runtime: 'codex',
+                    running: true,
+                    updatedAt: '2026-06-20T02:30:00Z',
                   },
                   {
                     taskId: 'codex-idle',
@@ -3530,19 +3571,23 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalTasks: 2,
+        totalTasks: 3,
       },
     })
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
-    expect(runningStatus).toHaveAttribute('aria-label', '运行中')
-    expect(runningStatus).not.toHaveTextContent('运行中')
+    expect(runningStatus).toHaveAttribute('aria-label', '运行中，有目标')
+    expect(runningStatus).not.toHaveTextContent('运行中，有目标')
     const spinnerLayer = runningStatus.querySelector('.animate-spin')
     expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
     expect(spinnerLayer).toHaveClass('will-change-transform')
     expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
+    expect(screen.getByTestId('runtime-local-task-goal-dot-codex-running')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-goal-dot-codex-running-without-goal')
+    ).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 

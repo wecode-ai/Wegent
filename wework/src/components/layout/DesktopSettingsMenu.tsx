@@ -1,3 +1,4 @@
+import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import {
   ChevronDown,
   Download,
@@ -214,14 +215,7 @@ export function DesktopSettingsMenu({
             })
           : null
   const downloadMessage =
-    updateStatus === 'downloading'
-      ? downloadPercent === null
-        ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
-        : t('workbench.app_update_downloading_progress', {
-            defaultValue: '正在下载更新 {{progress}}%',
-            progress: downloadPercent,
-          }).replace('{{progress}}', String(downloadPercent))
-      : null
+    updateStatus === 'downloading' ? formatAppUpdateProgress(downloadProgress, t) : null
 
   return (
     <div

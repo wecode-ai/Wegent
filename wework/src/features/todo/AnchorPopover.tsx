@@ -54,6 +54,12 @@ export function AnchorPopover({ anchor, title, testId, onClose, children }: Anch
   }, [anchor])
 
   useEffect(() => {
+    if (!anchor) return
+    const frame = window.requestAnimationFrame(() => popoverRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [anchor])
+
+  useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) {
@@ -83,8 +89,9 @@ export function AnchorPopover({ anchor, title, testId, onClose, children }: Anch
       ref={popoverRef}
       data-testid={testId}
       role="dialog"
+      tabIndex={-1}
       aria-label={title}
-      className="fixed z-system-popover w-[280px] rounded-xl border border-border/70 bg-background p-1 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+      className="fixed z-system-popover w-[280px] rounded-xl border border-border/70 bg-popover p-1 text-text-primary shadow-lg"
       style={{ left: position.left, bottom: position.bottom, top: position.top }}
     >
       <p className="px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>

@@ -635,6 +635,55 @@ describe('telemetry client', () => {
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('project_id')
   })
 
+  test('captures smart app events with coarse properties only', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('smart_app_installed', {
+      domain: 'smart_app',
+      install_source: 'marketplace',
+      smart_app_id: 'private-smart-app',
+      file_path: '/Users/private/Downloads/workbench.zip',
+    } as {
+      domain: 'smart_app'
+      install_source: 'marketplace'
+      smart_app_id: string
+      file_path: string
+    })
+    track('feature_action_completed', {
+      domain: 'smart_app',
+      action: 'update',
+      app_name: 'private workbench',
+    } as { domain: 'smart_app'; action: 'update'; app_name: string })
+    track('operation_failed', {
+      domain: 'smart_app',
+      operation: 'smart_app_zip_import',
+      error_message: 'private archive validation detail',
+    } as { domain: 'smart_app'; operation: 'smart_app_zip_import'; error_message: string })
+
+    await flushPostHogCaptures()
+
+    expect(posthogMocks.capture).toHaveBeenNthCalledWith(
+      1,
+      'smart_app_installed',
+      expect.objectContaining({ domain: 'smart_app', install_source: 'marketplace' })
+    )
+    expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('smart_app_id')
+    expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('file_path')
+    expect(posthogMocks.capture).toHaveBeenNthCalledWith(
+      2,
+      'feature_action_completed',
+      expect.objectContaining({ domain: 'smart_app', action: 'update' })
+    )
+    expect(posthogMocks.capture.mock.calls[1]?.[1]).not.toHaveProperty('app_name')
+    expect(posthogMocks.capture).toHaveBeenNthCalledWith(
+      3,
+      'operation_failed',
+      expect.objectContaining({ domain: 'smart_app', operation: 'smart_app_zip_import' })
+    )
+    expect(posthogMocks.capture.mock.calls[2]?.[1]).not.toHaveProperty('error_message')
+  })
+
   test('clears identity and stops both SDKs when disabled', async () => {
     const { installTelemetry, setTelemetryEnabled } = await import('./client')
     await installTelemetry(true)

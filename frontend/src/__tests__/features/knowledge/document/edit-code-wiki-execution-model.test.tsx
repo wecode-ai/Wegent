@@ -15,7 +15,7 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import { getKnowledgeBase } from '@/apis/knowledge'
+import { getDocumentProtection, getKnowledgeBase } from '@/apis/knowledge'
 import { modelApis } from '@/apis/models'
 import { EditKnowledgeBaseDialog } from '@/features/knowledge/document/components/EditKnowledgeBaseDialog'
 import type { KnowledgeBase, KnowledgeBaseUpdate } from '@/types/knowledge'
@@ -26,6 +26,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  getDocumentProtection: jest.fn(),
 }))
 
 jest.mock('@/apis/models', () => ({
@@ -100,6 +101,10 @@ describe('editing a code wiki that has no model of its own', () => {
   beforeEach(() => {
     localStorage.clear()
     jest.clearAllMocks()
+    jest.mocked(getDocumentProtection).mockResolvedValue({
+      original_download_allowed: true,
+      watermark_text: null,
+    })
     ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: MODELS })
   })
 

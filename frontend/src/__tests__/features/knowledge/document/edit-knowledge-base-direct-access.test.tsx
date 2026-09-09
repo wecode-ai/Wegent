@@ -5,7 +5,7 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import { getKnowledgeBase } from '@/apis/knowledge'
+import { getDocumentProtection, getKnowledgeBase } from '@/apis/knowledge'
 import { EditKnowledgeBaseDialog } from '@/features/knowledge/document/components/EditKnowledgeBaseDialog'
 import type { KnowledgeBase, KnowledgeBaseUpdate } from '@/types/knowledge'
 
@@ -15,15 +15,20 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  getDocumentProtection: jest.fn(),
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   KnowledgeBaseForm: ({
     directAccessRequirement,
     onDirectAccessRequirementChange,
+    allowDocumentDownload,
+    onAllowDocumentDownloadChange,
   }: {
     directAccessRequirement: 'read' | 'edit'
     onDirectAccessRequirementChange: (value: 'read' | 'edit') => void
+    allowDocumentDownload: boolean
+    onAllowDocumentDownloadChange: (value: boolean) => void
   }) => (
     <div data-testid="knowledge-base-form">
       <button
@@ -43,6 +48,15 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
         onClick={() => onDirectAccessRequirementChange('edit')}
       >
         edit
+      </button>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={allowDocumentDownload}
+        data-testid="knowledge-base-allow-document-download"
+        onClick={() => onAllowDocumentDownloadChange(!allowDocumentDownload)}
+      >
+        allow document download
       </button>
     </div>
   ),
@@ -85,10 +99,22 @@ const knowledgeBase: KnowledgeBase = {
   updated_at: '2026-07-20T00:00:00Z',
 }
 
+const knowledgeBaseWithoutDownloadConfig = {
+  ...knowledgeBase,
+  allow_document_download: null,
+} as unknown as KnowledgeBase
+
 describe('EditKnowledgeBaseDialog direct access requirement', () => {
+  beforeEach(() => {
+    jest.mocked(getDocumentProtection).mockResolvedValue({
+      original_download_allowed: true,
+      watermark_text: null,
+    })
+  })
+
   it('loads and saves the direct access requirement', async () => {
     const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
-    jest.mocked(getKnowledgeBase).mockResolvedValue(knowledgeBase)
+    jest.mocked(getKnowledgeBase).mockResolvedValue(knowledgeBaseWithoutDownloadConfig)
 
     render(
       <EditKnowledgeBaseDialog
@@ -102,6 +128,7 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
     const editorsOnlyOption = await screen.findByTestId('knowledge-base-direct-access-edit')
     const allMembersOption = screen.getByTestId('knowledge-base-direct-access-read')
     await waitFor(() => expect(editorsOnlyOption).toBeChecked())
+    expect(screen.getByTestId('knowledge-base-allow-document-download')).toBeChecked()
 
     fireEvent.click(allMembersOption)
     await waitFor(() => expect(allMembersOption).toBeChecked())
@@ -144,5 +171,42 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
     expect(saveButton).toBeEnabled()
 
     consoleError.mockRestore()
+  })
+
+  it('uses the effective protection default when download configuration is absent', async () => {
+    const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
+    jest.mocked(getKnowledgeBase).mockResolvedValue(knowledgeBaseWithoutDownloadConfig)
+    jest.mocked(getDocumentProtection).mockResolvedValue({
+      original_download_allowed: false,
+      watermark_text: 'user',
+    })
+
+    render(
+      <EditKnowledgeBaseDialog
+        open
+        onOpenChange={jest.fn()}
+        knowledgeBase={knowledgeBaseWithoutDownloadConfig}
+        onSubmit={onSubmit}
+      />
+    )
+
+    const allowDownload = await screen.findByTestId('knowledge-base-allow-document-download')
+    expect(allowDownload).not.toBeChecked()
+    expect(getDocumentProtection).toHaveBeenCalledWith(knowledgeBaseWithoutDownloadConfig.id)
+
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ allow_document_download: undefined })
+      )
+    })
+
+    fireEvent.click(allowDownload)
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allow_document_download: true })
+      )
+    })
   })
 })

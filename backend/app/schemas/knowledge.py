@@ -60,7 +60,6 @@ class DocumentSourceType(str, Enum):
 
     FILE = "file"
     TEXT = "text"
-    TABLE = "table"
     WEB = "web"
     ATTACHMENT = "attachment"
     # Source file indexed for retrieval rather than a browsable document. Declared so
@@ -304,6 +303,10 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         default="read",
         description="Minimum capability required for direct knowledge base access",
     )
+    allow_document_download: Optional[bool] = Field(
+        default=None,
+        description="Whether readers may download original knowledge documents",
+    )
     kb_type: KnowledgeBaseType = Field(
         KnowledgeBaseType.NOTEBOOK,
         description=(
@@ -332,6 +335,16 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
             "its runs are work nobody started a conversation to do. The wiki's run "
             "history shows them either way and links to the task, so hiding them "
             "loses nothing. Meaningless for other knowledge base types."
+        ),
+    )
+    generation_strategy: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description=(
+            "Default orchestration strategy for this code wiki. The dedicated "
+            "create endpoint resolves and persists the deployment default when unset."
         ),
     )
     retrieval_config: Optional[RetrievalConfigCreate] = Field(
@@ -415,6 +428,10 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         default=None,
         description="Minimum capability required for direct knowledge base access",
     )
+    allow_document_download: Optional[bool] = Field(
+        default=None,
+        description="Whether readers may download original knowledge documents",
+    )
     retrieval_config: Optional[RetrievalConfigUpdate] = Field(
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
@@ -450,6 +467,13 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
             "wiki was built with, so a reader who wants to watch a run should not "
             "have to rebuild the wiki to see one."
         ),
+    )
+    generation_strategy: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description="Default orchestration strategy for this code wiki",
     )
     guided_questions: Optional[List[str]] = Field(
         None,
@@ -658,6 +682,9 @@ class CodeWikiRunProgress(BaseModel):
     total_steps: int = Field(0, ge=0)
     pages_written: int = Field(0, ge=0)
     pages_total: int = Field(0, ge=0)
+    # The same three visible phases serve reviewed and no-review runs. This tells the
+    # client whether the completed planning phase was a quality-gated review.
+    review_required: bool = False
 
 
 class CodeWikiRunStatus(BaseModel):
@@ -726,6 +753,24 @@ class CodeWikiRunCreate(BaseModel):
     )
 
 
+class CodeWikiGenerationStrategyOption(BaseModel):
+    """One deployment-enabled, validated strategy a caller may select."""
+
+    id: str
+    revision: int
+    display_name: str
+    description: str
+
+
+class CodeWikiGenerationStrategyCapabilities(BaseModel):
+    """Deployment policy projected into the choices a Code Wiki UI needs."""
+
+    # Empty means the configured default is currently unavailable, so a form must
+    # require the caller to choose one of the runnable strategies explicitly.
+    default_strategy: Optional[str] = None
+    strategies: List[CodeWikiGenerationStrategyOption] = Field(default_factory=list)
+
+
 class CodeWikiRunResponse(BaseModel):
     """What happened when a code wiki was asked to regenerate."""
 
@@ -734,6 +779,8 @@ class CodeWikiRunResponse(BaseModel):
     reason: str = Field("", description="Why that mode was chosen")
     generation_id: int = Field(0, description="The version being written, when started")
     task_id: int = Field(0, description="Task running the agent, when started")
+    strategy_id: str = Field("", description="Resolved generation strategy")
+    strategy_revision: int = Field(0, description="Resolved strategy revision")
 
 
 class CodeWikiRunRecord(BaseModel):
@@ -773,6 +820,8 @@ class CodeWikiRunRecord(BaseModel):
             "container then died."
         ),
     )
+    strategy_id: str = Field("legacy", description="Resolved generation strategy")
+    strategy_revision: int = Field(0, description="Resolved strategy revision")
 
 
 class CodeWikiRunHistory(BaseModel):
@@ -847,6 +896,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     user_id: int
     namespace: str
     direct_access_requirement: Literal["read", "edit"] = "read"
+    allow_document_download: Optional[bool] = None
     source: Optional[Dict[str, Any]] = Field(
         None,
         description=(
@@ -864,6 +914,9 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             "Returned so the edit form can show what is set rather than defaulting "
             "the switch to off and silently turning it off on the next save."
         ),
+    )
+    generation_strategy: Optional[str] = Field(
+        None, description="Default orchestration strategy for this code wiki"
     )
     kb_type: KnowledgeBaseType = Field(
         KnowledgeBaseType.NOTEBOOK,
@@ -973,10 +1026,12 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             user_id=kind.user_id,
             namespace=kind.namespace,
             direct_access_requirement=spec.get("directAccessRequirement", "read"),
+            allow_document_download=spec.get("allowDocumentDownload"),
             kb_type=kb_type,
             source=source,
             language=language,
             show_generation_task=bool(spec.get("showGenerationTask", False)),
+            generation_strategy=spec.get("generationStrategy"),
             document_count=document_count,
             retrieval_config=cls._normalize_retrieval_config_for_response(
                 spec.get("retrievalConfig"), kind.id
@@ -999,6 +1054,13 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
 
     class Config:
         from_attributes = True
+
+
+class DocumentProtectionResponse(BaseModel):
+    """Effective document-export capability for a knowledge-base reader."""
+
+    original_download_allowed: bool
+    watermark_text: Optional[str] = None
 
 
 class KnowledgeBaseListResponse(BaseModel):
@@ -1037,7 +1099,7 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     _no_internal_source = field_validator("source_type")(reject_internal_source_type)
     source_config: dict = Field(
         default_factory=dict,
-        description="Source configuration (e.g., {'url': '...'} for table)",
+        description="Source configuration (e.g., {'url': '...'} for web)",
     )
 
 
@@ -1512,32 +1574,6 @@ class PersonalKnowledgeBaseGroup(BaseModel):
 
     created_by_me: list[KnowledgeBaseResponse]
     shared_with_me: list[KnowledgeBaseResponse]
-
-
-# ============== Table URL Validation Schemas ==============
-
-
-class TableUrlValidationRequest(BaseModel):
-    """Schema for table URL validation request."""
-
-    url: str = Field(..., min_length=1, description="The table URL to validate")
-
-
-class TableUrlValidationResponse(BaseModel):
-    """Schema for table URL validation response."""
-
-    valid: bool = Field(..., description="Whether the URL is valid")
-    provider: Optional[str] = Field(
-        None, description="Detected table provider (e.g., 'dingtalk')"
-    )
-    base_id: Optional[str] = Field(None, description="Extracted base ID from URL")
-    sheet_id: Optional[str] = Field(None, description="Extracted sheet ID from URL")
-    error_code: Optional[str] = Field(
-        None, description="Error code if validation failed"
-    )
-    error_message: Optional[str] = Field(
-        None, description="Error message if validation failed"
-    )
 
 
 # ============== Document Detail Schemas ==============

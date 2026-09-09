@@ -33,6 +33,7 @@ const managedComponentResources = [
 
 module.exports = {
   appId: identity.identifier,
+  protocols: [{ name: 'Wework', schemes: ['wework'] }],
   productName: identity.productName,
   executableName: identity.executableName,
   compression: onlineUpdateBuild ? 'store' : 'normal',
@@ -87,7 +88,9 @@ module.exports = {
       ? { notarize: false }
       : {}),
     icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
-    signIgnore: ['/Contents/Resources/wework-core-plugins/'],
+    signIgnore: process.env.APPLE_SIGNING_IDENTITY
+      ? managedComponentResources.map(resource => '/Contents/Resources/' + resource.to + '/')
+      : ['/Contents/Resources/wework-core-plugins/'],
     target: onlineUpdateBuild ? ['zip'] : ['dmg', 'zip'],
   },
   dmg: {

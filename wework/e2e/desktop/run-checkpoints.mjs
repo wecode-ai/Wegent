@@ -15,6 +15,7 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
+  'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
@@ -33,12 +34,14 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'runtime-terminal-convergence': './scenarios/runtime-terminal-convergence.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'computer-use': './scenarios/computer-use.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
+  'app-update-baseline': './scenarios/app-update-baseline.scenario.mjs',
   'app-update-differential': './scenarios/app-update-differential.scenario.mjs',
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
@@ -52,8 +55,11 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
+  'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
+  'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'plugin-account-auth',
   'cloud-space-mention',
   'change-request-status',
   'claude-runtime',
@@ -68,6 +74,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'runtime-task-queue',
   'runtime-terminal-convergence',
   'executor-stream-recovery',
+  'transcript-sync',
   'running-conversation-history',
   'codex-notification-isolation',
   'context-compaction',
@@ -75,6 +82,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'split-workbench',
   'release-package-startup',
   'app-update-differential',
+  'app-update-baseline',
   'component-update',
   'native-window-startup',
   'native-window-chrome',
@@ -85,8 +93,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'browser-annotation-anchors',
   'browser-annotation-design',
   'external-content-import',
+  'workbench-mode',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'plugin-auto-update',
   'plugin-workspace-publication',
   'cloud-git-worktree',
   'cloud-worktree-capability',
@@ -385,6 +395,9 @@ function parallelCheckpointLimit() {
 }
 
 function parallelCheckpointArgs(checkpoint) {
+  // Scenario modules declare their own cloud prerequisites. Cloud is a shard
+  // scope here, not a second mutually exclusive task-flow execution mode.
+  if (SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)) return ['--segment', checkpoint]
   const scope = process.env.WEWORK_E2E_PARALLEL_SCOPE ?? 'cloud'
   if (scope === 'cloud') return ['--cloud-only', '--segment', checkpoint]
   if (scope === 'core') return ['--segment', checkpoint]
@@ -399,9 +412,15 @@ async function runRequestedArgs() {
   if (checkpoints) return runCheckpoints(checkpoints)
 
   const label = requestedArgs.join(' ') || 'desktop task flow'
-  const env = await sharedBuildEnvironment()
+  const sharedEnv = await sharedBuildEnvironment()
+  const segmentIndex = requestedArgs.indexOf('--segment')
+  const checkpoint = segmentIndex >= 0 ? requestedArgs[segmentIndex + 1] : undefined
+  const env = segmentIndex >= 0 ? checkpointScenarioEnv(sharedEnv, checkpoint) : sharedEnv
+  const args = SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+    ? requestedArgs.filter(argument => argument !== '--cloud-only')
+    : requestedArgs
   console.log(`[desktop-e2e] START ${label}`)
-  const result = await runTaskFlow(requestedArgs, env, label)
+  const result = await runTaskFlow(args, env, label)
   if (result.code === 0) {
     console.log(
       `[desktop-e2e] PASS ${label}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
@@ -431,6 +450,9 @@ async function runParallelCheckpoints(checkpoints) {
       const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
       delete env.WEWORK_E2E_CONTROL_SERVER_PORT
       delete env.WEWORK_E2E_MODEL_SERVER_PORT
+      const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
+      env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
+      env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
       const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
       if (result.code === 0) {

@@ -141,6 +141,9 @@ class DeviceInfo(BaseModel):
     """Response schema for device information."""
 
     id: int = Field(..., description="Device CRD ID in kinds table")
+    execution_target_id: Optional[str] = Field(
+        None, description="Record-scoped app route; logical device IDs remain unchanged"
+    )
     device_id: str = Field(..., description="Device unique identifier")
     name: str = Field(..., description="Device name")
     status: DeviceStatusEnum = Field(..., description="Device online status")

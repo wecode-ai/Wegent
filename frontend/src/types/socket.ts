@@ -536,7 +536,7 @@ export interface ChatMessageAttachment {
 
 export interface ChatMessageContext {
   id: number
-  context_type: 'attachment' | 'external_web_content' | 'knowledge_base' | 'table'
+  context_type: 'attachment' | 'external_web_content' | 'knowledge_base'
   name: string
   status: string
   file_extension?: string

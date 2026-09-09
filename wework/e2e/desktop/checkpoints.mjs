@@ -6,6 +6,7 @@ export const DESKTOP_CHECKPOINTS = [
   'priority-filter',
   'telemetry-consent',
   'external-content-import',
+  'workbench-mode',
   'automation-lifecycle',
   'project-automation',
   'project-assignment-notification',
@@ -14,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'core-dsh-plugin-management',
   'plugin-development',
   'plugin-auto-update',
+  'plugin-account-auth',
   'plugin-workspace-publication',
   'project-ai-settings',
   'model-routing',
@@ -34,11 +36,13 @@ export const DESKTOP_CHECKPOINTS = [
   'runtime-task-queue',
   'runtime-terminal-convergence',
   'executor-stream-recovery',
+  'transcript-sync',
   'running-conversation-history',
   'codex-notification-isolation',
   'split-workbench',
   'release-package-startup',
   'app-update-differential',
+  'app-update-baseline',
   'component-update',
   'native-window-startup',
   'native-window-chrome',
@@ -65,6 +69,7 @@ export const DESKTOP_CHECKPOINTS = [
   'browser-annotation-core',
   'browser-annotation-anchors',
   'browser-annotation-design',
+  'dsh-owner-capture',
 ]
 
 export const PLUGIN_SEGMENTS = [

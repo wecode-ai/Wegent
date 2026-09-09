@@ -19,6 +19,7 @@ from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.device_service import device_service
+from app.services.plugin_device_identity import plugin_device_rows
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
@@ -767,18 +768,7 @@ class DeviceCapabilitySyncService:
     ) -> dict[int, int]:
         if not device_id or not installed_rows:
             return {}
-        rows_by_installed_id = {
-            row.installed_kind_id: row
-            for row in db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.user_id == user_id,
-                PluginDeviceInstallation.installed_kind_id.in_(
-                    [installed.id for installed in installed_rows]
-                ),
-                PluginDeviceInstallation.device_id == device_id,
-            )
-            .all()
-        }
+        rows_by_installed_id = plugin_device_rows(db, user_id, device_id)
         overrides: dict[int, int] = {}
         for installed in installed_rows:
             release_id = installed.json.get("spec", {}).get("releaseId")

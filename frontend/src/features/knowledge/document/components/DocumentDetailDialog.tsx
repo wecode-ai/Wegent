@@ -95,8 +95,12 @@ interface DocumentDetailDialogProps {
   knowledgeBaseName?: string
   /** Current knowledge base namespace - used for resolving cross-namespace relative links */
   knowledgeBaseNamespace?: string
-  /** Whether this KB belongs to an organization-level namespace */
+  /** Whether this KB belongs to an organization-level namespace (affects URL format) */
   isOrganization?: boolean
+  /** Whether the KB may deliver original document files. */
+  allowDownload?: boolean
+  /** Server-supplied display text for the preview watermark. */
+  watermarkText?: string | null
 }
 
 export function DocumentDetailDialog({
@@ -109,9 +113,13 @@ export function DocumentDetailDialog({
   knowledgeBaseName = '',
   knowledgeBaseNamespace = 'default',
   isOrganization = false,
+  allowDownload = true,
+  watermarkText,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const downloadDocument = useKnowledgeDocumentDownload()
+  const protectedPreview = !allowDownload
+  const effectiveWatermarkText = watermarkText || t('document.document.detail.protectedWatermark')
   const [copiedContent, setCopiedContent] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -125,7 +133,7 @@ export function DocumentDetailDialog({
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
   const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>(() =>
-    document && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
+    document && allowDownload && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
   )
   const [isSummaryOpen, setIsSummaryOpen] = useState(contentSourceMode === 'parsed')
   const summaryManuallyToggledRef = useRef(false)
@@ -167,14 +175,17 @@ export function DocumentDetailDialog({
 
   // Check if document is editable
   const isEditable = useMemo(
-    () => isDocumentEditable(document?.source_type, document?.file_extension, canEdit),
-    [document?.source_type, document?.file_extension, canEdit]
+    // Editing loads the full raw document into an editable view, which would
+    // bypass the download protection of a protected knowledge base. Hide the
+    // edit entry whenever original-file download is not allowed.
+    () =>
+      allowDownload && isDocumentEditable(document?.source_type, document?.file_extension, canEdit),
+    [allowDownload, document?.source_type, document?.file_extension, canEdit]
   )
   const canPreviewSource = useMemo(
-    () => Boolean(document && isKnowledgeSourcePreviewSupported(document)),
-    [document]
+    () => Boolean(document && allowDownload && isKnowledgeSourcePreviewSupported(document)),
+    [allowDownload, document]
   )
-  const allowDownload = !isOrganization
   // Source governance metadata for imported external documents.
   const externalSourceInfo = useMemo(
     () => (document ? getExternalSourceInfo(document) : null),
@@ -242,13 +253,13 @@ export function DocumentDetailDialog({
   }
 
   const handleSourceDownload = useCallback(async () => {
-    if (!document?.attachment_id) return
+    if (!allowDownload || !document) return
     try {
       await downloadDocument(document)
     } catch {
       toast.error(t('document.document.detail.sourcePreview.downloadFailed'))
     }
-  }, [document, downloadDocument, t])
+  }, [allowDownload, document, downloadDocument, t])
 
   const handleEdit = useCallback(async () => {
     if (!isEditable) return
@@ -732,7 +743,7 @@ export function DocumentDetailDialog({
                               </Tooltip>
                             )}
                             {/* Copy link button - always visible in preview mode */}
-                            {documentFullUrl && (
+                            {documentFullUrl && !protectedPreview && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -790,7 +801,7 @@ export function DocumentDetailDialog({
                                 )}
                               </Button>
                             )}
-                            {fullContent && !isOrganization && (
+                            {fullContent && !protectedPreview && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -832,8 +843,10 @@ export function DocumentDetailDialog({
                       </div>
                     ) : (
                       <DocumentProtectionBoundary
-                        enabled={isOrganization}
+                        enabled={protectedPreview}
                         knowledgeBaseId={knowledgeBaseId}
+                        preferExtension={isOrganization}
+                        watermarkText={effectiveWatermarkText}
                       >
                         <DocumentContentViewer
                           content={fullContent}

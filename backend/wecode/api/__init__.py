@@ -9,11 +9,18 @@ import logging
 
 # Register ERP entity resolver for org_department entity type
 from app.services.external_entity_resolver import register_entity_resolver
+from app.services.knowledge.document_download_policy import (
+    set_document_download_allowed_resolver,
+)
 from wecode.service.erp_entity_resolver import ErpEntityResolver
+from wecode.service.knowledge.document_protection_policy import (
+    is_internal_original_download_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
 register_entity_resolver("org_department", ErpEntityResolver)
+set_document_download_allowed_resolver(is_internal_original_download_allowed)
 
 # Register Weibo MCP Provider before MCPProviderRegistry.initialize() is called
 # This must be done before importing any modules that trigger app.services.mcp_providers.service import

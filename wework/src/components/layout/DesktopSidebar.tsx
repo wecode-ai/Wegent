@@ -75,6 +75,7 @@ import type { CloudConnectionStatus } from '@/features/cloud-connection/cloudCon
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   StandaloneFolderProjectDialog,
@@ -1394,7 +1395,7 @@ function getDeviceUnavailableActionTitle(
 ) {
   const status = getSidebarDeviceStatusLabel(t, deviceState.status)
   return formatSidebarTemplate(
-    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法私信 AI：{{device}}'),
+    t('workbench.project_chat_device_unavailable', '设备{{status}}，无法问AI：{{device}}'),
     { status, device: getSidebarDeviceName(deviceState) }
   )
 }
@@ -1493,6 +1494,7 @@ function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
   const queuePosition =
@@ -1874,14 +1876,31 @@ function RuntimeTaskRow({
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
-                    title={t('workbench.runtime_task_running')}
-                    aria-label={t('workbench.runtime_task_running')}
+                    title={
+                      hasActiveGoal
+                        ? t('workbench.runtime_task_running_with_goal')
+                        : t('workbench.runtime_task_running')
+                    }
+                    aria-label={
+                      hasActiveGoal
+                        ? t('workbench.runtime_task_running_with_goal')
+                        : t('workbench.runtime_task_running')
+                    }
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <CompositedSpinner
-                      icon={Loader2}
-                      className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
-                    />
+                    <span className="relative flex h-4 w-4 items-center justify-center">
+                      <CompositedSpinner
+                        icon={Loader2}
+                        className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
+                      />
+                      {hasActiveGoal ? (
+                        <span
+                          data-testid={`runtime-local-task-goal-dot-${task.taskId}`}
+                          aria-hidden="true"
+                          className="absolute h-1.5 w-1.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                    </span>
                   </span>
                 ) : priorityReason === 'waiting' ? (
                   <span
@@ -2441,7 +2460,7 @@ function ProjectItem({
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
-      : t('workbench.new_project_chat', '私信 AI')
+      : t('workbench.new_project_chat', '问AI')
   const archiveConversationCount = allRuntimeTaskItems.length
   const archiveProjectName = runtimeProjectWork?.project.name ?? project.name
   const persistedProjectPinned = runtimeProjectWork?.project.pinned ?? false
@@ -4092,7 +4111,13 @@ export function DesktopSidebar({
                     label={t(item.labelKey ?? item.id, item.label)}
                     testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
                     selected={activeItem === (item.activeItem ?? item.id)}
-                    onClick={() => navigateTo(item.path)}
+                    onClick={() => {
+                      if (item.workspaceSidebarTab) {
+                        rightWorkspaceDshSidebar.openTab({ type: item.workspaceSidebarTab })
+                        return
+                      }
+                      if (item.path) navigateTo(item.path)
+                    }}
                     onPointerEnter={
                       item.prefetch ? () => prefetchDshSidebarNavigation(item) : undefined
                     }

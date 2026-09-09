@@ -1344,6 +1344,10 @@ async function verifyExistingTaskBoardAssociation(
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="work-item-change-board"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="work-item-change-board"]')
   await control.command(
     'markElementWithText',

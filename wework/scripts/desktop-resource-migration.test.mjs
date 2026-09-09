@@ -123,6 +123,7 @@ describe('desktop resource migration', () => {
     expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
+    expect(prepareElectron).toContain("WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true'")
     expect(packageApp).toContain('await releaseToolchainLock()')
     const noAsar = packageApp.indexOf('process.noAsar = true')
     const outputCleanup = packageApp.indexOf('rm(output')
@@ -186,6 +187,10 @@ describe('desktop resource migration', () => {
     expect(source).toContain("process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'")
     expect(source).toContain("configured === 'debug' || configured === 'release'")
     expect(source).toContain("profile === 'release' ? ['--release'] : []")
+    expect(source).toContain('resolveExecutorPackageTargetDirectory(process.env, executorRoot)')
+    expect(source).toContain('CARGO_TARGET_DIR: targetDirectory')
+    expect(source).toContain('executorPackageBinaryPath(targetDirectory, target, profile)')
+    expect(source).not.toContain("'metadata',")
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
@@ -199,6 +204,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('resolveDesktopPackageTargets(process.env)')
     expect(source).toContain('WEWORK_CODEX_TARGET: packageTargets.codexTarget')
     expect(source).toContain('WEWORK_DWS_TARGET: packageTargets.dwsTarget')
+    expect(source).toContain(
+      'process.env.WEWORK_RUNTIME_TARGET?.trim() || packageTargets.cargoTarget'
+    )
     expect(source).toContain("path: 'bundled-plugins'")
     expect(source).toContain(
       "materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))"
@@ -210,6 +218,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('version: weworkRuntimeVersion')
     expect(source).toContain('sourceSha,')
     expect(source).toContain('path: `bin/${dwsName}`')
+    expect(source).toContain("path: 'codex'")
+    expect(source).toContain('sha256: await hashComponentPath(codexResources)')
+    expect(source).not.toContain('path: `codex/${codexRuntime.binaryPath}`')
     expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('execution-runtime-node-dev')
@@ -230,16 +241,13 @@ describe('desktop resource migration', () => {
     expect(builderConfig).not.toContain('resources/node-runtime')
   })
 
-  test('launches the package-owned electron-builder CLI directly', async () => {
+  test('launches the release builder through the Windows command interpreter', async () => {
     const source = await readFile(join(weworkRoot, 'electron/scripts/build-release.mjs'), 'utf8')
 
-    expect(source).toContain("'node_modules/electron-builder/cli.js'")
-    expect(source).toContain('resolveNodeRuntime()')
+    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
     expect(source).toContain("WEWORK_ONLINE_UPDATE_BUILD: 'true'")
-    expect(source).toContain('WEWORK_RELEASE_DIR_ONLY')
-    expect(source).toContain("...(directoryOnly ? ['--dir'] : [])")
-    expect(source).not.toContain("'pnpm'")
-    expect(source).not.toContain('wrapWindowsScriptCommand')
+    expect(source).toContain('WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS')
   })
 
   test('prebuilt macOS packaging requires the installed Electron workspace toolchain', async () => {
@@ -266,6 +274,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain('ELECTRON_DOWNLOAD_CACHE_MODE=')
     expect(source).toContain('WEGENT_CODEX_CACHE_DIR=')
     expect(source).toContain('WEWORK_HARNESS_RUNTIME_CACHE_ROOT=')
+    expect(source).toContain('$cache_root/harness-runtime/$MACOS_BUILD_TARGET')
     expect(source).toContain('WEGENT_CARGO_TARGET_ROOT=')
     expect(source).toContain('pnpm_config_store_dir=')
     expect(source).toContain('configure_wegent_sccache_s3')
@@ -283,17 +292,26 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
     )
+    expect(source).toContain(
+      "const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'"
+    )
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
-  test('creates macOS component archives from the requested packaged application', async () => {
+  test('selects the component asset source explicitly for each release flow', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
+    const minioMacRelease = await readFile(
+      join(weworkRoot, 'scripts/build-minio-mac-release.sh'),
+      'utf8'
+    )
 
     expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
+    expect(source).toContain("WEWORK_RELEASE_COMPONENT_ASSET_SOURCE?.trim() || 'prepared'")
+    expect(source).toContain("componentAssetSource === 'packaged-macos-app'")
     expect(source).toContain(
       "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
     )
@@ -302,6 +320,8 @@ describe('desktop resource migration', () => {
     expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
     expect(source).toContain('releaseScope: componentReleaseScope(id)')
     expect(source).not.toContain('async function findDirectory')
+    expect(minioMacRelease).toContain('WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app')
+    expect(minioMacRelease).toContain('export APPLE_SIGNING_IDENTITY="$component_signing_identity"')
   })
 
   test('requires differential update blockmaps in formal release assets', async () => {

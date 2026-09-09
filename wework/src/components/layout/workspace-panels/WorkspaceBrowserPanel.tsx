@@ -415,6 +415,8 @@ export function WorkspaceBrowserTabPanel({
   const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
   const [pageUrl, setPageUrl] = useState<string | null>(initialTransferredUrl)
   const [status, setStatus] = useState<BrowserStatus>(initialTransferredUrl ? 'ready' : 'idle')
+  const [canGoBack, setCanGoBack] = useState(false)
+  const [canGoForward, setCanGoForward] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [navigationError, setNavigationError] = useState<EmbeddedBrowserNavigationError | null>(
     null
@@ -501,11 +503,15 @@ export function WorkspaceBrowserTabPanel({
   const applyNativePageStatus = useCallback(
     (pageState: {
       isLoading: boolean
+      canGoBack?: boolean
+      canGoForward?: boolean
       navigationError?: EmbeddedBrowserNavigationError | null
     }) => {
       const nextNavigationError = pageState.navigationError ?? null
       setNavigationError(nextNavigationError)
       setStatus(nextNavigationError ? 'error' : pageState.isLoading ? 'loading' : 'ready')
+      setCanGoBack(Boolean(pageState.canGoBack))
+      setCanGoForward(Boolean(pageState.canGoForward))
     },
     []
   )
@@ -2429,7 +2435,9 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-back-button"
             label={t('workbench.browser_back')}
-            disabled={!currentUrl || !embeddedBrowserAvailable}
+            disabled={
+              !currentUrl || !embeddedBrowserAvailable || !canGoBack || status === 'loading'
+            }
             onClick={() => void runBrowserCommand(() => goBackEmbeddedBrowser(label))}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -2437,7 +2445,9 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-forward-button"
             label={t('workbench.browser_forward')}
-            disabled={!currentUrl || !embeddedBrowserAvailable}
+            disabled={
+              !currentUrl || !embeddedBrowserAvailable || !canGoForward || status === 'loading'
+            }
             onClick={() => void runBrowserCommand(() => goForwardEmbeddedBrowser(label))}
           >
             <ArrowRight className="h-4 w-4" />
@@ -2445,7 +2455,7 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-reload-button"
             label={t('workbench.browser_reload')}
-            disabled={!activePageUrl}
+            disabled={!activePageUrl || status === 'loading'}
             onClick={handleReload}
           >
             <RotateCw className="h-4 w-4" />

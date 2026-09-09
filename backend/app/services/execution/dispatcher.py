@@ -29,9 +29,6 @@ if TYPE_CHECKING:
 
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
-from app.services.device.remote_control_policy import (
-    ensure_remote_control_enabled_for_device,
-)
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -455,6 +452,7 @@ class ResponsesAPIEventParser:
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content=reasoning_content,
+                    data={"thinking_kind": "reasoning_summary"},
                     message_id=message_id,
                 )
             return None
@@ -800,10 +798,6 @@ class ExecutionDispatcher:
                 user_id = request.user.get("id") if request.user else None
                 if not isinstance(user_id, int):
                     raise ValueError("Device dispatch requires an authenticated user")
-                ensure_remote_control_enabled_for_device(
-                    user_id=user_id,
-                    device_id=device_id,
-                )
             await self._recover_executor_if_needed(request, device_id=device_id)
 
             # Route to execution target

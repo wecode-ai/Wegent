@@ -2,11 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -245,6 +247,28 @@ pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, Con
     let path = config_path
         .map(PathBuf::from)
         .unwrap_or_else(default_config_path);
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: path.clone(),
+        source,
+    })?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("json.lock"))
+        .map_err(|source| ConfigError::Write {
+            path: path.clone(),
+            source,
+        })?;
+    lock.lock_exclusive().map_err(|source| ConfigError::Write {
+        path: path.clone(),
+        source,
+    })?;
     let (mut config, mut should_save) = if let Some(config) = read_config_path(&path)? {
         (config, false)
     } else {
@@ -303,7 +327,13 @@ fn set_from_env(target: &mut String, name: &str) {
 fn ensure_stable_identity(config: &mut DeviceConfig) -> bool {
     let mut changed = false;
     if config.device_id.trim().is_empty() {
-        config.device_id = generate_prefixed_id("device");
+        config.device_id = if config.device_type == "app"
+            || env::var("WEGENT_APP_IPC_DEVICE_ID").is_ok_and(|id| !id.trim().is_empty())
+        {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            generate_prefixed_id("device")
+        };
         changed = true;
     }
     if config.runtime_instance_id.trim().is_empty() {
@@ -328,7 +358,18 @@ fn save_config_path(path: &Path, config: &DeviceConfig) -> Result<(), ConfigErro
         path: path.to_owned(),
         source,
     })?;
-    fs::write(path, format!("{content}\n")).map_err(|source| ConfigError::Write {
+    let write = || -> std::io::Result<()> {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        writeln!(temporary, "{content}")?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(path).map_err(|error| error.error)?;
+        Ok(())
+    };
+    write().map_err(|source| ConfigError::Write {
         path: path.to_owned(),
         source,
     })

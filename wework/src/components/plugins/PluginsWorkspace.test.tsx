@@ -490,6 +490,7 @@ function mockSystemSkillsFetch(
     marketplaceCount: number
     marketplaceConnectorSlug: string
     marketplaceConnectorLocal: boolean
+    marketplaceConnectorAccountAuth: boolean
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
     marketplaceSourceProvider: 'codex' | 'wegent'
@@ -764,6 +765,15 @@ function mockSystemSkillsFetch(
             {
               slug: overrides.marketplaceConnectorSlug,
               authPolicy: 'on_install',
+              ...(overrides.marketplaceConnectorAccountAuth
+                ? {
+                    accountAuth: {
+                      protocolVersion: 1,
+                      credentialType: 'oauth2',
+                      adapter: 'scripts/account-auth.py',
+                    },
+                  }
+                : {}),
               ...(overrides.marketplaceConnectorLocal
                 ? {
                     localAuth: {
@@ -2882,6 +2892,32 @@ describe('PluginsWorkspace', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', { source: 'cloud' })
+  })
+
+  test('installs an account-managed plugin without opening a second local login', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceName: 'dingtalk',
+      marketplaceDisplayName: '钉钉',
+      marketplaceConnectorSlug: 'dingtalk',
+      marketplaceConnectorLocal: true,
+      marketplaceConnectorAccountAuth: true,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      localConnectorAuthHealth: () => Promise.resolve({ status: 'need_login' }),
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('钉钉 已安装')
+    )
+    expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+    expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+      'runtime.local_connector_auth.start',
+      expect.anything()
+    )
   })
 
   test('waits for a cloud plugin to reach the local executor before starting local auth', async () => {
@@ -5395,6 +5431,26 @@ describe('PluginsWorkspace', () => {
     expect(fetch).toHaveBeenCalledWith(
       '/api/plugins/installed/101?device_id=current-device',
       expect.objectContaining({ method: 'DELETE' })
+    )
+    expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()
+  })
+
+  test('invalidates a materialized cloud detail immediately after uninstall', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceSourceProvider: 'wegent',
+      localVersionEvidence: '1.0.0',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device', marketplaces: [] })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
+    await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
+    await userEvent.click(screen.getByTestId('plugin-detail-uninstall-101'))
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('安装插件')
     )
     expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()
   })

@@ -288,6 +288,7 @@ export function KnowledgeDocumentPageMobile({
           description: data.description,
           namespace,
           direct_access_requirement: data.direct_access_requirement,
+          allow_document_download: data.allow_document_download,
           retrieval_config: data.retrieval_config,
           rag_config_mode: data.rag_config_mode,
           summary_enabled: data.summary_enabled,

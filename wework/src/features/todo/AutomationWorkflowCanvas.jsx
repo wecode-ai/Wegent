@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   BaseEdge,
   Background,
@@ -76,7 +76,7 @@ const WorkflowNodeInsertControl = memo(function WorkflowNodeInsertControl({
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
       >
-        <Plus size={14} />
+        <Plus size={16} />
       </button>
       {open ? (
         <div className={automationClass(`workflow-node-insert-menu nodrag nopan ${placement}`)}>
@@ -420,7 +420,7 @@ const CanvasViewportControls = memo(function CanvasViewportControls() {
         data-testid="automation-canvas-zoom-out"
         onClick={() => zoomOut({ duration: 160 })}
       >
-        <Minus size={14} />
+        <Minus size={16} />
       </button>
       <span>{Math.round(zoom * 100)}%</span>
       <button
@@ -437,27 +437,57 @@ const CanvasViewportControls = memo(function CanvasViewportControls() {
         data-testid="automation-canvas-fit-view"
         onClick={() => fitView({ duration: 240, padding: CANVAS_FIT_PADDING })}
       >
-        <Focus size={14} />
+        <Focus size={16} />
       </button>
     </Panel>
   )
 })
 
-const CanvasAutoFit = memo(function CanvasAutoFit({ outerNodeCount }) {
-  const { fitView } = useReactFlow()
-  const previousOuterNodeCount = useRef(outerNodeCount)
+function focusedViewport(node, viewport, canvasRect, rightPanelInset) {
+  const visibleCenter = {
+    x: Math.max(0, canvasRect.width - rightPanelInset) / 2,
+    y: canvasRect.height / 2,
+  }
+  const nodeWidth = node.measured?.width ?? node.width ?? node.style?.width ?? OUTER_NODE_WIDTH
+  const nodeHeight = node.measured?.height ?? node.height ?? node.style?.height ?? OUTER_NODE_HEIGHT
+  const nodeCenter = {
+    x: node.position.x + nodeWidth / 2,
+    y: node.position.y + nodeHeight / 2,
+  }
 
-  useEffect(() => {
-    if (outerNodeCount <= previousOuterNodeCount.current) {
-      previousOuterNodeCount.current = outerNodeCount
-      return undefined
-    }
-    previousOuterNodeCount.current = outerNodeCount
-    const frame = window.requestAnimationFrame(() => {
-      void fitView({ duration: 0, padding: CANVAS_FIT_PADDING })
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [fitView, outerNodeCount])
+  return {
+    x: visibleCenter.x - nodeCenter.x * viewport.zoom,
+    y: visibleCenter.y - nodeCenter.y * viewport.zoom,
+    zoom: viewport.zoom,
+  }
+}
+
+const CanvasNewNodeFocus = memo(function CanvasNewNodeFocus({
+  canvasRef,
+  outerNodes,
+  rightPanelInset,
+  selectedNode,
+}) {
+  const { getViewport, setViewport } = useReactFlow()
+  const previousOuterNodeIds = useRef(new Set(outerNodes.map(node => node.id)))
+
+  useLayoutEffect(() => {
+    const previousIds = previousOuterNodeIds.current
+    const addedNode =
+      selectedNode.type === 'step' && !previousIds.has(selectedNode.id)
+        ? outerNodes.find(node => node.id === selectedNode.id)
+        : outerNodes.find(node => !previousIds.has(node.id))
+    previousOuterNodeIds.current = new Set(outerNodes.map(node => node.id))
+    if (!addedNode) return undefined
+
+    const canvas = canvasRef.current
+    if (!canvas) return undefined
+    void setViewport(
+      focusedViewport(addedNode, getViewport(), canvas.getBoundingClientRect(), rightPanelInset),
+      { duration: 240 }
+    )
+    return undefined
+  }, [canvasRef, getViewport, outerNodes, rightPanelInset, selectedNode, setViewport])
 
   return null
 })
@@ -479,6 +509,7 @@ export function AutomationWorkflowCanvas({
   draft,
   trigger,
   selectedNode,
+  rightPanelInset,
   onSelectNode,
   onInsertNode,
   onAddDagStage,
@@ -487,7 +518,8 @@ export function AutomationWorkflowCanvas({
   onToggleStepDependency,
   onMoveStep,
 }) {
-  const [interactionMode, setInteractionMode] = useState('hand')
+  const [interactionMode, setInteractionMode] = useState('pointer')
+  const canvasRef = useRef(null)
 
   const graph = useMemo(() => {
     const nodes = []
@@ -762,6 +794,7 @@ export function AutomationWorkflowCanvas({
 
   return (
     <div
+      ref={canvasRef}
       className={automationClass('react-flow-workflow-canvas')}
       data-testid="automation-workflow-canvas"
       onClick={event => {
@@ -800,11 +833,16 @@ export function AutomationWorkflowCanvas({
         zoomOnDoubleClick={false}
         minZoom={0.25}
         maxZoom={1.8}
-        defaultViewport={{ x: 176, y: 136, zoom: 0.78 }}
+        defaultViewport={{ x: 176, y: 136, zoom: 0.99 }}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={['Backspace', 'Delete']}
       >
-        <CanvasAutoFit outerNodeCount={draft.steps.length + 1} />
+        <CanvasNewNodeFocus
+          canvasRef={canvasRef}
+          outerNodes={graph.nodes.filter(node => node.id !== 'trigger' && !node.parentId)}
+          rightPanelInset={rightPanelInset}
+          selectedNode={selectedNode}
+        />
         <Background
           variant="dots"
           gap={[18, 18]}
@@ -822,7 +860,7 @@ export function AutomationWorkflowCanvas({
             data-testid="automation-canvas-pointer-mode"
             onClick={() => setInteractionMode('pointer')}
           >
-            <MousePointer2 size={15} />
+            <MousePointer2 size={16} />
           </button>
           <button
             type="button"
@@ -834,7 +872,7 @@ export function AutomationWorkflowCanvas({
             data-testid="automation-canvas-hand-mode"
             onClick={() => setInteractionMode('hand')}
           >
-            <Hand size={15} />
+            <Hand size={16} />
           </button>
         </Panel>
         <MiniMap

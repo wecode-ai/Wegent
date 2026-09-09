@@ -63,6 +63,7 @@ export interface ChatStreamHandlers {
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
   onRuntimeEventLagged?: (payload: RuntimeEventLaggedPayload) => void
   onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
+  onWeworkNotification?: () => void
   onProjectTaskAssigned?: (payload: ProjectTaskAssignedPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void

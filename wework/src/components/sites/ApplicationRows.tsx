@@ -30,6 +30,7 @@ export interface ApplicationRowContext {
   onConfigureEnvironment: (site: Site) => void
   onDelete: (site: Site) => void
   onManageCollaborators: (site: Site) => void
+  onManageAccess: (site: Site) => void
 }
 
 function SiteThumbnail({ site }: { site: Site }) {
@@ -84,7 +85,7 @@ export function SiteApplicationRow({
   const PublishIcon = isPublishing || isSecurityChecking ? Loader2 : Upload
 
   const openUrl = (url: string) => {
-    void openExternalUrl(url).catch(error => {
+    void openExternalUrl(url, { target: 'system' }).catch(error => {
       console.error('Failed to open site URL:', error)
     })
   }
@@ -144,6 +145,7 @@ export function SiteApplicationRow({
         {context.capabilities.has('publish') ||
         context.capabilities.has('edit') ||
         context.capabilities.has('configure_environment') ||
+        context.capabilities.has('manage_access') ||
         context.capabilities.has('delete') ||
         site.access_role === 'owner' ? (
           <SiteActionsMenu
@@ -157,11 +159,13 @@ export function SiteApplicationRow({
             canConfigureEnvironment={context.capabilities.has('configure_environment')}
             canDelete={context.capabilities.has('delete')}
             canManageCollaborators={site.access_role === 'owner'}
+            canManageAccess={context.capabilities.has('manage_access') && network === 'inner'}
             onPublish={context.onPublish}
             onEdit={context.onEdit}
             onConfigureEnvironment={context.onConfigureEnvironment}
             onDelete={context.onDelete}
             onManageCollaborators={context.onManageCollaborators}
+            onManageAccess={context.onManageAccess}
           />
         ) : null}
       </div>

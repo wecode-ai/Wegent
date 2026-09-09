@@ -45,6 +45,8 @@ export interface RemoteDeviceConfig {
 export interface DeviceInfo {
   id: number
   device_id: string
+  execution_target_id?: string | null
+  registered_device_id?: string
   socket_device_id?: string | null
   name: string
   status: DeviceStatus
@@ -143,12 +145,13 @@ export const deviceApis = {
 
   /**
    * Delete a device registration.
+   * Only cloud devices can be removed while online or busy.
    * Note: If the device reconnects via WebSocket, it will be re-registered.
    *
-   * @param deviceId - Device unique identifier
+   * @param recordId - Device registration primary key
    */
-  async deleteDevice(deviceId: string): Promise<{ message: string }> {
-    return apiClient.delete(`/devices/${encodeURIComponent(deviceId)}`)
+  async deleteDevice(recordId: number): Promise<{ message: string }> {
+    return apiClient.delete(`/devices/records/${recordId}`)
   },
 
   /**

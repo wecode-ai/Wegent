@@ -6,6 +6,8 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
 from app.services.device.local_provider import AppDeviceProvider, LocalDeviceProvider
@@ -62,6 +64,49 @@ async def test_app_provider_lists_app_devices_separately(test_db):
     assert app_devices[0]["runtime_instance_id"] == "runtime-app-device"
     assert [device["device_id"] for device in local_devices] == ["local-device"]
     assert local_devices[0]["runtime_instance_id"] == "runtime-local-device"
+
+
+@pytest.mark.parametrize(
+    "observed_runtime", [None, "runtime-other", "runtime-app-device"]
+)
+async def test_app_status_only_uses_matching_runtime_heartbeat(
+    test_db, observed_runtime
+):
+    record = _local_device("app-device", DeviceType.APP.value)
+    test_db.add(record)
+    test_db.commit()
+    online = {
+        "runtime_instance_id": observed_runtime,
+        "status": "online",
+        "runtime_features": {"schemaVersion": 2},
+        "executor_version": "1.8.6",
+        "runtime_capacity": {"limit": 4, "active": 1, "active_task_ids": ["task-1"]},
+    }
+    with (
+        patch(
+            "app.services.device.local_provider.cache_manager.get",
+            AsyncMock(return_value=online),
+        ),
+        patch(
+            "app.services.device.local_provider.cache_manager.mget",
+            AsyncMock(
+                return_value={
+                    f"device:online:7:app-record-{record.id}": online,
+                }
+            ),
+        ),
+    ):
+        provider = AppDeviceProvider()
+        status = await provider.get_status(test_db, 7, "app-device")
+        listed = (await provider.list_devices(test_db, 7))[0]
+    expected_online = observed_runtime == "runtime-app-device"
+    for device in [status, listed]:
+        assert device["status"] == ("online" if expected_online else "offline")
+        assert device["slot_used"] == (1 if expected_online else 0)
+        assert device["slot_max"] == (4 if expected_online else 0)
+        assert device["runtime_features"] == (
+            online["runtime_features"] if expected_online else None
+        )
 
 
 async def test_heartbeat_without_capacity_clears_previous_observation():

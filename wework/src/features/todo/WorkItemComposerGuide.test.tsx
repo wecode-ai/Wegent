@@ -168,6 +168,35 @@ describe('WorkItemComposerGuide', () => {
     expect(api.findCloudContextForTask).toHaveBeenCalledTimes(2)
   })
 
+  test('keeps a runtime status override ahead of a lagging refreshed context', async () => {
+    const runningItem = { ...item, status: 'in_progress' as const }
+    const refreshedItem = { ...item, title: 'Refreshed stale item' }
+    const api = {
+      listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
+      findCloudContextForTask: vi.fn().mockResolvedValue({
+        project,
+        loop_item: refreshedItem,
+      }),
+    } as unknown as ProjectSpaceApi
+
+    render(
+      <WorkItemComposerGuide
+        item={runningItem}
+        statusOverride="in_progress"
+        api={api}
+        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
+        refreshKey="running"
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent(
+        'Refreshed stale item'
+      )
+    )
+    expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('进行中')
+  })
+
   test('summarizes sibling tasks without opening a second menu', async () => {
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),

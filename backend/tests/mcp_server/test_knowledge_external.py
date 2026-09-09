@@ -10,9 +10,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.mcp_server import server as mcp_server_module
+from app.mcp_server.server import ExternalKnowledgeUser
 from app.mcp_server.tools import knowledge_external
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument, KnowledgeFolder
@@ -25,7 +27,10 @@ from app.services.knowledge.external_creator import (
     default_external_knowledge_creator_resolver,
     set_external_knowledge_creator_resolver,
 )
-from app.services.knowledge.external_document_access import DOWNLOAD_TOKEN_HEADER
+from app.services.knowledge.external_document_access import (
+    DOWNLOAD_TOKEN_HEADER,
+    verify_document_download_token,
+)
 
 
 def _set_external_user(user):
@@ -1186,6 +1191,108 @@ async def test_list_nodes_returns_document_capability_metadata(test_db, test_use
 
 
 @pytest.mark.asyncio
+async def test_list_nodes_reports_protected_document_as_not_downloadable(
+    test_db, test_user
+):
+    now = datetime(2026, 1, 3, 9, 45, 0)
+    attachment = _make_attachment(test_user.id)
+    test_db.add(attachment)
+    test_db.flush()
+    document = KnowledgeDocument(
+        kind_id=19,
+        attachment_id=attachment.id,
+        name="protected.pdf",
+        file_extension="pdf",
+        file_size=123,
+        user_id=test_user.id,
+        is_active=True,
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="file",
+        folder_id=0,
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add(document)
+    test_db.commit()
+
+    kb = _make_kb(19, test_user.id, "Protected KB", now)
+    kb.json["spec"]["allowDocumentDownload"] = False
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_nodes(
+                knowledge_base_id=19,
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["items"][0]["downloadable"] is False
+    assert payload["items"][0]["previewable"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_nodes_keeps_document_downloadable_for_exempt_external_user(
+    test_db, test_user
+):
+    now = datetime(2026, 1, 3, 9, 50, 0)
+    attachment = _make_attachment(test_user.id)
+    test_db.add(attachment)
+    test_db.flush()
+    document = KnowledgeDocument(
+        kind_id=20,
+        attachment_id=attachment.id,
+        name="exempt.pdf",
+        file_extension="pdf",
+        file_size=123,
+        user_id=test_user.id,
+        is_active=True,
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="file",
+        folder_id=0,
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add(document)
+    test_db.commit()
+
+    kb = _make_kb(20, test_user.id, "Protected KB", now)
+    kb.json["spec"]["allowDocumentDownload"] = False
+    token = _set_external_user(
+        ExternalKnowledgeUser(
+            id=test_user.id,
+            user_name=test_user.user_name,
+            document_download_exempt=True,
+        )
+    )
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_nodes(
+                knowledge_base_id=20,
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["items"][0]["downloadable"] is True
+    assert payload["items"][0]["previewable"] is True
+
+
+@pytest.mark.asyncio
 async def test_list_nodes_can_filter_inactive_documents(test_db, test_user):
     now = datetime(2026, 1, 3, 10, 0, 0)
     inactive_doc = KnowledgeDocument(
@@ -1628,6 +1735,116 @@ async def test_get_document_download_returns_short_lived_header_token(
     assert payload["file_size"] == 321
     assert payload["downloadable"] is True
     assert payload["previewable"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_document_download_rejects_protected_knowledge_base(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    now = datetime(2026, 1, 3, 13, 15, 0)
+    attachment = _make_attachment(test_user.id, extracted_text="protected report")
+    test_db.add(attachment)
+    test_db.flush()
+    document = KnowledgeDocument(
+        kind_id=25,
+        attachment_id=attachment.id,
+        name="protected-report.pdf",
+        file_extension="pdf",
+        file_size=123,
+        user_id=test_user.id,
+        is_active=True,
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="file",
+        folder_id=0,
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add(document)
+    test_db.commit()
+
+    kb = _make_kb(25, test_user.id, "Protected KB", now)
+    kb.json["spec"]["allowDocumentDownload"] = False
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_get_document_download(
+                document_id=document.id,
+                disposition="attachment",
+            )
+    finally:
+        _reset_external_user(token)
+
+    assert json.loads(result) == {
+        "error": "Document download is disabled",
+        "code": "DOCUMENT_DOWNLOAD_DISABLED",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_document_download_allows_product_exempt_external_user(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    now = datetime(2026, 1, 3, 13, 20, 0)
+    attachment = _make_attachment(test_user.id, extracted_text="protected report")
+    test_db.add(attachment)
+    test_db.flush()
+    document = KnowledgeDocument(
+        kind_id=26,
+        attachment_id=attachment.id,
+        name="protected-report.pdf",
+        file_extension="pdf",
+        file_size=123,
+        user_id=test_user.id,
+        is_active=True,
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="file",
+        folder_id=0,
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add(document)
+    test_db.commit()
+
+    kb = _make_kb(26, test_user.id, "Protected KB", now)
+    kb.json["spec"]["allowDocumentDownload"] = False
+    external_user = ExternalKnowledgeUser(
+        id=test_user.id,
+        user_name=test_user.user_name,
+        document_download_exempt=True,
+    )
+    token = _set_external_user(external_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_get_document_download(
+                document_id=document.id,
+                disposition="attachment",
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    token_payload = verify_document_download_token(
+        payload["headers"][DOWNLOAD_TOKEN_HEADER]
+    )
+    assert payload["downloadable"] is True
+    assert token_payload is not None
+    assert token_payload.document_download_exempt is True
 
 
 @pytest.mark.asyncio

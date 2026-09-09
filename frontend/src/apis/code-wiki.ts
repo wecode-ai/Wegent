@@ -4,6 +4,7 @@
 
 import type {
   CodeWikiCreateRequest,
+  CodeWikiGenerationStrategyCapabilities,
   CodeWikiListResponse,
   CodeWikiPageTree,
   CodeWikiResolution,
@@ -57,6 +58,12 @@ export const codeWikiApi = {
    */
   create: async (data: CodeWikiCreateRequest): Promise<CodeWikiSummary> =>
     client.post<CodeWikiSummary>('/knowledge-bases/code-wikis', data),
+
+  /** Deployment-enabled strategy choices; Team mapping stays server-side. */
+  strategies: async (): Promise<CodeWikiGenerationStrategyCapabilities> =>
+    client.get<CodeWikiGenerationStrategyCapabilities>(
+      '/knowledge-bases/code-wikis/generation-strategies'
+    ),
 
   /**
    * The navigation: every published page, already nested and ordered.

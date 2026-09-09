@@ -11,6 +11,10 @@ import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { hashComponentPath } from './lib/component-content-hash.mjs'
+import {
+  loadPreviousComponentManifest,
+  resolveReusableComponent,
+} from './lib/component-asset-reuse.mjs'
 import { componentReleaseScope } from './desktop-component-release.mjs'
 import { desktopComponentIds } from './lib/desktop-component-ids.mjs'
 import identityModule from '../electron/scripts/build-identity.cjs'
@@ -23,6 +27,10 @@ const componentResourcesRoot = join(weworkRoot, 'electron', 'resources')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
 const identity = resolveBuildIdentity()
+const componentAssetSource = process.env.WEWORK_RELEASE_COMPONENT_ASSET_SOURCE?.trim() || 'prepared'
+const previousComponentManifestPath = process.env.WEWORK_PREVIOUS_COMPONENT_MANIFEST?.trim()
+const includeLegacyTauriBridge =
+  process.env.WEWORK_INCLUDE_LEGACY_TAURI_BRIDGE?.trim().toLowerCase() !== 'false'
 let packagedComponentResourcesRoot = componentResourcesRoot
 
 if (!platform || !arch || !version || !outputDirectory) {
@@ -30,9 +38,21 @@ if (!platform || !arch || !version || !outputDirectory) {
     'Usage: prepare-desktop-release-assets.mjs <macos|windows|linux> <arm64|x64> <version> <output-directory>'
   )
 }
+if (!['prepared', 'packaged-macos-app'].includes(componentAssetSource)) {
+  throw new Error(`Unsupported release component asset source: ${componentAssetSource}`)
+}
+if (componentAssetSource === 'packaged-macos-app' && platform !== 'macos') {
+  throw new Error('packaged-macos-app component assets require the macOS release platform')
+}
 
 const output = resolve(outputDirectory)
 const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch
+const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
+const previousComponentManifest = await loadPreviousComponentManifest(
+  previousComponentManifestPath,
+  platform,
+  arch
+)
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 
@@ -43,8 +63,9 @@ if (platform === 'macos') {
   const appName = `${identity.productName}.app`
   const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
-  packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
-  await requireFile(join(packagedComponentResourcesRoot, 'app-update.yml'))
+  if (componentAssetSource === 'packaged-macos-app') {
+    packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
+  }
   const dmg = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.dmg$`)
@@ -58,7 +79,9 @@ if (platform === 'macos') {
   const releaseBaseName = `WeWork_${version}_${releasePlatform}`
   const releaseZip = join(output, `${releaseBaseName}.zip`)
   const bridge = join(output, `${releaseBaseName}.app.tar.gz`)
-  await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
+  if (includeLegacyTauriBridge) {
+    await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
+  }
   await Promise.all([
     cp(dmg, join(output, `${releaseBaseName}.dmg`)),
     cp(zip, releaseZip),
@@ -72,7 +95,7 @@ if (platform === 'macos') {
   await requireFile(`${updateZip}.blockmap`)
   await cp(updateZip, updateReleaseZip)
   await cp(`${updateZip}.blockmap`, `${updateReleaseZip}.blockmap`)
-  await signBridge(bridge)
+  if (includeLegacyTauriBridge) await signBridge(bridge)
 } else if (platform === 'windows') {
   const installer = await findFile(
     installerRoot,
@@ -83,17 +106,28 @@ if (platform === 'macos') {
     new RegExp(`^WeWorkHostUpdate_${escape(version)}_windows-${arch}-setup\\.exe$`)
   )
   await copyUpdateArtifacts([installer, updateInstaller])
-  await signBridge(join(output, basename(installer)))
+  if (includeLegacyTauriBridge) await signBridge(join(output, basename(installer)))
 } else if (platform === 'linux') {
   const appImage = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
   )
-  const updateAppImage = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
+  await copyUpdateArtifacts(
+    [
+      appImage,
+      ...(useComponentizedHostUpdate
+        ? [
+            await findFile(
+              onlineUpdateRoot,
+              new RegExp(
+                `^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`
+              )
+            ),
+          ]
+        : []),
+    ],
+    false
   )
-  await copyUpdateArtifacts([appImage, updateAppImage], false)
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }
@@ -112,6 +146,21 @@ async function prepareComponentAssets() {
     const sourcePath = join(packagedComponentResourcesRoot, component.path)
     const source = await stat(sourcePath)
     const contentSha256 = await hashComponentPath(sourcePath)
+    const entryPath = source.isDirectory() ? '.' : basename(sourcePath)
+    const reusable = resolveReusableComponent({
+      arch,
+      component,
+      contentSha256,
+      entryPath,
+      id,
+      platform,
+      previousManifest: previousComponentManifest,
+    })
+    if (reusable) {
+      componentAssets[id] = reusable
+      console.log(`Reusing unchanged component asset: ${reusable.assetName}`)
+      continue
+    }
     const temporaryAssetPath = join(output, `.component-${id}.tar.gz`)
     const archiveOptions = {
       cwd: source.isDirectory() ? sourcePath : dirname(sourcePath),
@@ -129,14 +178,16 @@ async function prepareComponentAssets() {
     }
     const archiveSha256 = await sha256(temporaryAssetPath)
     const assetName = `WeworkComponent_${id}_${archiveSha256}_${platform}_${arch}.tar.gz`
-    await rename(temporaryAssetPath, join(output, assetName))
+    const archivePath = join(output, assetName)
+    await rename(temporaryAssetPath, archivePath)
     componentAssets[id] = {
       version: component.version,
       contentSha256,
       archiveSha256,
+      archiveBytes: (await stat(archivePath)).size,
       assetName,
       releaseScope: componentReleaseScope(id),
-      entryPath: source.isDirectory() ? '.' : basename(sourcePath),
+      entryPath,
     }
   }
   await writeFile(

@@ -6,8 +6,12 @@ image_tag="${2:-wegent/e2e-claudecode-executor:latest}"
 image_archive="$artifact_dir/e2e-claudecode-executor-image.tar.zst"
 binary_archive="$artifact_dir/wegent-executor"
 
-test -s "$image_archive"
-test -s "$binary_archive"
+for required_file in "$image_archive" "$binary_archive"; do
+  if [[ ! -s "$required_file" ]]; then
+    printf 'Executor E2E artifact is missing or empty: %s\n' "$required_file" >&2
+    exit 1
+  fi
+done
 
 zstd -dc "$image_archive" | docker load
 docker image inspect "$image_tag" >/dev/null

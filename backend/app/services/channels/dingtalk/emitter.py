@@ -27,16 +27,23 @@ __all__ = ["SyncResponseEmitter", "StreamingResponseEmitter"]
 
 _MARKDOWN_TOKEN_RE = re.compile(r"[`*_>#]+")
 _CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_WAITING_FOR_INPUT_CONTENT = "等待你在 Wework 中确认后继续。"
+_EMPTY_FINAL_CONTENT = "本轮已结束，未生成最终回复。"
 
 
-def _compact_text(value: Any, limit: int) -> str:
-    """Return one safe, bounded line for the compact IM projection."""
+def _safe_single_line(value: Any) -> str:
+    """Return one masked, normalized line for the compact IM projection."""
     if not isinstance(value, str):
         return ""
     text = mask_string(value)
     text = _CONTROL_CHARACTER_RE.sub(" ", text)
     text = _MARKDOWN_TOKEN_RE.sub("", text)
-    text = " ".join(text.split()).strip()
+    return " ".join(text.split()).strip()
+
+
+def _compact_text(value: Any, limit: int) -> str:
+    """Return one safe, bounded line for the compact IM projection."""
+    text = _safe_single_line(value)
     if len(text) <= limit:
         return text
     return f"{text[: limit - 1].rstrip()}…"
@@ -50,11 +57,13 @@ class _CompactProgressState:
     current: str = "正在理解需求…"
     recent: list[str] = field(default_factory=list)
     blocks: dict[str, dict[str, Any]] = field(default_factory=dict)
+    reasoning_summary: str = ""
 
     MAX_RECENT = 2
     MAX_BLOCKS = 20
     MAX_STEP_LENGTH = 80
     MAX_CARD_LENGTH = 320
+    MAX_REASONING_LENGTH = 240
 
     @classmethod
     def from_dict(cls, value: Any) -> "_CompactProgressState":
@@ -78,11 +87,15 @@ class _CompactProgressState:
             for block_id, block in list(blocks.items())[-cls.MAX_BLOCKS :]
             if isinstance(block, dict)
         }
+        reasoning_summary = _compact_text(
+            value.get("reasoning_summary"), cls.MAX_REASONING_LENGTH
+        )
         return cls(
             mode=mode,
             current=current or "正在处理…",
             recent=recent,
             blocks=safe_blocks,
+            reasoning_summary=reasoning_summary,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,18 +104,36 @@ class _CompactProgressState:
             "current": self.current,
             "recent": self.recent[-self.MAX_RECENT :],
             "blocks": self.blocks,
+            "reasoning_summary": self.reasoning_summary,
         }
 
     def set_current(self, value: str) -> None:
         text = _compact_text(value, self.MAX_STEP_LENGTH)
         if text:
+            self.reasoning_summary = ""
             self.current = text
+
+    def append_reasoning_summary(self, value: str) -> None:
+        separator = " " if self.reasoning_summary and value[:1].isspace() else ""
+        summary = _safe_single_line(f"{self.reasoning_summary}{separator}{value}")
+        if not summary:
+            self.set_current("正在分析…")
+            return
+        summary = summary[-self.MAX_REASONING_LENGTH :]
+        self.reasoning_summary = summary
+        prefix = "正在分析："
+        available = self.MAX_STEP_LENGTH - len(prefix)
+        visible = summary
+        if len(visible) > available:
+            visible = f"…{visible[-(available - 1):]}"
+        self.current = f"{prefix}{visible}"
 
     def complete(self, value: str) -> None:
         text = _compact_text(value, self.MAX_STEP_LENGTH)
         if text and (not self.recent or self.recent[-1] != text):
             self.recent.append(text)
             self.recent = self.recent[-self.MAX_RECENT :]
+        self.reasoning_summary = ""
         self.current = "继续处理…"
 
     def remember_block(self, block: dict[str, Any]) -> None:
@@ -460,7 +491,13 @@ class StreamingResponseEmitter(ResultEmitter):
                 event.task_id, event.subtask_id, event.content or "", event.offset
             )
         elif event_type == EventType.THINKING.value:
-            await self.emit_thinking(event.task_id, event.subtask_id)
+            await self.emit_thinking(
+                event.task_id,
+                event.subtask_id,
+                content=event.content or "",
+                is_reasoning_summary=(event.data or {}).get("thinking_kind")
+                == "reasoning_summary",
+            )
         elif event_type == EventType.TOOL_START.value:
             await self.emit_tool_start(event)
         elif event_type == EventType.TOOL_RESULT.value:
@@ -495,9 +532,21 @@ class StreamingResponseEmitter(ResultEmitter):
                 return
             await self._load_progress_state()
             await self._save_progress_state()
-            await self._render_current_mode(force=not self._reconnected)
+            if not self._reconnected:
+                await self._render_current_mode(force=True)
 
-    async def emit_thinking(self, task_id: Any, subtask_id: int) -> None:
+    async def emit_thinking(
+        self,
+        task_id: Any,
+        subtask_id: int,
+        content: str = "",
+        is_reasoning_summary: bool = False,
+    ) -> None:
+        if content and is_reasoning_summary:
+            await self._update_progress(
+                lambda state: state.append_reasoning_summary(content)
+            )
+            return
         await self._update_progress(lambda state: state.set_current("正在分析…"))
 
     async def emit_status_prefix(
@@ -595,12 +644,16 @@ class StreamingResponseEmitter(ResultEmitter):
     async def _final_content(self, result: Optional[dict]) -> str:
         content = await self._current_answer()
         if isinstance(result, dict):
+            if result.get("silent_exit_reason") == "waiting_for_user_input":
+                return self._truncate_final(content or _WAITING_FOR_INPUT_CONTENT)
+            if result.get("value_origin") in {"process_fallback", "empty"}:
+                return self._truncate_final(content or _EMPTY_FINAL_CONTENT)
             for field_name in ("value", "output"):
                 result_value = result.get(field_name)
                 if isinstance(result_value, str) and result_value:
                     content = result_value
                     break
-        return self._truncate_final(content)
+        return self._truncate_final(content or _EMPTY_FINAL_CONTENT)
 
     async def emit_done(
         self,

@@ -13,6 +13,10 @@ import {
   updateCoreDshPlugin,
 } from '@/features/dsh-plugins/coreDshPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  MODE_MANAGED_GIT_PLUGIN,
+  MODE_MANAGED_HOME_PLUGINS,
+} from '@/features/workbench-mode/workbenchMode'
 
 type Operation =
   | 'install'
@@ -286,6 +290,8 @@ function PluginRow({
     operation === `update:${plugin.name}` ||
     operation === `uninstall:${plugin.name}`
   const source = plugin.repository || plugin.homepage || plugin.requestedSpec
+  const modeManaged =
+    plugin.name === MODE_MANAGED_GIT_PLUGIN || MODE_MANAGED_HOME_PLUGINS.has(plugin.name)
 
   return (
     <article
@@ -313,8 +319,13 @@ function PluginRow({
           {plugin.version ? ` · ${plugin.version}` : ''}
           {source ? ` · ${source}` : ''}
         </p>
+        {modeManaged ? (
+          <p className="mt-1 text-xs text-text-secondary">
+            {t('workbench.core_dsh_plugins_managed_by_mode', '由“设置 → 通用 → 模式”管理')}
+          </p>
+        ) : null}
       </div>
-      {!plugin.immutable ? (
+      {!plugin.immutable && !modeManaged ? (
         <div className="flex items-center gap-2">
           <button
             type="button"

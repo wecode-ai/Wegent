@@ -55,6 +55,13 @@ pnpm --filter wework e2e:desktop -- --segment permission-modes
 3. 等待对话框显示保存成功，并断言请求经过真实 Backend 后写入 Sites upstream fixture。
 4. 截图保存成功状态并关闭对话框。
 
+### 管理内网站点访问权限
+
+1. 打开 `E2E Product Site` 行末的更多菜单和“访问权限”。
+2. 选择“项目成员及指定成员”，输入两个顺序相反的用户名并保存。
+3. 等待对话框显示保存成功，并断言请求经过真实 Backend 后按确定顺序写入 Sites upstream fixture。
+4. 截图保存成功状态并关闭对话框。
+
 ### 管理站点协作者
 
 1. 打开 `E2E Product Site` 行末的更多菜单和“管理协作者”。

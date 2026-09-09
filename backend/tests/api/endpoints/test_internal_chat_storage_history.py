@@ -86,7 +86,7 @@ def _create_subtask(
     return subtask
 
 
-def test_internal_chat_history_includes_cancelled_subtasks(
+def test_internal_chat_history_marks_cancelled_partial_as_interrupted(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -108,12 +108,26 @@ def test_internal_chat_history_includes_cancelled_subtasks(
         message_id=2,
         status=SubtaskStatus.CANCELLED,
         content="cancelled-message",
+        result_override={
+            "value": "cancelled-message",
+            "messages_chain": [
+                {"role": "assistant", "content": "incomplete chain content"}
+            ],
+        },
     )
     _create_subtask(
         test_db,
         user_id=test_user.id,
         task_id=task_id,
         message_id=3,
+        status=SubtaskStatus.CANCELLED,
+        content=None,
+    )
+    _create_subtask(
+        test_db,
+        user_id=test_user.id,
+        task_id=task_id,
+        message_id=4,
         status=SubtaskStatus.FAILED,
         content=None,
     )
@@ -128,8 +142,35 @@ def test_internal_chat_history_includes_cancelled_subtasks(
     assert [item["id"] for item in messages] == [str(completed.id), str(cancelled.id)]
     assert [item["content"] for item in messages] == [
         "completed-message",
-        "cancelled-message",
+        "cancelled-message\n\n"
+        "[Previous assistant response was interrupted by the user.]",
     ]
+
+
+def test_internal_chat_history_omits_empty_completed_assistant(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+):
+    task_id = 9528
+    _create_task_resource(test_db, user_id=test_user.id, task_id=task_id)
+    _create_subtask(
+        test_db,
+        user_id=test_user.id,
+        task_id=task_id,
+        message_id=1,
+        status=SubtaskStatus.COMPLETED,
+        content="",
+        result_override={
+            "value": "",
+            "messages_chain": [{"role": "assistant", "content": ""}],
+        },
+    )
+
+    response = test_client.get(f"/api/internal/chat/history/task-{task_id}")
+
+    assert response.status_code == 200
+    assert response.json()["messages"] == []
 
 
 def test_internal_chat_history_includes_failed_only_when_value_exists(

@@ -53,6 +53,10 @@ macOS 托盘会根据 `WEWORK_APP_IDENTIFIER` 派生稳定的 UUID v5，并作�
 `WEWORK_APP_IDENTIFIER` 与正式版和其他 worktree 隔离。不要修改 UUID
 namespace 或改用随机 GUID，否则会再次重置用户的菜单栏显示规则。
 
+Electron 在 macOS 上创建 `NSStatusItem` 后才写入 `autosaveName`。托盘必须先用
+空图片完成构造，再设置真实图标，避免 iBar 在这段窗口期把正式版识别成临时的
+`Item-0` 并套用错误的隐藏规则。不要把真实图片重新放回 `Tray` 构造函数。
+
 脚本也会把这些值导出为 `VITE_WEWORK_*`，供前端在运行时显示。
 
 ## 前端显示

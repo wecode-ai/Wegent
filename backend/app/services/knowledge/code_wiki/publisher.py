@@ -134,12 +134,17 @@ def read_version_pages(db: Session, generation_id: int) -> tuple[PageSource, ...
 
 
 def _declared_order_paths(generation: WikiGeneration) -> list[str]:
-    """Read the page order exactly as the completing Writer submitted it."""
+    """Read the page order, including the legacy CSV representation."""
     summary = (generation.ext or {}).get("content_write", {}).get("summary", {}) or {}
+    raw_order = summary.get("structure_order") or []
+    if isinstance(raw_order, str):
+        raw_order = [raw_order]
+
     return [
-        str(path).strip()
-        for path in summary.get("structure_order") or []
-        if str(path).strip()
+        path
+        for value in raw_order
+        for path in (part.strip() for part in str(value).split(","))
+        if path
     ]
 
 

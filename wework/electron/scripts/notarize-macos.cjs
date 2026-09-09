@@ -5,6 +5,8 @@ const { join, resolve } = require('node:path')
 
 const { resolveBuildIdentity } = require('./build-identity.cjs')
 
+const NOTARYTOOL_PROCESS_TIMEOUT_MS = 35 * 60 * 1000
+
 async function notarizeMacos(context) {
   if (context.electronPlatformName !== 'darwin') return
 
@@ -21,14 +23,38 @@ async function notarizeApp(appPath, environment = process.env) {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'wework-notarize-'))
   const archivePath = join(temporaryDirectory, `${identity.productName}.zip`)
   try {
+    const verificationStartedAt = Date.now()
+    console.log(`Apple notarization code-signature verification started: ${appPath}`)
     await run('codesign', ['--verify', '--deep', '--strict', appPath])
+    console.log(
+      `Apple notarization code-signature verification completed in ${formatDuration(
+        Date.now() - verificationStartedAt
+      )}`
+    )
+
+    const compressionStartedAt = Date.now()
+    console.log(`Apple notarization archive compression started: ${archivePath}`)
     await run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, archivePath])
+    const archiveBytes = (await stat(archivePath)).size
+    console.log(
+      `Apple notarization archive ready: ${formatBytes(archiveBytes)} ` +
+        `(${archiveBytes} bytes), compressed in ${formatDuration(Date.now() - compressionStartedAt)}`
+    )
+
     const result = await submitArchive(archivePath, environment)
     if (result.status !== 'Accepted') {
       throw new Error(`Apple notarization failed with status: ${result.status || 'unknown'}`)
     }
+
+    const stapleStartedAt = Date.now()
+    console.log('Apple notarization ticket staple and validation started')
     await run('xcrun', ['stapler', 'staple', appPath])
     await run('xcrun', ['stapler', 'validate', appPath])
+    console.log(
+      `Apple notarization ticket staple and validation completed in ${formatDuration(
+        Date.now() - stapleStartedAt
+      )}`
+    )
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true })
   }
@@ -36,6 +62,7 @@ async function notarizeApp(appPath, environment = process.env) {
 
 async function submitArchive(archivePath, environment) {
   const attempts = retryAttempts(environment.WEWORK_NOTARY_UPLOAD_ATTEMPTS)
+  const archiveBytes = (await stat(archivePath)).size
   const args = [
     'notarytool',
     'submit',
@@ -49,11 +76,21 @@ async function submitArchive(archivePath, environment) {
     'json',
   ]
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const attemptStartedAt = Date.now()
     try {
-      console.log(`Apple notarization upload attempt ${attempt}/${attempts}`)
-      const result = JSON.parse(await run('xcrun', args))
       console.log(
-        `Apple notarization attempt ${attempt}/${attempts} completed: ${result.status || 'unknown'}`
+        `Apple notarization submit-and-wait attempt ${attempt}/${attempts} started: ` +
+          `${formatBytes(archiveBytes)} (${archiveBytes} bytes)`
+      )
+      const result = JSON.parse(
+        await run('xcrun', args, {
+          streamOutput: true,
+          timeoutMs: NOTARYTOOL_PROCESS_TIMEOUT_MS,
+        })
+      )
+      console.log(
+        `Apple notarization submit-and-wait attempt ${attempt}/${attempts} completed in ` +
+          `${formatDuration(Date.now() - attemptStartedAt)}: ${result.status || 'unknown'}`
       )
       return result
     } catch (error) {
@@ -66,6 +103,30 @@ async function submitArchive(archivePath, environment) {
     }
   }
   throw new Error('Apple notarization exhausted all upload attempts')
+}
+
+function formatBytes(bytes) {
+  if (!Number.isSafeInteger(bytes) || bytes < 0) {
+    throw new Error(`Invalid byte count: ${bytes}`)
+  }
+  const units = ['B', 'KiB', 'MiB', 'GiB']
+  let value = bytes
+  let unit = units[0]
+  for (let index = 1; index < units.length && value >= 1024; index += 1) {
+    value /= 1024
+    unit = units[index]
+  }
+  return `${value >= 10 || unit === 'B' ? value.toFixed(0) : value.toFixed(1)} ${unit}`
+}
+
+function formatDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+    throw new Error(`Invalid duration: ${milliseconds}`)
+  }
+  const totalSeconds = Math.round(milliseconds / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
 function authorizationArgs(environment) {
@@ -139,7 +200,7 @@ function delay(milliseconds) {
   return new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds))
 }
 
-function run(command, args) {
+function run(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       env: process.env,
@@ -147,16 +208,39 @@ function run(command, args) {
     })
     let stdout = ''
     let stderr = ''
+    let timedOut = false
+    let forceKillTimer
+    const timeoutTimer = options.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true
+          child.kill('SIGTERM')
+          forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5000)
+        }, options.timeoutMs)
+      : undefined
+    const clearTimers = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+    }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', chunk => {
       stdout += chunk
+      if (options.streamOutput) process.stdout.write(chunk)
     })
     child.stderr.on('data', chunk => {
       stderr += chunk
+      if (options.streamOutput) process.stderr.write(chunk)
     })
-    child.once('error', reject)
+    child.once('error', error => {
+      clearTimers()
+      reject(error)
+    })
     child.once('exit', (code, signal) => {
+      clearTimers()
+      if (timedOut) {
+        reject(new Error(`${command} timed out after ${options.timeoutMs}ms`))
+        return
+      }
       if (code === 0) {
         resolvePromise(stdout)
       } else {
@@ -186,7 +270,10 @@ if (require.main === module) {
 
 module.exports = notarizeMacos
 module.exports.authorizationArgs = authorizationArgs
+module.exports.formatBytes = formatBytes
+module.exports.formatDuration = formatDuration
 module.exports.isTransientNotaryFailure = isTransientNotaryFailure
 module.exports.notarizeApp = notarizeApp
 module.exports.retryAttempts = retryAttempts
+module.exports.run = run
 module.exports.s3AccelerationArgs = s3AccelerationArgs

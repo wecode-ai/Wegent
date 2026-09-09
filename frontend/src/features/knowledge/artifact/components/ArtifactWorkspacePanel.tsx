@@ -39,6 +39,7 @@ export function ArtifactWorkspacePanel({
       defaultWidth={360}
       minWidth={280}
       maxWidth={520}
+      defaultCollapsed
       collapsedWidth={72}
       mobileVisible={mobileVisible}
       expandLabel={t('artifact.showGeneration')}

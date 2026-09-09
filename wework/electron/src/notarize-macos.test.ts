@@ -8,8 +8,11 @@ import { expect, test } from 'vitest'
 const require = createRequire(import.meta.url)
 const {
   authorizationArgs,
+  formatBytes,
+  formatDuration,
   isTransientNotaryFailure,
   retryAttempts,
+  run,
   s3AccelerationArgs,
 } = require('../scripts/notarize-macos.cjs')
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -104,9 +107,16 @@ test('retries only transient notarization transport failures', () => {
   expect(isTransientNotaryFailure(new Error('HTTPClientError.connectTimeout'))).toBe(true)
   expect(isTransientNotaryFailure(new Error('HTTPClientError.deadlineExceeded'))).toBe(true)
   expect(isTransientNotaryFailure(new Error('abortedUpload after connection reset'))).toBe(true)
+  expect(isTransientNotaryFailure(new Error('xcrun timed out after 2100000ms'))).toBe(true)
   expect(
     isTransientNotaryFailure(new Error('Apple notarization failed with status: Invalid'))
   ).toBe(false)
+})
+
+test('terminates commands that exceed their process timeout', async () => {
+  await expect(
+    run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 100 })
+  ).rejects.toThrow('timed out after 100ms')
 })
 
 test('limits notarization upload attempts', () => {
@@ -121,4 +131,11 @@ test('uses S3 acceleration by default and supports explicit standard S3', () => 
   expect(s3AccelerationArgs('true')).toEqual(['--s3-acceleration'])
   expect(s3AccelerationArgs('false')).toEqual(['--no-s3-acceleration'])
   expect(() => s3AccelerationArgs('invalid')).toThrow('must be true or false')
+})
+
+test('formats notarization archive sizes and phase durations for CI logs', () => {
+  expect(formatBytes(390_360_297)).toBe('372 MiB')
+  expect(formatBytes(1_073_741_824)).toBe('1.0 GiB')
+  expect(formatDuration(34 * 60 * 1000 + 11_000)).toBe('34m 11s')
+  expect(formatDuration(900)).toBe('1s')
 })

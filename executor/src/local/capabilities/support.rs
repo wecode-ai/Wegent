@@ -97,6 +97,7 @@ pub(super) fn extract_plugin_zip(
     }
 
     let mut entries = Vec::new();
+    let mut executable_modes = BTreeMap::new();
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
         if file.is_dir() {
@@ -113,6 +114,7 @@ pub(super) fn extract_plugin_zip(
         }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).map_err(map_zip_read_error)?;
+        executable_modes.insert(path.clone(), file.unix_mode().unwrap_or(0) & 0o111);
         entries.push((path, bytes));
     }
     let manifest_prefix = plugin_manifest_prefix(&entries).ok_or_else(|| {
@@ -139,6 +141,7 @@ pub(super) fn extract_plugin_zip(
                 fs::create_dir_all(parent)?;
             }
             fs::write(&target, bytes)?;
+            restore_archive_execute_bits(&target, executable_modes[path])?;
             ensure_plugin_hook_executable(relative, &target)?;
         }
         ensure_dual_plugin_manifests(&temp_path).map(|_| ())
@@ -357,6 +360,24 @@ pub(super) fn ensure_plugin_hook_permissions(
         }
     }
 
+    Ok(())
+}
+
+fn restore_archive_execute_bits(
+    target: &Path,
+    execute_bits: u32,
+) -> Result<(), CapabilitySyncError> {
+    #[cfg(unix)]
+    if execute_bits != 0 {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Keep creation/umask permissions; archive write and special bits are untrusted.
+        let mut permissions = fs::metadata(target)?.permissions();
+        permissions.set_mode(permissions.mode() | (execute_bits & 0o111));
+        fs::set_permissions(target, permissions)?;
+    }
+    #[cfg(not(unix))]
+    let _ = (target, execute_bits);
     Ok(())
 }
 
@@ -875,6 +896,52 @@ pub(super) fn now_rfc3339_like() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn extraction_preserves_native_execution_without_archive_write_permissions() {
+        use std::{io::Write, os::unix::fs::PermissionsExt, process::Command};
+
+        let temporary = tempfile::tempdir().unwrap();
+        let installed = temporary.path().join("installed");
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (path, content, mode) in [
+            (
+                "plugin/.codex-plugin/plugin.json",
+                "{\"name\":\"native\"}",
+                0o644,
+            ),
+            (
+                "plugin/scripts/native/companion",
+                "#!/bin/sh\nprintf native-ok",
+                0o777,
+            ),
+            ("plugin/scripts/data.json", "{}", 0o644),
+        ] {
+            archive
+                .start_file(
+                    path,
+                    zip::write::FileOptions::default().unix_permissions(mode),
+                )
+                .unwrap();
+            archive.write_all(content.as_bytes()).unwrap();
+        }
+        let bytes = archive.finish().unwrap().into_inner();
+        extract_plugin_zip(&bytes, &installed).unwrap();
+        let companion = installed.join("scripts/native/companion");
+        let mode = fs::metadata(&companion).unwrap().permissions().mode();
+        let data_mode = fs::metadata(installed.join("scripts/data.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111);
+        assert_eq!(mode & 0o7000, 0);
+        assert_eq!(mode & 0o666, data_mode & 0o666);
+        assert_eq!(data_mode & 0o111, 0);
+        let result = Command::new(companion).output().unwrap();
+        assert!(result.status.success());
+        assert_eq!(result.stdout, b"native-ok");
+    }
 
     #[test]
     fn dual_manifest_conversion_preserves_connector_auth_contracts() {
