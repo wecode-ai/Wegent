@@ -666,6 +666,39 @@ def test_the_commit_the_agent_reports_is_what_the_next_run_compares_against(
     assert published_commit(test_db, knowledge_base) == NEXT_HEAD
 
 
+def test_a_published_checkout_count_enables_the_relative_change_limit(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    first = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+    _write_page(test_db, first.generation, "index")
+    _write_page(test_db, first.generation, "architecture")
+    _write_page(test_db, first.generation, "architecture/backend")
+    finish_run(
+        test_db,
+        generation=first.generation,
+        succeeded=True,
+        head_commit=HEAD,
+        tracked_file_count=100,
+    )
+
+    started = start_run(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=NEXT_HEAD,
+        changed_paths=[ChangedPath(f"src/module_{i}.py", "M") for i in range(30)],
+    )
+
+    assert started.generation.generation_type.value == "full"
+    assert "30 of 100 tracked files" in started.reason
+
+
 def test_a_failed_run_publishes_nothing(
     test_db: Session,
     knowledge_base: Kind,

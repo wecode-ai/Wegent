@@ -174,6 +174,9 @@ node wiki_submit.js plan \
 ### Complete the wiki generation
 
 Report the commit you documented, so the next run knows what has already been covered.
+When `complete` runs inside that checkout, it also records the Git-tracked file count
+for the same commit. This is automatic and lets a later incremental run use a
+proportional change limit; older versions without it continue with absolute limits.
 
 ```bash
 node wiki_submit.js complete \

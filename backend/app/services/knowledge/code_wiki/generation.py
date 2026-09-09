@@ -73,6 +73,7 @@ from app.services.knowledge.code_wiki.version_store import (
 logger = logging.getLogger(__name__)
 
 SOURCE_COMMIT_KEY = "commit"
+SOURCE_TRACKED_FILE_COUNT_KEY = "trackedFileCount"
 
 # Why a run failed, reached only through the two helpers below.
 #
@@ -177,6 +178,26 @@ def published_commit(db: Session, knowledge_base: Kind) -> str:
     if generation is None:
         return ""
     return str((generation.source_snapshot or {}).get(SOURCE_COMMIT_KEY, "") or "")
+
+
+def published_tracked_file_count(db: Session, knowledge_base: Kind) -> Optional[int]:
+    """Tracked-file count from the snapshot currently visible to readers.
+
+    This is deliberately optional. Versions produced before the submit skill began
+    reporting it still have a valid commit and can still use the absolute run-mode
+    limits; treating an absent value as a made-up repository size would distort the
+    proportional limit instead.
+    """
+    current = published_generation_id(knowledge_base)
+    if not current:
+        return None
+    generation = db.get(WikiGeneration, current)
+    if generation is None:
+        return None
+    value = (generation.source_snapshot or {}).get(SOURCE_TRACKED_FILE_COUNT_KEY)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def start_generation(

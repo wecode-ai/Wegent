@@ -10,6 +10,7 @@ const fs = require('fs')
 const path = require('path')
 const https = require('https')
 const http = require('http')
+const { spawnSync } = require('child_process')
 const { validateMermaidMarkdown } = require('./mermaid_validation')
 
 /**
@@ -122,6 +123,58 @@ function getAuthToken(argValue) {
 
   // Finally use argument value
   return argValue
+}
+
+/**
+ * Count the files Git tracks in the checkout that supplied a reported commit.
+ *
+ * The count is advisory metadata for the next run's change-ratio decision, so a
+ * missing repository or an unusually large output must never prevent a completed
+ * wiki from being submitted. Matching the commit keeps the count paired with the
+ * snapshot it describes instead of accidentally recording the executor's cwd.
+ *
+ * @param {string|null} reportedCommit Commit passed to ``complete``.
+ * @returns {number|null} Tracked file count, or null when it cannot be trusted.
+ */
+function trackedFileCountForCommit(reportedCommit) {
+  if (!reportedCommit) {
+    return null
+  }
+
+  const gitOptions = { encoding: 'utf8', maxBuffer: 1024 * 1024 }
+  const root = spawnSync('git', ['rev-parse', '--show-toplevel'], gitOptions)
+  if (root.status !== 0) {
+    return null
+  }
+  const repositoryRoot = String(root.stdout || '').trim()
+  if (!repositoryRoot) {
+    return null
+  }
+
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { ...gitOptions, cwd: repositoryRoot })
+  const checkoutCommit = String(head.stdout || '').trim()
+  const reported = String(reportedCommit).trim()
+  if (head.status !== 0 || !checkoutCommit || !reported || !checkoutCommit.startsWith(reported)) {
+    console.warn('Warning: --head-commit does not match this checkout; tracked file count was not recorded.')
+    return null
+  }
+
+  const files = spawnSync('git', ['ls-files', '-z'], {
+    cwd: repositoryRoot,
+    encoding: null,
+    maxBuffer: 16 * 1024 * 1024,
+  })
+  if (files.status !== 0 || !Buffer.isBuffer(files.stdout)) {
+    return null
+  }
+
+  let count = 0
+  for (const byte of files.stdout) {
+    if (byte === 0) {
+      count += 1
+    }
+  }
+  return count
 }
 
 /**
@@ -750,6 +803,10 @@ async function cmdComplete(args) {
 
   if (args.headCommit) {
     summary.head_commit = args.headCommit
+    const trackedFileCount = trackedFileCountForCommit(args.headCommit)
+    if (trackedFileCount !== null) {
+      summary.tracked_file_count = trackedFileCount
+    }
   }
   if (args.model) {
     summary.model = args.model

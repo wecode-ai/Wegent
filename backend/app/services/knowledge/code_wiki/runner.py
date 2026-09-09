@@ -39,11 +39,13 @@ from app.schemas.task import TaskCreate
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.generation import (
     SOURCE_COMMIT_KEY,
+    SOURCE_TRACKED_FILE_COUNT_KEY,
     FailureCode,
     GenerationInFlight,
     GenerationWikiNotFound,
     finish_generation,
     published_commit,
+    published_tracked_file_count,
     record_failure_reason,
     start_generation,
 )
@@ -163,7 +165,8 @@ def start_run(
             as unknown — which costs a full rebuild.
         changed_paths: Diff since the published commit. ``None`` asks for it to be
             read from the provider alongside the commit.
-        total_source_files: Repository size, used by the change-ratio threshold.
+        total_source_files: Explicit repository size for callers/tests. Normal runs
+            use the tracked-file count returned by the currently published checkout.
         force_full: Whether an explicit caller requested a fresh full rebuild.
 
     Returns:
@@ -204,6 +207,8 @@ def start_run(
         return execution["team"].id
 
     previous_commit = published_commit(db, knowledge_base)
+    if total_source_files is None:
+        total_source_files = published_tracked_file_count(db, knowledge_base)
     # Read on every run, including the first.
     #
     # This used to be skipped when nothing was published, on the grounds that a first
@@ -343,6 +348,7 @@ def finish_run(
     error_message: str = "",
     failure_code: str = "",
     head_commit: str = "",
+    tracked_file_count: Optional[int] = None,
 ) -> Optional[PublishResult]:
     """Conclude a run the agent has reported on, and publish it if it succeeded.
 
@@ -355,6 +361,8 @@ def finish_run(
             run started with, because the agent read the working tree and the trigger
             only knew what it was told — and this value is what the next run's mode
             decision compares against.
+        tracked_file_count: Number of Git-tracked files in that same checkout. It is
+            optional for compatibility with historical runs and unavailable worktrees.
 
     Returns:
         The publish outcome, or ``None`` when the run failed or was not publishable.
@@ -375,6 +383,8 @@ def finish_run(
     if head_commit:
         snapshot = dict(generation.source_snapshot or {})
         snapshot[SOURCE_COMMIT_KEY] = head_commit
+        if tracked_file_count is not None:
+            snapshot[SOURCE_TRACKED_FILE_COUNT_KEY] = tracked_file_count
         generation.source_snapshot = snapshot
         db.flush()
 

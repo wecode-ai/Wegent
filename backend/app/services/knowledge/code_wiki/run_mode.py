@@ -140,8 +140,9 @@ def decide_run_mode(
         incrementals_since_full: Incremental runs completed since the last full one.
         days_since_full: Days since the last full run, if one has happened.
         policy: Thresholds to apply.
-        total_source_files: Files under consideration at ``head_commit``, used for the
-            proportional threshold; skipped when unknown.
+        total_source_files: Known tracked-file count from the published checkout,
+            used for the proportional threshold. It is skipped for historical
+            versions that have no count yet.
         force_full: Whether an explicit caller requested a fresh full rebuild.
     """
     if force_full:
@@ -195,7 +196,8 @@ def decide_run_mode(
         if ratio > policy.max_changed_ratio:
             return RunModeDecision(
                 RunMode.FULL,
-                f"{ratio:.0%} of files changed, over the limit of "
+                f"{ratio:.0%} of files changed ({len(changed_paths)} of "
+                f"{total_source_files} tracked files), over the limit of "
                 f"{policy.max_changed_ratio:.0%}",
             )
 
