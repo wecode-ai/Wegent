@@ -319,6 +319,30 @@ async function waitForValue(read, predicate, message, timeoutMs) {
   assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
 }
 
+async function openInlineEventSubscriptionManager(control, uiTimeoutMs) {
+  const manageSelector = '[data-testid="automation-manage-event-subscriptions"]'
+  await control.command('select', '[data-testid="automation-trigger-type"]', {
+    value: 'webhook',
+  })
+  await control.command('scrollIntoView', manageSelector)
+  await control.command('waitFor', manageSelector, {
+    timeoutMs: uiTimeoutMs,
+    visible: true,
+  })
+  const [rightPanelBeforeSubscriptions] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="automation-editor-rightbar"]')
+  )
+  await control.command('click', manageSelector, {
+    visible: true,
+  })
+  await control.command('scrollIntoView', '[data-testid="event-subscription-editor"]')
+  await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
+    timeoutMs: uiTimeoutMs,
+    visible: true,
+  })
+  return rightPanelBeforeSubscriptions
+}
+
 function runtimeWorkTasks(runtimeWork) {
   return [
     ...(runtimeWork.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
@@ -1410,24 +1434,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('select', '[data-testid="automation-trigger-type"]', {
-      value: 'webhook',
-    })
-    await control.command('waitFor', '[data-testid="automation-manage-event-subscriptions"]', {
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
-    const [rightPanelBeforeSubscriptions] = JSON.parse(
-      await control.command('getElementMetrics', '[data-testid="automation-editor-rightbar"]')
+    const rightPanelBeforeSubscriptions = await openInlineEventSubscriptionManager(
+      control,
+      uiTimeoutMs
     )
-    await control.command('click', '[data-testid="automation-manage-event-subscriptions"]', {
-      visible: true,
-    })
-    await control.command('scrollIntoView', '[data-testid="event-subscription-editor"]')
-    await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
     const subscriptionEditorSnapshot = JSON.parse(
       await control.command('snapshot', '[data-testid="event-subscription-manager"]')
     )
@@ -4474,20 +4484,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await control.command('select', '[data-testid="automation-trigger-type"]', {
-        value: 'webhook',
-      })
-      await control.command('waitFor', '[data-testid="automation-manage-event-subscriptions"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('click', '[data-testid="automation-manage-event-subscriptions"]', {
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
+      await openInlineEventSubscriptionManager(control, uiTimeoutMs)
       await control.command('fill', '[data-testid="event-subscription-name"]', {
         value: 'GitHub repository',
       })
