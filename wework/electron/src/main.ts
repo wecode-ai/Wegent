@@ -56,6 +56,7 @@ import {
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { SystemRecordReplay } from './host/system-record-replay.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
@@ -196,6 +197,7 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
+let systemRecordReplay: SystemRecordReplay | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -1237,12 +1239,15 @@ async function shutdown(): Promise<void> {
   desktopControlBridge = null
   const computerUseService = computerUse
   computerUse = null
+  const recordReplay = systemRecordReplay
+  systemRecordReplay = null
   const development = pluginDevelopment
   pluginDevelopment = null
   await Promise.allSettled([
     browserBridge?.stop(),
     controlBridge?.stop(),
     computerUseService?.stop(),
+    recordReplay?.dispose(),
     development?.stop(),
     desktopRuntime?.stop(),
   ])
@@ -1341,6 +1346,17 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  const systemRecordReplayHelper = process.env.WEWORK_SYSTEM_RECORD_REPLAY_HELPER?.trim()
+  systemRecordReplay = new SystemRecordReplay(
+    app.getPath('userData'),
+    systemRecordReplayHelper ||
+      join(
+        app.isPackaged ? process.resourcesPath : developmentResourcesRoot,
+        'bin',
+        'wework-system-record-replay'
+      ),
+    systemRecordReplayHelper ? 'darwin' : process.platform
+  )
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -1421,6 +1437,7 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
+          systemRecordReplay,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           pendingSchemes,

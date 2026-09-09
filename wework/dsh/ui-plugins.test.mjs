@@ -10,6 +10,7 @@ const packages = [
   'ui-applications',
   'ui-automations',
   'ui-cloud-work',
+  'ui-record-replay',
   'ui-home-focus',
   'ui-home-developer',
   'ui-git',
@@ -103,6 +104,7 @@ test('first-party route packages own their routes and sidebar navigation', async
     'ui-applications',
     'ui-automations',
     'ui-cloud-work',
+    'ui-record-replay',
   ]) {
     const result = await registrationsOf(packageName)
     registrations.push(...result.registrations)
@@ -115,13 +117,21 @@ test('first-party route packages own their routes and sidebar navigation', async
   const actions = registrations.filter(entry => entry.options.name === 'wework.action')
   assert.deepEqual(
     routes.map(entry => entry.descriptor.path),
-    ['/plugins', '/plugins/create', '/plugins/manage', '/sites', '/automations', '/cloud-work']
+    [
+      '/plugins',
+      '/plugins/create',
+      '/plugins/manage',
+      '/sites',
+      '/automations',
+      '/cloud-work',
+      '/record-replay',
+    ]
   )
   assert.deepEqual(
     navigation.map(entry => entry.descriptor.path),
-    ['/plugins', '/sites', '/automations', '/cloud-work']
+    ['/plugins', '/sites', '/automations', '/cloud-work', '/record-replay']
   )
-  assert.equal(injections.filter(slot => slot === 'wework.sidebar.navigation').length, 4)
+  assert.equal(injections.filter(slot => slot === 'wework.sidebar.navigation').length, 5)
   assert.ok(actions.some(entry => entry.descriptor.id === 'plugin-center.open'))
   assert.ok(routes.every(entry => /^plugins\/wework-ui-[a-z-]+\.js$/.test(entry.descriptor.module)))
   assert.ok(routes.every(entry => typeof entry.descriptor.icon === 'string'))

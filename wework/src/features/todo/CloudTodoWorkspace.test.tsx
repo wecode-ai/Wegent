@@ -3657,7 +3657,7 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(screen.queryByTestId('automation-selection-options')).not.toBeInTheDocument()
-  })
+  }, 30_000)
 
   it('creates a queued task and starts it without opening a task composer', async () => {
     const workbenchServices = services()

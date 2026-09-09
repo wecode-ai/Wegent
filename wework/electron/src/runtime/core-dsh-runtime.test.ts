@@ -133,6 +133,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-ui-applications': expect.stringContaining('wework-ui-applications'),
         '@wegent/dsh-ui-automations': expect.stringContaining('wework-ui-automations'),
         '@wegent/dsh-ui-cloud-work': expect.stringContaining('wework-ui-cloud-work'),
+        '@wegent/dsh-ui-record-replay': expect.stringContaining('wework-ui-record-replay'),
         '@wegent/dsh-wework-plugin-developer': expect.stringContaining('wework-plugin-developer'),
         '@wegent/dsh-ui-home-focus': expect.stringContaining('wework-ui-home-focus'),
         '@wegent/dsh-ui-home-developer': expect.stringContaining('wework-ui-home-developer'),
@@ -157,6 +158,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-ui-applications',
             '@wegent/dsh-ui-automations',
             '@wegent/dsh-ui-cloud-work',
+            '@wegent/dsh-ui-record-replay',
             '@wegent/dsh-wework-plugin-developer',
             '@wegent/dsh-ui-home-focus',
             '@wegent/dsh-ui-home-developer',
@@ -219,6 +221,9 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-cloud-work', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-record-replay', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-home-focus', 'package.json'), 'utf8')
@@ -814,6 +819,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-applications', 'wework-ui-applications'],
       ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
       ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
+      ['@wegent/dsh-ui-record-replay', 'wework-ui-record-replay'],
       ['@wegent/dsh-wework-plugin-developer', 'wework-plugin-developer'],
       ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
       ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
