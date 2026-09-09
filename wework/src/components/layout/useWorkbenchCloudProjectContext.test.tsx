@@ -637,6 +637,121 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(enrichedFollowup.origin).toBeUndefined()
   })
 
+  test('does not apply a late default Issue refresh after switching tasks', async () => {
+    const defaultBoard = {
+      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: '我的任务',
+    }
+    const firstTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    const secondTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-2',
+    }
+    const firstItem = {
+      ...loopItem(defaultBoard.id),
+      id: 'todo-1',
+      has_additional_context: false,
+    }
+    const secondItem = {
+      ...loopItem(defaultBoard.id),
+      id: 'todo-2',
+      title: 'Second task',
+      has_additional_context: false,
+    }
+    const lateFirstItem = {
+      ...firstItem,
+      description: `${firstItem.description}\n\nLate first-task context`,
+      has_additional_context: true,
+    }
+    type BoundContext = {
+      id: number
+      cloud_project_id: string
+      loop_item_id: string
+      project: CloudProject
+      loop_item: CloudLoopItem
+    }
+    let resolveLateFirstContext: ((value: BoundContext) => void) | undefined
+    let firstTaskLookupCount = 0
+    const findCloudContextForTask = vi.fn((task: RuntimeTaskAddress) => {
+      if (task.taskId === secondTask.taskId) {
+        return Promise.resolve({
+          id: 2,
+          cloud_project_id: defaultBoard.id,
+          loop_item_id: secondItem.id,
+          project: defaultBoard,
+          loop_item: secondItem,
+        })
+      }
+      firstTaskLookupCount += 1
+      if (firstTaskLookupCount === 1) {
+        return Promise.resolve({
+          id: 1,
+          cloud_project_id: defaultBoard.id,
+          loop_item_id: firstItem.id,
+          project: defaultBoard,
+          loop_item: firstItem,
+        })
+      }
+      return new Promise<BoundContext>(resolve => {
+        resolveLateFirstContext = resolve
+      })
+    })
+    const localApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask,
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result, rerender } = renderHook(
+      ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskTitle: null,
+          services,
+          userId: 1,
+        }),
+      { initialProps: { currentRuntimeTask: firstTask } }
+    )
+
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(firstItem))
+    let submissionPromise: ReturnType<typeof result.current.prepareSubmission> | undefined
+    act(() => {
+      submissionPromise = result.current.prepareSubmission('Refresh first task')
+    })
+    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledTimes(2))
+
+    rerender({ currentRuntimeTask: secondTask })
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(secondItem))
+    await act(async () => {
+      resolveLateFirstContext?.({
+        id: 1,
+        cloud_project_id: defaultBoard.id,
+        loop_item_id: lateFirstItem.id,
+        project: defaultBoard,
+        loop_item: lateFirstItem,
+      })
+      await submissionPromise
+    })
+
+    expect(result.current.boundCloudItem).toEqual(secondItem)
+    expect(result.current.boundCloudProject).toEqual(defaultBoard)
+  })
+
   test('submits immediately and delegates a late default-project association to executor', async () => {
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),

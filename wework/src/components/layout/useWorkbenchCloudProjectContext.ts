@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import {
   nextTaskTrackingStatus,
@@ -313,7 +313,12 @@ export function useWorkbenchCloudProjectContext({
         : null,
     [currentRuntimeDeviceId, currentRuntimeTaskId]
   )
+  const currentContextTaskKey = contextRuntimeTask ? runtimeTaskKey(contextRuntimeTask) : null
   const contextMountedRef = useRef(true)
+  const currentContextTaskKeyRef = useRef(currentContextTaskKey)
+  useLayoutEffect(() => {
+    currentContextTaskKeyRef.current = currentContextTaskKey
+  }, [currentContextTaskKey])
   const contextLookupGenerationRef = useRef(0)
   const contextLookupTaskKeyRef = useRef<string | null>(null)
   useEffect(
@@ -1068,15 +1073,24 @@ export function useWorkbenchCloudProjectContext({
       if (contextRuntimeTask && boundCloudProject && isDefaultWorkItemProject(boundCloudProject)) {
         const api = projectSpaceApiFor(boundCloudProject)
         if (api) {
+          const refreshTaskKey = runtimeTaskKey(contextRuntimeTask)
+          const refreshGeneration = contextLookupGenerationRef.current + 1
+          contextLookupGenerationRef.current = refreshGeneration
           try {
             const context = await api.findCloudContextForTask(contextRuntimeTask)
-            setBoundCloudProject(context.project)
-            setBoundCloudItem(context.loop_item)
-            setDeliveryItem(
-              context.loop_item
-                ? cloudItemAsLocalWorkItem(context.loop_item, contextRuntimeTask)
-                : null
-            )
+            if (
+              contextMountedRef.current &&
+              currentContextTaskKeyRef.current === refreshTaskKey &&
+              contextLookupGenerationRef.current === refreshGeneration
+            ) {
+              setBoundCloudProject(context.project)
+              setBoundCloudItem(context.loop_item)
+              setDeliveryItem(
+                context.loop_item
+                  ? cloudItemAsLocalWorkItem(context.loop_item, contextRuntimeTask)
+                  : null
+              )
+            }
             refreshedCloudAdditionalContext = cloudProjectAdditionalContext(
               context.project,
               context.loop_item

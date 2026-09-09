@@ -1929,7 +1929,7 @@ impl LocalTaskStore {
     }
 
     pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
-        self.get_task(project_id, task_id)?;
+        let parent_id = self.get_task(project_id, task_id)?.parent_id;
         let connection = self.connection()?;
         let archived_at = now();
         let updated = connection.execute(
@@ -1950,6 +1950,9 @@ impl LocalTaskStore {
         )?;
         if updated == 0 {
             return Err(TaskRuntimeError::TaskNotFound);
+        }
+        if let Some(parent_id) = parent_id.as_deref() {
+            refresh_runtime_projection_additional_context(&connection, parent_id)?;
         }
         Ok(())
     }
@@ -6663,6 +6666,48 @@ mod tests {
                 .unwrap()
                 .metadata["has_additional_context"],
             json!(true)
+        );
+
+        let parent_binding = store
+            .ensure_default_work_item_binding(
+                "local-device",
+                "runtime-default-parent",
+                "Parent runtime title",
+                "Parent runtime description",
+            )
+            .unwrap();
+        let parent_id = parent_binding.loop_item_id.unwrap();
+        let child = store
+            .create_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                TaskCreate {
+                    title: "Temporary child context".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: Some(parent_id.clone()),
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &parent_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(true)
+        );
+
+        store
+            .archive_task(DEFAULT_WORK_ITEM_PROJECT_ID, &child.id)
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &parent_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(false)
         );
     }
 
