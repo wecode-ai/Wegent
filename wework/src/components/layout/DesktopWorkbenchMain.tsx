@@ -102,6 +102,7 @@ import {
 } from './workspace-panels/rightWorkspaceDshSidebar'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
+import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import { TaskBoardAssociationDialog } from '@/features/todo/TaskBoardAssociationDialog'
@@ -4286,12 +4287,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
-  const workspaceToolbarExtensions = (
-    <WorkspaceToolbarExtensions
-      currentProject={currentProject}
-      environmentInfo={environmentInfo}
-      workspaceTarget={workspaceTarget}
+  const conversationToolbarExtensions = currentRuntimeTask ? (
+    <DshMenuActions
+      args={{
+        deviceId: currentRuntimeTask.deviceId,
+        taskId: currentRuntimeTask.taskId,
+        workspacePath: currentRuntimeConversationSource?.workspacePath,
+      }}
+      buttonClassName={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      location="conversation.toolbar"
     />
+  ) : null
+  const workspaceToolbarExtensions = (
+    <>
+      {conversationToolbarExtensions}
+      <WorkspaceToolbarExtensions
+        currentProject={currentProject}
+        environmentInfo={environmentInfo}
+        workspaceTarget={workspaceTarget}
+      />
+    </>
   )
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')

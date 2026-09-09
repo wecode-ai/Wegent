@@ -615,6 +615,54 @@ test('binds the active Composer without exposing a second editor registry', asyn
   assert.throws(() => runtime.service.composer.insertText('missing'), /No active Wework composer/)
 })
 
+test('binds the conversation transcript controller for client plugins', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  const reference = { deviceId: 'device-1', taskId: 'task-1' }
+  const snapshot = { reference, title: 'Conversation', turns: [] }
+  const dispose = runtime.bindConversationController({
+    async getTranscript(value) {
+      assert.deepEqual(value, reference)
+      return snapshot
+    },
+  })
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await runtime.service.conversations.getTranscript(reference))),
+    snapshot
+  )
+  assert.equal(runtime.host.conversations.bind, undefined)
+  dispose()
+  await assert.rejects(
+    async () => runtime.service.conversations.getTranscript(reference),
+    /No active Wework conversation controller/
+  )
+})
+
+test('exposes only the save dialog capability to contribution modules', async () => {
+  const client = await loadClient()
+  const calls = []
+  const runtime = client.exports.createExtensionRuntime({
+    async saveDialog(options) {
+      calls.push(options)
+      return { canceled: false, filePath: '/tmp/conversation.html' }
+    },
+  })
+
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        await runtime.host.dialog.save({
+          defaultPath: 'conversation.html',
+        })
+      )
+    ),
+    { canceled: false, filePath: '/tmp/conversation.html' }
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ defaultPath: 'conversation.html' }])
+  assert.equal('host' in runtime.host, false)
+})
+
 test('provides namespaced state, validated configuration, and secure values', async () => {
   const client = await loadClient()
   const values = new Map()
