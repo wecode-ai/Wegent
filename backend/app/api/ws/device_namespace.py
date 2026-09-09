@@ -3047,6 +3047,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session = await self.get_session(sid)
         user_id = session.get("user_id") if session else None
         device_id = str(session.get("device_id") or "") if session else ""
+        logical_device_id = (
+            str(session.get("logical_device_id") or device_id) if session else ""
+        )
         if not user_id or not device_id:
             return {"error": "Device not authenticated"}
         if not isinstance(data, dict):
@@ -3056,6 +3059,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             return await self._forward_runtime_event(
                 user_id=int(user_id),
                 device_id=device_id,
+                logical_device_id=logical_device_id,
                 data=data,
             )
 
@@ -3064,6 +3068,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         *,
         user_id: int,
         device_id: str,
+        logical_device_id: str,
         data: dict,
     ) -> dict:
         """Persist and relay one runtime event without reordering its socket stream."""
@@ -3072,11 +3077,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
         nested_payload = payload.get("payload")
         if isinstance(nested_payload, dict):
             nested_payload = dict(nested_payload)
-            nested_payload.setdefault("deviceId", device_id)
-            nested_payload.setdefault("device_id", device_id)
+            nested_payload["deviceId"] = logical_device_id
+            nested_payload["device_id"] = logical_device_id
             payload["payload"] = nested_payload
         else:
-            payload["payload"] = {"deviceId": device_id, "device_id": device_id}
+            payload["payload"] = {
+                "deviceId": logical_device_id,
+                "device_id": logical_device_id,
+            }
 
         # Persist project-chat output before acknowledging the executor event.
         # The browser relay is an ephemeral projection; it must not be able to
@@ -3112,12 +3120,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         await publish_runtime_event(user_id, logical_device_id, payload)
         await self._local_task_responses.forward_runtime_event_to_channels(
-            device_id=device_id,
+            device_id=logical_device_id,
             payload=payload["payload"],
         )
         await self._notify_runtime_event(
             user_id=user_id,
-            device_id=device_id,
+            device_id=logical_device_id,
             payload=payload["payload"],
         )
         return {"success": True}

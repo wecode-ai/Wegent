@@ -192,7 +192,7 @@ class WeworkTranscript(Base):
 
 
 class WeworkTranscriptTurn(Base):
-    """One structured finalized transcript summary."""
+    """One finalized hot transcript increment."""
 
     __tablename__ = "wework_transcript_turns"
 
@@ -226,7 +226,7 @@ class WeworkTranscriptTurn(Base):
     payload = Column(
         JSON,
         nullable=False,
-        comment="Structured finalized-turn summary",
+        comment="Finalized transcript turn payload",
     )
     created_at = Column(
         _DATETIME,
@@ -253,7 +253,7 @@ class WeworkTranscriptTurn(Base):
             "sequence",
         ),
         {
-            "comment": "Structured finalized Wework transcript summaries",
+            "comment": "Hot finalized turns awaiting transcript archival",
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
         },
@@ -261,7 +261,7 @@ class WeworkTranscriptTurn(Base):
 
 
 class WeworkTranscriptArchive(Base):
-    """One immutable native transcript segment in object storage."""
+    """One immutable cold transcript segment in object storage."""
 
     __tablename__ = "wework_transcript_archives"
 
@@ -283,14 +283,14 @@ class WeworkTranscriptArchive(Base):
         nullable=False,
         default=0,
         server_default="0",
-        comment="First included sequence; 0 identifies a full snapshot",
+        comment="First turn sequence contained in the archive",
     )
     to_sequence = Column(
         BigInteger,
         nullable=False,
         default=0,
         server_default="0",
-        comment="Sequence materialized by this immutable segment",
+        comment="Last turn sequence contained in the archive",
     )
     storage_key = Column(
         String(500),
@@ -341,7 +341,7 @@ class WeworkTranscriptArchive(Base):
             "from_sequence",
         ),
         {
-            "comment": "Immutable native Wework transcript segments",
+            "comment": "Immutable archived Wework transcript segments",
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
         },

@@ -436,6 +436,63 @@ async def test_runtime_notification_failure_does_not_break_wework_relay(
 
 
 @pytest.mark.asyncio
+async def test_runtime_event_projects_app_device_id_to_logical_device_id(monkeypatch):
+    namespace = DeviceNamespace()
+    sio = AsyncMock()
+    forward = AsyncMock()
+    publish = AsyncMock()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(
+            return_value={
+                "user_id": 7,
+                "device_id": "runtime-device",
+                "logical_device_id": "app-device",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio)
+    monkeypatch.setattr(
+        "app.services.wework_api.events.publish_runtime_event",
+        publish,
+    )
+    monkeypatch.setattr(
+        namespace._local_task_responses,
+        "forward_runtime_event_to_channels",
+        forward,
+    )
+
+    result = await namespace.on_runtime_event(
+        "device-sid",
+        {
+            "event": "response.completed",
+            "payload": {
+                "deviceId": "runtime-device",
+                "taskId": "runtime-task-1",
+                "data": {"value": "done"},
+            },
+        },
+    )
+
+    assert result == {"success": True}
+    relay_payload = sio.emit.await_args.args[1]
+    relayed = relay_payload["payload"]
+    assert relayed["deviceId"] == "app-device"
+    assert relayed["device_id"] == "app-device"
+    forward.assert_awaited_once_with(
+        device_id="app-device",
+        payload=relayed,
+    )
+    publish.assert_awaited_once_with(7, "app-device", relay_payload)
+
+
+@pytest.mark.asyncio
 async def test_device_runtime_event_persists_project_chat_before_browser_relay(
     monkeypatch,
 ):
