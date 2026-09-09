@@ -1088,9 +1088,10 @@ jobs:
       - name: Install macOS Inspector backend dependencies
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
         run: |
-          brew install redis
+          brew install redis libmagic
           redis-server --version
           uv sync --project backend --frozen
+          uv run --project backend python -c "import magic; assert magic.from_buffer(b'Wework E2E', mime=True) == 'text/plain'"
 
       - name: Run Wework desktop macOS Inspector E2E
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
