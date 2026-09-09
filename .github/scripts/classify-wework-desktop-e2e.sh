@@ -19,6 +19,7 @@ core_segments=(
   plugin-development
   project-ai-settings
   model-routing
+  codex-account-login
   permission-modes
   workbench-mode
   computer-use
@@ -144,7 +145,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
-  model-routing,computer-use
+  model-routing,computer-use,codex-account-login
 )
 
 validate_core_shards() {
@@ -302,6 +303,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/modules/terminal-compatibility-flows.mjs)
       select_target "cloud:core-task-flow"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs)
+      select_target "core:codex-account-login"
       return
       ;;
     # Documentation does not change the packaged desktop application.
