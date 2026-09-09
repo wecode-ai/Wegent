@@ -19,6 +19,7 @@ export const inject = [
 const PACKAGE_NAME = '@wegent/dsh-transcript-sync'
 const SNAPSHOT_INTERVAL = 10
 const MAX_ENCRYPTED_SEGMENT_BYTES = 256 * 1024 * 1024 + 33
+const OBJECT_TRANSFER_TIMEOUT_MS = 10 * 60 * 1000
 const PREFERENCES_UNIT = 'portable_preferences'
 const PREFERENCES_FIELDS = [
   'appearanceMode',
@@ -286,6 +287,7 @@ export class WeworkSync {
       method: 'PUT',
       body: createReadStream(segment.path),
       duplex: 'half',
+      signal: AbortSignal.timeout(OBJECT_TRANSFER_TIMEOUT_MS),
       headers: {
         'content-length': String(segment.sizeBytes),
         'content-type': 'application/octet-stream',
@@ -664,7 +666,9 @@ function restorableSegments(archives, currentSequence) {
 }
 
 async function downloadFile(url, path) {
-  const response = await fetch(url)
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(OBJECT_TRANSFER_TIMEOUT_MS),
+  })
   if (!response.ok || !response.body) {
     throw new Error(`Transcript object download failed (${response.status})`)
   }

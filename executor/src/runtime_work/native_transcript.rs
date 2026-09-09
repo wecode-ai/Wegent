@@ -20,7 +20,7 @@ use ignore::WalkBuilder;
 use rusqlite::{
     params,
     types::{Value as SqlValue, ValueRef},
-    Connection,
+    Connection, OptionalExtension,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -375,6 +375,55 @@ pub(crate) fn restore_segments(
         sequence: manifest.sequence,
         rollout_end: rewritten_rollout_end,
     })
+}
+
+pub(crate) fn remove_restored_transcript(
+    workspace_path: &Path,
+    thread_id: &str,
+) -> Result<bool, String> {
+    let restored_root = executor_home().join("restored-workspaces");
+    if workspace_path.parent() != Some(restored_root.as_path()) {
+        return Ok(false);
+    }
+    let codex_home = wework_codex_home();
+    let state_path = codex_state_home(&codex_home).join(STATE_DB_FILENAME);
+    let mut connection = Connection::open(&state_path)
+        .map_err(|error| format!("failed to open Codex state database: {error}"))?;
+    let rollout_path = connection
+        .query_row(
+            "SELECT rollout_path FROM threads WHERE id = ?",
+            params![thread_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("failed to read restored Codex thread: {error}"))?
+        .map(PathBuf::from);
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("failed to begin restored Codex thread cleanup: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM thread_dynamic_tools WHERE thread_id = ?",
+            params![thread_id],
+        )
+        .map_err(|error| format!("failed to remove restored Codex tools: {error}"))?;
+    transaction
+        .execute("DELETE FROM threads WHERE id = ?", params![thread_id])
+        .map_err(|error| format!("failed to remove restored Codex thread: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("failed to commit restored Codex thread cleanup: {error}"))?;
+    if let Some(rollout_path) = rollout_path.filter(|path| {
+        path.starts_with(codex_home.join("sessions"))
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&format!("-{thread_id}.jsonl")))
+    }) {
+        cleanup(&rollout_path);
+    }
+    cleanup(workspace_path);
+    Ok(true)
 }
 
 fn encryption_aad(transcript_id: &str, sequence: u64, format: &str) -> Vec<u8> {
@@ -1182,6 +1231,18 @@ mod tests {
         })
         .expect("restored rollout cursor should permit the next delta");
         cleanup(&continued.path);
+        assert!(remove_restored_transcript(&restored.workspace_path, &restored.thread_id).unwrap());
+        assert!(!restored.workspace_path.exists());
+        assert!(!rollout_path.exists());
+        let restored_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM threads WHERE id = ?",
+                params![restored.thread_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored_count, 0);
+        assert!(workspace.exists());
         assert!(executor_home
             .join("runtime-work/transcript-restore")
             .read_dir()

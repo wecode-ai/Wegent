@@ -82,6 +82,7 @@ test('uploads a native snapshot and persists only its locator', async () => {
   const acknowledgements = []
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (_url, options) => {
+    assert.ok(options.signal instanceof AbortSignal)
     const chunks = []
     for await (const chunk of options.body) chunks.push(chunk)
     uploads.push(Buffer.concat(chunks).toString())
@@ -146,8 +147,12 @@ test('uploads a native snapshot and persists only its locator', async () => {
 
 test('restores the latest snapshot and contiguous native deltas', async () => {
   const restored = []
+  const downloadSignals = []
   const originalFetch = globalThis.fetch
-  globalThis.fetch = async url => new Response(`object:${url}`, { status: 200 })
+  globalThis.fetch = async (url, options) => {
+    downloadSignals.push(options.signal)
+    return new Response(`object:${url}`, { status: 200 })
+  }
   try {
     const sync = new WeworkSync({
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -227,6 +232,8 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
     )
     assert.equal(restored[0].segments[1].body, 'object:https://storage/2')
     assert.equal(restored[0].options.encryptionKey, TEST_ENCRYPTION_KEY)
+    assert.equal(downloadSignals.length, 2)
+    assert.ok(downloadSignals.every(signal => signal instanceof AbortSignal))
   } finally {
     globalThis.fetch = originalFetch
   }

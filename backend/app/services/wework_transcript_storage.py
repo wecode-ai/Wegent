@@ -4,6 +4,7 @@
 
 """Private object storage for archived Wework transcripts."""
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 from minio import Minio
@@ -85,13 +86,24 @@ class WeworkTranscriptStorage:
                 "Failed to create transcript segment upload URL"
             ) from exc
 
-    def size(self, object_key: str) -> int:
+    def integrity(self, object_key: str) -> tuple[int, str]:
+        response = None
         try:
-            return self.client.stat_object(self.bucket, object_key).size
+            response = self.client.get_object(self.bucket, object_key)
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in response.stream(amt=1024 * 1024):
+                size += len(chunk)
+                digest.update(chunk)
+            return size, digest.hexdigest()
         except Exception as exc:
             raise WeworkTranscriptStorageError(
                 "Failed to verify uploaded transcript segment"
             ) from exc
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
 
     def delete(self, object_key: str) -> None:
         try:

@@ -30,6 +30,7 @@ from app.services.wework_transcript_storage import (
 )
 
 logger = logging.getLogger(__name__)
+MAX_SEGMENTS_PRUNED_PER_COMMIT = 20
 
 
 class WeworkTranscriptError(RuntimeError):
@@ -284,10 +285,17 @@ def commit_segment(
             "A different transcript summary already exists for this turn or sequence",
         )
     _validate_segment_write(transcript, request)
-    if wework_transcript_storage.size(object_key) != request.size_bytes:
+    stored_size, stored_sha256 = wework_transcript_storage.integrity(object_key)
+    if stored_size != request.size_bytes:
         raise WeworkTranscriptError(
             "segment_size_mismatch",
             "Uploaded transcript segment size does not match its manifest",
+            status_code=422,
+        )
+    if stored_sha256 != request.sha256:
+        raise WeworkTranscriptError(
+            "segment_digest_mismatch",
+            "Uploaded transcript segment digest does not match its manifest",
             status_code=422,
         )
     db.add(
@@ -319,8 +327,7 @@ def commit_segment(
     transcript.updated_at = utcnow()
     db.commit()
     db.refresh(transcript)
-    if from_sequence == 0:
-        _prune_obsolete_segments(db, transcript.id)
+    _prune_obsolete_segments(db, transcript.id)
     return transcript, True
 
 
@@ -504,6 +511,7 @@ def _prune_obsolete_segments(db: Session, transcript_db_id: int) -> None:
             WeworkTranscriptArchive.to_sequence < retained_snapshot_sequence,
         )
         .order_by(WeworkTranscriptArchive.to_sequence)
+        .limit(MAX_SEGMENTS_PRUNED_PER_COMMIT)
         .all()
     )
     for segment in obsolete:

@@ -49,6 +49,11 @@ def _segment(lease, **overrides):
     }
 
 
+def _segment_integrity(object_key: str) -> tuple[int, str]:
+    digest = object_key.rsplit("-", 1)[-1].split(".", 1)[0]
+    return 4096, digest
+
+
 def test_commits_native_object_metadata_and_structured_summary(
     test_client, test_token, test_db, monkeypatch
 ):
@@ -71,7 +76,7 @@ def test_commits_native_object_metadata_and_structured_summary(
             datetime.now(UTC) + timedelta(minutes=5),
         ),
     )
-    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    monkeypatch.setattr(storage, "integrity", _segment_integrity)
     request = _segment(lease)
     prepare = test_client.post(
         "/api/wework-transcripts/transcript-1/segments/prepare",
@@ -117,6 +122,31 @@ def test_commits_native_object_metadata_and_structured_summary(
     assert turns.json()["turns"][0]["payload"]["taskId"] == "task-1"
 
 
+def test_rejects_uploaded_segment_with_mismatched_digest(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.services import wework_transcript_service
+
+    lease = _lease(test_client, test_token)
+    monkeypatch.setattr(
+        wework_transcript_service.wework_transcript_storage,
+        "integrity",
+        lambda _key: (4096, "b" * 64),
+    )
+
+    response = test_client.post(
+        "/api/wework-transcripts/transcript-1/segments",
+        headers=_headers(test_token),
+        json=_segment(lease),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "segment_digest_mismatch"
+    assert test_db.query(WeworkTranscriptArchive).count() == 0
+    assert test_db.query(WeworkTranscriptTurn).count() == 0
+    assert test_db.query(WeworkTranscript).one().current_sequence == 0
+
+
 def test_encryption_key_is_shared_by_one_user_across_transcripts(
     test_client, test_token
 ):
@@ -148,7 +178,7 @@ def test_prunes_segments_older_than_previous_snapshot(
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
     deleted_keys: list[str] = []
-    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    monkeypatch.setattr(storage, "integrity", _segment_integrity)
     monkeypatch.setattr(storage, "delete", deleted_keys.append)
 
     for sequence in range(1, 21):
@@ -188,6 +218,52 @@ def test_prunes_segments_older_than_previous_snapshot(
     assert all(f"/{sequence}-" in key for sequence, key in enumerate(deleted_keys, 1))
 
 
+def test_continues_bounded_pruning_on_delta_commits(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.services import wework_transcript_service
+
+    lease = _lease(test_client, test_token)
+    storage = wework_transcript_service.wework_transcript_storage
+    deleted_keys: list[str] = []
+    monkeypatch.setattr(storage, "integrity", _segment_integrity)
+    monkeypatch.setattr(storage, "delete", deleted_keys.append)
+    monkeypatch.setattr(wework_transcript_service, "MAX_SEGMENTS_PRUNED_PER_COMMIT", 2)
+
+    pruned_per_commit: list[int] = []
+    for sequence in range(1, 7):
+        is_snapshot = sequence in {1, 4, 5}
+        deleted_before_commit = len(deleted_keys)
+        response = test_client.post(
+            "/api/wework-transcripts/transcript-1/segments",
+            headers=_headers(test_token),
+            json=_segment(
+                lease,
+                baseSequence=sequence - 1,
+                sequence=sequence,
+                sha256=f"{sequence:064x}",
+                turnId=f"turn-{sequence}",
+                format=(
+                    "codex-rollout-snapshot.v1.tgz.aes256gcm"
+                    if is_snapshot
+                    else "codex-rollout-delta.v1.tgz.aes256gcm"
+                ),
+            ),
+        )
+        assert response.status_code == 200
+        pruned_per_commit.append(len(deleted_keys) - deleted_before_commit)
+
+    retained_sequences = [
+        row.to_sequence
+        for row in test_db.query(WeworkTranscriptArchive)
+        .order_by(WeworkTranscriptArchive.to_sequence)
+        .all()
+    ]
+    assert retained_sequences == [4, 5, 6]
+    assert len(deleted_keys) == 3
+    assert pruned_per_commit == [0, 0, 0, 0, 2, 1]
+
+
 def test_pruning_hides_obsolete_metadata_and_retries_object_deletion(
     test_client, test_token, test_db, monkeypatch
 ):
@@ -196,7 +272,7 @@ def test_pruning_hides_obsolete_metadata_and_retries_object_deletion(
 
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
-    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    monkeypatch.setattr(storage, "integrity", _segment_integrity)
     failures = 1
 
     def delete(_key):
@@ -256,7 +332,7 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
 
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
-    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    monkeypatch.setattr(storage, "integrity", _segment_integrity)
     monkeypatch.setattr(
         storage,
         "delete",
@@ -324,8 +400,8 @@ def test_rejects_stale_sequence_before_upload(test_client, test_token, monkeypat
     lease = _lease(test_client, test_token)
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
-        "size",
-        lambda _key: 4096,
+        "integrity",
+        _segment_integrity,
     )
     first = test_client.post(
         "/api/wework-transcripts/transcript-1/segments",
@@ -354,8 +430,8 @@ def test_rejects_mismatched_summary_for_committed_segment(
     lease = _lease(test_client, test_token)
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
-        "size",
-        lambda _key: 4096,
+        "integrity",
+        _segment_integrity,
     )
     request = _segment(lease)
     committed = test_client.post(
@@ -399,8 +475,8 @@ def test_reports_turn_conflict_when_turn_identity_exists_at_another_sequence(
     test_db.commit()
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
-        "size",
-        lambda _key: 4096,
+        "integrity",
+        _segment_integrity,
     )
 
     conflict = test_client.post(

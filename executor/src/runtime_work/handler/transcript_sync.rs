@@ -4,7 +4,8 @@
 
 use super::*;
 use crate::runtime_work::native_transcript::{
-    export_segment, restore_segments, ExportRequest, RestoreSegment, RestoredTranscript,
+    export_segment, remove_restored_transcript, restore_segments, ExportRequest, RestoreSegment,
+    RestoredTranscript,
 };
 
 const CLOUD_TRANSCRIPT_HANDLE_KEY: &str = "cloudTranscript";
@@ -156,6 +157,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| {
                 AppIpcError::new("bad_request", "transcript encryptionKey is required")
             })?;
+        let mut superseded_restore = None;
         if let Some(link) = self.local_task_link(&task_id) {
             let requested = segments
                 .iter()
@@ -183,6 +185,11 @@ impl RuntimeWorkRpcHandler {
                     "task_running",
                 ));
             }
+            if transcript_matches(&link, &transcript_id) {
+                superseded_restore = link
+                    .thread_id
+                    .map(|thread_id| (link.workspace_path, thread_id));
+            }
         }
         let restore_transcript_id = transcript_id.clone();
         let restored = tokio::task::spawn_blocking(move || {
@@ -197,6 +204,14 @@ impl RuntimeWorkRpcHandler {
         })?
         .map_err(|error| AppIpcError::new("transcript_restore_failed", error))?;
         let link = restored_task_link(&task_id, &transcript_id, &restored);
+        if let Some((workspace_path, thread_id)) = superseded_restore {
+            if let Err(error) =
+                remove_restored_transcript(std::path::Path::new(&workspace_path), &thread_id)
+            {
+                let _ = remove_restored_transcript(&restored.workspace_path, &restored.thread_id);
+                return Err(AppIpcError::new("transcript_restore_failed", error));
+            }
+        }
         self.upsert_local_task(link);
         emit_runtime_work_changed(&self.event_tx, &self.device_id, &task_id);
         Ok(json!({
