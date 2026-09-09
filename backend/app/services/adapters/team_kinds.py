@@ -42,6 +42,7 @@ from app.schemas.kind import (
 from app.schemas.namespace import GroupRole
 from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
+from app.schemas.user import UserInDB
 from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
@@ -1264,12 +1265,21 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 share_status = team_crd.metadata.labels["share_status"]
 
             team_dict["share_status"] = int(share_status)
+            team_dict["user"] = user
         else:
             team_dict["share_status"] = 2  # shared from others
-            user.git_info = []
+            # Redact credentials on a response copy only: the owner User row is
+            # session-attached, and mutating it here would let a later commit in
+            # the same session wipe the stored tokens.
+            user_view = {
+                field: getattr(user, field)
+                for field in UserInDB.model_fields
+                if field != "git_info" and hasattr(user, field)
+            }
+            user_view["git_info"] = []
+            team_dict["user"] = user_view
 
         team_dict["bots"] = detailed_bots
-        team_dict["user"] = user
 
         return team_dict
 

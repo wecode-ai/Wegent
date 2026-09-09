@@ -119,6 +119,7 @@ def _project_task_status(
     *,
     task_statuses: dict[str, str],
     ordered_task_ids: list[str],
+    loop_item_id: str | None = None,
 ) -> str:
     if any(task_statuses.get(task_id) == "running" for task_id in ordered_task_ids):
         return "running"
@@ -130,7 +131,7 @@ def _project_task_status(
 
         return (
             "awaiting_deliverables"
-            if missing_requirement_ids(db, node)
+            if missing_requirement_ids(db, node, loop_item_id=loop_item_id)
             else "completed"
         )
     if latest_status in FAILED_TASK_STATUSES:
@@ -178,6 +179,7 @@ def reconcile_workflow_task_nodes(
             node,
             task_statuses=task_statuses,
             ordered_task_ids=ordered_task_ids,
+            loop_item_id=(str(bindings[0].loop_item_id) if bindings else None),
         )
         node["task_ids"] = ordered_task_ids
         reconciled.append(node)
@@ -199,11 +201,26 @@ def update_workflow_task_status(
         task_id,
         execution_status,
     )
+    from app.services.loop_item_executions.service import runtime_device_identity_ids
+
+    device_ids = runtime_device_identity_ids(
+        db,
+        device_id,
+        owner_user_id=user_id,
+    )
+    if not device_ids:
+        logger.warning(
+            "[IssueTaskStatusSync] binding missing user=%s device=%s task=%s",
+            user_id,
+            device_id,
+            task_id,
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud context not found")
     binding = (
         db.query(LoopItemTaskBinding)
         .filter(
             LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == device_id,
+            LoopItemTaskBinding.device_id.in_(device_ids),
             LoopItemTaskBinding.task_id == task_id,
             loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
         )
@@ -258,7 +275,7 @@ def update_workflow_task_status(
         for candidate in bindings
         if candidate.workflow_node_id == binding.workflow_node_id
     ]
-    runtime_task_id = f"{device_id}:{task_id}"
+    runtime_task_id = f"{binding.device_id}:{task_id}"
     changed = False
     nodes: list[dict] = []
     for raw_node in raw_nodes:
@@ -287,6 +304,7 @@ def update_workflow_task_status(
                 node,
                 task_statuses=task_statuses,
                 ordered_task_ids=ordered_task_ids,
+                loop_item_id=str(item.id),
             )
             if (
                 node.get("status") != node_status
@@ -326,6 +344,43 @@ def apply_workflow_nodes(
         if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
     }
     for node in nodes:
+        if node.get("loop_id"):
+            continue
+        if node.get("node_type") == "branch":
+            continue
+        dependencies = node.get("depends_on")
+        dependencies = dependencies if isinstance(dependencies, list) else []
+        if node.get("status") == "blocked" and all(
+            str(dependency) in completed for dependency in dependencies
+        ):
+            node["status"] = "ready"
+    from app.services.workflow_loop_runtime import (
+        advance_loops,
+        advance_root_branches,
+        catch_up_branch_events,
+    )
+
+    def _arm_catch_up(loop: dict, branch: dict, body: list[dict]) -> None:
+        catch_up_branch_events(
+            db,
+            item,
+            loop=loop,
+            branch=branch,
+            nodes=body,
+        )
+
+    advance_loops(nodes, on_branch_armed=_arm_catch_up)
+    advance_root_branches(nodes)
+    completed = {
+        str(node.get("id"))
+        for node in nodes
+        if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
+    }
+    for node in nodes:
+        if node.get("loop_id"):
+            continue
+        if node.get("node_type") == "branch":
+            continue
         dependencies = node.get("depends_on")
         dependencies = dependencies if isinstance(dependencies, list) else []
         if node.get("status") == "blocked" and all(
@@ -333,6 +388,17 @@ def apply_workflow_nodes(
         ):
             node["status"] = "ready"
 
+    from app.services.project_branch_collectors import (
+        ensure_branch_collectors,
+        release_item_collectors,
+    )
+
+    ensure_branch_collectors(
+        db,
+        item,
+        nodes=nodes,
+        actor_user_id=actor_user_id,
+    )
     next_workflow = dict(workflow)
     next_workflow["version"] = int(workflow.get("version") or 1) + 1
     next_workflow["nodes"] = nodes
@@ -344,7 +410,11 @@ def apply_workflow_nodes(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required
     ):
         projected_status = "in_review"
-    elif any(node.get("status") in {"running", "changes_requested"} for node in nodes):
+        release_item_collectors(db, item, nodes=nodes)
+    elif any(
+        node.get("status") in {"running", "changes_requested", "waiting", "reacting"}
+        for node in nodes
+    ):
         projected_status = "in_progress"
     else:
         projected_status = "pending"
@@ -387,7 +457,7 @@ def workflow_automation_run_state(
     if not isinstance(raw_workflow, dict):
         raise RuntimeError("Workflow automation Issue has no workflow snapshot")
     workflow = IssueWorkflowInstance.model_validate({**raw_workflow, "nodes": nodes})
-    required = [node for node in workflow.nodes if node.required]
+    required = [node for node in workflow.nodes if node.required and not node.loop_id]
     if not required:
         return "succeeded", ""
 
@@ -437,6 +507,8 @@ def workflow_automation_run_state(
             "awaiting_approval",
             "awaiting_deliverables",
             "changes_requested",
+            "waiting",
+            "reacting",
         }
         for state in states
     ):
@@ -611,7 +683,7 @@ def sync_automation_workflow_node(
         if node is not None:
             from app.services.workflow_deliverables import missing_requirement_ids
 
-            if missing_requirement_ids(db, node):
+            if missing_requirement_ids(db, node, loop_item_id=str(run.task_id)):
                 node_status = "awaiting_deliverables"
     return update_workflow_node(
         db,
