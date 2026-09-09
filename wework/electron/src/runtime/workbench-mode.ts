@@ -111,7 +111,7 @@ function developmentCommandEnvironment(
   }
 }
 
-async function probeDevelopmentCommand(
+export async function probeDevelopmentCommand(
   command: string,
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform

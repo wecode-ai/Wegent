@@ -10,6 +10,7 @@ import {
   MODE_MANAGED_FOCUS_HOME_PLUGIN,
   MODE_MANAGED_GIT_PLUGIN,
   normalizeWorkbenchMode,
+  probeDevelopmentCommand,
 } from './workbench-mode.js'
 
 const gitPlugin = {
@@ -118,6 +119,12 @@ describe('workbench mode runtime policy', () => {
     } finally {
       await rm(root, { force: true, recursive: true })
     }
+  })
+
+  test('ignores the macOS system Git placeholder', async () => {
+    await expect(probeDevelopmentCommand('git', { PATH: '/usr/bin' }, 'darwin')).resolves.toBe(
+      false
+    )
   })
 
   test('does not treat Python alone as a development environment', async () => {
