@@ -4,6 +4,10 @@ sidebar_position: 1
 
 # 智能工作台首版统计设计
 
+> 本文档已由
+> `2026-09-09-wework-automatic-telemetry-design.md` 取代。事件模型、命名和实现边界
+> 以新文档为准；本文仅保留为历史设计记录。
+
 ## 背景
 
 智能工作台可从市场安装，也可通过导入 ZIP 包安装。已安装的工作台可
@@ -95,7 +99,7 @@ feature_action_completed: {
 ## 事实发生点
 
 | 流程 | 成功记录时点 | 成功事件 | 失败记录时点 | 失败事件 |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | 市场首次安装 | `harnessAppsApi.install(...)` 已成功返回且本地安装状态确认完成后 | `smart_app_installed { install_source: 'marketplace' }` | 获取描述失败，或安装失败 | `smart_app_marketplace_download` / `smart_app_marketplace_install` |
 | 市场更新 | 同一安装调用成功且本地状态确认完成后 | `feature_action_completed { domain: 'smart_app', action: 'update' }` | 获取描述失败，或更新安装失败 | `smart_app_marketplace_download` / `smart_app_marketplace_update` |
 | ZIP 导入 | ZIP 预览、校验和 `harnessAppsApi.install(...)` 均成功，且本地状态确认完成后 | `smart_app_installed { install_source: 'zip_import' }` | 预览、校验或安装失败 | `smart_app_zip_import` |
