@@ -219,6 +219,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const runStatus = useCodeWikiRunStatus(wiki.id)
   const control = regenerateControl(runStatus.status, regenerating, t)
   const emptyState = emptyStateText(runStatus.status, t)
+  const hasPublishedVersion = Boolean(runStatus.status?.last_published_at)
   const reloadPages = useCallback(
     async (showError = true, showLoading = true) => {
       const request = pagesRequest.current + 1
@@ -438,7 +439,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             className="h-11 sm:h-9"
           >
             <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
-            {runStatus.status?.last_published_at ? t('codeWiki.reader.update') : control.label}
+            {hasPublishedVersion ? t('codeWiki.reader.update') : control.label}
           </Button>
         )}
       </div>
@@ -447,10 +448,22 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         <Dialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
           <DialogContent data-testid="code-wiki-regenerate-confirm">
             <DialogHeader>
-              <DialogTitle>{t('codeWiki.reader.updateTitle')}</DialogTitle>
-              <DialogDescription>{t('codeWiki.reader.updateDescription')}</DialogDescription>
+              <DialogTitle>
+                {t(
+                  hasPublishedVersion
+                    ? 'codeWiki.reader.updateTitle'
+                    : 'codeWiki.reader.generateFirstTitle'
+                )}
+              </DialogTitle>
+              <DialogDescription>
+                {t(
+                  hasPublishedVersion
+                    ? 'codeWiki.reader.updateDescription'
+                    : 'codeWiki.reader.generateFirstDescription'
+                )}
+              </DialogDescription>
             </DialogHeader>
-            {runStatus.status?.last_published_at && (
+            {hasPublishedVersion && (
               <RadioGroup
                 value={updateMode}
                 onValueChange={value => setUpdateMode(value as 'check' | 'full')}
@@ -484,7 +497,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                 onClick={handleRegenerate}
                 data-testid="code-wiki-regenerate-confirm-action"
               >
-                {runStatus.status?.last_published_at
+                {hasPublishedVersion
                   ? t('codeWiki.reader.startUpdate')
                   : t('codeWiki.reader.generateFirst')}
               </Button>

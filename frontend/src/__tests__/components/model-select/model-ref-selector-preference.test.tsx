@@ -241,3 +241,44 @@ describe('not filling in a box that is meant to be empty', () => {
     expect(getGlobalModelPreference(TEAM_ID, undefined, 'wiki')?.modelName).toBe('zzz-remembered')
   })
 })
+
+describe('loading the available model list', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    jest.clearAllMocks()
+  })
+
+  it('shares one in-flight LLM request between simultaneous selectors', async () => {
+    let resolveModels: (value: { data: typeof MODELS }) => void
+    const modelsPromise = new Promise<{ data: typeof MODELS }>(resolve => {
+      resolveModels = resolve
+    })
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(modelsPromise)
+
+    render(
+      <>
+        <ModelRefSelector
+          value={null}
+          onChange={jest.fn()}
+          placeholder="Pick a generation model"
+          autoSelect={false}
+          dataTestId="generation-model-select"
+        />
+        <ModelRefSelector
+          value={null}
+          onChange={jest.fn()}
+          placeholder="Pick a summary model"
+          autoSelect={false}
+          dataTestId="summary-model-select"
+        />
+      </>
+    )
+
+    await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1))
+    resolveModels!({ data: MODELS })
+    await waitFor(() => {
+      expect(screen.getByTestId('generation-model-select')).not.toBeDisabled()
+      expect(screen.getByTestId('summary-model-select')).not.toBeDisabled()
+    })
+  })
+})

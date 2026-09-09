@@ -1249,6 +1249,8 @@
       "backToChat": "Back to conversation",
       "openNavigation": "Page navigation",
       "generateFirst": "Generate",
+      "generateFirstTitle": "Generate Wiki",
+      "generateFirstDescription": "Read the repository and generate the first documentation version. This may take a few minutes.",
       "regenerateConfirmTitle": "Regenerate this wiki?",
       "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
       "cancelConfirmTitle": "Stop this generation?",

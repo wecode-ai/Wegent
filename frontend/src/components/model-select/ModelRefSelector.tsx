@@ -21,6 +21,30 @@ export interface ModelRef {
   type: 'public' | 'user' | 'group' | 'runtime'
 }
 
+// A knowledge-base edit dialog can show both the generation and summary selectors.
+// They need the same all-scope LLM list, so share an active fetch while preserving a
+// fresh request each time the dialog is opened later.
+let llmModelsRequest: Promise<UnifiedModel[]> | null = null
+
+function loadLlmModels(): Promise<UnifiedModel[]> {
+  if (!llmModelsRequest) {
+    llmModelsRequest = modelApis
+      .getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+      .then(response =>
+        [...(response.data || [])].sort((a, b) => {
+          const nameA = a.displayName || a.name
+          const nameB = b.displayName || b.name
+          return nameA.localeCompare(nameB)
+        })
+      )
+      .finally(() => {
+        llmModelsRequest = null
+      })
+  }
+
+  return llmModelsRequest
+}
+
 interface ModelRefSelectorProps {
   value?: ModelRef | null
   onChange: (value: ModelRef | null) => void
@@ -81,15 +105,7 @@ export function ModelRefSelector({
     const fetchModels = async () => {
       setLoading(true)
       try {
-        // Fetch LLM models (all scopes)
-        const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
-        // Sort by displayName
-        const sortedModels = (response.data || []).sort((a, b) => {
-          const nameA = a.displayName || a.name
-          const nameB = b.displayName || b.name
-          return nameA.localeCompare(nameB)
-        })
-        setModels(sortedModels)
+        setModels(await loadLlmModels())
       } catch (err) {
         console.error('Failed to fetch models:', err)
         setModels([])

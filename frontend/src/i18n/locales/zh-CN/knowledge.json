@@ -1249,6 +1249,8 @@
       "backToChat": "回到对话",
       "openNavigation": "页面导航",
       "generateFirst": "开始生成",
+      "generateFirstTitle": "生成 Wiki",
+      "generateFirstDescription": "将读取仓库并生成首个文档版本，通常需要几分钟。",
       "regenerateConfirmTitle": "重新生成这个 wiki？",
       "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
       "cancelConfirmTitle": "终止本次生成？",
