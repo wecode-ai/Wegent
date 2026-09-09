@@ -6,7 +6,7 @@ sidebar_position: 10
 
 ## 2026-09-10 AI reads context on demand
 
-Launch requests retain the current instruction, Issue/stage identifiers, execution configuration, and inherited workspace address. Activity, historical conclusions, and delivery content stay in their original stores. Enqueueing, task binding, and dispatch no longer read, freeze, or copy them into execution_payload. The obsolete path that expanded stage content into origin, prompts, and additional context was removed. No database capacity change or content truncation is used.
+Launch requests retain the current instruction, Issue/stage identifiers, execution configuration, inherited workspace address, and a directory of existing deliverables. Activity, historical conclusions, and delivery content stay in their original stores. Enqueueing, task binding, and dispatch no longer read, freeze, or copy them into execution_payload. The obsolete path that expanded stage content into origin, prompts, and additional context was removed. No database capacity change or content truncation is used.
 
 ```mermaid
 sequenceDiagram
@@ -15,17 +15,20 @@ sequenceDiagram
   participant R as AI on target machine
   participant B as Board tools
   C->>Q: Instruction, Issue/stage IDs, execution configuration
-  Q->>R: Compact launch request and inherited workspace address
+  Q->>Q: Query submitted Issue deliveries and extract directory metadata
+  Q->>R: Compact request, workspace address, delivery directory
   R->>B: get_board_item / list_board_item_comments
   B-->>R: Current Issue, assignment, paginated activity and thread context
-  R->>B: Read requirements, deliveries or files as needed
+  R->>B: read_delivery by directory ID, requirements or files as needed
   B-->>R: Requested business content
   R->>B: Write results and deliverables
 ```
 
 list_board_item_comments enforces Issue access, pages backward from recent activity, and reuses thread context inclusion. It does not read unrelated Issue activity, reconcile execution state, or dispatch work. get_workflow_stage_context reads current content on invocation without persisting a binding snapshot. Launches still resolve predecessor workspace addresses for inherit and preserve existing execution target validation.
 
-Regression sources cover large Issue content excluded from launch payloads, no eager content reads, bindings without snapshots, comment pagination/access isolation, workspace inheritance, and real MCP reads in the CI event-center scenario. Tests and application verification were not run as requested. The commit is synchronized to Test-Wegent for user deployment and acceptance.
+The directory includes delivery_id, requirement_id, name, type, stage, submission time, and superseded_by_delivery_id. It excludes bodies, complete fulfillments, file content, and download URLs. The latest submission supersedes older entries only within the same stage and requirement; requirements within one delivery are evaluated independently. Entries without a known stage or requirement do not imply replacement. All previously submitted deliverables in this Issue are listed, including earlier outputs of a revisited stage, so AI skips and returns do not hide usable work based on graph edges. Drafts, deleted deliveries, and other Issues are excluded. Source task bindings retain stage provenance even after unlinking; stage delivery links identify outputs submitted without a binding. AI uses list_deliveries for outputs submitted after launch and read_delivery for content. No new table or migration is required.
+
+Regression sources cover directory metadata, partial replacement, stage/Issue isolation, draft/deletion filtering, binding provenance, startup with missing delivery bodies, large Issue and delivery content excluded from launch payloads, no eager content reads, bindings without snapshots, comment pagination/access isolation, workspace inheritance, and real MCP reads in the CI event-center scenario. Tests and application verification were not run as requested. The commit is synchronized to Test-Wegent for user deployment and acceptance.
 
 ## 2026-09-09 Work results and orchestration state are independent
 

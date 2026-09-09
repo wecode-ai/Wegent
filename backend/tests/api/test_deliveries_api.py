@@ -1775,7 +1775,8 @@ def test_workflow_task_binding_survives_missing_dependency_delivery_content(
     assert "workflow_node_id: deploy" in compiled_instruction
     assert "get_board_item" in compiled_instruction
     assert "read_delivery" in compiled_instruction
-    assert draft["id"] not in compiled_instruction
+    assert draft["id"] in compiled_instruction
+    assert context_response.json()["upstream_deliverables"][0]["stage_id"] == "develop"
     assert "dependencies" not in context_response.json()
 
 

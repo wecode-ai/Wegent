@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.models.delivery import (
     CloudProject,
+    Delivery,
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRule,
@@ -1429,6 +1430,25 @@ async def test_direct_workflow_node_queues_without_robot_rule(
         project_automations_module, "require_cloud_project_role", lambda *_args: None
     )
 
+    delivery = Delivery(
+        cloud_project_id=project.id,
+        loop_item_id=item.id,
+        status="delivered",
+        title="Existing design report",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "fulfillments": [
+                {
+                    "requirement_id": "design-report",
+                    "kind": "text",
+                    "text": "UPSTREAM_CONTENT" + "长报告" * content_size,
+                }
+            ]
+        },
+    )
+    test_db.add(delivery)
+    test_db.commit()
+
     from app.services.workflow_stage_context import workflow_stage_context_resolver
 
     def reject_eager_content(*_args, **_kwargs):
@@ -1457,6 +1477,8 @@ async def test_direct_workflow_node_queues_without_robot_rule(
     assert "workflowStageInput" not in execution.execution_payload
     assert "list_board_item_comments" in execution.runtime_request["message"]
     assert "read_delivery" in execution.runtime_request["message"]
+    assert delivery.id in execution.runtime_request["message"]
+    assert "design-report" in execution.runtime_request["message"]
     assert execution.executor_type == "generic_robot"
     assert execution.status == "queued"
     assert execution.agent_id == ""

@@ -203,5 +203,10 @@ def test_launch_inherits_workspace_without_loading_business_content(
         "deviceId": "desktop-1",
         "taskId": "runtime-task-A",
     }
-    assert set(launch) == {"target_stage", "workspace_source_task"}
+    assert set(launch) == {
+        "target_stage",
+        "workspace_source_task",
+        "upstream_deliverables",
+    }
+    assert launch["upstream_deliverables"] == []
     assert set(launch["target_stage"]) == {"id", "name", "workspace_policy"}
