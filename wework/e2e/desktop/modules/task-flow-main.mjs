@@ -283,6 +283,7 @@ import {
 
 import {
   captureVerificationScreenshot,
+  enrichTrackedDefaultIssueTitle,
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
@@ -315,6 +316,37 @@ const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
+const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
+  'WEWORK_DESKTOP_E2E_DEFAULT_ISSUE_CONTEXT: preserve this acceptance criterion.'
+
+function assertDefaultIssueContextAbsent(request) {
+  const serializedRequest = JSON.stringify(request.body)
+  assert.ok(
+    !serializedRequest.includes('cloud://projects/default-work-items'),
+    'The first task request included the empty default Issue reference'
+  )
+  assert.ok(
+    !serializedRequest.includes('Current cloud project: 我的任务'),
+    'The first task request included the empty default Issue project context'
+  )
+  assert.ok(
+    !serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The first task request unexpectedly included later Issue content'
+  )
+}
+
+function assertDefaultIssueContextInjected(request) {
+  const serializedRequest = JSON.stringify(request.body)
+  assert.ok(
+    serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The follow-up request did not include the enriched default Issue title'
+  )
+  assert.match(
+    serializedRequest,
+    /cloud:\/\/projects\/default-work-items\/todos\/WORK-\d+/,
+    'The follow-up request did not include the bound default Issue reference'
+  )
+}
 
 async function openProjectAiSettings(control, projectId) {
   await control.command('hover', `[data-testid="project-row-${projectId}"]`)
@@ -2460,7 +2492,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
       phase = 'initial-task'
       await sendPrompt(control, composerSelector, TASK_PROMPT)
-      await withTimeout(
+      const initialTaskRequest = await withTimeout(
         control.awaitScenarioRequest('initial'),
         DEFAULT_STEP_TIMEOUT_MS,
         'The model service did not receive the initial task request'
@@ -2522,11 +2554,21 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
       if (shouldRunDesktopCheckpoint('task-board-association')) {
         phase = 'project-space-task-board-association'
+        assertDefaultIssueContextAbsent(initialTaskRequest)
         control.releaseInitialToolExecution()
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        phase = 'project-space-default-issue-context-enriched'
+        await enrichTrackedDefaultIssueTitle(
+          control,
+          associatedTaskTabTestId,
+          `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`
+        )
+        control.setScenario('checkpoint_task')
+        const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
+        assertDefaultIssueContextInjected(enrichedIssueRequest)
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })

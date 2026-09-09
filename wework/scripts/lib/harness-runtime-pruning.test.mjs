@@ -25,6 +25,8 @@ describe('pruneHarnessRuntime', () => {
     await expectMissing(join(root, 'package', 'index.js.map'))
     await expectMissing(join(root, 'package', 'index.d.ts'))
     await expectExists(join(root, 'package', 'index.js'))
+    await expectMissing(join(root, 'node_modules', '.modules.yaml'))
+    await expectMissing(join(root, 'node_modules', '.pnpm-workspace-state-v1.json'))
   })
 
   test('removes unsupported reflink native packages for Linux', async () => {
@@ -51,6 +53,7 @@ async function runtimeFixture() {
     ['@reflink', 'reflink-darwin-arm64'],
     ['@reflink', 'reflink-darwin-x64'],
     ['@reflink', 'reflink-win32-x64-msvc'],
+    ['node_modules'],
     ['package'],
   ]
   await Promise.all(directories.map(parts => mkdir(join(root, ...parts), { recursive: true })))
@@ -64,6 +67,11 @@ async function runtimeFixture() {
     writeFile(join(root, '@reflink', 'reflink-darwin-arm64', 'reflink.node'), ''),
     writeFile(join(root, '@reflink', 'reflink-darwin-x64', 'reflink.node'), ''),
     writeFile(join(root, '@reflink', 'reflink-win32-x64-msvc', 'reflink.node'), ''),
+    writeFile(join(root, 'node_modules', '.modules.yaml'), 'prunedAt: now\n'),
+    writeFile(
+      join(root, 'node_modules', '.pnpm-workspace-state-v1.json'),
+      JSON.stringify({ lastValidatedTimestamp: Date.now() })
+    ),
     writeFile(join(root, 'package', 'index.js'), ''),
     writeFile(join(root, 'package', 'index.js.map'), ''),
     writeFile(join(root, 'package', 'index.d.ts'), ''),
