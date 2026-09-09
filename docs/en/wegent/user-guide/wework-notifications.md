@@ -16,7 +16,9 @@ An optional `url` specifies the click destination independently of project sourc
 
 ## Open Wework from DingTalk and other IM clients
 
-IM links open `/launch/wework?destination=...` on the Wegent website. Runtime task updates also include their task link. Click “Open Wework” on the page and allow the browser to launch the installed desktop app. The page requires no web login; resource authorization remains in the client. If DingTalk blocks the app launch, open the page in your system browser.
+IM links open `/launch/wework?destination=...` on the Wegent website. Runtime task updates also include their task link. The page validates the destination and automatically requests the installed desktop app; confirm the browser prompt without clicking a page button first. Each destination is requested once. After cancellation, the page button can request it again. The page requires no web login; resource authorization remains in the client. If DingTalk blocks the app launch, open the page in your system browser.
+
+Set frontend runtime environment variable `RUNTIME_WEWORK_APP_NAME` to configure the page’s app name (default: `Wework`; for example, `Weibo WeWork` internally), then restart the frontend. This changes page copy only; the browser prompt names the locally registered handler for `wework://`.
 
 Configure Backend `FRONTEND_URL` to the recipient-accessible Wegent website (HTTPS in production). Route `/launch/wework` to the Wegent frontend, not the separate Wework website. Stored destinations remain `wework://...`; the page and desktop share the same parser and accept only the destinations below.
 
@@ -46,7 +48,7 @@ flowchart LR
   Inbox --> IM[Private IM delivery]
   Live --> Bell[Notification center]
   IM --> Web[Wegent launch page]
-  Web -->|User clicks Open Wework| Scheme[Wework scheme parser]
+  Web -->|Automatic request and browser confirmation| Scheme[Wework scheme parser]
   Bell --> Scheme
   Scheme --> Issue[Board tab and Issue]
 ```

@@ -1751,10 +1751,10 @@
     }
   },
   "wework_open": {
-    "title": "打开 Wework",
-    "description": "在 Wework 桌面客户端中查看通知对应的内容。",
-    "open": "打开 Wework",
-    "hint": "请先安装 Wework，并允许浏览器打开应用。若钉钉阻止打开，请在系统浏览器中打开此页面。",
+    "title": "打开 {{appName}}",
+    "description": "正在请求打开 {{appName}}，请在浏览器提示中确认。若未出现提示，可点击下方按钮再次打开。",
+    "open": "打开 {{appName}}",
+    "hint": "请先安装 {{appName}}，并允许浏览器打开应用。若钉钉阻止打开，请在系统浏览器中打开此页面。",
     "invalid": "此链接无效，请从通知中重新打开。"
   }
 }

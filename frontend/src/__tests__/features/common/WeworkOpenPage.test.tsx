@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { render, screen } from '@testing-library/react'
 import { useSearchParams } from 'next/navigation'
 import WeworkOpenPage from '@/app/launch/wework/page'
@@ -8,16 +9,38 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('Wegent desktop launch page', () => {
+  const originalLocation = window.location
+  const assign = jest.fn()
+
+  beforeAll(() => {
+    Object.defineProperty(window, 'location', { configurable: true, value: { assign } })
+  })
+  afterAll(() => {
+    Object.defineProperty(window, 'location', { configurable: true, value: originalLocation })
+  })
+  beforeEach(() => assign.mockClear())
+
   it.each([
     'wework://boards',
     'wework://boards/12',
     'wework://boards/12/issues/gitlab%3A12%2Fissue%233',
     'wework://tasks/device/task%2F1',
-  ])('preserves the destination for explicit app launch: %s', destination => {
+  ])('automatically launches the exact destination once: %s', destination => {
     jest
       .mocked(useSearchParams)
       .mockReturnValue(new URLSearchParams({ destination }) as ReturnType<typeof useSearchParams>)
-    render(<WeworkOpenPage />)
+    const { rerender } = render(
+      <StrictMode>
+        <WeworkOpenPage />
+      </StrictMode>
+    )
+    rerender(
+      <StrictMode>
+        <WeworkOpenPage />
+      </StrictMode>
+    )
+    expect(assign).toHaveBeenCalledTimes(1)
+    expect(assign).toHaveBeenCalledWith(destination)
     expect(screen.getByTestId('open-wework')).toHaveAttribute('href', destination)
   })
 
@@ -36,6 +59,7 @@ describe('Wegent desktop launch page', () => {
       .mocked(useSearchParams)
       .mockReturnValue(new URLSearchParams({ destination }) as ReturnType<typeof useSearchParams>)
     render(<WeworkOpenPage />)
+    expect(assign).not.toHaveBeenCalled()
     expect(screen.getByRole('alert')).toBeInTheDocument()
     expect(screen.queryByTestId('open-wework')).not.toBeInTheDocument()
   })
@@ -49,6 +73,7 @@ describe('Wegent desktop launch page', () => {
         ) as ReturnType<typeof useSearchParams>
       )
     render(<WeworkOpenPage />)
+    expect(assign).not.toHaveBeenCalled()
     expect(screen.getByRole('alert')).toBeInTheDocument()
   })
 })

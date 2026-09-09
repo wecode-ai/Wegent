@@ -6,7 +6,16 @@ test('notification link opens the public Wegent launch page and preserves its ta
   page,
 }) => {
   const destination = 'wework://boards/12/issues/gitlab%3A12%2Fissue%233'
+  const navigationRequests: string[] = []
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Page.enable')
+  cdp.on('Page.frameRequestedNavigation', event => {
+    if (event.url.startsWith('wework:')) navigationRequests.push(event.url)
+  })
+  const runtimeConfig = page.waitForResponse(response => response.url().endsWith('/runtime-config'))
   await page.goto(`/launch/wework?${new URLSearchParams({ destination })}`)
+  expect((await runtimeConfig).ok()).toBe(true)
+  await expect.poll(() => navigationRequests).toEqual([destination])
   const launch = page.getByTestId('open-wework')
   await expect(launch).toBeVisible()
   await expect(launch).toHaveAttribute('href', destination)

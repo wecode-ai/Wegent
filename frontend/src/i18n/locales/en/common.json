@@ -1757,10 +1757,10 @@
     }
   },
   "wework_open": {
-    "title": "Open Wework",
-    "description": "View this notification’s destination in the Wework desktop app.",
-    "open": "Open Wework",
-    "hint": "Install Wework and allow your browser to open the app. If DingTalk blocks opening it, open this page in your system browser.",
+    "title": "Open {{appName}}",
+    "description": "Requesting to open {{appName}}. Confirm the browser prompt. If no prompt appears, use the button below to try again.",
+    "open": "Open {{appName}}",
+    "hint": "Install {{appName}} and allow your browser to open the app. If DingTalk blocks opening it, open this page in your system browser.",
     "invalid": "This link is invalid. Open it again from your notification."
   }
 }
