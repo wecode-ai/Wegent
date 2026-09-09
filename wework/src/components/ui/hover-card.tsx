@@ -74,6 +74,7 @@ function hoverCardPosition(
 
 function viewportRightHoverCardPosition(
   estimatedWidth: number,
+  estimatedHeight: number,
   viewportTop: number
 ): HoverCardPosition {
   return {
@@ -81,7 +82,7 @@ function viewportRightHoverCardPosition(
     top: clamp(
       viewportTop,
       VIEWPORT_PADDING,
-      Math.max(VIEWPORT_PADDING, window.innerHeight - VIEWPORT_PADDING)
+      Math.max(VIEWPORT_PADDING, window.innerHeight - estimatedHeight - VIEWPORT_PADDING)
     ),
   }
 }
@@ -239,10 +240,11 @@ export function HoverCard({
     if (!anchorRect || !cardRect) return
 
     const measuredWidth = cardRect.width || estimatedWidth
+    const measuredHeight = cardRect.height || estimatedHeight
     setPosition(
       placement === 'viewport-right'
-        ? viewportRightHoverCardPosition(measuredWidth, viewportTop)
-        : hoverCardPosition(anchorRect, measuredWidth, cardRect.height || estimatedHeight)
+        ? viewportRightHoverCardPosition(measuredWidth, measuredHeight, viewportTop)
+        : hoverCardPosition(anchorRect, measuredWidth, measuredHeight)
     )
   }, [estimatedHeight, estimatedWidth, open, placement, viewportTop])
 

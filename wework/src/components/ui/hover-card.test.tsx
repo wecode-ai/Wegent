@@ -523,4 +523,46 @@ describe('HoverCard', () => {
       top: '48px',
     })
   })
+
+  test('keeps viewport-right cards fully inside the viewport', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('innerWidth', 1024)
+    vi.stubGlobal('innerHeight', 768)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const isCard = this.dataset.testid === 'bounded-hover-card'
+      return {
+        x: isCard ? 0 : 120,
+        y: isCard ? 0 : 160,
+        width: isCard ? 360 : 180,
+        height: isCard ? 300 : 80,
+        top: isCard ? 0 : 160,
+        right: isCard ? 360 : 300,
+        bottom: isCard ? 300 : 240,
+        left: isCard ? 0 : 120,
+        toJSON: () => undefined,
+      }
+    })
+
+    render(
+      <HoverCard
+        testId="bounded-hover-card"
+        interactive
+        placement="viewport-right"
+        viewportTop={700}
+        estimatedWidth={360}
+        estimatedHeight={300}
+        content={<div>Bounded details</div>}
+      >
+        <div>Bounded task</div>
+      </HoverCard>
+    )
+
+    fireEvent.mouseEnter(screen.getByText('Bounded task'))
+    await act(async () => vi.advanceTimersByTime(450))
+
+    expect(screen.getByTestId('bounded-hover-card')).toHaveStyle({
+      left: '656px',
+      top: '460px',
+    })
+  })
 })
