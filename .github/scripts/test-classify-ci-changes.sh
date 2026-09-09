@@ -503,7 +503,7 @@ wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"resilience\"/\"segments\":\"resilience,environment-panel-scroll\"}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,board-focus-view\"/\"segments\":\"project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view\"}"
 
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
