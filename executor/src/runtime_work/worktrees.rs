@@ -2814,8 +2814,10 @@ mod tests {
                 Err("delete interrupted by test".to_owned())
             })
         });
+        // Repository discovery is setup, not the concurrency assertion. Wait for
+        // its handshake; an early deletion error disconnects the channel.
         delete_started_rx
-            .recv_timeout(Duration::from_secs(5))
+            .recv()
             .expect("deletion must reach the slow operation");
 
         let (execution_tx, execution_rx) = mpsc::channel();

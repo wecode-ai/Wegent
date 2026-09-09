@@ -1,7 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
-import type { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { CloudProjectManageView } from './CloudProjectManageView'
 
@@ -43,43 +42,17 @@ const project: CloudProject = {
   updated_at: '2026-08-16T00:00:00Z',
 }
 
-describe('CloudProjectManageView incoming hooks', () => {
-  test('creates and exposes a copyable incoming URL', async () => {
-    const hook = {
-      id: 'hook-1',
-      projectId: project.id,
-      name: '外部系统',
-      status: 'active' as const,
-      webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/secret',
-      version: 1,
-      createdAt: '2026-08-16T00:00:00Z',
-      updatedAt: '2026-08-16T00:00:00Z',
-    }
-    const incomingHookApi = {
-      list: vi.fn().mockResolvedValue([]),
-      create: vi.fn().mockResolvedValue(hook),
-      update: vi.fn(),
-      rotate: vi.fn(),
-    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+describe('CloudProjectManageView', () => {
+  test('does not render the deprecated event subscription section', async () => {
     const api = {
       listCloudProjectMembers: vi.fn().mockResolvedValue([]),
       listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
     } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    })
 
-    render(<CloudProjectManageView api={api} incomingHookApi={incomingHookApi} project={project} />)
+    render(<CloudProjectManageView api={api} project={project} />)
 
-    expect(await screen.findByTestId('incoming-hook-settings')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('incoming-hook-empty-create'))
-
-    await waitFor(() => expect(incomingHookApi.create).toHaveBeenCalledWith(project.id, '外部系统'))
-    expect(await screen.findByText(hook.webhookUrl)).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('incoming-hook-copy-hook-1'))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(hook.webhookUrl))
+    expect(await screen.findByRole('heading', { name: '管理项目' })).toBeInTheDocument()
+    expect(screen.queryByTestId('event-subscription-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('event-subscription-create')).not.toBeInTheDocument()
   })
 })
