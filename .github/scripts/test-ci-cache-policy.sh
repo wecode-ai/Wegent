@@ -236,12 +236,17 @@ sccache_action="$action_dir/setup-sccache/action.yml"
 # Environment variables are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
+  ! grep -Fq 'continue-on-error: true' "$sccache_action" ||
+  [[ "$(grep -Fc "if: steps.install.outcome == 'success'" \
+    "$sccache_action")" -ne 2 ]] ||
+  ! grep -Fq "if: steps.install.outcome != 'success'" "$sccache_action" ||
+  ! grep -Fq 'continuing without Rust compiler caching' "$sccache_action" ||
   ! grep -Fq 'GitHub Actions cache credentials are unavailable for sccache' \
     "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_VERSION=wegent-sccache-v1-' "$sccache_action" ||
   ! grep -Fq 'SCCACHE_GHA_RW_MODE=READ_ONLY' "$sccache_action" ||
   ! grep -Fq 'refs/heads/main' "$sccache_action"; then
-  fail "sccache must normalize paths and allow writes only from main"
+  fail "sccache must degrade safely and allow cache writes only from main"
 fi
 
 macos_warmup_section="$(
@@ -340,10 +345,13 @@ if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   "$workflow_dir/e2e-tests.yml" |
     grep -F 'setup-toolchain: "false"' >/dev/null ||
+  ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+  "$workflow_dir/e2e-tests.yml" |
+    grep -F 'setup-uv: "false"' >/dev/null ||
   sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -E 'install-playwright-(browser|system-deps)' >/dev/null; then
-  fail "Platform E2E shards must consume the immutable Playwright image without runtime installs"
+  fail "Platform E2E shards must consume the immutable toolchain image without runtime installs"
 fi
 
 # GitHub expressions are matched literally in workflow source.
@@ -397,6 +405,19 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
   fail "Executor E2E must run Playwright from the immutable dependency image"
 fi
 
+executor_runtime_download="$(sed -n '/name: Download fork Executor E2E runtime/,/name: Restore fork Executor E2E runtime/p' "$workflow_dir/e2e-tests.yml")"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq '.github/scripts/download-actions-artifact.sh' <<<"$executor_runtime_download" ||
+  ! grep -Fq 'GITHUB_TOKEN: ${{ github.token }}' <<<"$executor_runtime_download" ||
+  ! grep -Fq 'executor-e2e-runtime' <<<"$executor_runtime_download" ||
+  ! grep -Fq '.ci-artifacts' <<<"$executor_runtime_download" ||
+  grep -Fq 'uses: actions/download-artifact@' <<<"$executor_runtime_download" ||
+  ! sed -n '/^  executor-e2e-tests:/,/^    needs:/p' "$workflow_dir/e2e-tests.yml" |
+    grep -Fq 'actions: read'; then
+  fail "Fork Executor E2E must download the complete runtime archive with Actions read permission"
+fi
+
 if grep -R -E \
   'install-playwright-(browser|system-deps)|playwright-chromium-v2-' \
   "$workflow_dir/e2e-tests.yml" "$warmup_workflow" >/dev/null; then
@@ -413,6 +434,13 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
+  ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
+    "$wework_browser_image" ||
+  ! grep -Fq 'uv --version' "$wework_browser_image"; then
+  fail "The platform E2E image must provide the pinned uv toolchain"
+fi
+
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
   [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||

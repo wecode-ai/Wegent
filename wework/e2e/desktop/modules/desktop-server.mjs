@@ -30,6 +30,7 @@ import {
   parseTelemetryPayload,
   readRawRequestBody,
   readRequestBody,
+  requestAdvertisesProgrammaticExec,
   requestAdvertisesShellTool,
   requestAdvertisesViewImageTool,
   requestContainsToolOutput,
@@ -41,10 +42,12 @@ import {
   selectConvertedTool,
   selectMcpTool,
   selectOfficialPluginMcpTool,
+  selectProgrammaticExec,
   selectShellTool,
   selectShellToolCommand,
   selectTool,
   selectToolSearch,
+  serializedOutputReportsSuccess,
   toolSearchResponseEvents,
   selectViewImageTool,
   streamingMarkdownReport,
@@ -253,6 +256,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
   'getElementCount',
+  'getTerminalText',
   'getText',
   'metrics',
   'snapshot',
@@ -275,6 +279,33 @@ function findNestedString(value, predicate) {
     if (match) return match
   }
   return null
+}
+
+function requestContainsSkillLocator(body, skillPath, skillName) {
+  const requestText = JSON.stringify(body)
+  if (requestText.includes(skillPath)) return true
+
+  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
+  const relativeSkillPath = `${skillName}/SKILL.md`
+  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
+  const catalog = findNestedString(
+    body,
+    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
+  )
+  if (!catalog) return false
+
+  for (const line of catalog.split(/\r?\n/u)) {
+    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+    if (!rootMatch) continue
+    const [, alias, root] = rootMatch
+    if (
+      root.replaceAll('\\', '/') === skillRoot &&
+      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function toolOutputText(request, callId) {
@@ -314,18 +345,17 @@ function pluginWorkspacePublishCommand(body) {
 }
 
 function publishedPluginWorkspaceResult(body) {
+  const completedStatus = /"status":"(?:published|pending_review)"/u
   const output = findNestedString(
     body,
-    value =>
-      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(value)
   )
   if (!output) return null
   const line = output
     .split(/\r?\n/u)
     .find(
       candidate =>
-        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
-        candidate.includes('"status":"published"')
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(candidate)
     )
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
@@ -398,6 +428,19 @@ class DesktopE2EServer {
     this.failedCloudModelWaiter = null
     this.sitesPluginInstalled = false
     this.sitesPluginDeviceId = null
+    this.siteEnvironmentRevision = 0
+    this.siteEnvironmentVariables = []
+    this.siteCollaborators = []
+    this.siteAccessPolicy = {
+      id: 'pol_e2e_1',
+      project_id: 'prj_e2e_product',
+      target: 'inner',
+      audience: 'owner',
+      subjects: [],
+      revision_number: 2,
+      created_by: 'wework-desktop-e2e-cloud-user',
+      created_at: '2026-09-08T00:00:00Z',
+    }
     this.miniProgramPluginInstalled = false
     this.miniProgramPluginDeviceId = null
     this.sitesConnectionBootstrapRequests = 0
@@ -756,6 +799,7 @@ class DesktopE2EServer {
         'local_markdown_image',
         'tool_block_order',
         'official_plugin',
+        'plugin_development',
         'automation',
         'skill_mention_display',
         'connector_auth_unmatched_resume',
@@ -1235,7 +1279,14 @@ class DesktopE2EServer {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'edit', 'delete'],
+            capabilities: [
+              'create',
+              'publish',
+              'edit',
+              'delete',
+              'configure_environment',
+              'manage_access',
+            ],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',
@@ -1267,6 +1318,8 @@ class DesktopE2EServer {
                 siteid: 'prj_e2e_mini',
                 taskid: 'prj_e2e_mini',
                 username: 'wework-desktop-e2e-cloud-user',
+                owner_username: 'wework-desktop-e2e-cloud-user',
+                access_role: 'owner',
                 name: 'E2E Mini Program',
                 slug: 'prj_e2e_mini',
                 app_id: 'wx-e2e-mini',
@@ -1284,6 +1337,8 @@ class DesktopE2EServer {
                 siteid: 'prj_e2e_product',
                 taskid: 'prj_e2e_product',
                 username: 'wework-desktop-e2e-cloud-user',
+                owner_username: 'wework-desktop-e2e-cloud-user',
+                access_role: 'owner',
                 name: 'E2E Product Site',
                 slug: 'prj_e2e_product',
                 internal_url: 'https://sites.internal/e2e-product',
@@ -1308,7 +1363,136 @@ class DesktopE2EServer {
       return
     }
 
+    if (
+      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
+      request.method === 'GET'
+    ) {
+      json(response, 200, {
+        revision_id:
+          this.siteEnvironmentRevision > 0 ? `env_e2e_${this.siteEnvironmentRevision}` : null,
+        project_id: 'prj_e2e_product',
+        revision_number: this.siteEnvironmentRevision,
+        items: this.siteEnvironmentVariables,
+      })
+      return
+    }
+    if (
+      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
+      request.method === 'PATCH'
+    ) {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Updating Site environment variables did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.ok(Array.isArray(body.operations))
+      for (const operation of body.operations) {
+        if (operation.op === 'remove') {
+          this.siteEnvironmentVariables = this.siteEnvironmentVariables.filter(
+            item => item.key !== operation.key
+          )
+          continue
+        }
+        assert.equal(operation.op, 'upsert')
+        const item =
+          operation.type === 'secret'
+            ? {
+                key: operation.key,
+                type: 'secret',
+                configured: true,
+                updated_by: 'wework-desktop-e2e-cloud-user',
+                updated_at: '2026-09-03T00:00:00Z',
+              }
+            : {
+                key: operation.key,
+                type: 'plain',
+                value: operation.value,
+                updated_by: 'wework-desktop-e2e-cloud-user',
+                updated_at: '2026-09-03T00:00:00Z',
+              }
+        this.siteEnvironmentVariables = [
+          ...this.siteEnvironmentVariables.filter(existing => existing.key !== operation.key),
+          item,
+        ]
+      }
+      this.siteEnvironmentRevision += 1
+      json(response, 201, {
+        id: `env_e2e_${this.siteEnvironmentRevision}`,
+        project_id: 'prj_e2e_product',
+        revision_number: this.siteEnvironmentRevision,
+        variables: this.siteEnvironmentVariables,
+        created_by: 'wework-desktop-e2e-cloud-user',
+        created_at: '2026-09-03T00:00:00Z',
+      })
+      return
+    }
+
+    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'GET') {
+      json(response, 200, this.siteAccessPolicy)
+      return
+    }
+    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'PUT') {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Updating Site access did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.ok(['all', 'login', 'owner', 'custom'].includes(body.audience))
+      assert.ok(Array.isArray(body.subjects))
+      this.siteAccessPolicy = {
+        ...this.siteAccessPolicy,
+        id: 'pol_e2e_2',
+        audience: body.audience,
+        subjects: body.subjects,
+        revision_number: this.siteAccessPolicy.revision_number + 1,
+        created_at: '2026-09-08T00:01:00Z',
+      }
+      json(response, 200, this.siteAccessPolicy)
+      return
+    }
+
+    const siteCollaboratorsMatch = url.pathname.match(
+      /^\/api\/sites\/prj_e2e_product\/collaborators(?:\/([^/]+))?$/
+    )
+    if (siteCollaboratorsMatch && request.method === 'GET' && !siteCollaboratorsMatch[1]) {
+      json(response, 200, { items: this.siteCollaborators })
+      return
+    }
+    if (siteCollaboratorsMatch && request.method === 'POST' && !siteCollaboratorsMatch[1]) {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Adding a Site collaborator did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.equal(typeof body.subject, 'string')
+      const collaborator = {
+        subject: body.subject,
+        added_by: 'wework-desktop-e2e-cloud-user',
+        created_at: '2026-09-03T00:00:00Z',
+      }
+      this.siteCollaborators = [
+        ...this.siteCollaborators.filter(item => item.subject !== collaborator.subject),
+        collaborator,
+      ]
+      json(response, 201, collaborator)
+      return
+    }
+    if (siteCollaboratorsMatch && request.method === 'DELETE' && siteCollaboratorsMatch[1]) {
+      const subject = decodeURIComponent(siteCollaboratorsMatch[1])
+      this.siteCollaborators = this.siteCollaborators.filter(item => item.subject !== subject)
+      response.writeHead(204)
+      response.end()
+      return
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
+      if (this.applicationPluginInspectionUnavailable) {
+        json(response, 500, { detail: 'Plugin inventory unavailable' })
+        return
+      }
       json(response, 200, {
         items: [
           ...(this.sitesPluginInstalled
@@ -1334,6 +1518,9 @@ class DesktopE2EServer {
       const installedPlugin = isSitesPlugin
         ? installedSitesPlugin(targetDeviceId ?? 'local-device')
         : installedMiniProgramPlugin(targetDeviceId ?? 'local-device')
+      if (targetDeviceId && this.onApplicationPluginInstalled) {
+        await this.onApplicationPluginInstalled(installedPlugin)
+      }
       const installedPluginId = isSitesPlugin ? 601 : 602
       if (isSitesPlugin) {
         this.sitesPluginInstalled = true
@@ -1990,7 +2177,8 @@ class DesktopE2EServer {
     if (
       this.scenario === 'embedded_browser_setup' &&
       !this.embeddedBrowserSetupToolLessPrewarmHandled &&
-      !requestAdvertisesShellTool(body)
+      !requestAdvertisesShellTool(body) &&
+      !requestAdvertisesProgrammaticExec(body)
     ) {
       this.embeddedBrowserSetupToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
@@ -2217,10 +2405,45 @@ class DesktopE2EServer {
       )
 
       if (requestNumber === 1) {
+        if (requestAdvertisesProgrammaticExec(body)) {
+          const browserUrl = new URL('/embedded-browser-agent-fixture', this.url).href
+          const program = [
+            "const browserOpen = ALL_TOOLS.find(tool => tool.name === 'browser_open' || (tool.name.includes('wework_browser') && tool.name.endsWith('browser_open')))",
+            "if (!browserOpen) throw new Error('Wework browser_open unavailable')",
+            `await tools[browserOpen.name](${JSON.stringify({ url: browserUrl })})`,
+            'text(JSON.stringify({ ok: true }))',
+          ].join('\n')
+          const exec = selectProgrammaticExec(body, program)
+          this.writeSse(response, [
+            responseCreated(responseId),
+            customToolCall(EMBEDDED_BROWSER_SETUP_OPEN_ID, exec.name, exec.input),
+            responseCompleted(responseId),
+          ])
+          return
+        }
         const search = selectToolSearch(body, 'Wework browser open')
         this.writeSse(response, [
           responseCreated(responseId),
           ...toolSearchResponseEvents(EMBEDDED_BROWSER_SETUP_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestAdvertisesProgrammaticExec(body)) {
+        assert.equal(requestNumber, 2, `Unexpected embedded-browser setup request ${requestNumber}`)
+        assert.equal(
+          requestContainsToolOutput(body, EMBEDDED_BROWSER_SETUP_OPEN_ID),
+          true,
+          'The embedded-browser programmatic exec output did not return to the model'
+        )
+        assert.ok(
+          findNestedString(body, serializedOutputReportsSuccess),
+          'The programmatic Wework browser_open call did not complete successfully'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT),
           responseCompleted(responseId),
         ])
         return
@@ -3185,7 +3408,7 @@ class DesktopE2EServer {
         assert.ok(
           requestText.includes(OFFICIAL_PLUGIN_NAME) &&
             requestText.includes(OFFICIAL_PLUGIN_SKILL_NAME) &&
-            requestText.includes(skillPath),
+            requestContainsSkillLocator(body, skillPath, OFFICIAL_PLUGIN_SKILL_NAME),
           'The real Codex request did not inject the selected official plugin skill'
         )
         const shell = selectShellToolCommand(
@@ -3420,6 +3643,25 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'plugin_development') {
+      this.recordScenarioRequest('plugin_development', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes('开发这个 Wework 插件：'),
+        'The plugin development prompt was lost'
+      )
+      assert.ok(
+        requestText.includes('wework-plugin-developer:develop-wework-plugin'),
+        'The Wework plugin developer Skill was not available to Codex'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage('Wework plugin development request accepted.'),
         responseCompleted(responseId),
       ])
       return

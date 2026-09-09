@@ -260,6 +260,26 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('spellcheck', 'false')
   })
 
+  test('renders a transferred page on the first frame without reopening the browser', async () => {
+    render(
+      <WorkspaceBrowserPanel
+        active
+        label="workspace-browser-runtime-1"
+        transferFromLabel="workspace-browser-blank-0"
+        transferredNativeLabel="workspace-browser-native-1"
+        transferredUrl="https://www.baidu.com/"
+      />
+    )
+
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://www.baidu.com/')
+    expect(screen.getByTestId('workspace-browser-native-view')).toBeInTheDocument()
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(embeddedBrowserMocks.openEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
   test('clears cookies from the browser actions submenu and reports completion', async () => {
     render(<WorkspaceBrowserPanel active />)
 

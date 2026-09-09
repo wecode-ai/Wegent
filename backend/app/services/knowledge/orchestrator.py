@@ -1056,6 +1056,8 @@ class KnowledgeOrchestrator:
         execution_model_ref: Optional[Dict[str, str]] = None,
         execution_model_ref_is_set: bool = False,
         show_generation_task: Optional[bool] = None,
+        generation_strategy: Optional[str] = None,
+        generation_strategy_is_set: bool = False,
         guided_questions: Optional[List[str]] = None,
         max_calls_per_conversation: Optional[int] = None,
         exempt_calls_before_check: Optional[int] = None,
@@ -1076,6 +1078,7 @@ class KnowledgeOrchestrator:
             execution_model_ref: Code Wiki execution model reference. Explicit null
                 clears the override, so its presence is tracked separately.
             show_generation_task: Whether Code Wiki generation tasks are visible.
+            generation_strategy: Default Code Wiki orchestration strategy.
             guided_questions: New guided questions list (optional)
             max_calls_per_conversation: Max calls per conversation (optional)
             exempt_calls_before_check: Exempt calls before check (optional)
@@ -1112,6 +1115,16 @@ class KnowledgeOrchestrator:
             update_fields["execution_model_ref"] = execution_model_ref
         if show_generation_task is not None:
             update_fields["show_generation_task"] = show_generation_task
+        if generation_strategy_is_set:
+            from app.services.knowledge.code_wiki.generation_policy import (
+                ready_strategy_for_new_wiki,
+            )
+
+            if generation_strategy is None:
+                raise ValueError("A code wiki generation strategy cannot be cleared")
+            update_fields["generation_strategy"] = ready_strategy_for_new_wiki(
+                db, user=user, requested_id=generation_strategy
+            )
         if guided_questions is not None:
             update_fields["guided_questions"] = guided_questions
         if max_calls_per_conversation is not None:
@@ -1177,6 +1190,7 @@ class KnowledgeOrchestrator:
         source: Optional[SourceRepository] = None,
         show_generation_task: bool = False,
         language: str = "",
+        generation_strategy: Optional[str] = None,
     ) -> int:
         """Resolve defaults, persist a knowledge base, and return its id.
 
@@ -1256,6 +1270,7 @@ class KnowledgeOrchestrator:
             source=source.to_spec() if source else None,
             language=language or None,
             show_generation_task=show_generation_task,
+            generation_strategy=generation_strategy,
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
@@ -1410,6 +1425,7 @@ class KnowledgeOrchestrator:
         language: str = "",
         # Whether this wiki's generation runs are listed as conversations.
         show_generation_task: bool = False,
+        generation_strategy: Optional[str] = None,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         retrieval_config: Optional[Dict[str, Any]] = None,
@@ -1435,7 +1451,14 @@ class KnowledgeOrchestrator:
         the repository, are decided by the endpoint: they are about who is asking,
         not about what a code wiki is.
         """
+        from app.services.knowledge.code_wiki.generation_policy import (
+            ready_strategy_for_new_wiki,
+        )
         from app.services.knowledge.code_wiki.registry import claim_repository
+
+        generation_strategy = ready_strategy_for_new_wiki(
+            db, user=user, requested_id=generation_strategy
+        )
 
         kb_id = self._create(
             db,
@@ -1458,6 +1481,7 @@ class KnowledgeOrchestrator:
             source=source,
             show_generation_task=show_generation_task,
             language=language,
+            generation_strategy=generation_strategy,
         )
         claim_repository(db, source, kb_id)
         db.commit()

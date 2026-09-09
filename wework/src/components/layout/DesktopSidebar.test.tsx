@@ -35,6 +35,8 @@ import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
+import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -208,9 +210,11 @@ await preloadDefaultDshUiTestModules()
 describe('DesktopSidebar', () => {
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
     localStorage.clear()
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', '')
     enableElectron()
     setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
@@ -1664,7 +1668,8 @@ describe('DesktopSidebar', () => {
     const projectsTitle = projectsToggle.querySelector('span')
 
     for (const button of [newTaskButton, pluginsButton, cloudButton]) {
-      expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
+      expect(button).not.toHaveClass('font-normal')
+      expect(button).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     }
     expect(collapseSidebarButton).toHaveClass(
       'text-[rgb(var(--color-sidebar-text-primary))]',
@@ -1984,6 +1989,37 @@ describe('DesktopSidebar', () => {
     expect(window.location.pathname).toBe('/sites')
   })
 
+  test('opens a contributed workspace sidebar tab without changing the current route', async () => {
+    const runtime = window.__WEWORK_DSH_UI__
+    expect(runtime).toBeDefined()
+    const openTab = vi.spyOn(rightWorkspaceDshSidebar, 'openTab').mockImplementation(() => {})
+    const navigation = [
+      ...runtime!.getEntries(WEWORK_DSH_SLOTS.sidebarNavigation),
+      {
+        id: 'reference-website.navigation',
+        label: 'Reference website',
+        icon: 'globe',
+        workspaceSidebarTab: 'reference-website',
+        testId: 'reference-website-button',
+      },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      ...runtime!,
+      getEntries: slotName =>
+        slotName === WEWORK_DSH_SLOTS.sidebarNavigation
+          ? navigation
+          : runtime!.getEntries(slotName),
+    }
+    window.history.replaceState({}, '', '/')
+
+    renderSidebar()
+    await userEvent.click(screen.getByTestId('reference-website-button'))
+
+    expect(openTab).toHaveBeenCalledWith({ type: 'reference-website' })
+    expect(window.location.pathname).toBe('/')
+    openTab.mockRestore()
+  })
+
   test('keeps a dynamic DSH navigation icon mounted across unrelated sidebar rerenders', async () => {
     const runtime = window.__WEWORK_DSH_UI__
     expect(runtime).toBeDefined()
@@ -2058,17 +2094,11 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
-  test('shows Sites only while experimental features are enabled', async () => {
+  test('shows Applications while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
-    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
   })
 
   test('shows Automations when experimental features are disabled', () => {
@@ -3311,6 +3341,143 @@ describe('DesktopSidebar', () => {
     expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('shows offline device projects and tasks by default and persists hiding them', async () => {
+    const user = userEvent.setup()
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, key: 'project:7', name: 'Online project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online' as const,
+              available: true,
+              workspacePath: '/repo/online',
+              tasks: [
+                {
+                  taskId: 'online-project-task',
+                  workspacePath: '/repo/online',
+                  title: 'Online project task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          project: { id: 8, key: 'project:8', name: 'Offline project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: 'Remote Host',
+              deviceStatus: 'offline' as const,
+              available: false,
+              workspacePath: '/repo/offline',
+              tasks: [
+                {
+                  taskId: 'offline-project-task',
+                  workspacePath: '/repo/offline',
+                  title: 'Offline project task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: '/chats/online',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'online-chat-task',
+              workspacePath: '/chats/online',
+              workspaceKind: 'chat',
+              title: 'Online chat task',
+              runtime: 'codex',
+            },
+          ],
+        },
+        {
+          deviceId: 'remote-device',
+          deviceName: 'Remote Host',
+          deviceStatus: 'offline' as const,
+          available: false,
+          workspacePath: '/chats/offline',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'offline-chat-task',
+              workspacePath: '/chats/offline',
+              workspaceKind: 'chat',
+              title: 'Offline chat task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 4,
+    }
+    const props = {
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline' as const,
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork,
+      onArchiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const view = renderSidebar(props)
+
+    expect(screen.getByTestId('project-row-7')).toBeInTheDocument()
+    expect(screen.getByTestId('project-row-8')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-online-chat-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-offline-chat-task')).toBeInTheDocument()
+
+    const offlineProjectToggle = screen
+      .getByTestId('project-row-8')
+      .querySelector<HTMLButtonElement>('[data-testid="project-item-button"]')
+    expect(offlineProjectToggle).not.toBeNull()
+    await user.click(offlineProjectToggle!)
+    expect(screen.getByTestId('runtime-local-task-row-offline-project-task')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('projects-section-menu'))
+    const visibilityItem = screen.getByTestId('projects-section-show-offline-device-items')
+    expect(visibilityItem).toHaveAttribute('role', 'menuitemcheckbox')
+    expect(visibilityItem).toHaveAttribute('aria-checked', 'true')
+    await user.click(visibilityItem)
+
+    expect(screen.getByTestId('project-row-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-row-8')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-online-chat-task')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-offline-chat-task')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wework.desktop.sidebar.showOfflineDeviceItems.1')).toBe('false')
+
+    view.unmount()
+    renderSidebar(props)
+
+    expect(screen.queryByTestId('project-row-8')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-offline-chat-task')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('projects-section-menu'))
+    expect(screen.getByTestId('projects-section-show-offline-device-items')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+  })
+
   test('shows an available remote project IP with green status', () => {
     renderSidebar({
       devices: [
@@ -3363,7 +3530,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalTasks: 2,
+            totalTasks: 3,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -3379,7 +3546,16 @@ describe('DesktopSidebar', () => {
                     title: 'Investigate stream',
                     runtime: 'codex',
                     running: true,
+                    goalStatus: 'active',
                     updatedAt: '2026-06-20T03:00:00Z',
+                  },
+                  {
+                    taskId: 'codex-running-without-goal',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Investigate logs',
+                    runtime: 'codex',
+                    running: true,
+                    updatedAt: '2026-06-20T02:30:00Z',
                   },
                   {
                     taskId: 'codex-idle',
@@ -3395,16 +3571,23 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalTasks: 2,
+        totalTasks: 3,
       },
     })
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
-    expect(runningStatus).toHaveAttribute('aria-label', '运行中')
-    expect(runningStatus).not.toHaveTextContent('运行中')
-    expect(runningStatus.querySelector('svg')).not.toBeNull()
+    expect(runningStatus).toHaveAttribute('aria-label', '运行中，有目标')
+    expect(runningStatus).not.toHaveTextContent('运行中，有目标')
+    const spinnerLayer = runningStatus.querySelector('.animate-spin')
+    expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
+    expect(spinnerLayer).toHaveClass('will-change-transform')
+    expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
+    expect(screen.getByTestId('runtime-local-task-goal-dot-codex-running')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-goal-dot-codex-running-without-goal')
+    ).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 

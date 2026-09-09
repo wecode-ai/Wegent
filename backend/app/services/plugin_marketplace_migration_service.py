@@ -17,7 +17,10 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.plugin_marketplace import Plugin, PluginRelease
 from app.models.skill_binary import SkillBinary
-from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
+from app.services.plugin_marketplace_identity import (
+    catalog_namespace_for_visibility,
+    marketplace_name_for_visibility,
+)
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
     PluginPackageScanError,
@@ -82,10 +85,23 @@ class PluginMarketplaceMigrationService:
         parsed = plugin_package_parser.parse_package(binary.binary_data)
         scan_report = scan_plugin_package(binary.binary_data)
         slug = self._slug(str(spec.get("name") or parsed.name), row.id)
-        plugin = db.query(Plugin).filter(Plugin.slug == slug).first()
+        visibility = self._visibility(spec.get("visibility"))
+        owner_user_id = int(spec.get("ownerUserId") or row.user_id or 0)
+        catalog_namespace = catalog_namespace_for_visibility(
+            visibility, owner_user_id=owner_user_id
+        )
+        plugin = (
+            db.query(Plugin)
+            .filter(
+                Plugin.catalog_namespace == catalog_namespace,
+                Plugin.slug == slug,
+            )
+            .first()
+        )
         created = plugin is None
         if not plugin:
             plugin = Plugin(
+                catalog_namespace=catalog_namespace,
                 slug=slug,
                 name=parsed.name,
                 display_name=str(spec.get("displayName") or parsed.displayName),
@@ -96,7 +112,7 @@ class PluginMarketplaceMigrationService:
                 listing_type="plugin",
                 source_type="native",
                 source_provider="wework",
-                owner_user_id=int(spec.get("ownerUserId") or row.user_id or 0),
+                owner_user_id=owner_user_id,
                 category=(parsed.interface.category if parsed.interface else "") or "",
                 keywords_json=parsed.manifest.get("keywords") or [],
                 interface_json=(
@@ -104,7 +120,7 @@ class PluginMarketplaceMigrationService:
                     if parsed.interface
                     else {}
                 ),
-                visibility=self._visibility(spec.get("visibility")),
+                visibility=visibility,
                 status="published",
                 # Legacy Kind used featured_rank=0 as "featured"; new schema uses
                 # non-zero rank for featured and 0 as the unset sentinel.

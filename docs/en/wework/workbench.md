@@ -16,6 +16,12 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
+## Configure board automations
+
+Under **Automation** in a project space, choose a scheduled trigger and select daily, weekdays, weekly, or **Hourly**. Hourly schedules support minute 0–59 and use the configured timezone.
+
+Scheduled automations have a **Run** button on both their list card and detail view, including when their schedule is paused. Save configuration changes before running. The button is disabled while a run is starting to prevent duplicate submissions and becomes available again after a failed start. View results in run history.
+
 ## Manage issues and tasks in workspaces
 
 The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
@@ -28,9 +34,9 @@ Without any setup, new tasks select **My tasks** by default. Sending the first m
 
 Every runtime task has at least one system-managed **My tasks** issue. A user may additionally link the task to one issue in a local or cloud project space. Task context prefers the user-selected issue and falls back to the system issue when no user link exists. The system issue remains linked and receives runtime status, task-title, and archive-state updates even after the extra project-space link is removed, so unlinking another board never removes the task from **My tasks**. Issues may also exist without a runtime task, which is why an ordinary project-space board is not itself a task inventory.
 
-Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes.
+Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes. Batch archive processes all linked runtime conversations in one operation, removes successfully archived cards from the board, and keeps failed cards in the confirmation dialog for retry.
 
-Hover anywhere on a board card to open a task-progress panel with the full conversation layout. The panel shows the latest user message and AI response, can load earlier history, and includes the same composer used in the task conversation. In the normal preview state, it remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Interacting with the composer pins the panel until you use its top-right close button or press `Esc`.
+Hover anywhere on a board card to open a task-progress panel. The panel directly reuses the task conversation component, shows the complete currently loaded conversation, and uses the same composer in its collapsed-by-default state. Message loading, live updates, continuation, and attachments therefore behave exactly as they do on the task page. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Interacting with the composer pins the panel until you use its top-right close button or press `Esc`.
 
 The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
 
@@ -124,6 +130,8 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 ## Navigate long conversations
 
 When a conversation is taller than the current viewport, turn markers appear along the left side of the message area. The navigation stays centered in the conversation viewport instead of scrolling with message content. Select a marker to jump to that turn, or hover over it to preview the user request and assistant response summary.
+
+While an assistant response is still growing, navigation keeps the current turn active until the message area finishes its next layout measurement. This prevents bottom-follow scrolling from briefly clearing the marker or switching it to another turn.
 
 ## Switch conversations and restore position
 

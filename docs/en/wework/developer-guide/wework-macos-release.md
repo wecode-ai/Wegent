@@ -40,12 +40,15 @@ manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
 Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
-and NSIS installer. `electron-updater` compares the previous cached package with
-the old and new blockmaps and downloads only changed blocks. It falls back to
-the full installer only for a first update, a cleared cache, or a differential
-download failure. The release workflow must fail when any required blockmap is
-missing. Differential plans, transferred sizes, and fallback reasons are
-written to `app-update.log` in the application log directory.
+and NSIS installer. On macOS, Wework atomically stores every successful full or
+differential download as a verified baseline containing the ZIP, blockmap,
+version, architecture, URL, and SHA-512. Later updates use only this local
+baseline and never guess the previous blockmap URL from the new artifact name.
+A first update or an incomplete or invalid baseline downloads the full package
+and establishes a new baseline. A failed differential verification performs
+only one full-download recovery. The release workflow must fail when any
+required blockmap is missing. Differential plans, cumulative transferred bytes,
+and fallback reasons are written to `app-update.log`.
 
 The same release also emits signed manifests and artifacts for the legacy Tauri
 updater so installed Tauri builds can migrate through the existing Update UI:
@@ -78,6 +81,7 @@ offline:
   process, Core DSH, plugin subprocesses, and Codex skill scripts;
 - Core DSH;
 - Wework core DSH plugins;
+- Wework application static assets;
 - bundled personal plugins and Skills;
 - Executor;
 - Codex;
@@ -86,16 +90,42 @@ offline:
 `components.json` records the application version, release channel, and each
 component's version, resource path, and content SHA-256. The Electron
 application itself continues to update through `electron-updater`; the other
-six components use independent
+seven components use independent
 `components-<channel>-<platform>-<arch>.json` manifests.
 
+For macOS, publication locates immutable signed components by their unsigned
+content, certificate identity, architecture, signing policy, and build-tool
+version. When those inputs are unchanged, the installer and online component
+reuse exactly the same signed bytes. A changed input is signed and verified
+again. Electron Builder skips those already processed managed resources so a
+new signing timestamp alone cannot change their component hashes. Published
+content SHA-256 values are computed from these final resources rather than
+extracting components from a newly re-signed installer.
+
+Re-signing an existing Mach-O file must preserve the entitlements from its
+previous signature. Codex and `codex-code-mode-host` require `allow-jit` and
+`allow-unsigned-executable-memory` to run V8; `codesign --verify` alone does
+not detect removed entitlements. Any signing-argument change must increment
+the signing-policy version so cached components signed under the previous
+policy are invalidated.
+
+The Codex component boundary is the complete `codex/` runtime directory, not
+the standalone `codex` executable. The component must contain
+`WEGENT_CODEX_BINARY.json`, the target architecture's `codex` and
+`codex-code-mode-host` binaries, the `codex-path` tools, and legal resources.
+The client resolves the main executable from the runtime descriptor's
+`binaryPath` and verifies the sibling code-mode host before activation.
+Release scripts must not point the Codex entry in `components.json` at the main
+executable or archive that executable alone.
+
 Component archives are named by their archive SHA-256 and stored as immutable
-assets. Repository-built Wework core plugin/UI, bundled plugin, and Executor
-archives live in their corresponding version Release. External Core DSH,
-Codex, and DWS archives live centrally in `wework-updater` for reuse across
-versions. Every publication Release contains complete installers and its
-component manifests, and uploads only archive hashes that are not already
-available at the appropriate location.
+assets. Repository-built Wework core plugin/UI, application static asset,
+bundled plugin, and Executor archives live in their corresponding version
+Release. External Core DSH, Codex, and DWS archives live centrally in
+`wework-updater` for reuse across versions. Version Releases must not attach
+Core DSH, Codex, or DWS binaries. Every publication Release contains complete
+installers and its component manifests, and uploads only archive hashes that
+are not already available at the appropriate location.
 
 The version boundary follows whether an artifact must remain atomically
 compatible with the Electron host:
@@ -105,7 +135,8 @@ compatible with the Electron host:
   modules, application identity, signing permissions, icons, installers,
   updater protocols, and incompatible local-data migrations.
 - Independently versioned components: Core DSH, Wework core DSH plugins and UI,
-  bundled personal plugins and Skills, Executor, Codex, and DWS.
+  Wework application static assets, bundled personal plugins and Skills,
+  Executor, Codex, and DWS.
 - User-installed marketplace plugins remain independently managed by the
   plugin system and are not part of desktop component publication.
 
@@ -114,13 +145,23 @@ Independent components must still exactly match the current Electron
 requires a new Host capability, native module, or incompatible data format
 automatically becomes a full application release.
 
-The Wework UI, core plugins, bundled personal plugins, and Executor share one
-`wework-<sourceSha12>` runtime version, where `sourceSha12` is the first 12
-hexadecimal characters of the source commit, and switch atomically through the
-same component manifest. They remain separate content-addressed archives only
-as a transport optimization, so clients download the files that actually
-changed; the split does not make Executor an independently released product.
-Codex and DWS retain their own product versions.
+The Wework UI, core plugins, application static assets, bundled personal
+plugins, and Executor share one `wework-<sourceSha12>` runtime version, where
+`sourceSha12` is the first 12 hexadecimal characters of the source commit, and
+switch atomically through the same component manifest. They remain separate
+content-addressed archives only as a transport optimization, so clients
+download the files that actually changed; the split does not make Executor an
+independently released product. Codex and DWS retain their own product
+versions.
+
+The Wework application is further split by change frequency:
+`weworkCorePlugins` contains frequently changing application code and UI,
+while `weworkAppStatic` contains stable `web/vendor` and `web/wasm` assets. The
+client atomically composes both components into the complete plugin directory
+before startup. A routine Wework UI change should publish and download only
+`weworkCorePlugins`, whose archive must remain below 20 MiB. If it exceeds that
+limit, re-examine component ownership instead of adding external binaries such
+as Codex, Core DSH, or DWS to the version Release.
 
 The release workflow automatically compares the source commit recorded by the
 previous component manifest. If only managed components changed, the Electron
@@ -139,14 +180,27 @@ marked as the GitHub `latest` Release. New users download a complete installer
 from that Release, while every historical Release also remains independently
 installable.
 
-Repository-built Wework core plugin/UI, bundled plugin, and Executor archives
-are uploaded to their corresponding version Release. External Core DSH, Codex,
-DWS, and other non-repository binary dependencies use content-addressed
-archives stored centrally in `wework-updater` for reuse across versions.
-Rolling component manifests are also published there, but it is no longer the
-first-time installer download entry point. Existing users therefore download
-only components that actually changed and do not redownload Electron and
-Chromium for a component-only change.
+Repository-built Wework core plugin/UI, application static asset, bundled
+plugin, and Executor archives are uploaded to their corresponding version
+Release. External Core DSH, Codex, DWS, and other non-repository binary
+dependencies use content-addressed archives stored centrally in
+`wework-updater` for reuse across versions. Rolling component manifests are
+also published there, but it is no longer the first-time installer download
+entry point. Existing users therefore download only components that actually
+changed and do not redownload Electron and Chromium for a component-only
+change.
+
+Online Electron host updates use a separate `WeWorkHostUpdate` artifact. The
+rolling Electron manifest points at a slim host package without the seven
+managed components only after the currently published version advertises
+`componentizedHostUpdate: 1`. The client stages the complete component set for
+the target application version before installing that host update. Older
+clients without this capability first receive one migration host package that
+still contains the managed components, preventing missing runtime resources
+after the upgrade. Component manifests and archives must be published before
+the Electron YAML so a visible host update never references unavailable
+components. Complete installers always contain every component for first-time
+offline installation.
 
 The client accepts only a component manifest that exactly matches the running
 Electron application version, channel, platform, and architecture. A
@@ -161,6 +215,16 @@ startup. Wework confirms the new set only after the workbench and Core DSH
 start successfully. A failed startup, or a process exit before confirmation,
 rolls back to the previous set on the next launch. Packaged resources remain
 the final fallback.
+
+The main process owns one application-update task. Automatic downloads, manual
+downloads, and repeated checks for the same version and channel share that
+task, and a check cannot clear an active download. Missing components download
+with at most three workers; Wework writes the `pending` set only after every
+archive passes size, archive-hash, and extracted-content verification. Progress
+covers component downloads, host download, verification, and installation
+readiness, and includes bytes transferred before a failed differential attempt.
+The local Squirrel.Mac handoff of the cached ZIP is not counted as network
+traffic.
 
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it
@@ -177,6 +241,15 @@ The guard handles only `EPIPE`; other stream errors still fail and expose their
 root cause. A configured external Node executable keeps native Node error
 handling and does not load this Electron-specific guard.
 
+The Electron main process may also be launched through pipes by a terminal,
+development script, or automation runner and remain resident after that parent
+exits. Before loading other Electron modules, the main process must install the
+same strict `EPIPE` guard on its own `stdout` and `stderr`, preventing later
+Node warnings or diagnostic logs from becoming uncaught-exception dialogs
+after the consumer closes. This path must neither exit the main process nor
+ignore errors other than `EPIPE`; the desktop window and local runtime do not
+share the log consumer's lifecycle.
+
 ## Bundled sidecars and resources
 
 Prepare Codex and DWS before packaging:
@@ -192,6 +265,14 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 `wework/electron/scripts/prepare-package-assets.mjs` copies sidecars, plugins,
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
+
+The current pin is Codex `0.153.3`. Codex `0.152` disables
+`tools.update_plan.enabled` by default, while Wework consumes the corresponding
+plan events to render plan blocks, so the Executor must enable the tool
+explicitly when launching Codex. Desktop E2E verifies the lockfile binary by
+default; only the dedicated `WEWORK_E2E_CODEX_BIN` may override it. It must not
+inherit the generic `CODEX_BIN`, which could otherwise select an older binary
+from an installed application instead of the repository version under test.
 
 Desktop distributions must also include the project and bundled-sidecar
 licenses and attribution notices:
@@ -224,6 +305,14 @@ the build result is closed, and file-viewer metadata is normalized. Core DSH
 uses this marker as the published build ID, so the page reloads only after the
 marker changes instead of treating an intermediate `index.html` write as a
 loadable generation.
+
+Automatic reload is enabled only in desktop renderers that expose the Wework
+Electron preload capabilities. Opening the Core DSH URL directly in the system
+default browser must not start the hot-reload poller. When a desktop renderer
+observes a newly published build, it records that build ID before attempting a
+reload. If the new page fails to load and the old document remains alive, the
+same build must not trigger another reload. A later build with a new ID still
+reloads normally.
 
 In development hot-reload mode, static resources under `/wework/app/` must use
 `Cache-Control: no-store`. In addition to hashed assets, this tree contains

@@ -147,6 +147,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Run settings configuration check
         run: |
@@ -159,11 +161,17 @@ jobs:
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
 
+      - name: Test AI push gate
+        run: scripts/hooks/test-ai-push-gate.sh
+
       - name: Test Wegent release policy
         run: scripts/test-publish-image-release-policy.sh
 
       - name: Test repository policy workflow
         run: scripts/test-repository-policy-workflow.sh
+
+      - name: Test binary asset policy workflow
+        run: bash .github/scripts/test-binary-asset-policy.sh
 
       - name: Run repository policy check
         # Fork PRs run this in repository-policy.yml using pull_request_target

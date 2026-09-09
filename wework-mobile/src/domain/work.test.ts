@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeWorkListResponse } from '@/types/runtime'
 import { runtimeTaskKey } from './runtimeTaskLifecycle'
-import { flattenConversations, runtimeWorkContainsTask } from './work'
+import {
+  flattenConversations,
+  mergeRuntimeWorkForDevices,
+  runtimeWorkContainsTask,
+  runtimeWorkForDevices,
+} from './work'
 
 describe('flattenConversations', () => {
   it('combines project and standalone chats in update order', () => {
@@ -115,3 +120,60 @@ describe('flattenConversations', () => {
     expect(runtimeWorkContainsTask(work, { deviceId: 'cloud-2', taskId: 'task-1' })).toBe(false)
   })
 })
+
+describe('mergeRuntimeWorkForDevices', () => {
+  it('builds the PC-style all-devices view and merges shared projects', () => {
+    const result = mergeRuntimeWorkForDevices(
+      {
+        'device-1': projectWork('device-1', 'task-1'),
+        'device-2': projectWork('device-2', 'task-2'),
+      },
+      ['device-1', 'device-2']
+    )
+
+    expect(result.projects).toHaveLength(1)
+    expect(result.projects[0]?.deviceWorkspaces.map(workspace => workspace.deviceId)).toEqual([
+      'device-1',
+      'device-2',
+    ])
+    expect(result.totalTasks).toBe(2)
+  })
+})
+
+describe('runtimeWorkForDevices', () => {
+  it('removes cached work owned by unsupported devices', () => {
+    const result = runtimeWorkForDevices(
+      {
+        claudecode: projectWork('claudecode', 'task-1'),
+        openclaw: projectWork('openclaw', 'task-2'),
+      },
+      ['claudecode']
+    )
+
+    expect(Object.keys(result)).toEqual(['claudecode'])
+  })
+})
+
+function projectWork(deviceId: string, taskId: string): RuntimeWorkListResponse {
+  return {
+    projects: [
+      {
+        project: { key: 'shared-project', name: 'Wegent' },
+        deviceWorkspaces: [
+          {
+            deviceId,
+            deviceName: deviceId,
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: `/work/${deviceId}`,
+            tasks: [
+              { taskId, title: taskId, runtime: 'codex', workspacePath: `/work/${deviceId}` },
+            ],
+          },
+        ],
+      },
+    ],
+    chats: [],
+    totalTasks: 1,
+  }
+}

@@ -39,19 +39,26 @@ interface RefreshResponse {
 const CREDENTIAL_KEY = 'wegent.mobile.cloud-credentials.v2'
 
 export class DeviceCredentialService {
+  private serial: Promise<unknown> = Promise.resolve()
+
   async publicKey(): Promise<DevicePublicKey> {
-    const existing = await this.read()
-    if (existing) return existing.publicKey
-    const created = createCredential()
-    await this.write(created)
-    return created.publicKey
+    return this.enqueue(async () => {
+      const existing = await this.readStored()
+      if (existing) return existing.publicKey
+      const created = createCredential()
+      await this.writeStored(created)
+      return created.publicKey
+    })
   }
 
-  async claimAuthorization(input: {
-    apiBaseUrl: string
-    sessionId: string
-    pollToken: string
-  }): Promise<{
+  async claimAuthorization(
+    input: {
+      apiBaseUrl: string
+      sessionId: string
+      pollToken: string
+    },
+    isStillValid: () => boolean
+  ): Promise<{
     status: PollResponse['status']
     accessToken?: string
     username?: string
@@ -66,20 +73,31 @@ export class DeviceCredentialService {
     if (body.status !== 'success') {
       return { status: body.status, error: body.error }
     }
-    if (!body.access_token) throw new Error('授权响应缺少 access token')
-    if (!body.refresh_token) throw new Error('授权响应缺少设备绑定 refresh token')
-
-    const current = (await this.read()) ?? createCredential()
-    await this.write({
-      ...current,
-      apiBaseUrl: normalizeApiBaseUrl(input.apiBaseUrl),
-      refreshToken: body.refresh_token,
+    const accessToken = body.access_token
+    const refreshToken = body.refresh_token
+    if (!accessToken) throw new Error('授权响应缺少 access token')
+    if (!refreshToken) throw new Error('授权响应缺少设备绑定 refresh token')
+    // The refresh credential never leaves this service: persistence runs inside
+    // the serialization authority so an invalidated generation cannot leave a
+    // stale credential behind. The hook only ever sees the access token.
+    return this.enqueue(async () => {
+      const accepted = { status: 'success' as const, accessToken, username: body.username }
+      if (!isStillValid()) return accepted
+      const current = (await this.readStored()) ?? createCredential()
+      const persisted: StoredDeviceCredential = {
+        ...current,
+        apiBaseUrl: normalizeApiBaseUrl(input.apiBaseUrl),
+        refreshToken,
+      }
+      await this.writeStored(persisted)
+      if (!isStillValid()) {
+        // The generation was invalidated while the native write was in flight.
+        // Runs inside the serial queue, so no queued mutation can land between
+        // this operation's write and this cleanup.
+        await SecureStore.deleteItemAsync(CREDENTIAL_KEY)
+      }
+      return accepted
     })
-    return {
-      status: 'success',
-      accessToken: body.access_token,
-      username: body.username,
-    }
   }
 
   async refreshAccessToken(apiBaseUrl: string): Promise<{
@@ -124,21 +142,34 @@ export class DeviceCredentialService {
   }
 
   clear(): Promise<void> {
-    return SecureStore.deleteItemAsync(CREDENTIAL_KEY)
+    return this.enqueue(() => SecureStore.deleteItemAsync(CREDENTIAL_KEY))
   }
 
-  private async read(): Promise<StoredDeviceCredential | null> {
+  private read(): Promise<StoredDeviceCredential | null> {
+    return this.enqueue(() => this.readStored())
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.serial
+    let release!: () => void
+    this.serial = new Promise<void>(resolve => {
+      release = resolve
+    })
+    return previous.then(operation, operation).finally(release)
+  }
+
+  private async readStored(): Promise<StoredDeviceCredential | null> {
     const raw = await SecureStore.getItemAsync(CREDENTIAL_KEY)
     if (!raw) return null
     try {
       return normalizeCredential(JSON.parse(raw))
     } catch {
-      await this.clear()
+      await SecureStore.deleteItemAsync(CREDENTIAL_KEY)
       return null
     }
   }
 
-  private write(credential: StoredDeviceCredential): Promise<void> {
+  private writeStored(credential: StoredDeviceCredential): Promise<void> {
     return SecureStore.setItemAsync(CREDENTIAL_KEY, JSON.stringify(credential), {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     })

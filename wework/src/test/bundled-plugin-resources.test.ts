@@ -14,6 +14,7 @@ const bundledPluginExampleManifests = [
 
 const bundledWeworkSpaceDirectory = 'bundled-plugins/wework-personal/plugins/wework-space'
 const bundledSmartAppBuilderDirectory = 'bundled-plugins/wework-personal/plugins/smart-app-builder'
+const weworkPluginDeveloperDirectory = 'dsh/plugin-developer'
 
 describe('bundled plugin resources', () => {
   test('explicitly packages hidden marketplace manifests', () => {
@@ -122,7 +123,83 @@ describe('bundled plugin resources', () => {
     ).toBe(true)
   })
 
-  test('packages Smart apps on Windows without evaluating path text', () => {
+  test('owns the official Codex development plugin inside the Wework plugin package', () => {
+    const resourcesDirectory = resolve(process.cwd(), 'resources')
+    const weworkDirectory = resolve(process.cwd())
+    const marketplace = JSON.parse(
+      readFileSync(
+        resolve(
+          resourcesDirectory,
+          'bundled-plugins/wework-personal/.agents/plugins/marketplace.json'
+        ),
+        'utf8'
+      )
+    ) as {
+      plugins: Array<{
+        name: string
+        policy?: { installation?: string }
+      }>
+    }
+    const weworkManifest = JSON.parse(
+      readFileSync(resolve(weworkDirectory, weworkPluginDeveloperDirectory, 'package.json'), 'utf8')
+    ) as { version?: string; wework?: { codexPlugin?: string } }
+    const codexPluginRoot = resolve(
+      weworkDirectory,
+      weworkPluginDeveloperDirectory,
+      weworkManifest.wework?.codexPlugin ?? ''
+    )
+    const codexManifest = JSON.parse(
+      readFileSync(resolve(codexPluginRoot, '.codex-plugin/plugin.json'), 'utf8')
+    ) as Record<string, unknown>
+
+    expect(weworkManifest.wework?.codexPlugin).toBe('./codex-plugin')
+    expect(codexManifest.name).toBe('wework-plugin-developer')
+    expect(weworkManifest.version).toBe(codexManifest.version)
+    expect(Object.keys(codexManifest)).toEqual([
+      'name',
+      'version',
+      'description',
+      'author',
+      'skills',
+      'interface',
+    ])
+    expect(
+      marketplace.plugins.find(plugin => plugin.name === 'wework-plugin-developer')?.policy
+        ?.installation
+    ).toBe('INSTALLED_BY_DEFAULT')
+    const claudeMarketplace = JSON.parse(
+      readFileSync(
+        resolve(
+          resourcesDirectory,
+          'bundled-plugins/wework-personal/.claude-plugin/marketplace.json'
+        ),
+        'utf8'
+      )
+    ) as { plugins: Array<{ name: string; version?: string }> }
+    expect(
+      claudeMarketplace.plugins.find(plugin => plugin.name === 'wework-plugin-developer')?.version
+    ).toBe(codexManifest.version)
+    const skillRoot = resolve(codexPluginRoot, 'skills/develop-wework-plugin')
+    expect(readFileSync(resolve(skillRoot, 'SKILL.md'), 'utf8')).toContain(
+      'Never edit files inside an installed plugin cache'
+    )
+    expect(readFileSync(resolve(skillRoot, 'SKILL.md'), 'utf8')).toContain(
+      'wework desktop inspect --project .'
+    )
+    expect(existsSync(resolve(codexPluginRoot, '.mcp.json'))).toBe(false)
+    expect(existsSync(resolve(skillRoot, 'references/extension-points.md'))).toBe(true)
+    expect(existsSync(resolve(skillRoot, 'assets/ui-extension-demo/client.js'))).toBe(true)
+    expect(
+      existsSync(
+        resolve(
+          resourcesDirectory,
+          'bundled-plugins/wework-personal/plugins/wework-plugin-developer/.codex-plugin/plugin.json'
+        )
+      )
+    ).toBe(false)
+  })
+
+  test('delegates Smart App verification and packaging to the Wework host', () => {
     const script = readFileSync(
       resolve(
         process.cwd(),
@@ -132,12 +209,26 @@ describe('bundled plugin resources', () => {
       ),
       'utf8'
     )
+    const skill = readFileSync(
+      resolve(
+        process.cwd(),
+        'resources',
+        bundledSmartAppBuilderDirectory,
+        'skills/create-smart-app/SKILL.md'
+      ),
+      'utf8'
+    )
 
-    expect(script).toMatch(/execFileSync\(\s*'tar\.exe'/)
-    expect(script).not.toMatch(/execFileSync\(\s*'powershell\.exe'/)
-    expect(script).toContain("'--exclude=node_modules'")
-    expect(script).toContain("'--exclude=.git'")
-    expect(script).toContain("'--exclude=test-results'")
+    expect(script).toContain("spawnSync('wework'")
+    expect(script).toContain("['smart-app', command, '--project', root, '--format', 'json']")
+    expect(script).toContain("case 'inspect'")
+    expect(script).toContain("case 'verify'")
+    expect(script).toContain("case 'pack'")
+    expect(script).not.toContain('function validate(')
+    expect(script).not.toContain('function pack(')
+    expect(script).not.toContain('execFileSync')
+    expect(skill).toContain('inspect → contract → doctor → verify → preview → pack')
+    expect(skill).toContain('structured error code')
   })
 
   test('uses the Electron release builder and publishes both updater protocols', () => {
@@ -183,9 +274,9 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('RELEASE_KIND')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
-    expect(workflow).toContain("! -name 'WeworkComponent_coreDsh_*.tar.gz'")
-    expect(workflow).toContain("! -name 'WeworkComponent_codex_*.tar.gz'")
-    expect(workflow).toContain("! -name 'WeworkComponent_dws_*.tar.gz'")
+    expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
+    expect(workflow).toContain('desktop-component-release.mjs release-assets version')
+    expect(workflow).toContain('desktop-component-release.mjs release-assets shared')
     expect(workflow).toContain('Reusing immutable component asset')
     expect(workflow).toContain('components-${channel}-linux-x64.json')
     expect(
@@ -241,6 +332,14 @@ describe('bundled plugin resources', () => {
     )
 
     expect(workflow).toContain('macos-14')
+    expect(workflow).not.toContain('macos-15-intel')
+    expect(workflow).not.toContain('Install Rosetta 2')
+    expect(workflow).not.toContain('node_arch')
+    expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
+    expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"')
+    expect(workflow).toContain(
+      '--parallel-segments release-package-startup,component-update,app-update-differential'
+    )
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

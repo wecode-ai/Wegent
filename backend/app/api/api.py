@@ -37,6 +37,7 @@ from app.api.endpoints import (
     oidc,
     openapi_responses,
     pet,
+    plugin_publications,
     project_automations,
     project_incoming_hooks,
     projects,
@@ -60,6 +61,8 @@ from app.api.endpoints import (
     utils,
     web_scraper,
     wework_auth,
+    wework_notifications,
+    wework_transcripts,
     wiki,
     wizard,
     work_queue,
@@ -106,6 +109,7 @@ from app.api.endpoints.internal import (
 )
 from app.api.endpoints.internal import (
     object_storage_router,
+    plugin_publications_router,
     rag_content_router,
 )
 from app.api.endpoints.internal import robot_queue as internal_robot_queue
@@ -348,12 +352,18 @@ api_router.include_router(
 )
 api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
+api_router.include_router(plugin_publications.router, prefix="/plugins")
 api_router.include_router(smart_apps.router, prefix="/smart-apps", tags=["smart-apps"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
 )
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
+)
+api_router.include_router(
+    wework_transcripts.router,
+    prefix="/wework-transcripts",
+    tags=["wework-transcripts"],
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
@@ -404,6 +414,11 @@ api_router.include_router(
     tags=["internal-object-storage"],
 )
 api_router.include_router(
+    plugin_publications_router,
+    prefix="/internal",
+    tags=["internal-plugin-publications"],
+)
+api_router.include_router(
     workspace_archives_router,
     prefix="/internal",
     tags=["internal-workspace-archives"],
@@ -433,4 +448,10 @@ api_router.include_router(
     api_keys_internal_router,
     prefix="/internal",
     tags=["internal-api-keys"],
+)
+
+api_router.include_router(
+    wework_notifications.router,
+    prefix="/v1/wework-notifications",
+    tags=["wework-notifications"],
 )

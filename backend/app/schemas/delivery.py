@@ -18,11 +18,13 @@ from pydantic import (
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
+from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
 
 
 class LoopItemCreate(BaseModel):
+    notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
@@ -55,6 +57,7 @@ class LoopItemCreate(BaseModel):
 
 
 class LoopItemUpdate(BaseModel):
+    notify_assignee: bool = True
     version: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
@@ -140,6 +143,7 @@ class LoopItemResponse(BaseModel):
     created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
+    detail_loaded: bool = True
     content_revision: int = 1
     is_unread: bool = False
     current_delivery_id: str | None
@@ -358,6 +362,10 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    model_selection: RuntimeModelSelection | None = Field(
+        default=None,
+        alias="modelSelection",
+    )
     workflow_node_id: str | None = Field(
         default=None,
         alias="workflowNodeId",
@@ -368,7 +376,7 @@ class LoopItemTaskBind(BaseModel):
 
 
 class LoopItemTaskBindingResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: SnowflakeId
     cloud_project_id: SnowflakeId
@@ -378,6 +386,10 @@ class LoopItemTaskBindingResponse(BaseModel):
     task_id: str
     task_title: str | None
     backend_task_id: int | None
+    model_selection: RuntimeModelSelection | None = Field(
+        default=None,
+        alias="modelSelection",
+    )
     workflow_node_id: str | None = None
     linked_by_user_id: int
     linked_at: datetime
@@ -397,6 +409,12 @@ class LoopItemTaskBindingResponse(BaseModel):
     @classmethod
     def normalize_unlinked_at(cls, value: object) -> object:
         return LoopItemResponse.normalize_unset_datetime(value)
+
+
+class LoopItemPageResponse(BaseModel):
+    items: list[LoopItemResponse]
+    task_bindings: list[LoopItemTaskBindingResponse]
+    next_cursor: str | None = None
 
 
 class CloudTaskContextResponse(LoopItemTaskBindingResponse):

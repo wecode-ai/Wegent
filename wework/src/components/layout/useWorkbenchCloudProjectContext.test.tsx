@@ -12,6 +12,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { WorkspaceTabsContext } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { defaultProjectSpaceContentRoute } from '@/features/todo/projectSpaceRoute'
 import {
   cloudItemAsLocalWorkItem,
   useWorkbenchCloudProjectContext,
@@ -238,6 +239,128 @@ describe('useWorkbenchCloudProjectContext', () => {
 
     await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('completed'))
     expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
+  })
+
+  test('projects current runtime status while the bound work item persistence lags', async () => {
+    const cloudProject = project('space-cloud')
+    const reviewItem = {
+      ...loopItem(cloudProject.id),
+      status: 'in_review' as const,
+    }
+    const runtimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+    }
+    const services = {
+      deliveryApi: {
+        findCloudContextForTask: vi
+          .fn()
+          .mockResolvedValue({ project: cloudProject, loop_item: reviewItem }),
+        listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+        listCloudProjects: vi.fn().mockResolvedValue({ items: [cloudProject] }),
+        listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+        listLoopItems: vi.fn().mockResolvedValue({ items: [reviewItem] }),
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: runtimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskExecutionKnown: true,
+        runtimeTaskExecutionStatus: 'running',
+        runtimeTaskRunning: true,
+        runtimeTaskTitle: 'Lifecycle task',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_progress'))
+    expect(result.current.boundCloudItemStatusOverride).toBe('in_progress')
+  })
+
+  test('persists settled execution status for an already-bound work item', async () => {
+    const cloudProject = project('space-cloud', 'local')
+    const runningItem = loopItem(cloudProject.id)
+    const reviewItem = {
+      ...runningItem,
+      status: 'in_review' as const,
+      version: 2,
+    }
+    const runtimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+    }
+    let currentItem = runningItem
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockImplementation(async () => ({
+        project: cloudProject,
+        loop_item: currentItem,
+        loop_item_id: currentItem.id,
+      })),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [cloudProject] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockImplementation(async () => ({ items: [currentItem] })),
+      updateTaskTrackingStatus: vi.fn().mockImplementation(async () => {
+        currentItem = reviewItem
+        return reviewItem
+      }),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result, rerender } = renderHook(
+      ({
+        runtimeTaskExecutionKnown,
+        runtimeTaskExecutionStatus,
+        runtimeTaskRunning,
+      }: {
+        runtimeTaskExecutionKnown: boolean
+        runtimeTaskExecutionStatus: string | null
+        runtimeTaskRunning: boolean
+      }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: runtimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskExecutionKnown,
+          runtimeTaskExecutionStatus,
+          runtimeTaskRunning,
+          runtimeTaskTitle: 'Lifecycle task',
+          services,
+          userId: 1,
+        }),
+      {
+        initialProps: {
+          runtimeTaskExecutionKnown: true,
+          runtimeTaskExecutionStatus: 'running',
+          runtimeTaskRunning: true,
+        },
+      }
+    )
+
+    await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_progress'))
+
+    rerender({
+      runtimeTaskExecutionKnown: true,
+      runtimeTaskExecutionStatus: 'done',
+      runtimeTaskRunning: false,
+    })
+
+    await waitFor(() =>
+      expect(localApi.updateTaskTrackingStatus).toHaveBeenCalledWith(runtimeTask, 'succeeded')
+    )
+    await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_review'))
+    expect(localApi.updateTaskTrackingStatus).toHaveBeenCalledOnce()
   })
 
   test('automatically selects the configured default project space', async () => {
@@ -938,9 +1061,28 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(result.current.closeDeliveryDialog).toBe(closeDeliveryDialog)
   })
 
-  test('reuses the existing project board tab when opening a bound work item', async () => {
-    const cloudProject = project('space-local', 'local')
-    cloudProject.name = '我的任务'
+  test.each([
+    {
+      description: 'resolved project board tab',
+      boardTabId: 'board-existing',
+      boardRoute: '/todo?projectStore=local&projectId=space-local',
+      cloudProject: { ...project('space-local', 'local'), name: '我的任务' },
+      fixed: false,
+    },
+    {
+      description: 'unresolved fixed default project board tab',
+      boardTabId: 'fixed-board',
+      boardRoute: defaultProjectSpaceContentRoute(),
+      cloudProject: {
+        ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+        project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+        name: '我的任务',
+        metadata: { system_kind: 'default_work_items' },
+      },
+      fixed: true,
+    },
+  ])('reuses the $description when opening a bound work item', async setup => {
+    const { boardRoute, boardTabId, cloudProject, fixed } = setup
     const item = loopItem(cloudProject.id)
     const currentRuntimeTask = {
       deviceId: 'local-device',
@@ -969,10 +1111,11 @@ describe('useWorkbenchCloudProjectContext', () => {
       contentRoute: '/?deviceId=local-device&taskId=runtime-1',
     }
     const boardTab = {
-      id: 'board-existing',
+      id: boardTabId,
       kind: 'board' as const,
-      title: '工作项',
-      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
+      title: fixed ? '工作空间' : '工作项',
+      contentRoute: boardRoute,
+      fixed,
     }
     const openTab = vi.fn()
     const workspaceTabs = {

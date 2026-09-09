@@ -34,6 +34,7 @@ from app.services.knowledge.code_wiki.runner import (
     is_code_wiki_generation,
     source_of,
     start_run,
+    strategy_team_readiness,
 )
 from app.services.knowledge.code_wiki.version_store import set_page_path
 
@@ -296,7 +297,8 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
     test_db.flush()
     tasks.team.json = {
         "spec": {
-            "collaborationModel": "coordinate",
+            # The strategy, not collaborationModel, selects the Code Wiki protocol.
+            "collaborationModel": "solo",
             "members": [
                 {
                     "role": "reviewer",
@@ -315,6 +317,11 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
             ],
         }
     }
+    _set_spec(
+        test_db,
+        knowledge_base,
+        generationStrategy="coordinator_reviewed",
+    )
     started = start_run(
         test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
     )
@@ -328,6 +335,168 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
     assert "`plan_only` review policy" in tasks.prompt
     assert f"`code-wiki-reviewer-{reviewer.id}`" in tasks.prompt
     assert f"`code-wiki-section-writer-{section_writer.id}`" in tasks.prompt
+
+
+def test_a_generation_snapshots_the_resolved_strategy(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+) -> None:
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "legacy"
+    assert started.strategy_revision == 1
+    assert started.generation.ext["generationStrategy"] == {
+        "id": "legacy",
+        "revision": 1,
+        "teamRef": {"name": "code-wiki-team", "namespace": "default"},
+    }
+
+
+def test_adaptive_full_run_requires_writer_without_creating_review_state(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+
+    writer = Kind(
+        kind="Bot",
+        name="code-wiki-section-writer",
+        namespace="default",
+        user_id=test_user.id,
+        json={"spec": {}},
+        is_active=True,
+    )
+    test_db.add(writer)
+    test_db.flush()
+    tasks.team.json = {
+        "spec": {
+            "collaborationModel": "coordinate",
+            "members": [
+                {
+                    "role": "writer",
+                    "botRef": {
+                        "name": writer.name,
+                        "namespace": writer.namespace,
+                    },
+                }
+            ],
+        }
+    }
+    _set_spec(test_db, knowledge_base, generationStrategy="coordinator_adaptive")
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_adaptive",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_adaptive": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "coordinator_adaptive"
+    assert "qualityReview" not in started.generation.ext
+    assert "Strategy: `coordinator_adaptive`" in tasks.prompt
+    assert f"`code-wiki-section-writer-{writer.id}`" in tasks.prompt
+    assert "review-open" not in tasks.prompt
+
+
+def test_solo_full_run_needs_no_team_roles_or_review_state(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+
+    _set_spec(test_db, knowledge_base, generationStrategy="coordinator_solo")
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_solo",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_solo": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "coordinator_solo"
+    assert "qualityReview" not in started.generation.ext
+    assert "Strategy: `coordinator_solo`" in tasks.prompt
+    assert "Do not call the Claude Code `Task` or `Agent` tool" in tasks.prompt
+    assert "review-open" not in tasks.prompt
+
+
+def test_strategy_team_readiness_resolves_a_solo_team(
+    monkeypatch, test_db: Session, test_user: User, tasks: FakeTasks
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+    from app.services.knowledge.code_wiki.generation_strategy import strategy_for_run
+
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_solo",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_solo": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    assert (
+        strategy_team_readiness(
+            test_db, test_user, strategy_for_run("coordinator_solo")
+        )
+        == ""
+    )
 
 
 def test_the_prompt_carries_the_generation_the_agent_must_write_into(

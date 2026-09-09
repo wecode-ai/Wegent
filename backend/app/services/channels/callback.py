@@ -18,7 +18,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, Generic, Iterator, Optional, Tuple, TypeVar
 
@@ -558,6 +558,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         content: str,
         status: str = "COMPLETED",
         error_message: Optional[str] = None,
+        result: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Send task result back to the channel.
 
@@ -570,6 +571,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             content: Result content
             status: Task status (COMPLETED or FAILED)
             error_message: Error message if failed
+            result: Complete terminal result, including runtime metadata
 
         Returns:
             True if sent successfully, False otherwise
@@ -582,38 +584,15 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             return False
 
         try:
-            # Check if we have an active streaming emitter
             emitter = self._active_emitters.get(task_id)
-
+            has_active_emitter = emitter is not None
             if emitter:
                 logger.info(
                     f"[{self._channel_type.value}Callback] Finishing active "
                     f"streaming emitter for task {task_id}: "
                     f"emitter={emitter.__class__.__name__}, status={status}"
                 )
-                # Streaming was active, just finish it
-                if status == "FAILED":
-                    await emitter.emit_error(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        error=error_message or "Task failed",
-                    )
-                else:
-                    # Pass result content to emitter so it can use the actual
-                    # AI response instead of stale accumulated content.
-                    # This is essential for device mode where executor events
-                    # arrive via device WebSocket rather than /callback.
-                    result = {"value": content} if content else None
-                    await emitter.emit_done(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        result=result,
-                    )
-                logger.info(
-                    f"[{self._channel_type.value}Callback] Finished streaming for task {task_id}"
-                )
             else:
-                # No active streaming, create new emitter and send complete result
                 emitter = await self._get_or_create_emitter(task_id, subtask_id)
                 if not emitter:
                     logger.warning(
@@ -621,40 +600,37 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     )
                     return False
 
-                # Build message content
-                # Build message content
-                if status == "FAILED":
-                    message = f"❌ 任务执行失败\n\n任务 ID: {task_id}\n错误: {error_message or '未知错误'}"
+            completion_result = (
+                result
+                if isinstance(result, dict)
+                else {"value": content} if content else None
+            )
+            if status == "FAILED":
+                if not has_active_emitter:
+                    message = (
+                        f"❌ 任务执行失败\n\n任务 ID: {task_id}\n"
+                        f"错误: {error_message or '未知错误'}"
+                    )
                     await emitter.emit_chunk(
                         task_id=task_id,
                         subtask_id=subtask_id,
                         content=message,
                         offset=0,
                     )
-                    await emitter.emit_error(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        error=error_message or "Task failed",
-                    )
-                else:
-                    # Truncate content if too long
-                    max_length = 4000
-                    if len(content) > max_length:
-                        content = content[:max_length] + "\n\n... (内容已截断)"
-
-                    await emitter.emit_chunk(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        content=content,
-                        offset=0,
-                    )
-                    await emitter.emit_done(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                    )
-                logger.info(
-                    f"[{self._channel_type.value}Callback] Sent result for task {task_id}"
+                await emitter.emit_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_message or "Task failed",
                 )
+            else:
+                await emitter.emit_done(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    result=completion_result,
+                )
+            logger.info(
+                f"[{self._channel_type.value}Callback] Sent result for task {task_id}"
+            )
 
             # Clean up
             await self._remove_emitter(task_id)
@@ -797,6 +773,7 @@ class ChannelCallbackRegistry:
                         content=content,
                         status=status,
                         error_message=error,
+                        result=result if isinstance(result, dict) else None,
                     )
                     if success:
                         sent_any = True

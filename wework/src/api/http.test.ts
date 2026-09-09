@@ -67,6 +67,32 @@ describe('createHttpClient', () => {
     })
   })
 
+  test('forwards idempotency headers on mutation requests', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 82 }),
+    })
+
+    const client = createHttpClient({ baseUrl: '/api', getToken: () => 'cloud-token' })
+    await client.post(
+      '/plugins/publication-requests',
+      { requestedVersion: '1.2.0' },
+      { headers: { 'Idempotency-Key': 'publication-create-82' } }
+    )
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/plugins/publication-requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer cloud-token',
+        'Idempotency-Key': 'publication-create-82',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
+      },
+      body: JSON.stringify({ requestedVersion: '1.2.0' }),
+    })
+  })
+
   test('uses one cloud connection for devices and cloud projects', async () => {
     fetchMock
       .mockResolvedValueOnce({

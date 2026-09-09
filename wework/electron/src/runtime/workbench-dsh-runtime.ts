@@ -44,11 +44,13 @@ export interface PrepareWorkbenchDshOptions {
   modelBaseUrl?: string | null
   contextBaseUrl?: string | null
   contextToken?: string | null
+  includeElectronHostBridge?: boolean
   run?: CommandRunner
 }
 
 export interface WorkbenchDshLaunch {
   command: string
+  entry: string
   args: string[]
   cwd: string
   dshHome: string
@@ -57,6 +59,37 @@ export interface WorkbenchDshLaunch {
   url: string
   version: string
   sourceFingerprint: string
+}
+
+export interface WorkbenchProjectPnpmCommand {
+  command: string
+  argsPrefix: string[]
+  environment: NodeJS.ProcessEnv
+}
+
+export interface ResolveWorkbenchProjectPnpmOptions {
+  runtimeRoot: string
+  environment: NodeJS.ProcessEnv
+  versionRequirement?: string
+}
+
+export async function resolveWorkbenchProjectPnpmCommand(
+  options: ResolveWorkbenchProjectPnpmOptions
+): Promise<WorkbenchProjectPnpmCommand> {
+  const runtime = await selectBundledDshRuntimeMatching(
+    options.runtimeRoot,
+    'workbench',
+    options.versionRequirement ?? WORKBENCH_DSH_VERSION
+  )
+  const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
+  const pnpmEntry = join(runtime.root, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+  await readFile(pnpmEntry)
+  const environment = withRuntimePath(options.environment, runtime.root, nodeCommand)
+  return {
+    command: nodeCommand,
+    argsPrefix: runtimeNodeArgs(environment, [pnpmEntry]),
+    environment,
+  }
 }
 
 export async function prepareWorkbenchDshLaunch(
@@ -94,6 +127,34 @@ export async function prepareWorkbenchDshLaunch(
     environment,
     run
   )
+  if (options.includeElectronHostBridge !== false) {
+    // The workbench is an isolated harness profile. Without the electron-host
+    // plugin its DSH client has no route to the scoped host pipe, so calling
+    // /wework/electron-host/v1/invoke hits a plain page and every capability
+    // (including dshCapture.*) silently degrades. Install the trusted host bridge
+    // into the profile so the workbench can reach the owner-scoped capabilities.
+    const hostPluginPath = join(runtime.pluginsRoot, 'wework-electron-host')
+    const corePluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
+    const resolvedHostPluginPath = (await isDirectory(hostPluginPath))
+      ? hostPluginPath
+      : corePluginsRoot && (await isDirectory(join(corePluginsRoot, 'wework-electron-host')))
+        ? join(corePluginsRoot, 'wework-electron-host')
+        : null
+    if (!resolvedHostPluginPath) {
+      throw new Error(
+        'Workbench Smart App runtime requires the trusted wework-electron-host plugin'
+      )
+    }
+    await installPlugins(
+      runtime,
+      dshHome,
+      options.manifest.entry.profile,
+      [resolvedHostPluginPath],
+      nodeCommand,
+      environment,
+      run
+    )
+  }
   await installPluginSpecs(
     runtime,
     dshHome,
@@ -119,6 +180,7 @@ export async function prepareWorkbenchDshLaunch(
   }
   return {
     command: nodeCommand,
+    entry: runtime.entry,
     args: runtimeNodeArgs(environment, [
       runtime.entry,
       '--profile',
@@ -187,7 +249,7 @@ async function prepareInstanceBundle(
   return packages
 }
 
-async function materializeManifestPackages(
+export async function materializeManifestPackages(
   manifest: WorkbenchAppManifest,
   root: string
 ): Promise<string[]> {
@@ -408,17 +470,24 @@ function runtimeEnvironment(
   nodeCommand: string,
   options: PrepareWorkbenchDshOptions
 ): NodeJS.ProcessEnv {
-  const pathEntries = [join(runtimeRoot, 'node_modules', '.bin')]
-  if (isAbsolute(nodeCommand)) pathEntries.push(dirname(nodeCommand))
-  if (environment.PATH) pathEntries.push(environment.PATH)
   return {
-    ...environment,
+    ...withRuntimePath(environment, runtimeRoot, nodeCommand),
     DSH_HOME: dshHome,
-    PATH: pathEntries.join(delimiter),
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),
     ...(options.contextToken ? { WEWORK_HARNESS_CONTEXT_TOKEN: options.contextToken } : {}),
   }
+}
+
+function withRuntimePath(
+  environment: NodeJS.ProcessEnv,
+  runtimeRoot: string,
+  nodeCommand: string
+): NodeJS.ProcessEnv {
+  const pathEntries = [join(runtimeRoot, 'node_modules', '.bin')]
+  if (isAbsolute(nodeCommand)) pathEntries.push(dirname(nodeCommand))
+  if (environment.PATH) pathEntries.push(environment.PATH)
+  return { ...environment, PATH: pathEntries.join(delimiter) }
 }
 
 function runCommand(

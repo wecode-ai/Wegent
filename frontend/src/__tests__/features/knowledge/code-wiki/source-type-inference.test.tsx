@@ -19,10 +19,16 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 jest.mock('@/apis/code-wiki', () => ({
-  codeWikiApi: { resolve: jest.fn().mockResolvedValue(null) },
+  codeWikiApi: {
+    resolve: jest.fn().mockResolvedValue(null),
+    strategies: jest.fn().mockResolvedValue({ default_strategy: null, strategies: [] }),
+  },
 }))
 jest.mock('@/features/tasks/components/selector', () => ({
   RepositorySelector: () => <div data-testid="repository-selector" />,
+}))
+jest.mock('@/features/knowledge/code-wiki/GenerationStrategySelect', () => ({
+  GenerationStrategySelect: () => null,
 }))
 
 const mockUser = jest.fn()
@@ -34,6 +40,7 @@ const EMPTY = {
   source_type: 'github' as const,
   source_url: '',
   language: 'zh',
+  generation_strategy: '',
   show_generation_task: false,
   resolution: null,
 }

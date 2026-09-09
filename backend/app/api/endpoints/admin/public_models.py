@@ -19,6 +19,10 @@ from app.schemas.admin import (
     PublicModelResponse,
     PublicModelUpdate,
 )
+from app.services.adapters.public_model import (
+    is_public_model_visible,
+    with_public_model_visibility,
+)
 
 router = APIRouter()
 
@@ -53,6 +57,7 @@ def _model_to_response(model: Kind) -> PublicModelResponse:
         display_name=display_name if display_name != model.name else None,
         model_json=model.json,
         is_active=model.is_active,
+        is_visible=is_public_model_visible(model.json),
         is_advanced=_get_is_advanced(model),
         created_at=model.created_at,
         updated_at=model.updated_at,
@@ -124,7 +129,7 @@ async def create_public_model(
         kind="Model",
         name=model_data.name,
         namespace=model_data.namespace,
-        json=model_data.model_json,
+        json=with_public_model_visibility(model_data.model_json, model_data.is_visible),
         is_active=True,
     )
     db.add(new_model)
@@ -180,9 +185,14 @@ async def update_public_model(
     if model_data.namespace is not None:
         model.namespace = model_data.namespace
     if model_data.model_json is not None:
-        model.json = model_data.model_json
+        model.json = with_public_model_visibility(
+            model_data.model_json,
+            is_public_model_visible(model.json),
+        )
     if model_data.is_active is not None:
         model.is_active = model_data.is_active
+    if model_data.is_visible is not None:
+        model.json = with_public_model_visibility(model.json, model_data.is_visible)
     if model_data.is_advanced is not None:
         updated_json = dict(model.json) if isinstance(model.json, dict) else {}
         if "spec" not in updated_json or not isinstance(updated_json.get("spec"), dict):

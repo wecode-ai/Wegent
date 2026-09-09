@@ -118,6 +118,16 @@ describe('pluginDistribution', () => {
         })
       )
     ).toBe('personal')
+    expect(
+      marketplacePluginDistribution(
+        marketplaceItem({
+          name: 'legacy-public-creation',
+          sourceProvider: 'user',
+          visibility: 'public',
+          accessRole: 'owner',
+        })
+      )
+    ).toBe('personal')
   })
 
   test('maps OpenAI local marketplaces to official and user-added ones to external', () => {

@@ -15,7 +15,7 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  background: #171717;
+  background: #181818;
 }
 
 * {
@@ -866,7 +866,7 @@ body[data-stage='2'] .monitor-status {
   }
 
   .ambient-node {
-    fill: #171717;
+    fill: #181818;
     stroke: rgb(255 255 255 / 16%);
   }
 
@@ -882,7 +882,7 @@ body[data-stage='2'] .monitor-status {
 
   .splash {
     color: #f5f5f5;
-    background: rgb(23 23 23 / 97%);
+    background: rgb(33 33 33 / 96%);
     box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
   }
 
@@ -901,13 +901,13 @@ body[data-stage='2'] .monitor-status {
   .human-head,
   .human-body,
   .human-hand {
-    fill: #222;
+    fill: #212121;
     stroke: rgb(255 255 255 / 18%);
   }
 
   .assembly-piece rect,
   .assembly-piece circle {
-    fill: #222;
+    fill: #212121;
     stroke: #7c3aed;
   }
 
@@ -928,7 +928,7 @@ body[data-stage='2'] .monitor-status {
   }
 
   .monitor-screen {
-    fill: #1b1b1b;
+    fill: #181818;
     stroke: rgb(255 255 255 / 10%);
   }
 
@@ -943,7 +943,7 @@ body[data-stage='2'] .monitor-status {
   .startup-button {
     color: #e5e5e5;
     border-color: rgb(255 255 255 / 16%);
-    background: #262626;
+    background: #303030;
   }
 
   .startup-button-primary {

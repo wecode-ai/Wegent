@@ -162,6 +162,7 @@ metadata:
   name: ClaudeSonnet4
   namespace: default
 spec:
+  isVisible: true
   modelGroup: "主分组"
   modelSubGroup: "快速"
   modelConfig:
@@ -178,6 +179,7 @@ spec:
 | ---------------------- | ------ | ---- | ---------------------------------- |
 | `metadata.name`        | string | 是   | Model 的唯一标识符                 |
 | `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
+| `spec.isVisible`       | boolean | 否  | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析 |
 | `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelConfig`     | object | 是   | 模型配置对象                       |

@@ -1202,6 +1202,34 @@
       "modelRequired": "Select the model to generate with",
       "created": "Code Wiki created. Content is generating."
     },
+    "strategy": {
+      "label": "Generation strategy",
+      "createDescription": "Choose how this wiki is generated in the future, or use the system default.",
+      "settingsDescription": "Applies to future generations. Existing versions are unchanged.",
+      "loading": "Loading available strategies…",
+      "loadFailed": "Could not load strategies. Try again later.",
+      "noneAvailable": "No generation strategies are available",
+      "selectRequired": "Select an available generation strategy",
+      "systemRecommended": "System default: {{strategy}}",
+      "systemRecommendedDescription": "The system uses {{strategy}} by default. You can override it in Advanced settings.",
+      "legacyTitle": "Legacy compatibility mode",
+      "legacyDescription": "Keeps the generation behaviour used before strategy selection was added.",
+      "unavailable": "This strategy is unavailable in the system configuration",
+      "options": {
+        "coordinator_adaptive": {
+          "title": "Adaptive collaboration",
+          "description": "One AI owns the whole wiki and delegates only complex areas for deeper work."
+        },
+        "coordinator_reviewed": {
+          "title": "Reviewed generation",
+          "description": "The documentation plan is checked before writing. It is usually steadier, but slower."
+        },
+        "coordinator_solo": {
+          "title": "Single-agent generation",
+          "description": "One AI researches and writes the whole wiki. Good for smaller projects and comparisons."
+        }
+      }
+    },
     "reader": {
       "regenerate": "Regenerate",
       "regenerating": "Generating…",
@@ -1237,6 +1265,8 @@
         "plan": "Plan review",
         "planPassed_one": "Plan review passed ({{count}} page)",
         "planPassed_other": "Plan review passed ({{count}} pages)",
+        "planCompleted_one": "Page plan complete ({{count}} page)",
+        "planCompleted_other": "Page plan complete ({{count}} pages)",
         "writing": "Write pages",
         "writingActive": "Writing pages ({{current}} / {{total}})",
         "writingCompleted_one": "Page writing complete ({{count}} page)",
@@ -1283,12 +1313,17 @@
       },
       "commitUnreported": "no commit reported",
       "taskFailed": "The task failed",
+      "strategy": "Strategy: {{strategy}}",
       "republish": "Restore this version",
       "republished": "This version is published again",
       "republishedDescription": "The page content has been refreshed.",
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
       "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
+      "republishConfirmSlow": "Synchronizing pages and clearing old indexes can take a little while. Retrieval indexes for new content continue updating in the background.",
+      "republishSyncingTitle": "Restoring and synchronizing this version",
+      "republishSyncingBody": "Writing pages, clearing replaced content, and refreshing the reader. Keep this window open.",
+      "republishSyncing": "Synchronizing…",
       "viewFailure": "View full error",
       "failureDetailsTitle": "Generation error",
       "failureDetailsDescription": "Full error message from this generation run."

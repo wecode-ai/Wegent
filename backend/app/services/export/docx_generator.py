@@ -44,6 +44,14 @@ EAST_ASIA_FONT = "Microsoft YaHei"
 MONOSPACE_FONT = "Courier New"
 DOCUMENT_LANGUAGE = "en-US"
 EAST_ASIA_LANGUAGE = "zh-CN"
+INVALID_XML_CHARACTER_PATTERN = re.compile(
+    r"[\x00-\x08\x0B\x0C\x0E-\x1F\uD800-\uDFFF\uFFFE\uFFFF]"
+)
+
+
+def _sanitize_xml_text(text: str) -> str:
+    """Remove characters forbidden by XML 1.0."""
+    return INVALID_XML_CHARACTER_PATTERN.sub("", text)
 
 
 def generate_task_docx(
@@ -69,6 +77,7 @@ def generate_task_docx(
         or task_data.get("title", "")
         or task_data.get("prompt", "Chat Export")[:50]
     )
+    task_title = _sanitize_xml_text(str(task_title))
 
     doc.core_properties.title = task_title
     doc.core_properties.author = "Wegent AI"
@@ -230,7 +239,8 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
         team_ref = task_data.get("teamRef", {})
         sender_name = team_ref.get("name", "AI Assistant")
 
-    _add_text_with_emoji_support(header, f"{sender_name}: ", bold=True)
+    sender_label = _sanitize_xml_text(f"{sender_name}: ")
+    _add_text_with_emoji_support(header, sender_label, bold=True)
     # Set sender font properties for all runs just added
     for run in header.runs:
         run.font.size = Pt(11)
@@ -304,7 +314,7 @@ def _clean_content(content: str) -> str:
     content = re.sub(r"__PROGRESS_BAR__:.*?:\d+", "", content)
     content = re.sub(r"__PROMPT_TRUNCATED__:.*?::(.*?)(?=\n|$)", r"\1", content)
 
-    return content.strip()
+    return _sanitize_xml_text(content).strip()
 
 
 def _convert_emoji_to_text(text: str) -> str:
@@ -369,7 +379,7 @@ def _add_image_attachment(doc: Document, attachment: SubtaskContext, db: Session
             # Add caption
             caption = doc.add_paragraph()
             caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = caption.add_run(attachment.name)
+            run = caption.add_run(_sanitize_xml_text(attachment.name or ""))
             run.font.size = Pt(8)
             run.font.italic = True
             run.font.color.rgb = RGBColor(150, 150, 150)
@@ -398,7 +408,7 @@ def _add_file_attachment(doc: Document, attachment: SubtaskContext):
     type_run.font.color.rgb = RGBColor(100, 100, 100)
 
     # Filename
-    name_run = p.add_run(attachment.name)
+    name_run = p.add_run(_sanitize_xml_text(attachment.name or ""))
     name_run.font.size = Pt(10)
 
     # File size

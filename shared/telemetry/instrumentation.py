@@ -20,6 +20,12 @@ from typing import Any, Optional
 from shared.telemetry.context.large_data import log_json_body
 
 
+def _should_capture_http_client_body(request: Any) -> bool:
+    """Exclude write-only or potentially sensitive environment values from traces."""
+    path = getattr(getattr(request, "url", None), "path", "")
+    return "/environment-variables" not in path
+
+
 def setup_opentelemetry_instrumentation(
     app: Any,
     logger: Optional[logging.Logger] = None,
@@ -481,7 +487,9 @@ def _create_httpx_request_hook(capture_settings: dict, logger: logging.Logger):
                     )
 
             # Capture request body
-            if capture_settings.get("capture_request_body"):
+            if capture_settings.get(
+                "capture_request_body"
+            ) and _should_capture_http_client_body(request):
                 try:
                     # HTTPX request body is in request.content
                     if hasattr(request, "content") and request.content:
@@ -516,7 +524,9 @@ def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
                     )
 
             # Capture response body
-            if capture_settings.get("capture_response_body"):
+            if capture_settings.get(
+                "capture_response_body"
+            ) and _should_capture_http_client_body(request):
                 try:
                     # HTTPX response body is in response.content
                     if hasattr(response, "content") and response.content:
@@ -551,7 +561,9 @@ def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Log
                     )
 
             # Capture request body
-            if capture_settings.get("capture_request_body"):
+            if capture_settings.get(
+                "capture_request_body"
+            ) and _should_capture_http_client_body(request):
                 try:
                     body = None
                     max_body_size = capture_settings.get("max_body_size", 4096)
@@ -690,7 +702,9 @@ def _create_httpx_async_response_hook(capture_settings: dict, logger: logging.Lo
                     )
 
             # Capture response body
-            if capture_settings.get("capture_response_body"):
+            if capture_settings.get(
+                "capture_response_body"
+            ) and _should_capture_http_client_body(request):
                 try:
                     # For async responses, we need to read the content
                     # Note: This may not work for streaming responses

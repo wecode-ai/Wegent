@@ -138,6 +138,7 @@ describe('GitHostingSettingsPage', () => {
           domain: 'git.example.com',
           status: 'not_installed',
           reason_code: 'cli_not_installed',
+          detail: null,
         },
       ],
       warning_codes: [],
@@ -242,6 +243,36 @@ describe('GitHostingSettingsPage', () => {
     )
   })
 
+  test('shows CLI failure detail from the device sync result', async () => {
+    syncGitAccounts.mockResolvedValue({
+      device_id: 'remote-1',
+      status: 'synced_with_warnings',
+      synced_domains: ['git.example.com'],
+      removed_domains: [],
+      duplicate_domains: [],
+      identity_warning_domains: [],
+      cli: [
+        {
+          provider: 'glab',
+          domain: 'git.example.com',
+          status: 'failed',
+          reason_code: 'cli_auth_failed',
+          detail: 'exit=1 error validating token: unauthorized',
+        },
+      ],
+      warning_codes: [],
+    })
+    render(<DeviceGitSyncSection />)
+
+    await screen.findAllByText('gitlab · git.example.com')
+    await userEvent.selectOptions(screen.getByTestId('git-device-sync-select'), 'remote-1')
+    await userEvent.click(screen.getByTestId('git-device-sync-submit'))
+
+    expect(await screen.findByTestId('git-device-sync-result')).toHaveTextContent(
+      'CLI 登录失败，Git 认证已生效（exit=1 error validating token: unauthorized）'
+    )
+  })
+
   test('requires confirmation before clearing managed credentials', async () => {
     getGitAccountSyncSummary.mockResolvedValue({
       accounts: [],
@@ -284,6 +315,7 @@ describe('GitHostingSettingsPage', () => {
           domain: 'git.example.com',
           status: 'configured',
           reason_code: null,
+          detail: null,
         },
       ],
       warning_codes: ['stale_cleanup_failed'],

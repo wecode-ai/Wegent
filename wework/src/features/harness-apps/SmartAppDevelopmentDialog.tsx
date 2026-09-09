@@ -1,6 +1,7 @@
 import { FolderOpen, Loader2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import type { SmartAppTemplate } from '@/api/local/harnessApps'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -11,7 +12,45 @@ export interface SmartAppDevelopmentInput {
   name: string
   displayName: string
   description: string
+  template: SmartAppTemplate
 }
+
+const SMART_APP_TEMPLATES: Array<{
+  value: SmartAppTemplate
+  labelKey: string
+  label: string
+  descriptionKey: string
+  description: string
+}> = [
+  {
+    value: 'web',
+    labelKey: 'workbench.smart_apps_template_web',
+    label: 'Web',
+    descriptionKey: 'workbench.smart_apps_template_web_description',
+    description: '仅包含浏览器界面。',
+  },
+  {
+    value: 'host',
+    labelKey: 'workbench.smart_apps_template_host',
+    label: 'Host',
+    descriptionKey: 'workbench.smart_apps_template_host_description',
+    description: '仅包含本地 Host 逻辑。',
+  },
+  {
+    value: 'web-host',
+    labelKey: 'workbench.smart_apps_template_web_host',
+    label: 'Web + Host',
+    descriptionKey: 'workbench.smart_apps_template_web_host_description',
+    description: '包含界面与本地 Host 逻辑。',
+  },
+  {
+    value: 'web-host-remote',
+    labelKey: 'workbench.smart_apps_template_web_host_remote',
+    label: 'Web + Host + Remote',
+    descriptionKey: 'workbench.smart_apps_template_web_host_remote_description',
+    description: '包含界面、Host 与类型化远程调用。',
+  },
+]
 
 interface SmartAppDevelopmentDialogProps {
   mode: 'create' | 'copy'
@@ -41,6 +80,7 @@ export function SmartAppDevelopmentDialog({
   const [nameEdited, setNameEdited] = useState(false)
   const [description, setDescription] = useState('')
   const [parentPath, setParentPath] = useState('')
+  const [template, setTemplate] = useState<SmartAppTemplate>('web')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const valid = useMemo(
@@ -68,6 +108,7 @@ export function SmartAppDevelopmentDialog({
         name: name.trim(),
         displayName: displayName.trim(),
         description: description.trim(),
+        template,
       })
       onClose()
     } catch (value) {
@@ -100,7 +141,7 @@ export function SmartAppDevelopmentDialog({
               {mode === 'create'
                 ? t(
                     'workbench.smart_apps_create_description',
-                    '从 Web 预设创建可直接运行和持续开发的本地目录。'
+                    '按所需能力创建可直接运行和持续开发的本地目录。'
                   )
                 : t(
                     'workbench.smart_apps_copy_description',
@@ -185,25 +226,61 @@ export function SmartAppDevelopmentDialog({
           </label>
 
           {mode === 'create' ? (
-            <label className="grid gap-1.5 text-sm text-text-secondary">
-              <span>{t('workbench.smart_apps_description', '用途说明')}</span>
-              <textarea
-                data-testid="smart-app-development-description"
-                value={description}
-                disabled={submitting}
-                rows={3}
-                onChange={event => setDescription(event.target.value)}
-                className="resize-none rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
-              />
-            </label>
+            <>
+              <fieldset className="grid gap-2">
+                <legend className="text-sm text-text-secondary">
+                  {t('workbench.smart_apps_template', '能力模板')}
+                </legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {SMART_APP_TEMPLATES.map(option => {
+                    const selected = template === option.value
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={selected}
+                        data-testid={`smart-app-development-template-${option.value}`}
+                        disabled={submitting}
+                        onClick={() => setTemplate(option.value)}
+                        className={`min-h-11 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 ${
+                          selected
+                            ? 'border-text-primary bg-muted text-text-primary'
+                            : 'border-border/50 text-text-secondary hover:bg-muted/50'
+                        }`}
+                      >
+                        <span className="block text-sm font-medium">
+                          {t(option.labelKey, option.label)}
+                        </span>
+                        <span className="mt-0.5 block text-xs">
+                          {t(option.descriptionKey, option.description)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </fieldset>
+              <label className="grid gap-1.5 text-sm text-text-secondary">
+                <span>{t('workbench.smart_apps_description', '用途说明')}</span>
+                <textarea
+                  data-testid="smart-app-development-description"
+                  value={description}
+                  disabled={submitting}
+                  rows={3}
+                  onChange={event => setDescription(event.target.value)}
+                  className="resize-none rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                />
+              </label>
+            </>
           ) : null}
 
-          <div className="rounded-lg border border-border/50 bg-surface/30 px-3 py-2 text-xs text-text-secondary">
-            {t(
-              'workbench.smart_apps_web_preset_hint',
-              '预设：DeepSeek Harness Web。创建后可反复使用开发助手添加插件或修改工作台代码。'
-            )}
-          </div>
+          {mode === 'create' ? (
+            <div className="rounded-lg border border-border/50 bg-surface/30 px-3 py-2 text-xs text-text-secondary">
+              {t(
+                'workbench.smart_apps_template_hint',
+                '模板只声明起步所需能力；后续可按实际需求调整代码与验证契约。'
+              )}
+            </div>
+          ) : null}
         </div>
 
         {error ? (

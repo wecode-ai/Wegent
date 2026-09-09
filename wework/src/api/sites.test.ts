@@ -32,7 +32,7 @@ describe('createSitesApi', () => {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'edit', 'delete'],
+            capabilities: ['create', 'publish', 'edit', 'delete', 'configure_environment'],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',
@@ -49,7 +49,7 @@ describe('createSitesApi', () => {
           app_type: 'web',
           enabled: true,
           order: 10,
-          capabilities: ['create', 'publish', 'edit', 'delete'],
+          capabilities: ['create', 'publish', 'edit', 'delete', 'configure_environment'],
           create: {
             plugin_name: 'wegent-sites',
             marketplace_name: 'wegent',
@@ -211,6 +211,157 @@ describe('createSitesApi', () => {
         Authorization: 'Bearer wegent-secret',
         'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
+    })
+  })
+
+  test('loads the latest environment snapshot through Wegent Backend', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        revision_id: 'env-1',
+        project_id: 'site/1',
+        revision_number: 1,
+        items: [],
+      }),
+    })
+
+    const api = createSitesApi('/api/')
+    await expect(api.getEnvironmentVariables('site/1')).resolves.toMatchObject({
+      revision_id: 'env-1',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1/environment-variables', {
+      method: 'GET',
+      headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+    })
+  })
+
+  test('atomically saves environment variables with an idempotency key', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        id: 'env-2',
+        project_id: 'site/1',
+        revision_number: 2,
+        variables: [],
+        created_by: 'testuser',
+        created_at: '2026-09-02T08:00:00Z',
+      }),
+    })
+    const input = {
+      expected_revision_id: 'env-1',
+      operations: [{ op: 'remove' as const, key: 'OLD_KEY' }],
+    }
+
+    const api = createSitesApi('/api/')
+    await api.patchEnvironmentVariables('site/1', input, 'site-environment-12345678')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1/environment-variables', {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer wegent-secret',
+        'Idempotency-Key': 'site-environment-12345678',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
+      },
+    })
+  })
+
+  test('lists, adds, and removes collaborators through Wegent Backend', async () => {
+    const collaborator = {
+      subject: 'member+test',
+      added_by: 'owner',
+      created_at: '2026-09-03T08:00:00Z',
+    }
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [collaborator] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => collaborator,
+      })
+      .mockResolvedValueOnce({ ok: true, status: 204 })
+
+    const api = createSitesApi('/api/')
+    await expect(api.listCollaborators('site/1')).resolves.toEqual({ items: [collaborator] })
+    await expect(
+      api.addCollaborator('site/1', 'member+test', 'collaborator-add-12345678')
+    ).resolves.toEqual(collaborator)
+    await api.removeCollaborator('site/1', 'member+test')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/sites/site%2F1/collaborators', {
+      method: 'GET',
+      headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/sites/site%2F1/collaborators', {
+      method: 'POST',
+      body: JSON.stringify({ subject: 'member+test' }),
+      headers: expect.objectContaining({
+        Authorization: 'Bearer wegent-secret',
+        'Idempotency-Key': 'collaborator-add-12345678',
+      }),
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/sites/site%2F1/collaborators/member%2Btest',
+      {
+        method: 'DELETE',
+        body: undefined,
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      }
+    )
+  })
+
+  test('loads and updates internal access through Wegent Backend', async () => {
+    const existing = {
+      id: 'policy-1',
+      project_id: 'site/1',
+      target: 'inner',
+      audience: 'owner',
+      subjects: [],
+      revision_number: 2,
+      created_by: 'owner',
+      created_at: '2026-09-08T08:00:00Z',
+    }
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => existing })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ...existing,
+          audience: 'custom',
+          subjects: ['member-a'],
+          revision_number: 3,
+        }),
+      })
+
+    const api = createSitesApi('/api/')
+    await expect(api.getSiteAccess('site/1')).resolves.toEqual(existing)
+    await api.updateSiteAccess(
+      'site/1',
+      { audience: 'custom', subjects: ['member-a'] },
+      'site-access-12345678'
+    )
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/sites/site%2F1/access', {
+      method: 'GET',
+      headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/sites/site%2F1/access', {
+      method: 'PUT',
+      body: JSON.stringify({ audience: 'custom', subjects: ['member-a'] }),
+      headers: expect.objectContaining({
+        Authorization: 'Bearer wegent-secret',
+        'Idempotency-Key': 'site-access-12345678',
+      }),
     })
   })
 })

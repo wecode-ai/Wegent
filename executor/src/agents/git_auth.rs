@@ -35,6 +35,7 @@ struct GitTokenDiagnostics {
 }
 
 const ENCRYPTED_REQUEST_TOKEN: &str = "encrypted_request_token";
+const DEVICE_LOCAL: &str = "device_local";
 
 pub async fn setup_git_authentication(request: &ExecutionRequest) {
     set_git_environment(request);
@@ -206,6 +207,9 @@ fn raw_git_token_for_domain(
     git_domain: &str,
     request: &ExecutionRequest,
 ) -> Option<(String, &'static str)> {
+    if uses_device_local_git_credentials(request) {
+        return token_file(git_domain, request).map(|token| (token, "home_ssh_domain_file"));
+    }
     let request_scoped_encrypted =
         request_git_auth_transport(request).as_deref() == Some(ENCRYPTED_REQUEST_TOKEN);
     if let Some(token) = user_git_token(request) {
@@ -235,6 +239,10 @@ fn raw_git_token_for_domain(
 
 fn request_git_auth_transport(request: &ExecutionRequest) -> Option<String> {
     extra_string(request, "git_auth_transport")
+}
+
+pub(crate) fn uses_device_local_git_credentials(request: &ExecutionRequest) -> bool {
+    request_git_auth_transport(request).as_deref() == Some(DEVICE_LOCAL)
 }
 
 fn user_git_token(request: &ExecutionRequest) -> Option<String> {
@@ -926,6 +934,36 @@ mod tests {
         };
 
         assert!(git_credentials_with_diagnostics("gitlab.com", &request).is_none());
+    }
+
+    #[test]
+    fn device_local_transport_ignores_request_token_without_aes() {
+        let temp_home = env::temp_dir().join(format!(
+            "wegent-device-local-git-auth-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&temp_home).unwrap();
+        let _env = EnvGuard::set_many_and_unset(
+            &[("HOME", temp_home.to_str().unwrap())],
+            &["GIT_TOKEN_AES_KEY", "GIT_TOKEN_AES_IV"],
+        );
+        let request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([
+                ("git_domain".to_owned(), json!("device.example.com")),
+                ("git_auth_transport".to_owned(), json!(DEVICE_LOCAL)),
+                (
+                    "user".to_owned(),
+                    json!({"git_token": "iOuoSwc/HrF6ZhttvtSNeQ=="}),
+                ),
+            ]),
+            ..ExecutionRequest::default()
+        };
+
+        let values = task_git_auth_environment(&request).unwrap();
+
+        assert!(uses_device_local_git_credentials(&request));
+        assert!(!values.contains_key("GIT_ASKPASS"));
+        let _ = fs::remove_dir_all(temp_home);
     }
 
     #[cfg(unix)]

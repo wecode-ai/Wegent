@@ -1,6 +1,7 @@
 import type { HttpClient } from './http'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from './plugins'
 import { sha256Hex } from './fileHash'
+import { resolveApiUrl } from './resolveApiUrl'
 
 export interface SmartAppMarketplaceTag {
   id: string
@@ -25,7 +26,8 @@ export interface SmartAppMarketplaceItem {
   sourceType: 'official' | 'user'
   ownerUserId: number
   ownerDisplayName: string
-  accessRole: 'official' | 'owner' | 'recipient'
+  accessRole: 'official' | 'owner' | 'public' | 'recipient'
+  visibility: 'private' | 'restricted' | 'public'
   tags: string[]
   iconUrl: string
   screenshotUrls: string[]
@@ -55,12 +57,14 @@ export interface SmartAppDownloadDescriptor {
 
 export interface SmartAppAccess {
   smartAppId: number
-  scope: 'private' | 'restricted'
+  scope: 'private' | 'restricted' | 'public'
   targets: SmartAppAccessTarget[]
+  isListed: boolean
+  latestReleaseId: number
+  version: string
 }
 
-export interface SmartAppSubmissionMetadata {
-  smartAppId?: number
+interface SmartAppSubmissionMetadataBase {
   name: string
   displayName: string
   version: string
@@ -74,6 +78,20 @@ export interface SmartAppSubmissionMetadata {
   releaseExtensions?: Record<string, unknown>
   targets: SmartAppAccessTarget[]
 }
+
+export interface SmartAppNewSubmissionMetadata extends SmartAppSubmissionMetadataBase {
+  smartAppId?: never
+  scope: 'restricted' | 'public'
+}
+
+export interface SmartAppExistingSubmissionMetadata extends SmartAppSubmissionMetadataBase {
+  smartAppId: number
+  scope?: 'private' | 'restricted' | 'public'
+}
+
+export type SmartAppSubmissionMetadata =
+  | SmartAppNewSubmissionMetadata
+  | SmartAppExistingSubmissionMetadata
 
 interface SmartAppSubmissionInitResponse {
   submissionId: number
@@ -100,21 +118,23 @@ export interface SmartAppSubmissionCompleteResponse {
   item: SmartAppMarketplaceItem | null
 }
 
-function resolveSmartAppDownloadUrl(downloadUrl: string, apiBaseUrl: string): string {
-  if (!apiBaseUrl.trim()) return downloadUrl
-  const baseUrl = new URL(apiBaseUrl, window.location.origin)
-  return new URL(downloadUrl, baseUrl).toString()
-}
-
 export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
-  const initSubmission = (
+  const initSubmission = async (
     packageInfo: SmartAppPreparedPackage,
     metadata: SmartAppSubmissionMetadata
-  ) =>
-    client.post<SmartAppSubmissionInitResponse>('/smart-apps/submissions/init', {
-      ...metadata,
-      ...packageInfo,
-    })
+  ) => {
+    const initialized = await client.post<SmartAppSubmissionInitResponse>(
+      '/smart-apps/submissions/init',
+      {
+        ...metadata,
+        ...packageInfo,
+      }
+    )
+    return {
+      ...initialized,
+      uploadUrl: resolveApiUrl(initialized.uploadUrl, apiBaseUrl),
+    }
+  }
   const completeSubmission = (id: number) =>
     client.post<SmartAppSubmissionCompleteResponse>(`/smart-apps/submissions/${id}/complete`)
   const cancelSubmission = (id: number) => client.post(`/smart-apps/submissions/${id}/cancel`)
@@ -158,13 +178,13 @@ export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
       )
       return {
         ...descriptor,
-        downloadUrl: resolveSmartAppDownloadUrl(descriptor.downloadUrl, apiBaseUrl),
+        downloadUrl: resolveApiUrl(descriptor.downloadUrl, apiBaseUrl),
       }
     },
     getAccess(id: number) {
       return client.get<SmartAppAccess>(`/smart-apps/${id}/access`)
     },
-    updateAccess(id: number, access: Omit<SmartAppAccess, 'smartAppId'>) {
+    updateAccess(id: number, access: Pick<SmartAppAccess, 'scope' | 'targets'>) {
       return client.put<SmartAppAccess>(`/smart-apps/${id}/access`, access)
     },
     initSubmission,

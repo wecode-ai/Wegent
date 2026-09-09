@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-home-focus
+      name: '@wegent/dsh-ui-home-focus'

@@ -12,6 +12,7 @@ type DeviceLike = Pick<DeviceInfo, 'device_type' | 'bind_shell' | 'status'> &
       | 'running_tasks'
       | 'running_task_ids'
       | 'runtime_routes'
+      | 'runtime_features'
     >
   >
 
@@ -142,11 +143,35 @@ export function supportsRemoteSessions(device: DeviceLike, deviceId?: string | n
   return routeKind ? routeKind === 'remote-relay' : isRemoteDevice(device)
 }
 
+export function isDeviceInteractiveSessionEnabled(
+  device: Pick<DeviceInfo, 'runtime_features'>,
+  session: 'codeServer' | 'terminal'
+): boolean {
+  return device.runtime_features?.interactiveSessions?.[session] !== false
+}
+
+export function supportsRemoteCodeServerSessions(
+  device: DeviceLike,
+  deviceId?: string | null
+): boolean {
+  return (
+    isUsableDevice(device) &&
+    isDeviceInteractiveSessionEnabled(device, 'codeServer') &&
+    (supportsCloudSessions(device, deviceId) || supportsRemoteSessions(device, deviceId))
+  )
+}
+
 export function supportsRemoteTerminalSessions(
   device: DeviceLike,
   deviceId?: string | null
 ): boolean {
-  if (!isClaudeCodeDevice(device)) return false
+  if (
+    !isClaudeCodeDevice(device) ||
+    !isUsableDevice(device) ||
+    !isDeviceInteractiveSessionEnabled(device, 'terminal')
+  ) {
+    return false
+  }
   const routeKind = selectedRuntimeRouteKind(device, deviceId)
   return routeKind
     ? routeKind === 'cloud-relay' || routeKind === 'remote-relay'

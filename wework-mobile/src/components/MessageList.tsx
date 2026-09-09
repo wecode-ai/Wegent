@@ -17,23 +17,23 @@ import {
   isNearMessageListBottom,
   messageListBottomOffset,
   reduceMessageListFollow,
+  shouldLoadEarlierMessages,
 } from '@/domain/messageListScroll'
-import {
-  buildMessageDisplayRows,
-  buildThinkingPreview,
-  type MessageDisplayRow,
-  type ToolActivityKind,
-} from '@/domain/messagePresentation'
-import type { ChatFileChangesSummary, ChatMessage, ChatToolBlock } from '@/types/runtime'
+import { buildThinkingPreview } from '@/domain/messagePresentation'
+import type { ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { MessageContextMenu, type MessageMenuAnchor } from './MessageContextMenu'
+import { ProcessingTimeline } from './ProcessingTimeline'
 
 interface MessageListProps {
   bottomInset: number
   conversationId: string
   entryRevision: number
+  hasMoreBefore: boolean
   messages: ChatMessage[]
   loading: boolean
+  loadingMoreBefore: boolean
+  onLoadMoreBefore: () => Promise<void>
   topInset: number
 }
 
@@ -46,8 +46,11 @@ export function MessageList({
   bottomInset,
   conversationId,
   entryRevision,
+  hasMoreBefore,
   messages,
   loading,
+  loadingMoreBefore,
+  onLoadMoreBefore,
   topInset,
 }: MessageListProps) {
   const listRef = useRef<FlatList<ChatMessage>>(null)
@@ -109,14 +112,27 @@ export function MessageList({
     [scrollToLatest]
   )
 
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (!userDraggingRef.current) return
-    followsLatestRef.current = reduceMessageListFollow(followsLatestRef.current, {
-      type: 'scroll-position-changed',
-      metrics: event.nativeEvent,
-      userInitiated: true,
-    })
-  }, [])
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!userDraggingRef.current) return
+      followsLatestRef.current = reduceMessageListFollow(followsLatestRef.current, {
+        type: 'scroll-position-changed',
+        metrics: event.nativeEvent,
+        userInitiated: true,
+      })
+      if (
+        shouldLoadEarlierMessages(
+          event.nativeEvent,
+          hasMoreBefore,
+          loadingMoreBefore,
+          userDraggingRef.current
+        )
+      ) {
+        void onLoadMoreBefore()
+      }
+    },
+    [hasMoreBefore, loadingMoreBefore, onLoadMoreBefore]
+  )
 
   const handleScrollBeginDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     userDraggingRef.current = true
@@ -161,6 +177,13 @@ export function MessageList({
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
         keyExtractor={message => message.id}
+        ListHeaderComponent={
+          loadingMoreBefore ? (
+            <View style={styles.olderMessagesLoader} testID="older-messages-loader">
+              <ActivityIndicator size="small" />
+            </View>
+          ) : null
+        }
         ListFooterComponent={messages.length > 0 ? <View style={{ height: bottomInset }} /> : null}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -176,6 +199,7 @@ export function MessageList({
         onScroll={handleScroll}
         onScrollBeginDrag={handleScrollBeginDrag}
         onScrollEndDrag={handleScrollEndDrag}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         ref={listRef}
         renderItem={({ item }) => <Message message={item} onLongPress={openMessageMenu} />}
         scrollEventThrottle={16}
@@ -224,7 +248,6 @@ function Message({
     )
   }
 
-  const displayRows = buildMessageDisplayRows(message.blocks, message.content)
   const thinkingPreview =
     message.status === 'streaming'
       ? buildThinkingPreview(message.streamingThinkingContent ?? '')
@@ -238,10 +261,12 @@ function Message({
       style={({ pressed }) => [styles.assistant, pressed && styles.messagePressed]}
       testID={`message-${message.id}`}
     >
-      {displayRows.map(row => (
-        <ProcessingRow key={row.id} row={row} />
-      ))}
-      {message.content ? <AssistantMarkdown>{message.content}</AssistantMarkdown> : null}
+      <ProcessingTimeline message={message} />
+      {message.content ? (
+        <AssistantMarkdown streaming={message.status === 'streaming'}>
+          {message.content}
+        </AssistantMarkdown>
+      ) : null}
       {message.status === 'completed' && message.fileChanges ? (
         <FileChangesSummary summary={message.fileChanges} />
       ) : null}
@@ -249,7 +274,7 @@ function Message({
       {(message.status === 'pending' || message.status === 'streaming') &&
       !message.content &&
       !thinkingPreview &&
-      !displayRows.length ? (
+      !message.blocks?.length ? (
         <ActivityIndicator size={16} style={styles.streaming} />
       ) : null}
       {message.error ? (
@@ -272,81 +297,6 @@ function ThinkingIndicator({ preview }: { preview: string }) {
     >
       思考中 · {preview}
     </Text>
-  )
-}
-
-function ProcessingRow({ row }: { row: MessageDisplayRow }) {
-  const theme = useTheme()
-  if (row.type === 'tool-group') return <ToolActivityGroup row={row} />
-  if (row.type === 'tool') {
-    return (
-      <View style={styles.activityRow} testID={`tool-block-${row.block.id}`}>
-        <ActivityIndicator size={16} />
-        <Text style={{ color: theme.colors.onSurfaceVariant }} variant="bodyMedium">
-          {activeToolLabel(row.block, row.kind)}
-        </Text>
-      </View>
-    )
-  }
-
-  const { block } = row
-  if (!block.content.trim()) return null
-  if (block.type === 'error') {
-    return (
-      <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
-        {block.content}
-      </Text>
-    )
-  }
-  return <AssistantMarkdown muted={block.type === 'guidance'}>{block.content}</AssistantMarkdown>
-}
-
-function ToolActivityGroup({ row }: { row: Extract<MessageDisplayRow, { type: 'tool-group' }> }) {
-  const theme = useTheme()
-  const [expanded, setExpanded] = useState(false)
-  const color = row.failed ? theme.colors.error : theme.colors.onSurfaceVariant
-  return (
-    <View style={styles.activityGroup}>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setExpanded(current => !current)}
-        style={styles.activityRow}
-        testID={`tool-group-toggle-${row.id}`}
-      >
-        <Ionicons color={color} name={activityIcon(row.kind)} size={20} />
-        <Text numberOfLines={1} style={[styles.activityLabel, { color }]} variant="bodyLarge">
-          {row.label}
-        </Text>
-        <Ionicons color={color} name={expanded ? 'chevron-down' : 'chevron-forward'} size={18} />
-      </Pressable>
-      {expanded ? (
-        <View
-          style={[styles.activityDetails, { borderLeftColor: theme.colors.outlineVariant }]}
-          testID={`tool-group-details-${row.id}`}
-        >
-          {row.blocks.map(block => (
-            <ToolActivityDetail block={block} key={block.id} />
-          ))}
-        </View>
-      ) : null}
-    </View>
-  )
-}
-
-function ToolActivityDetail({ block }: { block: ChatToolBlock }) {
-  const theme = useTheme()
-  const detail = toolDetail(block)
-  return (
-    <View style={styles.activityDetailRow}>
-      <Ionicons
-        color={block.status === 'error' ? theme.colors.error : theme.colors.onSurfaceVariant}
-        name={block.status === 'error' ? 'alert-circle-outline' : 'checkmark-circle-outline'}
-        size={16}
-      />
-      <Text numberOfLines={2} style={{ color: theme.colors.onSurfaceVariant }} variant="bodyMedium">
-        {detail}
-      </Text>
-    </View>
   )
 }
 
@@ -412,45 +362,6 @@ function FileChangesSummary({ summary }: { summary: ChatFileChangesSummary }) {
   )
 }
 
-function activityIcon(kind: ToolActivityKind): keyof typeof Ionicons.glyphMap {
-  switch (kind) {
-    case 'web':
-      return 'globe-outline'
-    case 'file':
-      return 'document-text-outline'
-    case 'search':
-      return 'search-outline'
-    case 'command':
-      return 'terminal-outline'
-    case 'create':
-      return 'add-circle-outline'
-    case 'edit':
-      return 'pencil-outline'
-    case 'guidance':
-      return 'chatbubble-ellipses-outline'
-    case 'tool':
-      return 'construct-outline'
-  }
-}
-
-function activeToolLabel(block: ChatToolBlock, kind: ToolActivityKind): string {
-  if (kind === 'web') return '正在搜索网页'
-  if (kind === 'search') return '正在搜索代码'
-  if (kind === 'file') return '正在读取文件'
-  if (kind === 'command') return '正在运行命令'
-  if (kind === 'edit') return '正在编辑文件'
-  if (kind === 'create') return '正在创建文件'
-  return `正在使用 ${block.toolName}`
-}
-
-function toolDetail(block: ChatToolBlock): string {
-  for (const key of ['query', 'pattern', 'command', 'path', 'file_path']) {
-    const value = block.toolInput?.[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return block.toolName
-}
-
 function compactCount(value: number): string {
   if (Math.abs(value) < 10_000) return String(value)
   return `${Number((value / 10_000).toFixed(1))}万`
@@ -462,6 +373,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   messageSeparator: { height: 22 },
+  olderMessagesLoader: { minHeight: 36, alignItems: 'center', justifyContent: 'center' },
   emptyContent: { flexGrow: 1 },
   empty: {
     flex: 1,
@@ -481,27 +393,6 @@ const styles = StyleSheet.create({
   assistant: { width: '100%' },
   messagePressed: { opacity: 0.82 },
   thinkingIndicator: { opacity: 0.62, marginBottom: 10 },
-  activityGroup: { marginBottom: 10 },
-  activityRow: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 32,
-    gap: 8,
-  },
-  activityLabel: { flexShrink: 1, opacity: 0.78 },
-  activityDetails: {
-    marginLeft: 10,
-    paddingLeft: 14,
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    gap: 6,
-    paddingVertical: 4,
-  },
-  activityDetailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   fileChangesContainer: { alignItems: 'center', marginTop: 10, marginBottom: 12 },
   fileChangesPill: {
     minHeight: 34,

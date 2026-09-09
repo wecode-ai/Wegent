@@ -41,6 +41,7 @@ import {
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
+import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import { overlayMarketplaceLogosOnComposerApps } from '@/features/plugins/composerPluginMetadata'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
@@ -72,6 +73,7 @@ import type {
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
 import { useWorkbenchModels } from './useWorkbenchModels'
+import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
@@ -80,7 +82,6 @@ import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
-import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
@@ -104,6 +105,10 @@ import {
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
+import {
+  queueWorkbenchWorkspaceLaunch,
+  type WorkbenchWorkspaceLaunchOptions,
+} from './workspaceLaunchRequest'
 import {
   createRuntimeTaskLifecycleOwnershipView,
   RuntimeTaskLifecycleProvider,
@@ -285,6 +290,7 @@ export function WorkbenchProvider({
   const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectWorkPreferenceMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const modelSelectionMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
   const projectSelectionStartedRef = useRef(false)
@@ -305,12 +311,14 @@ export function WorkbenchProvider({
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
+    const apiBaseUrl = cloudConnection.apiBaseUrl || runtime.apiBaseUrl
     return createPluginApi(
       createHttpClient({
-        baseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+        baseUrl: apiBaseUrl,
         getToken: () => cloudConnection.token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      apiBaseUrl
     )
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
@@ -325,22 +333,6 @@ export function WorkbenchProvider({
     lifecycleStore,
     lifecycleSnapshot,
   })
-  useEffect(
-    () =>
-      resolvedServices.chatStream.subscribe({
-        onProjectTaskAssigned: payload => {
-          void sendSystemNotification({
-            title: t('workbench.project_task_assigned_notification_title'),
-            body: t('workbench.project_task_assigned_notification_body', {
-              assigner: payload.assignerName,
-              task: payload.itemTitle,
-              project: payload.projectName,
-            }),
-          })
-        },
-      }),
-    [resolvedServices.chatStream, t]
-  )
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
@@ -363,7 +355,7 @@ export function WorkbenchProvider({
   )
   const projectWorkPreferenceKey = getProjectWorkPreferenceKey(projectWorkPreferenceScope)
   const activeProjectWorkPreferenceKeyRef = useRef<string | null>(projectWorkPreferenceKey)
-  const latestProjectWorkPreferencesRef = useRef<UserPreferences | null | undefined>(
+  const latestUserPreferencesRef = useRef<UserPreferences | null | undefined>(
     currentUser.preferences
   )
   const projectWorkPreferenceSyncRevisionRef = useRef(0)
@@ -371,7 +363,7 @@ export function WorkbenchProvider({
     activeProjectWorkPreferenceKeyRef.current = projectWorkPreferenceKey
   }, [projectWorkPreferenceKey])
   useLayoutEffect(() => {
-    latestProjectWorkPreferencesRef.current = currentUser.preferences
+    latestUserPreferencesRef.current = currentUser.preferences
   }, [currentUser.preferences])
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
@@ -386,6 +378,7 @@ export function WorkbenchProvider({
     userId: currentUser.id,
     currentProjectId: state.currentProject?.id ?? null,
     currentRuntimeTask: state.currentRuntimeTask,
+    standaloneChatKey: state.standaloneChatKey,
   })
   const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
     workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
@@ -734,13 +727,13 @@ export function WorkbenchProvider({
       if (!projectWorkPreferenceScope || !projectWorkPreferenceKey) return
 
       const preferences = mergeProjectWorkPreference(
-        latestProjectWorkPreferencesRef.current,
+        latestUserPreferencesRef.current,
         projectWorkPreferenceScope,
         patch
       )
       if (!preferences) return
 
-      latestProjectWorkPreferencesRef.current = preferences
+      latestUserPreferencesRef.current = preferences
       dispatch({ type: 'user_preferences_updated', preferences })
 
       const userApi = resolvedServices.userApi
@@ -821,6 +814,15 @@ export function WorkbenchProvider({
     },
     [persistProjectWorkPreference, projectExecutionMode, state.currentRuntimeTask, t]
   )
+  const projectModelSelection = useMemo(() => {
+    if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return null
+    const runtimeProject = state.runtimeWork.projects.find(
+      item => runtimeProjectUiId(item.project) === state.currentProject?.id
+    )?.project
+    return runtimeProject?.source === 'local_project'
+      ? (runtimeProject.aiSettings?.modelSelection ?? null)
+      : null
+  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
@@ -829,27 +831,8 @@ export function WorkbenchProvider({
         null
       )
     }
-    const runtimeProject =
-      state.currentProject && state.runtimeWork
-        ? state.runtimeWork.projects.find(
-            item => runtimeProjectUiId(item.project) === state.currentProject?.id
-          )?.project
-        : null
-    const projectModelSelection =
-      runtimeProject?.source === 'local_project'
-        ? (runtimeProject.aiSettings?.modelSelection ?? null)
-        : null
-    if (projectModelSelection) return projectModelSelection
-    return getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, state.currentProject, state.currentRuntimeTask, state.runtimeWork])
-  const usesLocalProjectScopedSelection = useMemo(() => {
-    if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return false
-    return state.runtimeWork.projects.some(
-      item =>
-        runtimeProjectUiId(item.project) === state.currentProject?.id &&
-        item.project.source === 'local_project'
-    )
-  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+    return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
+  }, [currentUser, projectModelSelection, state.currentRuntimeTask, state.runtimeWork])
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -857,19 +840,30 @@ export function WorkbenchProvider({
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
       const preferences = {
-        ...(currentUser.preferences ?? {}),
+        ...(latestUserPreferencesRef.current ?? {}),
         wework_new_chat_model_selection: selection,
       }
+      latestUserPreferencesRef.current = preferences
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi
-        ?.updateCurrentUser({
-          preferences: { wework_new_chat_model_selection: selection },
-        })
-        .catch(() => {
-          dispatch({ type: 'error_set', error: '模型配置保存失败' })
-        })
+
+      const userApi = resolvedServices.userApi
+      if (!userApi) return
+      const mutation = () =>
+        userApi
+          .updateCurrentUser({
+            preferences: { wework_new_chat_model_selection: selection },
+          })
+          .then(() => undefined)
+      const run = modelSelectionMutationQueueRef.current.catch(() => undefined).then(mutation)
+      modelSelectionMutationQueueRef.current = run.then(
+        () => undefined,
+        () => undefined
+      )
+      void run.catch(() => {
+        dispatch({ type: 'error_set', error: '模型配置保存失败' })
+      })
     },
-    [currentUser.preferences, resolvedServices.userApi]
+    [resolvedServices.userApi]
   )
   const handleBlockedModelSelection = useCallback(
     (reason: ModelCompatibilityDisabledReason | 'locked', model?: UnifiedModel | null) => {
@@ -896,7 +890,7 @@ export function WorkbenchProvider({
     locked: false,
     enabled: taskComposerCatalogsEnabled,
     scopeKey: modelSelectionScopeKey,
-    persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
+    persistSelection: !state.currentRuntimeTask && !projectModelSelection,
     selectionConfig: modelSelectionConfig,
     defaultSelectionConfig: defaultModelSelectionConfig,
     fallbackWhenConfiguredModelUnavailable: !state.currentRuntimeTask,
@@ -911,6 +905,16 @@ export function WorkbenchProvider({
         : null,
     [modelSelection.models, modelSelectionConfig, state.currentRuntimeTask]
   )
+  const {
+    resolveRuntimeTaskModelSelection,
+    setRuntimeTaskSelectedModel,
+    setRuntimeTaskSelectedModelAndOptions,
+    setRuntimeTaskSelectedModelOption,
+  } = useRuntimeTaskModelSelection({
+    userId: user.id,
+    runtimeWork: state.runtimeWork,
+    modelStore: modelSelection,
+  })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -1214,7 +1218,13 @@ export function WorkbenchProvider({
   )
 
   const openStandaloneWorkspace = useCallback(
-    async (deviceId: string, workspacePath: string, label?: string, projectRoots?: string[]) => {
+    async (
+      deviceId: string,
+      workspacePath: string,
+      label?: string,
+      projectRoots?: string[],
+      launchOptions?: WorkbenchWorkspaceLaunchOptions
+    ) => {
       projectSelectionStartedRef.current = true
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
@@ -1271,6 +1281,9 @@ export function WorkbenchProvider({
           })
         )
         await refreshWorkLists()
+        if (launchOptions) {
+          queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
+        }
         dispatch({
           type: 'runtime_workspace_opened',
           deviceId: response.deviceId,
@@ -1301,6 +1314,9 @@ export function WorkbenchProvider({
         requestDeviceId
 
       writeLastProjectId(user.id, null)
+      if (launchOptions) {
+        queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
+      }
       dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
@@ -2164,7 +2180,9 @@ export function WorkbenchProvider({
         // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
         let currentComposerDeviceId: string | null = null
         const composerPluginSources = {
-          listCodexApps: () => localPluginApi.listApps(),
+          // Retain inaccessible Codex apps while merging installed plugins so an
+          // unlinked connector cannot be reintroduced as an accessible skill-only app.
+          listCodexApps: () => localPluginApi.listApps({ includeInaccessible: true }),
           readLocalInstalledPlugins: async () => {
             currentComposerDeviceId =
               peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
@@ -2501,6 +2519,10 @@ export function WorkbenchProvider({
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
@@ -2561,6 +2583,10 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
@@ -2603,6 +2629,10 @@ export function WorkbenchProvider({
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
@@ -2662,6 +2692,10 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
@@ -2950,16 +2984,20 @@ export function WorkbenchProvider({
       <AttachmentDownloadProvider
         fetchAttachmentBlob={resolvedServices.attachmentApi?.fetchAttachmentBlob}
       >
-        <WorkbenchContext.Provider value={value}>
-          <WorkbenchPaneContext.Provider value={paneValue}>
-            <CoreDshModelSync
-              enabled={syncCoreDshModels}
-              models={conversationModels}
-              services={resolvedServices}
-            />
-            {children}
-          </WorkbenchPaneContext.Provider>
-        </WorkbenchContext.Provider>
+        <WorkspaceFileReaderProvider
+          readWorkspaceFileChunk={workspaceFileApi.readWorkspaceFileChunk}
+        >
+          <WorkbenchContext.Provider value={value}>
+            <WorkbenchPaneContext.Provider value={paneValue}>
+              <CoreDshModelSync
+                enabled={syncCoreDshModels}
+                models={conversationModels}
+                services={resolvedServices}
+              />
+              {children}
+            </WorkbenchPaneContext.Provider>
+          </WorkbenchContext.Provider>
+        </WorkspaceFileReaderProvider>
       </AttachmentDownloadProvider>
     </RuntimeTaskLifecycleProvider>
   )
@@ -2982,15 +3020,17 @@ function getModelSelectionScopeKey({
   userId,
   currentProjectId,
   currentRuntimeTask,
+  standaloneChatKey,
 }: {
   userId: number
   currentProjectId: number | null
   currentRuntimeTask: RuntimeTaskAddress | null
+  standaloneChatKey: number
 }): string {
   if (currentRuntimeTask) {
     return `user:${userId}:${getRuntimeTaskChatScopeKey(currentRuntimeTask)}`
   }
   return currentProjectId === null
-    ? `user:${userId}:new-task:standalone`
-    : `user:${userId}:new-task:project:${currentProjectId}`
+    ? `user:${userId}:new-task:standalone:${standaloneChatKey}`
+    : `user:${userId}:new-task:project:${currentProjectId}:${standaloneChatKey}`
 }

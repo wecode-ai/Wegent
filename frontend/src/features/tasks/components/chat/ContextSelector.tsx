@@ -347,6 +347,7 @@ export default function ContextSelector({
             externalSources={externalSources}
             selectedContexts={selectedContexts}
             searchValue={searchValue}
+            onSearchValueChange={setSearchValue}
             loading={loading}
             error={knowledgeBaseError}
             onRetry={handleKnowledgeBaseRetry}

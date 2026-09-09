@@ -3,9 +3,9 @@ import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from './xt
 
 function setThemeVariables() {
   const root = document.documentElement
-  root.style.setProperty('--color-bg-base', '17 19 22')
-  root.style.setProperty('--color-text-primary', '241 245 249')
-  root.style.setProperty('--color-primary', '45 212 191')
+  root.style.setProperty('--color-bg-base', '24 24 24')
+  root.style.setProperty('--color-text-primary', '255 255 255')
+  root.style.setProperty('--color-primary', '51 156 255')
 }
 
 describe('xterm-theme', () => {
@@ -21,10 +21,10 @@ describe('xterm-theme', () => {
     setThemeVariables()
 
     expect(getTerminalTheme()).toEqual({
-      background: 'rgb(17, 19, 22)',
-      foreground: 'rgb(241, 245, 249)',
-      cursor: 'rgb(45, 212, 191)',
-      selectionBackground: 'rgba(45, 212, 191, 0.28)',
+      background: 'rgb(24, 24, 24)',
+      foreground: 'rgb(255, 255, 255)',
+      cursor: 'rgb(51, 156, 255)',
+      selectionBackground: 'rgba(51, 156, 255, 0.28)',
     })
   })
 
@@ -38,8 +38,8 @@ describe('xterm-theme', () => {
 
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        background: 'rgb(17, 19, 22)',
-        foreground: 'rgb(241, 245, 249)',
+        background: 'rgb(24, 24, 24)',
+        foreground: 'rgb(255, 255, 255)',
       })
     )
 
@@ -61,14 +61,14 @@ describe('xterm-theme', () => {
     applyTerminalTheme(terminal as never, container)
 
     expect(terminal.options).toEqual({
-      theme: expect.objectContaining({ background: 'rgb(17, 19, 22)' }),
+      theme: expect.objectContaining({ background: 'rgb(24, 24, 24)' }),
     })
-    expect(container.style.backgroundColor).toBe('rgb(17, 19, 22)')
+    expect(container.style.backgroundColor).toBe('rgb(24, 24, 24)')
     expect(container.querySelector<HTMLElement>('.xterm-viewport')?.style.backgroundColor).toBe(
-      'rgb(17, 19, 22)'
+      'rgb(24, 24, 24)'
     )
     expect(container.querySelector<HTMLElement>('.xterm-screen')?.style.backgroundColor).toBe(
-      'rgb(17, 19, 22)'
+      'rgb(24, 24, 24)'
     )
   })
 

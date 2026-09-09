@@ -19,6 +19,7 @@ export type MessageListFollowEvent =
     }
 
 const BOTTOM_FOLLOW_THRESHOLD = 48
+const LOAD_EARLIER_THRESHOLD = 48
 
 export function messageListBottomOffset(contentHeight: number, viewportHeight: number): number {
   return Math.max(0, contentHeight - viewportHeight)
@@ -28,6 +29,20 @@ export function isNearMessageListBottom(metrics: MessageListScrollMetrics): bool
   const distance =
     metrics.contentSize.height - metrics.layoutMeasurement.height - metrics.contentOffset.y
   return distance <= BOTTOM_FOLLOW_THRESHOLD
+}
+
+export function shouldLoadEarlierMessages(
+  metrics: MessageListScrollMetrics,
+  hasMoreBefore: boolean,
+  loadingMoreBefore: boolean,
+  userInitiated: boolean
+): boolean {
+  return (
+    userInitiated &&
+    hasMoreBefore &&
+    !loadingMoreBefore &&
+    metrics.contentOffset.y <= LOAD_EARLIER_THRESHOLD
+  )
 }
 
 export function resolveMessageListFollow({

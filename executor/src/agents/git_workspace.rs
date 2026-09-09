@@ -23,7 +23,7 @@ use tokio::{
 use crate::{
     agents::git_auth::{
         configure_repo_proxy, request_git_domain, task_git_auth_environment, user_git_email,
-        user_git_login,
+        user_git_login, uses_device_local_git_credentials,
     },
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
@@ -205,7 +205,12 @@ async fn clone_repo(
     }
 
     let auth_environment = task_git_auth_environment(request)?;
-    if !auth_environment.contains_key("GIT_ASKPASS") && requires_credentials_for_clone(git_url) {
+    if missing_required_task_git_credentials(
+        request,
+        git_url,
+        auth_environment.contains_key("GIT_ASKPASS"),
+        &protected_git_credential_domains(),
+    ) {
         let mut failed_fields = task_fields(&request.task_id, &request.subtask_id);
         failed_fields.push(("path", project_path.display().to_string()));
         failed_fields.push(("git_url", mask_url_credentials(git_url)));
@@ -475,8 +480,15 @@ fn bounded_env_u64(key: &str, default: u64, minimum: u64, maximum: u64) -> u64 {
         .clamp(minimum, maximum)
 }
 
-fn requires_credentials_for_clone(git_url: &str) -> bool {
-    requires_credentials_for_clone_with_domains(git_url, &protected_git_credential_domains())
+fn missing_required_task_git_credentials(
+    request: &ExecutionRequest,
+    git_url: &str,
+    has_task_credentials: bool,
+    protected_domains: &[String],
+) -> bool {
+    !has_task_credentials
+        && requires_credentials_for_clone_with_domains(git_url, protected_domains)
+        && !uses_device_local_git_credentials(request)
 }
 
 fn git_url_contains_credentials(git_url: &str) -> bool {
@@ -683,6 +695,39 @@ mod tests {
         assert!(!requires_credentials_for_clone_with_domains(
             "git@github.com:wecode-ai/wegent.git",
             &protected_domains
+        ));
+    }
+
+    #[test]
+    fn device_local_transport_allows_configured_git_credential_helper() {
+        let protected_domains = vec!["github.com".to_owned()];
+        let server_request = ExecutionRequest::default();
+        let device_request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "git_auth_transport".to_owned(),
+                json!("device_local"),
+            )]),
+            ..ExecutionRequest::default()
+        };
+        let git_url = "https://github.com/wecode-ai/wegent.git";
+
+        assert!(missing_required_task_git_credentials(
+            &server_request,
+            git_url,
+            false,
+            &protected_domains,
+        ));
+        assert!(!missing_required_task_git_credentials(
+            &device_request,
+            git_url,
+            false,
+            &protected_domains,
+        ));
+        assert!(!missing_required_task_git_credentials(
+            &server_request,
+            git_url,
+            true,
+            &protected_domains,
         ));
     }
 

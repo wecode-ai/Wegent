@@ -33,12 +33,14 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'runtime-terminal-convergence': './scenarios/runtime-terminal-convergence.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'computer-use': './scenarios/computer-use.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
+  'app-update-baseline': './scenarios/app-update-baseline.scenario.mjs',
   'app-update-differential': './scenarios/app-update-differential.scenario.mjs',
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
@@ -49,8 +51,11 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
+  'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
+  'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
+  'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-space-mention',
@@ -61,11 +66,13 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'harness-apps',
   'offline-local-project-space',
   'cloud-context-resilience',
+  'plugin-development',
   'task-attachments',
   'project-assignment-notification',
   'runtime-task-queue',
   'runtime-terminal-convergence',
   'executor-stream-recovery',
+  'transcript-sync',
   'running-conversation-history',
   'codex-notification-isolation',
   'context-compaction',
@@ -73,6 +80,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'split-workbench',
   'release-package-startup',
   'app-update-differential',
+  'app-update-baseline',
   'component-update',
   'native-window-startup',
   'native-window-chrome',
@@ -83,8 +91,11 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'browser-annotation-anchors',
   'browser-annotation-design',
   'external-content-import',
+  'workbench-mode',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'plugin-auto-update',
+  'plugin-workspace-publication',
   'cloud-git-worktree',
   'cloud-worktree-capability',
   'cloud-worktree-create',
@@ -257,7 +268,7 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'native-window-chrome') {
+  if (checkpoint === 'native-window-chrome' || checkpoint === 'browser-multi-tabs') {
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
@@ -428,6 +439,9 @@ async function runParallelCheckpoints(checkpoints) {
       const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
       delete env.WEWORK_E2E_CONTROL_SERVER_PORT
       delete env.WEWORK_E2E_MODEL_SERVER_PORT
+      const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
+      env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
+      env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
       const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
       if (result.code === 0) {

@@ -2060,6 +2060,83 @@ describe('ScrollableMessageArea', () => {
     expect(markers[1]).toHaveAttribute('data-active', 'true')
   })
 
+  test('keeps the active turn stable until streaming layout measurements catch up', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const messages = [
+      {
+        id: 'stream-layout-user-1',
+        role: 'user' as const,
+        content: 'First request',
+        status: 'done' as const,
+        createdAt: '2026-09-03T00:00:00.000Z',
+      },
+      {
+        id: 'stream-layout-assistant-1',
+        role: 'assistant' as const,
+        content: 'First response',
+        status: 'done' as const,
+        createdAt: '2026-09-03T00:00:01.000Z',
+      },
+      {
+        id: 'stream-layout-user-2',
+        role: 'user' as const,
+        content: 'Streaming request',
+        status: 'done' as const,
+        createdAt: '2026-09-03T00:00:02.000Z',
+      },
+      {
+        id: 'stream-layout-assistant-2',
+        role: 'assistant' as const,
+        content: 'Streaming response',
+        status: 'streaming' as const,
+        createdAt: '2026-09-03T00:00:03.000Z',
+      },
+    ]
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          {messages.map(message => (
+            <div key={message.id} data-message-id={message.id}>
+              {message.content}
+            </div>
+          ))}
+        </div>
+        <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    let scrollHeight = 1_000
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 300, configurable: true },
+      scrollHeight: { get: () => scrollHeight, configurable: true },
+      scrollTop: { value: 700, writable: true, configurable: true },
+    })
+    mockRect(scroller, 0, 300)
+    mockScrollRelativeRect(screen.getByText('First request'), scroller, 0, 60)
+    mockScrollRelativeRect(screen.getByText('First response'), scroller, 60, 440)
+    mockScrollRelativeRect(screen.getByText('Streaming request'), scroller, 750, 50)
+    const streamingResponse = screen.getByText('Streaming response')
+    mockScrollRelativeRect(streamingResponse, scroller, 800, 200)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+
+    scrollHeight = 1_400
+    mockScrollRelativeRect(streamingResponse, scroller, 800, 600)
+    scroller.scrollTop = 1_100
+    fireEvent.scroll(scroller)
+
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    flushScheduledTimers()
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+  })
+
   test('activates a turn from a page-leading assistant', () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()

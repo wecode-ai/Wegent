@@ -192,26 +192,288 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenNthCalledWith(2, '/teams/2/skills')
   })
 
-  test('uploads plugins through the shared http client', async () => {
+  test('searches both departments and the organization root for plugin sharing', async () => {
     const client = mockClient()
-    vi.mocked(client.post).mockResolvedValueOnce({ metadata: { labels: { id: '1' } } })
-    const file = new File(['zip'], 'plugin.ZIP')
+    vi.mocked(client.get).mockResolvedValueOnce({ items: [], total: 0 })
 
-    await createPluginApi(client).uploadPlugin(file, false)
+    await createPluginApi(client).searchPluginShareGroups('研发 部')
 
-    expect(client.post).toHaveBeenCalledWith('/plugins/upload', expect.any(FormData))
-    const formData = vi.mocked(client.post).mock.calls[0][1] as FormData
-    expect(formData.get('file')).toBe(file)
-    expect(formData.get('enabled')).toBe('false')
+    expect(client.get).toHaveBeenCalledWith(
+      '/groups/search?q=%E7%A0%94%E5%8F%91%20%E9%83%A8&limit=20&include_organization=true'
+    )
   })
 
-  test('cancels an unfinished plugin submission', async () => {
+  test('lists and withdraws independent plugin publication requests', async () => {
     const client = mockClient()
-    vi.mocked(client.post).mockResolvedValueOnce({ status: 'cancelled' })
+    vi.mocked(client.get).mockResolvedValueOnce({ items: [], total: 0, page: 1, limit: 20 })
+    vi.mocked(client.post).mockResolvedValueOnce({ id: 82, aggregateStatus: 'withdrawn' })
+    const api = createPluginApi(client)
 
-    await createPluginApi(client).cancelSubmission(17)
+    await api.listPublicationRequests({
+      sourcePluginId: 101,
+      activeOnly: true,
+      page: 1,
+      limit: 20,
+    })
+    await api.getPublicationRequest(82, 1)
+    await api.withdrawPublicationRequest(82, 3)
 
-    expect(client.post).toHaveBeenCalledWith('/plugins/submissions/17/cancel')
+    expect(client.get).toHaveBeenCalledWith(
+      '/plugins/publication-requests?sourcePluginId=101&activeOnly=true&page=1&limit=20'
+    )
+    expect(client.get).toHaveBeenCalledWith('/plugins/publication-requests/82?revision=1')
+    expect(client.post).toHaveBeenCalledWith(
+      '/plugins/publication-requests/82/withdraw',
+      undefined,
+      {
+        headers: { 'Idempotency-Key': 'plugin-publication-withdraw-82-r3' },
+      }
+    )
+  })
+
+  test('uploads one immutable snapshot before completing a publication request', async () => {
+    const client = mockClient()
+    vi.mocked(client.post)
+      .mockResolvedValueOnce({
+        requestId: 82,
+        sourcePluginId: 101,
+        revision: { number: 2 },
+        uploadUrl: 'https://upload.example.com/request-82-r2.zip',
+        expiresAt: '2026-08-29T10:00:00Z',
+      })
+      .mockResolvedValueOnce({ id: 82, sourcePluginId: 101 })
+    const upload = vi.fn(async () => new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', upload)
+
+    try {
+      const file = new File(['zip snapshot'], 'dev-tools.zip', {
+        type: 'application/zip',
+      })
+      await createPluginApi(client).publishPublicationRequest(
+        file,
+        {
+          sourcePluginId: 101,
+          slug: 'dev-tools',
+          displayName: 'Dev Tools',
+          requestedVersion: '1.2.0',
+          releaseNotes: 'Enterprise release',
+          testNotes: 'Windows and macOS passed',
+          riskDeclaration: { externalNetwork: false },
+        },
+        'attempt-create-1'
+      )
+
+      expect(client.post).toHaveBeenNthCalledWith(
+        1,
+        '/plugins/publication-requests',
+        expect.objectContaining({
+          sourcePluginId: 101,
+          filename: 'dev-tools.zip',
+          sizeBytes: file.size,
+          snapshotSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+        {
+          headers: {
+            'Idempotency-Key': expect.stringMatching(
+              /^plugin-publication-create-attempt-create-1-[a-f0-9]+$/
+            ),
+          },
+        }
+      )
+      expect(upload).toHaveBeenCalledWith('https://upload.example.com/request-82-r2.zip', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/zip' },
+        body: file,
+      })
+      expect(client.post).toHaveBeenNthCalledWith(
+        2,
+        '/plugins/publication-requests/82/revisions/2/complete',
+        undefined,
+        {
+          headers: {
+            'Idempotency-Key': expect.stringMatching(
+              /^plugin-publication-complete-82-r2-[a-f0-9]{64}$/
+            ),
+          },
+        }
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test('uploads a new revision into the existing publication request', async () => {
+    const client = mockClient()
+    vi.mocked(client.post)
+      .mockResolvedValueOnce({
+        requestId: 82,
+        sourcePluginId: 101,
+        revision: { number: 3 },
+        uploadUrl: 'https://upload.example.com/request-82-r3.zip',
+        expiresAt: '2026-08-29T10:00:00Z',
+      })
+      .mockResolvedValueOnce({ id: 82, pluginId: 101, currentRevision: 3 })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 200 }))
+    )
+
+    try {
+      await createPluginApi(client).publishPublicationRevision(
+        82,
+        new File(['revision 3'], 'dev-tools.zip', { type: 'application/zip' }),
+        {
+          requestedVersion: '1.3.0',
+          releaseNotes: 'Address review feedback',
+          testNotes: 'Windows and macOS passed',
+          riskDeclaration: { externalNetworkAccess: false },
+        },
+        'attempt-revision-1'
+      )
+
+      expect(client.post).toHaveBeenNthCalledWith(
+        1,
+        '/plugins/publication-requests/82/revisions',
+        expect.objectContaining({ requestedVersion: '1.3.0' }),
+        {
+          headers: {
+            'Idempotency-Key': expect.stringMatching(
+              /^plugin-publication-revision-82-attempt-revision-1-[a-f0-9]+$/
+            ),
+          },
+        }
+      )
+      expect(client.post).toHaveBeenNthCalledWith(
+        2,
+        '/plugins/publication-requests/82/revisions/3/complete',
+        undefined,
+        {
+          headers: {
+            'Idempotency-Key': expect.stringMatching(
+              /^plugin-publication-complete-82-r3-[a-f0-9]{64}$/
+            ),
+          },
+        }
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test('binds the create idempotency key to both the logical attempt and full metadata', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockRejectedValue(new Error('transport unavailable'))
+    const api = createPluginApi(client)
+    const file = new File(['same snapshot'], 'dev-tools.zip', { type: 'application/zip' })
+    const baseMetadata = {
+      sourcePluginId: 101,
+      slug: 'dev-tools',
+      displayName: 'Dev Tools',
+      requestedVersion: '1.2.0',
+      releaseNotes: 'First release notes',
+      testNotes: 'Windows and macOS passed',
+      riskDeclaration: { externalNetworkAccess: false },
+    }
+
+    await expect(
+      api.publishPublicationRequest(file, baseMetadata, 'logical-attempt-a')
+    ).rejects.toThrow('transport unavailable')
+    await expect(
+      api.publishPublicationRequest(file, baseMetadata, 'logical-attempt-a')
+    ).rejects.toThrow('transport unavailable')
+    await expect(
+      api.publishPublicationRequest(
+        file,
+        { ...baseMetadata, releaseNotes: 'Changed release notes' },
+        'logical-attempt-a'
+      )
+    ).rejects.toThrow('transport unavailable')
+    await expect(
+      api.publishPublicationRequest(file, baseMetadata, 'logical-attempt-b')
+    ).rejects.toThrow('transport unavailable')
+
+    const keys = vi
+      .mocked(client.post)
+      .mock.calls.map(call => String(call[2]?.headers?.['Idempotency-Key']))
+    expect(keys[1]).toBe(keys[0])
+    expect(keys[2]).not.toBe(keys[0])
+    expect(keys[3]).not.toBe(keys[0])
+  })
+
+  test('withdraws a publication request when a new revision upload fails', async () => {
+    const client = mockClient()
+    vi.mocked(client.post)
+      .mockResolvedValueOnce({
+        requestId: 82,
+        sourcePluginId: 101,
+        revision: { number: 3 },
+        uploadUrl: 'https://upload.example.com/request-82-r3.zip',
+        expiresAt: '2026-08-29T10:00:00Z',
+      })
+      .mockResolvedValueOnce({ id: 82, aggregateStatus: 'withdrawn' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 500 }))
+    )
+
+    try {
+      await expect(
+        createPluginApi(client).publishPublicationRevision(
+          82,
+          new File(['revision 3'], 'dev-tools.zip', { type: 'application/zip' }),
+          {
+            requestedVersion: '1.3.0',
+            releaseNotes: 'Address review feedback',
+            testNotes: 'Windows and macOS passed',
+            riskDeclaration: { externalNetworkAccess: false },
+          },
+          'attempt-revision-upload-failure'
+        )
+      ).rejects.toThrow('Plugin upload failed with HTTP 500')
+
+      expect(client.post).toHaveBeenNthCalledWith(
+        2,
+        '/plugins/publication-requests/82/withdraw',
+        undefined,
+        {
+          headers: { 'Idempotency-Key': 'plugin-publication-withdraw-82-r3' },
+        }
+      )
+      expect(client.post).not.toHaveBeenCalledWith(
+        '/plugins/publication-requests/82/revisions/3/complete',
+        expect.anything(),
+        expect.anything()
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test('resolves plugin submission uploads against the connected Backend', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      submissionId: 17,
+      pluginId: 4,
+      releaseId: 8,
+      uploadUrl: '/api/plugins/submissions/17/artifact?token=ticket',
+      expiresAt: '2026-09-02T12:00:00Z',
+    })
+
+    const initialized = await createPluginApi(
+      client,
+      'https://api.example.test/api'
+    ).initSubmission({
+      slug: 'example',
+      displayName: 'Example',
+      version: '1.0.0',
+      filename: 'example.zip',
+      sha256: '0'.repeat(64),
+      sizeBytes: 3,
+    })
+
+    expect(initialized.uploadUrl).toBe(
+      'https://api.example.test/api/plugins/submissions/17/artifact?token=ticket'
+    )
   })
 
   test('ensures a built-in plugin through its stable key', async () => {

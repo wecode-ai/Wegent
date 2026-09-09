@@ -22,6 +22,30 @@ const MAX_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PublishRoute {
+    LegacySubmission,
+    EnterprisePublication,
+}
+
+struct PublishArtifact<'a> {
+    task_id: &'a str,
+    listing_type: &'a str,
+    slug: &'a str,
+    display_name: &'a str,
+    version: &'a str,
+    filename: &'a str,
+    digest: &'a str,
+    package: &'a [u8],
+}
+
+#[derive(Debug)]
+struct PublishOutcome {
+    status: &'static str,
+    plugin_id: Option<i64>,
+    submission_id: Option<i64>,
+}
+
 pub fn is_plugin_workspace_command() -> bool {
     env::args().nth(1).as_deref() == Some(COMMAND_PREFIX)
 }
@@ -70,21 +94,8 @@ async fn publish(args: &[String]) -> Result<(), String> {
         .unwrap_or(name);
     let digest = format!("{:x}", Sha256::digest(&package));
     let filename = format!("{}.zip", plugin_directory_name(&plugin_root));
-    let visibility = request
-        .get("visibility")
-        .and_then(Value::as_str)
-        .unwrap_or("personal");
-    if !matches!(visibility, "personal" | "workspace" | "public") {
-        return Err("publish visibility must be personal, workspace, or public".to_owned());
-    }
-    let targets = request
-        .get("targets")
-        .cloned()
-        .unwrap_or_else(|| Value::Array(Vec::new()));
-    let allow_copy = request
-        .get("allowCopy")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let slug = name.to_ascii_lowercase();
+    let route = publish_route(&request)?;
     let mut result = plugin_result(
         &plugin_root,
         &workspace,
@@ -97,19 +108,89 @@ async fn publish(args: &[String]) -> Result<(), String> {
     let client = http_client()?;
     let backend = backend_url()?;
     let token = auth_token()?;
+    let artifact = PublishArtifact {
+        task_id: &task_id,
+        listing_type: &listing_type,
+        slug: &slug,
+        display_name,
+        version,
+        filename: &filename,
+        digest: &digest,
+        package: &package,
+    };
+    let outcome = match route {
+        PublishRoute::LegacySubmission => {
+            publish_legacy_submission(&client, &backend, &token, &artifact, &request).await?
+        }
+        PublishRoute::EnterprisePublication => {
+            publish_enterprise_publication(&client, &backend, &token, &artifact, &request).await?
+        }
+    };
+    let object = result
+        .as_object_mut()
+        .ok_or_else(|| "plugin result must be an object".to_owned())?;
+    object.insert("status".to_owned(), json!(outcome.status));
+    if let Some(plugin_id) = outcome.plugin_id {
+        object.insert("pluginId".to_owned(), json!(plugin_id));
+    }
+    if let Some(submission_id) = outcome.submission_id {
+        object.insert("submissionId".to_owned(), json!(submission_id));
+    }
+    print_result(&result)
+}
+
+fn publish_route(request: &Value) -> Result<PublishRoute, String> {
+    let intent = request.get("intent").and_then(Value::as_str);
+    let visibility = request.get("visibility").and_then(Value::as_str);
+    match (intent, visibility) {
+        (Some("enterprise"), None | Some("workspace")) => Ok(PublishRoute::EnterprisePublication),
+        (Some("enterprise"), Some(_)) => {
+            Err("enterprise publish intent requires workspace visibility".to_owned())
+        }
+        (Some("restricted"), None | Some("personal")) => Ok(PublishRoute::LegacySubmission),
+        (Some("restricted"), Some(_)) => {
+            Err("restricted publish intent requires personal visibility".to_owned())
+        }
+        (Some(value), _) => Err(format!("unsupported publish intent: {value}")),
+        (None, Some("workspace")) => Ok(PublishRoute::EnterprisePublication),
+        (None, None | Some("personal")) => Ok(PublishRoute::LegacySubmission),
+        (None, Some("public")) => Err(
+            "public visibility is no longer supported; use enterprise/workspace publication"
+                .to_owned(),
+        ),
+        (None, Some(value)) => Err(format!("unsupported publish visibility: {value}")),
+    }
+}
+
+async fn publish_legacy_submission(
+    client: &reqwest::Client,
+    backend: &str,
+    token: &str,
+    artifact: &PublishArtifact<'_>,
+    request: &Value,
+) -> Result<PublishOutcome, String> {
+    let targets = request
+        .get("targets")
+        .cloned()
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+    let allow_copy = request
+        .get("allowCopy")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let initialized = send_json(
         client
             .post(format!("{backend}/api/plugins/submissions/init"))
-            .bearer_auth(&token)
+            .bearer_auth(token)
             .json(&json!({
-                "slug": name.to_ascii_lowercase(),
-                "displayName": display_name,
-                "version": version,
-                "filename": filename,
-                "sha256": digest,
-                "sizeBytes": package.len(),
-                "listingType": &listing_type,
-                "visibility": visibility,
+                "slug": artifact.slug,
+                "displayName": artifact.display_name,
+                "version": artifact.version,
+                "filename": artifact.filename,
+                "sha256": artifact.digest,
+                "sizeBytes": artifact.package.len(),
+                "listingType": artifact.listing_type,
+                "purpose": "restricted_share",
+                "visibility": "personal",
                 "targets": targets,
                 "allowCopy": allow_copy,
             })),
@@ -125,8 +206,8 @@ async fn publish(args: &[String]) -> Result<(), String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "plugin submission response is missing uploadUrl".to_owned())?;
 
-    if let Err(error) = upload_package(&client, upload_url, package).await {
-        cancel_submission(&client, &backend, &token, submission_id).await;
+    if let Err(error) = upload_package(client, upload_url, artifact.package).await {
+        cancel_submission(client, backend, token, submission_id).await;
         return Err(error);
     }
     let completed = match send_json(
@@ -134,14 +215,14 @@ async fn publish(args: &[String]) -> Result<(), String> {
             .post(format!(
                 "{backend}/api/plugins/submissions/{submission_id}/complete"
             ))
-            .bearer_auth(&token),
+            .bearer_auth(token),
         "complete plugin submission",
     )
     .await
     {
         Ok(completed) => completed,
         Err(error) => {
-            cancel_submission(&client, &backend, &token, submission_id).await;
+            cancel_submission(client, backend, token, submission_id).await;
             return Err(error);
         }
     };
@@ -158,26 +239,259 @@ async fn publish(args: &[String]) -> Result<(), String> {
     } else {
         "pending_review"
     };
-    let object = result
-        .as_object_mut()
-        .ok_or_else(|| "plugin result must be an object".to_owned())?;
-    object.insert("status".to_owned(), json!(result_status));
-    object.insert("submissionId".to_owned(), json!(submission_id));
-    if let Some(plugin_id) = submission.get("pluginId").and_then(Value::as_i64) {
-        object.insert("pluginId".to_owned(), json!(plugin_id));
+    Ok(PublishOutcome {
+        status: result_status,
+        plugin_id: submission.get("pluginId").and_then(Value::as_i64),
+        submission_id: Some(submission_id),
+    })
+}
+
+async fn publish_enterprise_publication(
+    client: &reqwest::Client,
+    backend: &str,
+    token: &str,
+    artifact: &PublishArtifact<'_>,
+    request: &Value,
+) -> Result<PublishOutcome, String> {
+    let attempt_id = required_request_string(request, "operationAttemptId")?;
+    let payload = enterprise_publication_payload(artifact, request)?;
+    let initialize_key = publication_idempotency_key(
+        "create",
+        attempt_id,
+        artifact.task_id,
+        artifact.digest,
+        &payload,
+    )?;
+    let initialized = send_json(
+        client
+            .post(format!("{backend}/api/plugins/publication-requests"))
+            .bearer_auth(token)
+            .header("Idempotency-Key", initialize_key)
+            .json(&payload),
+        "initialize enterprise plugin publication",
+    )
+    .await?;
+    let request_id = initialized
+        .get("requestId")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| "plugin publication response is missing requestId".to_owned())?;
+    let revision = initialized
+        .pointer("/revision/number")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| "plugin publication response is missing revision number".to_owned())?;
+    let upload_url = initialized
+        .get("uploadUrl")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "plugin publication response is missing uploadUrl".to_owned())?;
+
+    if let Err(error) = upload_package(client, upload_url, artifact.package).await {
+        withdraw_enterprise_publication(
+            client, backend, token, artifact, attempt_id, request_id, revision,
+        )
+        .await;
+        return Err(error);
     }
-    print_result(&result)
+    let completion_identity = json!({"requestId": request_id, "revision": revision});
+    let complete_key = publication_idempotency_key(
+        "complete",
+        attempt_id,
+        artifact.task_id,
+        artifact.digest,
+        &completion_identity,
+    )?;
+    let completed = match send_json(
+        client
+            .post(format!(
+                "{backend}/api/plugins/publication-requests/{request_id}/revisions/{revision}/complete"
+            ))
+            .bearer_auth(token)
+            .header("Idempotency-Key", complete_key),
+        "complete enterprise plugin publication",
+    )
+    .await
+    {
+        Ok(completed) => completed,
+        Err(error) => {
+            withdraw_enterprise_publication(
+                client,
+                backend,
+                token,
+                artifact,
+                attempt_id,
+                request_id,
+                revision,
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    match enterprise_publication_outcome(&initialized, &completed, request_id) {
+        Ok(outcome) => Ok(outcome),
+        Err(error) => {
+            withdraw_enterprise_publication(
+                client, backend, token, artifact, attempt_id, request_id, revision,
+            )
+            .await;
+            Err(error)
+        }
+    }
+}
+
+fn enterprise_publication_outcome(
+    initialized: &Value,
+    completed: &Value,
+    request_id: i64,
+) -> Result<PublishOutcome, String> {
+    let completed_request_id = completed
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| "plugin publication completion is missing id".to_owned())?;
+    if completed_request_id != request_id {
+        return Err("plugin publication completion returned a different request id".to_owned());
+    }
+    let status = if completed.get("status").and_then(Value::as_str) == Some("published") {
+        "published"
+    } else {
+        "pending_review"
+    };
+    let plugin_id = completed
+        .get("pluginId")
+        .and_then(Value::as_i64)
+        .or_else(|| initialized.get("sourcePluginId").and_then(Value::as_i64));
+    Ok(PublishOutcome {
+        status,
+        plugin_id,
+        submission_id: None,
+    })
+}
+
+async fn withdraw_enterprise_publication(
+    client: &reqwest::Client,
+    backend: &str,
+    token: &str,
+    artifact: &PublishArtifact<'_>,
+    attempt_id: &str,
+    request_id: i64,
+    revision: i64,
+) {
+    let identity = json!({"requestId": request_id, "revision": revision});
+    let Ok(idempotency_key) = publication_idempotency_key(
+        "withdraw",
+        attempt_id,
+        artifact.task_id,
+        artifact.digest,
+        &identity,
+    ) else {
+        return;
+    };
+    let _ = client
+        .post(format!(
+            "{backend}/api/plugins/publication-requests/{request_id}/withdraw"
+        ))
+        .bearer_auth(token)
+        .header("Idempotency-Key", idempotency_key)
+        .send()
+        .await;
+}
+
+fn enterprise_publication_payload(
+    artifact: &PublishArtifact<'_>,
+    request: &Value,
+) -> Result<Value, String> {
+    let release_notes = required_request_string(request, "releaseNotes")?;
+    let test_notes = required_request_string(request, "testNotes")?;
+    let risk_declaration = request
+        .get("riskDeclaration")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !risk_declaration.is_object() {
+        return Err("publish request riskDeclaration must be a JSON object".to_owned());
+    }
+    let mut payload = json!({
+        "slug": artifact.slug,
+        "displayName": artifact.display_name,
+        "requestedVersion": artifact.version,
+        "filename": artifact.filename,
+        "snapshotSha256": artifact.digest,
+        "sizeBytes": artifact.package.len(),
+        "listingType": artifact.listing_type,
+        "releaseNotes": release_notes,
+        "testNotes": test_notes,
+        "riskDeclaration": risk_declaration,
+    });
+    let object = payload
+        .as_object_mut()
+        .ok_or_else(|| "plugin publication payload must be an object".to_owned())?;
+    for field in ["sourcePluginId", "sourceReleaseId", "sourceUpdatedAt"] {
+        if let Some(value) = request.get(field) {
+            object.insert(field.to_owned(), value.clone());
+        }
+    }
+    Ok(payload)
+}
+
+fn required_request_string<'a>(request: &'a Value, field: &str) -> Result<&'a str, String> {
+    request
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("enterprise publish request requires {field}"))
+}
+
+fn publication_idempotency_key(
+    operation: &str,
+    attempt_id: &str,
+    task_id: &str,
+    snapshot_sha256: &str,
+    payload: &Value,
+) -> Result<String, String> {
+    let canonical_payload = canonical_json(payload);
+    let payload_bytes = serde_json::to_vec(&canonical_payload)
+        .map_err(|error| format!("serialize publication idempotency payload failed: {error}"))?;
+    let mut hasher = Sha256::new();
+    for component in [
+        b"plugin-workspace-publication-v1".as_slice(),
+        operation.as_bytes(),
+        attempt_id.as_bytes(),
+        task_id.as_bytes(),
+        snapshot_sha256.as_bytes(),
+        payload_bytes.as_slice(),
+    ] {
+        hasher.update((component.len() as u64).to_be_bytes());
+        hasher.update(component);
+    }
+    Ok(format!(
+        "plugin-workspace-{operation}-{:x}",
+        hasher.finalize()
+    ))
+}
+
+fn canonical_json(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(canonical_json).collect()),
+        Value::Object(values) => {
+            let mut keys = values.keys().collect::<Vec<_>>();
+            keys.sort();
+            let mut normalized = Map::new();
+            for key in keys {
+                normalized.insert(key.clone(), canonical_json(&values[key]));
+            }
+            Value::Object(normalized)
+        }
+        _ => value.clone(),
+    }
 }
 
 async fn upload_package(
     client: &reqwest::Client,
     upload_url: &str,
-    package: Vec<u8>,
+    package: &[u8],
 ) -> Result<(), String> {
     let response = client
         .put(upload_url)
         .header("Content-Type", "application/zip")
-        .body(package)
+        .body(package.to_vec())
         .send()
         .await
         .map_err(|error| format!("upload plugin package failed: {error}"))?;
@@ -492,6 +806,10 @@ fn auth_token() -> Result<String, String> {
 }
 
 #[cfg(test)]
+#[path = "plugin_workspace_publication_tests.rs"]
+mod publication_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
@@ -552,6 +870,29 @@ mod tests {
         let request = publish_request(&["--request-base64".to_owned(), encoded]).unwrap();
 
         assert_eq!(request["visibility"], "personal");
+    }
+
+    #[test]
+    fn enterprise_and_workspace_requests_use_publication_workflow() {
+        assert_eq!(
+            publish_route(&json!({"intent": "enterprise", "visibility": "workspace"})).unwrap(),
+            PublishRoute::EnterprisePublication
+        );
+        assert_eq!(
+            publish_route(&json!({"visibility": "workspace"})).unwrap(),
+            PublishRoute::EnterprisePublication
+        );
+        assert_eq!(
+            publish_route(&json!({"intent": "restricted", "visibility": "personal"})).unwrap(),
+            PublishRoute::LegacySubmission
+        );
+        assert_eq!(
+            publish_route(&json!({"visibility": "personal"})).unwrap(),
+            PublishRoute::LegacySubmission
+        );
+        assert!(publish_route(&json!({"visibility": "public"}))
+            .unwrap_err()
+            .contains("no longer supported"));
     }
 
     #[test]

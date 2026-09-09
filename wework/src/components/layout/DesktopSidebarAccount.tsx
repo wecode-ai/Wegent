@@ -1,3 +1,5 @@
+import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
+import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Download, Loader2, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -43,14 +45,6 @@ function formatSidebarTemplate(template: string, values: Record<string, string>)
   )
 }
 
-function calculateSidebarUpdateDownloadPercent(
-  downloadedBytes: number,
-  totalBytes: number | null
-): number | null {
-  if (!totalBytes || totalBytes <= 0) return null
-  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
-}
-
 function SidebarUpdateDownloadProgress({ progress }: { progress: number }) {
   return (
     <span
@@ -85,7 +79,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
   const errorSummary = error ? formatAppUpdateErrorSummary(error, t) : null
   const busy = status === 'checking' || status === 'downloading' || status === 'installing'
   const downloadPercent = downloadProgress
-    ? calculateSidebarUpdateDownloadPercent(
+    ? calculateAppUpdateDownloadPercent(
         downloadProgress.downloadedBytes,
         downloadProgress.totalBytes
       )
@@ -109,16 +103,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
     }),
     { version: availableUpdate.version }
   )
-  const downloadTitle =
-    downloadPercent === null
-      ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
-      : formatSidebarTemplate(
-          t('workbench.app_update_downloading_progress', {
-            defaultValue: '正在下载更新 {{progress}}%',
-            progress: downloadPercent,
-          }),
-          { progress: String(downloadPercent) }
-        )
+  const downloadTitle = formatAppUpdateProgress(downloadProgress, t)
 
   return (
     <div

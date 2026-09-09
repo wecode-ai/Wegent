@@ -5,7 +5,12 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@trycua/cua-driver@0.22.1': 1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd
+  '@trycua/cua-driver@0.22.1':
+    hash: 1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd
+    path: patches/@trycua__cua-driver@0.22.1.patch
+  electron-updater@6.8.9:
+    hash: a896d1e9a4bccd10cec2882a466a545425fd2cbfbd85400c3a8e86ac1f933a71
+    path: patches/electron-updater@6.8.9.patch
 
 importers:
 
@@ -19,7 +24,7 @@ importers:
         version: 8.0.0
       electron-updater:
         specifier: 6.8.9
-        version: 6.8.9
+        version: 6.8.9(patch_hash=a896d1e9a4bccd10cec2882a466a545425fd2cbfbd85400c3a8e86ac1f933a71)
       extract-zip:
         specifier: 2.0.1
         version: 2.0.1
@@ -320,6 +325,7 @@ packages:
     engines: {node: '>= 10'}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@tauri-apps/cli-linux-x64-gnu@2.11.4':
     resolution: {integrity: sha512-2VRNWl84FOH0m2giiDkO2h0QXlcMJeX+zJDpI5kDIQAx6s+geF3v48F4DXfJez4GS/FdoDGnPnw1C2iYGbQ7bQ==}
@@ -333,6 +339,7 @@ packages:
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@tauri-apps/cli-win32-arm64-msvc@2.11.4':
     resolution: {integrity: sha512-ld5Ehb598m0VkYyylRPNeCFsBe/km0jxis6KgMpl3IGY6I/i1RwQXO05I1AsXUXO2WC6AvB/Lw4qTf/asiuEiQ==}
@@ -1231,6 +1238,7 @@ packages:
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-x64-musl@1.33.0:
     resolution: {integrity: sha512-RYiYbkokw0trfKqqzfF55lginwEPrD3OJDfTuJzFs1MK6iFnDenaz1fqLLtX4ITG3OktJQXOeTaw1awrBAlZPw==}
@@ -2751,7 +2759,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron-updater@6.8.9:
+  electron-updater@6.8.9(patch_hash=a896d1e9a4bccd10cec2882a466a545425fd2cbfbd85400c3a8e86ac1f933a71):
     dependencies:
       builder-util-runtime: 9.7.0
       fs-extra: 10.1.0

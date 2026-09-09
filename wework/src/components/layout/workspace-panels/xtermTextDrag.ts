@@ -27,7 +27,16 @@ export type XtermTextDragController = {
 
 type XtermAutomationContainer = HTMLElement & {
   __weworkInputForE2E?: (value: string) => void
+  __weworkTextForE2E?: () => string
   __weworkSelectTextForE2E?: (value: string) => string
+}
+
+export function readXtermBufferText(terminal: Pick<Terminal, 'buffer'>): string {
+  const buffer = terminal.buffer.active
+  return Array.from(
+    { length: buffer.length },
+    (_, row) => buffer.getLine(row)?.translateToString(true) ?? ''
+  ).join('\n')
 }
 
 export function selectXtermBufferText(
@@ -191,7 +200,9 @@ export function installXtermTextDrag({
     syncDragRegions()
     return selectedText
   }
+  const readTextForE2E = () => readXtermBufferText(terminal)
   automationContainer.__weworkInputForE2E = value => terminal.input(value)
+  automationContainer.__weworkTextForE2E = readTextForE2E
   automationContainer.__weworkSelectTextForE2E = selectTextForE2E
   container.addEventListener('mousedown', handleMouseDown, true)
   window.addEventListener('mouseup', handleMouseUp, true)
@@ -206,6 +217,9 @@ export function installXtermTextDrag({
       window.removeEventListener('mouseup', handleMouseUp, true)
       if (automationContainer.__weworkSelectTextForE2E === selectTextForE2E) {
         delete automationContainer.__weworkSelectTextForE2E
+      }
+      if (automationContainer.__weworkTextForE2E === readTextForE2E) {
+        delete automationContainer.__weworkTextForE2E
       }
       delete automationContainer.__weworkInputForE2E
       overlay.remove()

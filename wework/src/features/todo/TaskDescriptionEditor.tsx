@@ -1,3 +1,4 @@
+import { parseWeworkScheme } from '@/features/notifications/scheme'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCreateBlockNote } from '@blocknote/react'
@@ -50,7 +51,11 @@ interface AttachmentPreviewState {
 }
 
 function isAllowedLinkHref(href: string): boolean {
-  return DEFAULT_LINK_SCHEMES.test(href) || href.startsWith('wegent://')
+  return (
+    DEFAULT_LINK_SCHEMES.test(href) ||
+    href.startsWith('wegent://') ||
+    Boolean(parseWeworkScheme(href))
+  )
 }
 
 export function TaskDescriptionEditor({

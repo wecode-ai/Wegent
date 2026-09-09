@@ -5,6 +5,7 @@
 import logging
 
 from app.main import _request_context_fields, _should_capture_http_body
+from shared.telemetry.instrumentation import _should_capture_http_client_body
 
 
 def test_request_context_fields_ignore_non_object_json() -> None:
@@ -21,6 +22,23 @@ def test_oauth_token_endpoint_body_is_excluded_from_telemetry() -> None:
     assert _should_capture_http_body("/api/external/oauth/token") is False
     assert _should_capture_http_body("/api/external/oauth/revoke") is False
     assert _should_capture_http_body("/api/external/oauth/userinfo") is True
+
+
+def test_site_environment_variable_bodies_are_excluded_from_telemetry() -> None:
+    path = "/api/sites/prj_123/environment-variables"
+    assert _should_capture_http_body(path) is False
+    assert _should_capture_http_body(f"{path}/DATABASE_URL") is False
+    assert _should_capture_http_body("/api/sites/prj_123") is True
+
+
+def test_platform_environment_variable_bodies_are_excluded_from_httpx_traces() -> None:
+    class Request:
+        class URL:
+            path = "/api/v1/projects/prj_123/environment-variables/API_TOKEN"
+
+        url = URL()
+
+    assert _should_capture_http_client_body(Request()) is False
 
 
 def test_access_logs_include_forwarded_headers(test_client, caplog):

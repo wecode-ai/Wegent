@@ -108,13 +108,19 @@ def search_groups_endpoint(
     ),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    include_organization: bool = Query(
+        False,
+        description="Include organization-level namespaces accessible to the user",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Search groups by name or display_name.
-    Only returns groups with level='group' (filters out organization-level groups).
-    Results are limited to groups where the current user is a member.
+    Returns groups with level='group'. Organization-level namespaces are included
+    only when include_organization=true.
+    Results are limited to namespaces accessible to the current user. Administrators
+    can access active organization-level namespaces.
     Returns paginated results.
     """
     skip = (page - 1) * limit
@@ -125,6 +131,7 @@ def search_groups_endpoint(
         limit=limit,
         user_id=current_user.id,
         user_role=current_user.role,
+        include_organization=include_organization,
     )
     return GroupListResponse(total=total, items=groups)
 

@@ -328,6 +328,7 @@ export function DeviceGitSyncSection({
                       {item.status === 'not_installed'
                         ? t('workbench.git_device_sync_cli_missing', 'CLI 未安装，Git 认证已生效')
                         : t('workbench.git_device_sync_cli_failed', 'CLI 登录失败，Git 认证已生效')}
+                      {item.status === 'failed' && item.detail ? `（${item.detail}）` : null}
                     </p>
                   ))}
                 {syncResult.identity_warning_domains.length ? (

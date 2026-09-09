@@ -127,6 +127,7 @@ describe('WorkspacePanelActions', () => {
   test('hides environment info while a task is being created', () => {
     render(<WorkspacePanelActions {...baseProps} environmentInfoVisible={false} />)
 
+    expect(screen.getByTestId('workspace-toolbar-extension-actions')).toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(
       screen.queryByTestId('toggle-right-workspace-panel-expanded-button')
@@ -256,6 +257,7 @@ describe('WorkspacePanelActions', () => {
 
     render(<WorkspacePanelActions {...baseProps} mode="environment" />)
 
+    expect(screen.queryByTestId('workspace-toolbar-extension-actions')).not.toBeInTheDocument()
     expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
@@ -590,6 +592,47 @@ describe('WorkspacePanelActions', () => {
     expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide', {
       target: 'system',
     })
+  })
+
+  test('keeps the cloud IDE action visible but disabled when the device disables code-server', async () => {
+    render(
+      <WorkspacePanelActions
+        {...baseProps}
+        currentProject={{
+          id: 7,
+          name: 'project38',
+          config: {
+            execution: {
+              targetType: 'cloud',
+              deviceId: 'device-1',
+            },
+          },
+          tasks: [],
+        }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Cloud Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+            runtime_features: {
+              schemaVersion: 3,
+              interactiveSessions: { codeServer: false, terminal: true },
+            },
+          },
+        ]}
+      />
+    )
+
+    const button = screen.getByTestId('open-code-server-titlebar-button')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'workbench.project_ide_unavailable_tooltip')
+    await userEvent.click(button)
+    expect(startProjectCodeServerMock).not.toHaveBeenCalled()
+    expect(startDeviceCodeServerMock).not.toHaveBeenCalled()
   })
 
   test('reports a missing cloud IDE URL from the titlebar action', async () => {

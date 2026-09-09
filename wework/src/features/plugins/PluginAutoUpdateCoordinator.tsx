@@ -33,7 +33,8 @@ export function PluginAutoUpdateCoordinator() {
         baseUrl: cloud.apiBaseUrl,
         getToken: () => cloud.token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      cloud.apiBaseUrl
     )
   }, [cloud.apiBaseUrl, cloud.token])
   const runtimeConnected =

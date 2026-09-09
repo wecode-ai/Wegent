@@ -79,7 +79,7 @@ export function createBackendWorkbenchServices(
   const projectAutomationApi = createProjectAutomationApi(client)
   const runtimeProfileApi = createRuntimeProfileApi(client)
   const projectIncomingHookApi = createProjectIncomingHookApi(client)
-  const cloudPluginApi = createPluginApi(client)
+  const cloudPluginApi = createPluginApi(client, apiBaseUrl)
   const pluginApi = {
     async listPlugins(deviceId: string) {
       const response = await cloudPluginApi.listInstalledPlugins(deviceId)

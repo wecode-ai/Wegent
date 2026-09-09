@@ -210,7 +210,7 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('completed')
   })
 
-  it('assigns a member through the assign route with a string user id', async () => {
+  it.each([true, false])('assigns a member with notification choice %s', async notify => {
     const user = userEvent.setup()
     const assignApi = {
       listDeliveries: vi.fn(async () => ({ items: [] })),
@@ -251,6 +251,13 @@ describe('TodoEditor external item sync', () => {
 
     await screen.findByRole('option', { name: '张三' })
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), 'user:5')
+    await user.click(
+      screen.getByTestId(
+        notify
+          ? 'wework-assignment-notify-confirm'
+          : 'wework-assignment-notify-confirm-cancel-button'
+      )
+    )
     await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() => {
@@ -258,6 +265,7 @@ describe('TodoEditor external item sync', () => {
         version: 2,
         assigneeType: 'user',
         assigneeId: '5',
+        notifyAssignee: notify,
       })
     })
   })

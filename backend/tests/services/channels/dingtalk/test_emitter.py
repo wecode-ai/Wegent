@@ -129,6 +129,51 @@ async def test_start_and_thinking_render_safe_compact_status(emitter, card_facto
 
 
 @pytest.mark.asyncio
+async def test_reasoning_summary_updates_live_compact_status(emitter, card_factory):
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    for content in ("正在检查", " 配置 token=supersecretvalue"):
+        await emitter.emit(
+            ExecutionEvent.create(
+                EventType.THINKING,
+                task_id=1,
+                subtask_id=2,
+                content=content,
+                data={"thinking_kind": "reasoning_summary"},
+            )
+        )
+
+    card = card_factory[0]
+    assert "正在分析：正在检查" in card.updates[-2]
+    assert "配置" in card.updates[-1]
+    assert "supersecretvalue" not in "".join(card.updates)
+
+
+@pytest.mark.asyncio
+async def test_reconnected_card_projects_first_progress_event_without_throttling(
+    card_factory,
+):
+    emitter = StreamingResponseEmitter(
+        object(),
+        object(),
+        existing_card_instance_id="existing-card-1",
+    )
+
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    await emitter.emit(
+        ExecutionEvent.create(
+            EventType.THINKING,
+            task_id=1,
+            subtask_id=2,
+            content="正在检查跨 worker 状态",
+            data={"thinking_kind": "reasoning_summary"},
+        )
+    )
+
+    assert card_factory[0].updates
+    assert "正在检查跨 worker 状态" in card_factory[0].updates[-1]
+
+
+@pytest.mark.asyncio
 async def test_dispatch_status_stays_in_progress_mode(emitter, card_factory):
     await emitter.emit_start(task_id=1, subtask_id=2)
     await emitter.emit_status_prefix(
@@ -323,12 +368,57 @@ async def test_answer_stream_and_terminal_result_replace_progress(
     await emitter.emit_done(
         task_id=1,
         subtask_id=2,
-        result={"value": "最终回答"},
+        result={"value": "最终回答", "value_origin": "final"},
     )
 
     assert card.finished == ["最终回答"]
     assert card.updates[-1] == "最终回答"
     assert "正在分析" not in card.finished[-1]
+
+
+@pytest.mark.asyncio
+async def test_process_fallback_is_not_rendered_as_final_answer(emitter, card_factory):
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    await emitter.emit(
+        ExecutionEvent.create(
+            EventType.THINKING,
+            task_id=1,
+            subtask_id=2,
+            content="正在检查代码",
+            data={"thinking_kind": "reasoning_summary"},
+        )
+    )
+
+    await emitter.emit_done(
+        task_id=1,
+        subtask_id=2,
+        result={
+            "value": "I will inspect the code.",
+            "value_origin": "process_fallback",
+        },
+    )
+
+    card = card_factory[0]
+    assert card.finished == ["本轮已结束，未生成最终回复。"]
+    assert "I will inspect" not in "".join(card.finished)
+    assert "正在检查代码" not in "".join(card.finished)
+
+
+@pytest.mark.asyncio
+async def test_waiting_for_input_finishes_with_actionable_status(emitter, card_factory):
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    await emitter.emit_done(
+        task_id=1,
+        subtask_id=2,
+        result={
+            "value": "",
+            "value_origin": "empty",
+            "silent_exit": True,
+            "silent_exit_reason": "waiting_for_user_input",
+        },
+    )
+
+    assert card_factory[0].finished == ["等待你在 Wework 中确认后继续。"]
 
 
 @pytest.mark.asyncio

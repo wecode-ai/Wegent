@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import i18n from '@/i18n'
 import { WindowFrameControls } from './WindowFrameControls'
 
 const mocks = vi.hoisted(() => {
@@ -13,6 +14,10 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 
 describe('WindowFrameControls', () => {
+  beforeAll(async () => {
+    await i18n.changeLanguage('zh-CN')
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.desktopInvoke.mockImplementation((capability: string) => {
@@ -23,9 +28,18 @@ describe('WindowFrameControls', () => {
 
   test('renders minimize, maximize and close buttons', () => {
     render(<WindowFrameControls />)
-    expect(screen.getByTestId('window-minimize-button')).toBeInTheDocument()
-    expect(screen.getByTestId('window-maximize-button')).toBeInTheDocument()
-    expect(screen.getByTestId('window-close-button')).toBeInTheDocument()
+    const minimizeButton = screen.getByTestId('window-minimize-button')
+    const maximizeButton = screen.getByTestId('window-maximize-button')
+    const closeButton = screen.getByTestId('window-close-button')
+    expect(minimizeButton).toBeInTheDocument()
+    expect(maximizeButton).toBeInTheDocument()
+    expect(closeButton).toBeInTheDocument()
+    expect(minimizeButton).toHaveAttribute('aria-label', '最小化')
+    expect(minimizeButton).toHaveAttribute('title', '最小化')
+    expect(maximizeButton).toHaveAttribute('aria-label', '最大化')
+    expect(maximizeButton).toHaveAttribute('title', '最大化')
+    expect(closeButton).toHaveAttribute('aria-label', '关闭')
+    expect(closeButton).toHaveAttribute('title', '关闭')
   })
 
   test('minimize button calls the Electron host', async () => {
@@ -48,11 +62,9 @@ describe('WindowFrameControls', () => {
 
     render(<WindowFrameControls />)
     await waitFor(() =>
-      expect(screen.getByTestId('window-maximize-button')).toHaveAttribute(
-        'aria-label',
-        'window.restore'
-      )
+      expect(screen.getByTestId('window-maximize-button')).toHaveAttribute('aria-label', '还原')
     )
+    expect(screen.getByTestId('window-maximize-button')).toHaveAttribute('title', '还原')
   })
 
   test('close button requests the standard window close flow', async () => {

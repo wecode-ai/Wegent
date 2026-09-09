@@ -224,6 +224,12 @@ class Settings(BaseSettings):
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
     APPEND_CODE_TASK_EXPIRE_HOURS: int = 24
 
+    # Cancellation recovery configuration
+    # A task stuck in CANCELLING (or a streaming subtask whose runtime is gone) is
+    # finalized locally once no streaming activity has been observed for this long.
+    # Healthy streams touch Redis activity every ~1s, so 30min is conservative.
+    CANCELLING_STUCK_TIMEOUT_SECONDS: int = 1800
+
     # Subtask executor cleanup configuration
     # After a subtask is COMPLETED or FAILED, if executor_name/executor_namespace are set
     # and updated_at exceeds this threshold, the executor task will be deleted automatically.
@@ -242,6 +248,8 @@ class Settings(BaseSettings):
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
     WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
+    WEWORK_TRANSCRIPT_S3_BUCKET: str = "wework-transcripts"
+    WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS: int = 900
 
     # Publish storage configuration
     PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS: int = 3600
@@ -279,6 +287,10 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
+    TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
+    # Keep false during mixed-version Backend rollout; enable after all replicas upgrade.
+    TERMINAL_PROTOCOL_V2_ENABLED: bool = True
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
     # Public base URL of this backend, reachable from executor devices. The
@@ -374,6 +386,16 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
+    @field_validator("WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS")
+    @classmethod
+    def validate_plugin_publication_max_active_requests(cls, v: int) -> int:
+        """Keep request capacity from becoming an implicit publication kill switch."""
+        if v < 1:
+            raise ValueError(
+                "WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS must be at least 1"
+            )
+        return v
+
     @field_validator("LOCAL_DEVICE_COMMANDS", mode="before")
     @classmethod
     def parse_local_device_commands(cls, v: Any) -> dict[str, Any]:
@@ -404,6 +426,12 @@ class Settings(BaseSettings):
                 raise ValueError("RAG_RUNTIME_MODE JSON override must be an object")
             return _normalize_rag_runtime_mode_value(raw, label="global")
         raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
+
+    # Master switch for scheduled work started by this Backend process.
+    # Disable it for traffic-verification environments that share production
+    # resources but must not run maintenance, scheduling, or queue-consuming
+    # workers. Scheduled work can run on a dedicated deployment instead.
+    SCHEDULED_TASKS_ENABLED: bool = True
 
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
@@ -592,9 +620,17 @@ class Settings(BaseSettings):
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200
-    PLUGIN_PUBLISH_ENABLED: bool = False
-    PLUGIN_PUBLISH_USER_IDS: list[int] = []
     PLUGIN_LEGACY_UPLOAD_ENABLED: bool = False
+    WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS: int = 5
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_API_URL: str = ""
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID: str = ""
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_URL: str = ""
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_TOKEN: str = ""
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID: int = 0
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH: str = "master"
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_MAX_FILES: int = 500
+    WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET: str = ""
+    WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS: int = 180
 
     # Attachment encryption configuration
     # Enable/disable AES-256-CBC encryption for attachment binary data

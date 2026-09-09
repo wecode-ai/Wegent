@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.project_automation_secrets import decrypt_webhook_secret
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
 from app.models.delivery import (
     CloudProject,
     ProjectAutomationRule,
@@ -391,7 +391,7 @@ def assign_from_ai_manager(
     values: ProjectAutomationManagerAssign,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
     """Apply the assignment selected by a Wework MCP manager."""
 
@@ -412,6 +412,7 @@ def assign_from_ai_manager(
             task_id=str(run.task_id),
             assignee_type=values.assignee_type,
             assignee_id=values.assignee_id,
+            notify_assignee=values.notify_assignee,
         )
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

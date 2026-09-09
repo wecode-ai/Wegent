@@ -168,6 +168,9 @@ class ProjectChatAgentView(ProjectChatSchema):
 class LoopItemAssign(ProjectChatSchema):
     """Assign a loop item to a project member or board robot."""
 
+    notify_assignee: bool = True
+    notify_self: bool = False
+
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent"]
     assignee_id: str = Field(min_length=1, max_length=128)

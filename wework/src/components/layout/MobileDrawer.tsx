@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { useContext, useMemo, useRef, useState } from 'react'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
@@ -60,7 +61,6 @@ import {
 } from './runtimeTaskSidebarHelpers'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 
-const MOBILE_RUNNING_SPINNER_CLASS = 'h-3.5 w-3.5 shrink-0 animate-spin'
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 interface MobileDrawerProps {
@@ -182,7 +182,7 @@ export function MobileDrawer({
         title={label}
         className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center text-text-secondary"
       >
-        <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} aria-hidden="true" />
+        <CompositedSpinner icon={Loader2} className="h-3.5 w-3.5" />
       </span>
     )
   }

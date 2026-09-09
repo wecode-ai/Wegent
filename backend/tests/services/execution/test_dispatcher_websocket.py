@@ -8,17 +8,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.device.remote_control_policy import (
-    REMOTE_CONTROL_DISABLED_MESSAGE,
-    RemoteControlDisabledError,
-)
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
 from shared.models import ExecutionRequest
+from shared.models.execution import (
+    GIT_AUTH_TRANSPORT_DEVICE_LOCAL,
+    GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
+)
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_app_only_device_before_task_emit():
+async def test_dispatch_allows_app_device_task_execution() -> None:
     dispatcher = ExecutionDispatcher()
     request = ExecutionRequest(
         task_id=1,
@@ -30,32 +30,26 @@ async def test_dispatch_rejects_app_only_device_before_task_emit():
         bot=[{"shell_type": "ClaudeCode"}],
     )
 
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        namespace="/local-executor",
+        event="task:execute",
+        room="device:9:app-device",
+    )
     with (
-        patch(
-            "app.services.execution.dispatcher.ensure_remote_control_enabled_for_device",
-            side_effect=RemoteControlDisabledError(REMOTE_CONTROL_DISABLED_MESSAGE),
-        ) as ensure_remote_control,
         patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()) as recover,
-        patch.object(dispatcher.router, "route") as route,
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(dispatcher, "_dispatch_websocket", AsyncMock()) as dispatch,
     ):
-        with pytest.raises(
-            RemoteControlDisabledError,
-            match=REMOTE_CONTROL_DISABLED_MESSAGE,
-        ):
-            await dispatcher.dispatch(
-                request,
-                device_id="app-device",
-                emitter=AsyncMock(),
-            )
+        await dispatcher.dispatch(
+            request,
+            device_id="app-device",
+            emitter=AsyncMock(),
+        )
 
-    ensure_remote_control.assert_called_once_with(
-        user_id=9,
-        device_id="app-device",
-    )
-    recover.assert_not_awaited()
-    route.assert_not_called()
-    dispatch.assert_not_awaited()
+    recover.assert_awaited_once_with(request, device_id="app-device")
+    dispatch.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -182,3 +176,42 @@ async def test_dispatch_websocket_passes_skill_identity_token_in_payload():
 
     payload = emit_mock.await_args.args[2]
     assert payload["skill_identity_token"] == "skill-jwt"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_websocket_uses_git_credentials_configured_on_device() -> None:
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1,
+        subtask_id=2,
+        message_id=3,
+        user={
+            "id": 9,
+            "git_domain": "git.example.com",
+            "git_token": "encrypted-token",
+        },
+        bot=[{"shell_type": "ClaudeCode"}],
+        git_auth_transport=GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
+    )
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        namespace="/local-executor",
+        event="task:execute",
+        room="device:9:device-1",
+    )
+    emitter = AsyncMock()
+
+    with (
+        patch.object(dispatcher, "_set_subtask_executor", AsyncMock()),
+        patch.object(
+            dispatcher,
+            "_emit_socketio_in_main_loop",
+            AsyncMock(),
+        ) as emit_mock,
+    ):
+        await dispatcher._dispatch_websocket(request, target, emitter)
+
+    payload = emit_mock.await_args.args[2]
+    assert payload["git_auth_transport"] == GIT_AUTH_TRANSPORT_DEVICE_LOCAL
+    assert "git_token" not in payload["user"]
+    assert request.user["git_token"] == "encrypted-token"

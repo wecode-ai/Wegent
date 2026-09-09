@@ -1,9 +1,7 @@
+import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { chmod, cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
@@ -12,11 +10,17 @@ import {
   targetExecutableName,
 } from '../../scripts/lib/desktop-package-target.mjs'
 import {
+  executorPackageBinaryPath,
+  resolveExecutorPackageTargetDirectory,
+} from '../../scripts/lib/executor-package-target.mjs'
+import {
   CORE_PLUGIN_DIRECTORIES,
   corePluginTarget,
 } from '../../scripts/lib/core-plugin-resources.mjs'
+import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plugin-resources.mjs'
 import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
+import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
@@ -27,6 +31,7 @@ const sharedResourcesRoot = join(weworkRoot, 'resources')
 const executorProfile = resolveExecutorProfile()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const packageTargets = resolveDesktopPackageTargets(process.env)
+const executorTargetDirectory = resolveExecutorPackageTargetDirectory(process.env, executorRoot)
 const packageEnvironment = {
   ...process.env,
   CARGO_BUILD_TARGET: packageTargets.cargoTarget,
@@ -41,7 +46,7 @@ const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
     ? Promise.resolve(resolve(configuredExecutorPath))
-    : buildExecutor(executorProfile, packageTargets.cargoTarget),
+    : buildExecutor(executorProfile, packageTargets.cargoTarget, executorTargetDirectory),
   run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot, packageEnvironment),
@@ -69,11 +74,7 @@ await writeFile(
   `${JSON.stringify({ runtimes: packagedRuntimes }, null, 2)}\n`,
   { mode: 0o600 }
 )
-await cp(
-  join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal'),
-  join(resourcesRoot, 'bundled-plugins', 'wework-personal'),
-  { recursive: true }
-)
+await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {
@@ -82,6 +83,8 @@ for (const directory of CORE_PLUGIN_DIRECTORIES) {
     filter: source => !source.endsWith('.test.mjs'),
   })
 }
+const weworkAppStaticRoot = join(resourcesRoot, 'wework-app-static')
+await extractWeworkAppStaticResources(corePluginsRoot, weworkAppStaticRoot)
 const codexTarget = packageTargets.codexTarget
 const codexSource = join(sharedResourcesRoot, 'binaries', 'codex', codexTarget)
 const codexResources = join(resourcesRoot, 'codex')
@@ -93,7 +96,7 @@ const executorName = targetExecutableName(packageTargets.cargoTarget, 'wegent-ex
 const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
-const executorSha256 = await sha256(packagedExecutor)
+const executorSha256 = await hashComponentPath(packagedExecutor)
 const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
 const packagedDws = join(resourcesRoot, 'bin', dwsName)
 const dwsSourceName = targetExecutableName(
@@ -128,17 +131,22 @@ await writeFile(
         coreDsh: {
           version: packagedRuntimes.find(runtime => runtime.role === 'core')?.dshVersion,
           path: 'harness-runtime',
-          sha256: await hashTree(harnessResources),
+          sha256: await hashComponentPath(harnessResources),
         },
         weworkCorePlugins: {
           version: weworkRuntimeVersion,
           path: 'wework-core-plugins',
-          sha256: await hashTree(corePluginsRoot),
+          sha256: await hashComponentPath(corePluginsRoot),
+        },
+        weworkAppStatic: {
+          version: weworkRuntimeVersion,
+          path: 'wework-app-static',
+          sha256: await hashComponentPath(weworkAppStaticRoot),
         },
         bundledPlugins: {
           version: weworkRuntimeVersion,
           path: 'bundled-plugins',
-          sha256: await hashTree(join(resourcesRoot, 'bundled-plugins')),
+          sha256: await hashComponentPath(join(resourcesRoot, 'bundled-plugins')),
         },
         executor: {
           version: weworkRuntimeVersion,
@@ -147,13 +155,13 @@ await writeFile(
         },
         codex: {
           version: codexRuntime.codexVersion,
-          path: `codex/${codexRuntime.binaryPath}`,
-          sha256: await sha256(join(codexResources, codexRuntime.binaryPath)),
+          path: 'codex',
+          sha256: await hashComponentPath(codexResources),
         },
         dws: {
           version: weworkPackage.devDependencies['dingtalk-workspace-cli'],
           path: `bin/${dwsName}`,
-          sha256: await sha256(packagedDws),
+          sha256: await hashComponentPath(packagedDws),
         },
       },
     },
@@ -182,27 +190,7 @@ async function buildDshApp() {
   )
 }
 
-async function sha256(path) {
-  const hash = createHash('sha256')
-  await pipeline(createReadStream(path), hash)
-  return hash.digest('hex')
-}
-
-async function hashTree(root, relative = '') {
-  const hash = createHash('sha256')
-  const entries = await readdir(join(root, relative), { withFileTypes: true })
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = join(relative, entry.name)
-    if (entry.isDirectory()) {
-      hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
-    } else if (entry.isFile()) {
-      hash.update(`file:${child}\0${await sha256(join(root, child))}\0`)
-    }
-  }
-  return hash.digest('hex')
-}
-
-async function buildExecutor(profile, target) {
+async function buildExecutor(profile, target, targetDirectory) {
   const buildArgs = [
     'build',
     '--manifest-path',
@@ -212,27 +200,11 @@ async function buildExecutor(profile, target) {
     'wegent-executor',
   ]
   if (target) buildArgs.push('--target', target)
-  await run('cargo', buildArgs, repositoryRoot)
-  const metadata = JSON.parse(
-    await capture(
-      'cargo',
-      [
-        'metadata',
-        '--manifest-path',
-        join(executorRoot, 'Cargo.toml'),
-        '--format-version',
-        '1',
-        '--no-deps',
-      ],
-      repositoryRoot
-    )
-  )
-  return join(
-    metadata.target_directory,
-    ...(target ? [target] : []),
-    profile,
-    targetExecutableName(target, 'wegent-executor')
-  )
+  await run('cargo', buildArgs, repositoryRoot, {
+    ...process.env,
+    CARGO_TARGET_DIR: targetDirectory,
+  })
+  return executorPackageBinaryPath(targetDirectory, target, profile)
 }
 
 function run(command, args, cwd, environment = process.env) {
