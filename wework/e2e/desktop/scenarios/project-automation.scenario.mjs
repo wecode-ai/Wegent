@@ -1306,15 +1306,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     })
     await control.command(
       'click',
-      `[data-testid="cloud-todo-card-progress-open-${moonshotOverrideIssue.id}"]`,
+      `[data-testid="cloud-todo-card-progress-pin-${moonshotOverrideIssue.id}"]`,
       { visible: true }
     )
-    await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+    await waitForValue(
+      () => control.command('getAttribute', moonshotProgressPopup, { value: 'data-pinned' }),
+      value => value === 'true',
+      'The board popup did not stay pinned in place',
+      uiTimeoutMs
+    )
+    await captureScreenshot(control, 'project-automation-board-hover-pinned.png')
+    await control.command('press', 'body', { key: 'Escape' })
+    await control.command('waitFor', moonshotProgressPopup, {
       timeoutMs: uiTimeoutMs,
-      visible: true,
+      visible: false,
     })
-    await captureScreenshot(control, 'project-automation-board-hover-open-half-screen.png')
-    await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
 
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       timeoutMs: uiTimeoutMs,

@@ -503,8 +503,9 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
   })
 
-  it('shows the current conversation goal and opens the side panel from the hover preview', async () => {
+  it('shows the current conversation goal and pins the same hover preview', async () => {
     const onClick = vi.fn()
+    const onPreviewPinnedChange = vi.fn()
     render(
       <CloudTodoBoardCard
         item={item}
@@ -530,6 +531,7 @@ describe('CloudTodoBoardCard', () => {
         ]}
         onClick={onClick}
         onArchive={vi.fn()}
+        onPreviewPinnedChange={onPreviewPinnedChange}
         display={{
           showAssignee: false,
           showPriority: false,
@@ -544,8 +546,9 @@ describe('CloudTodoBoardCard', () => {
     expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-85-85')).toHaveTextContent(
       '让用户在看板悬浮态快速理解当前会话正在完成什么'
     )
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-open-WEG-85'))
-    expect(onClick).toHaveBeenCalledOnce()
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-pin-WEG-85'))
+    expect(onPreviewPinnedChange).toHaveBeenCalledWith(true)
+    expect(onClick).not.toHaveBeenCalled()
   })
 
   it('forwards the bound task model to the shared hover conversation', async () => {

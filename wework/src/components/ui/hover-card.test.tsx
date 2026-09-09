@@ -315,6 +315,41 @@ describe('HoverCard', () => {
     expect(screen.getByTestId('scoped-pinned-hover-card-close')).toBeInTheDocument()
   })
 
+  test('keeps a controlled pinned card open until its owner clears the pinned state', () => {
+    const onPinnedChange = vi.fn()
+    const { rerender } = render(
+      <HoverCard
+        testId="controlled-pinned-hover-card"
+        interactive
+        pinned
+        onPinnedChange={onPinnedChange}
+        content={<div>Persistent progress</div>}
+      >
+        <button type="button">Current task</button>
+      </HoverCard>
+    )
+
+    expect(screen.getByTestId('controlled-pinned-hover-card')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('controlled-pinned-hover-card-close'))
+    expect(onPinnedChange).toHaveBeenCalledWith(false)
+
+    rerender(
+      <HoverCard
+        testId="controlled-pinned-hover-card"
+        interactive
+        pinned={false}
+        onPinnedChange={onPinnedChange}
+        content={<div>Persistent progress</div>}
+      >
+        <button type="button">Current task</button>
+      </HoverCard>
+    )
+    expect(screen.queryByTestId('controlled-pinned-hover-card')).not.toBeInTheDocument()
+  })
+
   test('positions the card to the left when the right side has less space', async () => {
     vi.useFakeTimers()
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {

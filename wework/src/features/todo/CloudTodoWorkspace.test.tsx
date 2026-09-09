@@ -1314,12 +1314,77 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-open-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    fireEvent.mouseLeave(screen.getByTestId('cloud-todo-card-WEG-1'))
+    fireEvent.pointerMove(document.body)
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
-    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
-    expect(await screen.findByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-runtime-task-id',
-      'runtime-2'
+  })
+
+  it('keeps a pinned board preview stable and switches it only from another progress row', async () => {
+    const secondItem = {
+      ...item,
+      id: 'WEG-2',
+      sequence_number: 2,
+      title: 'Verify pinned preview switching',
+      status: 'in_review' as const,
+      sort_order: 1,
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [{ ...item, status: 'in_review' as const }, secondItem],
+    }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async itemId => [
+      {
+        id: itemId === item.id ? 1 : 2,
+        loop_item_id: itemId,
+        task_user_id: 1,
+        device_id: 'local-device',
+        task_id: itemId === item.id ? 'runtime-1' : 'runtime-2',
+        task_title: itemId === item.id ? 'First task progress' : 'Second task progress',
+        backend_task_id: null,
+        linked_at: '2026-09-09T00:00:00Z',
+      },
+    ])
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.mouseEnter(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-2'))
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-2')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-2'))
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveTextContent(
+      'Second task progress'
     )
   })
 
@@ -4949,7 +5014,7 @@ describe('CloudTodoWorkspace', () => {
     )
     expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveAttribute(
       'aria-label',
-      'Stopped task'
+      '固定任务进展：Stopped task'
     )
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent('Stopped task')
     expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(

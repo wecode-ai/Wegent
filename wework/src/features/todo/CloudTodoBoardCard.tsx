@@ -8,19 +8,11 @@ import {
   Ellipsis,
   Flag,
   ListTodo,
-  PanelRightOpen,
+  Pin,
   Target,
   UserRound,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
@@ -49,7 +41,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ModelSelectionConfig, RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { WorkbenchMessage } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
 import {
@@ -308,7 +300,8 @@ interface CloudTodoBoardCardProps {
   onClick: () => void
   onConfigureExecution?: () => void
   onArchive: () => void
-  onOpenActivity?: () => void
+  previewPinned?: boolean
+  onPreviewPinnedChange?: (pinned: boolean) => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
   display: BoardCardDisplaySettings
   processingStatus: boolean
@@ -330,7 +323,8 @@ export function CloudTodoBoardCard({
   onClick,
   onConfigureExecution,
   onArchive,
-  onOpenActivity,
+  previewPinned = false,
+  onPreviewPinnedChange,
   onLoadRuntimeGoal,
   display,
   processingStatus,
@@ -472,19 +466,18 @@ export function CloudTodoBoardCard({
 
       {progressTaskBindings.length > 0 ? (
         <div
-          role={onOpenActivity ? 'button' : undefined}
-          tabIndex={onOpenActivity ? 0 : undefined}
-          aria-label={
-            onOpenActivity
-              ? currentTaskBinding?.task_title || currentTaskBinding?.task_id
-              : undefined
-          }
+          role={onPreviewPinnedChange ? 'button' : undefined}
+          tabIndex={onPreviewPinnedChange ? 0 : undefined}
+          aria-label={t('todo.pin_task_progress_named', '固定任务进展：{{task}}', {
+            task: currentTaskBinding?.task_title || currentTaskBinding?.task_id,
+          })}
+          data-hover-card-pin-trigger
           data-testid={`cloud-todo-card-tasks-${item.id}`}
-          onClick={onOpenActivity}
+          onClick={() => onPreviewPinnedChange?.(true)}
           onKeyDown={event => {
-            if (!onOpenActivity || (event.key !== 'Enter' && event.key !== ' ')) return
+            if (!onPreviewPinnedChange || (event.key !== 'Enter' && event.key !== ' ')) return
             event.preventDefault()
-            onOpenActivity()
+            onPreviewPinnedChange(true)
           }}
           className="w-full px-3.5 pb-3"
         >
@@ -530,7 +523,9 @@ export function CloudTodoBoardCard({
       interactive
       openOnFocus
       pinOnInteraction
-      pinOnInteractionSelector="[data-hover-card-pin-region]"
+      pinOnInteractionSelector="[data-hover-card-pin-region], [data-hover-card-pin-trigger]"
+      pinned={previewPinned}
+      onPinnedChange={onPreviewPinnedChange}
       closeLabel={t('common.close', '关闭')}
       estimatedWidth={480}
       estimatedHeight={620}
@@ -544,7 +539,8 @@ export function CloudTodoBoardCard({
           activeBindingId={hasActiveTask ? (currentTaskBinding?.id ?? null) : null}
           focusedBindingId={hoveredTaskBindingId}
           onFocusBinding={setHoveredTaskBindingId}
-          onOpenDetails={onOpenActivity ?? onClick}
+          pinned={previewPinned}
+          onPin={() => onPreviewPinnedChange?.(true)}
           onLoadRuntimeGoal={onLoadRuntimeGoal}
         />
       }
@@ -753,7 +749,8 @@ function RuntimeTaskProgressPopup({
   activeBindingId,
   focusedBindingId,
   onFocusBinding,
-  onOpenDetails,
+  pinned,
+  onPin,
   onLoadRuntimeGoal,
 }: {
   item: CloudLoopItem
@@ -761,7 +758,8 @@ function RuntimeTaskProgressPopup({
   activeBindingId: number | null
   focusedBindingId: number | null
   onFocusBinding: (bindingId: number | null) => void
-  onOpenDetails: () => void
+  pinned: boolean
+  onPin: () => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
 }) {
   const { t } = useTranslation('common')
@@ -789,15 +787,19 @@ function RuntimeTaskProgressPopup({
             </div>
           ) : null}
         </div>
-        <button
-          type="button"
-          data-testid={`cloud-todo-card-progress-open-${item.id}`}
-          onClick={onOpenDetails}
-          className="flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
-        >
-          <PanelRightOpen className="h-3.5 w-3.5" />
-          {t('todo.open_half_screen', '半屏打开')}
-        </button>
+        {!pinned ? (
+          <Tooltip label={t('todo.pin_task_progress', '固定任务进展')} side="bottom" align="end">
+            <button
+              type="button"
+              data-testid={`cloud-todo-card-progress-pin-${item.id}`}
+              onClick={onPin}
+              aria-label={t('todo.pin_task_progress', '固定任务进展')}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            >
+              <Pin className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        ) : null}
       </div>
       {visibleBindings.length > 0 ? (
         <div data-testid={`cloud-todo-card-progress-list-${item.id}`} className="space-y-1">
