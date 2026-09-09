@@ -33,11 +33,12 @@ summary match exactly. A missing or conflicting side is rejected instead of
 leaving a state that claims synchronization while either the tgz or summary is
 absent.
 
-The Backend derives a stable per-transcript key from the server `SECRET_KEY`,
-user ID, and transcript ID and returns it only through the authenticated
-`GET /{id}/encryption-key`
-endpoint. The key is never persisted in sync state, the outbox, or object
-storage. Each segment nonce is derived from the key, AAD, and plaintext digest.
+The Backend derives one stable key per user from
+`WEWORK_TRANSCRIPT_ENCRYPTION_SECRET` and the user ID and returns it only
+through the authenticated `GET /{id}/encryption-key` endpoint. All transcripts
+owned by one user share that key, while different users receive different keys.
+The key is never persisted in sync state, the outbox, or object contents. Each
+segment nonce is derived from the key, AAD, and plaintext digest.
 AAD binds the transcript ID, sequence, and format. Identical retries therefore
 produce identical ciphertext for SHA-256 reconciliation without reusing a
 nonce for different plaintext.
@@ -161,7 +162,12 @@ Object storage reuses the `ATTACHMENT_S3_*` connection settings:
 | ----------------------------------------------- | -------------------- | ---------------------------------------- |
 | `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | Private native transcript segment bucket |
 | `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | Upload/download signed URL lifetime      |
+| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`            | empty                | Stable high-entropy root for per-user keys |
 
 Run the Alembic migration before deployment. If object storage is unavailable,
 segment metadata is not committed and the outbox keeps its locator while local
 execution remains available offline.
+
+When the dedicated root is empty, `SECRET_KEY` is used for compatibility.
+Production deployments should configure a dedicated value and keep it unchanged
+while related tgz objects are retained.

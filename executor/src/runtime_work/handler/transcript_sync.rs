@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::runtime_work::native_transcript::{
-    export_segment, restore_segments, ExportRequest, RestoreSegment,
+    export_segment, restore_segments, ExportRequest, RestoreSegment, RestoredTranscript,
 };
 
 const CLOUD_TRANSCRIPT_HANDLE_KEY: &str = "cloudTranscript";
@@ -196,24 +196,13 @@ impl RuntimeWorkRpcHandler {
             )
         })?
         .map_err(|error| AppIpcError::new("transcript_restore_failed", error))?;
-        let mut link = RuntimeTaskLink::new_pending(
-            restored.task_id.clone(),
-            restored.workspace_path.to_string_lossy().into_owned(),
-            restored.title,
-        );
-        link.thread_id = Some(restored.thread_id.clone());
-        set_cloud_transcript(
-            &mut link,
-            &transcript_id,
-            restored.sequence,
-            restored.rollout_end,
-        );
+        let link = restored_task_link(&task_id, &transcript_id, &restored);
         self.upsert_local_task(link);
-        emit_runtime_work_changed(&self.event_tx, &self.device_id, &restored.task_id);
+        emit_runtime_work_changed(&self.event_tx, &self.device_id, &task_id);
         Ok(json!({
             "success": true,
             "available": true,
-            "taskId": restored.task_id,
+            "taskId": task_id,
             "transcriptId": transcript_id,
             "threadId": restored.thread_id,
             "workspacePath": restored.workspace_path,
@@ -250,6 +239,26 @@ impl RuntimeWorkRpcHandler {
             "acknowledged",
         ))
     }
+}
+
+fn restored_task_link(
+    task_id: &str,
+    transcript_id: &str,
+    restored: &RestoredTranscript,
+) -> RuntimeTaskLink {
+    let mut link = RuntimeTaskLink::new_pending(
+        task_id.to_owned(),
+        restored.workspace_path.to_string_lossy().into_owned(),
+        restored.title.clone(),
+    );
+    link.thread_id = Some(restored.thread_id.clone());
+    set_cloud_transcript(
+        &mut link,
+        transcript_id,
+        restored.sequence,
+        restored.rollout_end,
+    );
+    link
 }
 
 fn required_transcript_id(payload: &Value) -> Result<String, AppIpcError> {
@@ -332,4 +341,31 @@ fn set_cloud_transcript(
         "importedThrough": sequence,
         "rolloutBytes": rollout_bytes,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{cloud_transcript_id, imported_through, restored_task_link, RestoredTranscript};
+
+    #[test]
+    fn restore_preserves_the_requested_local_task_identity() {
+        let restored = RestoredTranscript {
+            title: "Restored".to_owned(),
+            workspace_path: PathBuf::from("/tmp/restored"),
+            thread_id: "thread-2".to_owned(),
+            sequence: 4,
+            rollout_end: 2048,
+        };
+
+        let link = restored_task_link("local-task", "cloud-transcript", &restored);
+
+        assert_eq!(link.local_task_id, "local-task");
+        assert_eq!(
+            cloud_transcript_id(&link).as_deref(),
+            Some("cloud-transcript")
+        );
+        assert_eq!(imported_through(&link), 4);
+    }
 }

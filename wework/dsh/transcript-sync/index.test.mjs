@@ -109,7 +109,7 @@ test('uploads a native snapshot and persists only its locator', async () => {
             if (request.path.endsWith('/encryption-key')) {
               return {
                 status: 200,
-                body: { version: 1, algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+                body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
               }
             }
             if (request.path.endsWith('/segments/prepare')) {
@@ -190,6 +190,7 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
                           fromSequence: 0,
                           toSequence: 1,
                           sha256: 'a'.repeat(64),
+                          sizeBytes: 32,
                           format: 'codex-rollout-snapshot.v1.tgz.aes256gcm',
                         },
                         {
@@ -197,6 +198,7 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
                           fromSequence: 2,
                           toSequence: 2,
                           sha256: 'b'.repeat(64),
+                          sizeBytes: 32,
                           format: 'codex-rollout-delta.v1.tgz.aes256gcm',
                         },
                       ],
@@ -208,7 +210,7 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
             if (request.path.endsWith('/encryption-key')) {
               return {
                 status: 200,
-                body: { version: 1, algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+                body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
               }
             }
             const id = request.path.match(/archives\/(\d+)\/download/u)?.[1]
@@ -273,7 +275,7 @@ test('branches deterministically when the cloud causal head changed', async () =
             if (request.path.endsWith('/encryption-key')) {
               return {
                 status: 200,
-                body: { version: 1, algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
+                body: { algorithm: 'aes-256-gcm', key: TEST_ENCRYPTION_KEY },
               }
             }
             if (request.path.endsWith('/segments/prepare')) {

@@ -13,7 +13,6 @@ from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.core.wework_transcript_encryption import (
     KEY_ALGORITHM,
-    KEY_VERSION,
     transcript_encryption_key,
 )
 from app.models.user import User
@@ -102,9 +101,8 @@ def get_transcript_encryption_key_endpoint(
         )
     )
     return {
-        "version": KEY_VERSION,
         "algorithm": KEY_ALGORITHM,
-        "key": transcript_encryption_key(current_user.id, transcript_id),
+        "key": transcript_encryption_key(current_user.id),
     }
 
 

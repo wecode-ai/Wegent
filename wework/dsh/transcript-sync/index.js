@@ -1,6 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -18,6 +18,7 @@ export const inject = [
 
 const PACKAGE_NAME = '@wegent/dsh-transcript-sync'
 const SNAPSHOT_INTERVAL = 10
+const MAX_ENCRYPTED_SEGMENT_BYTES = 256 * 1024 * 1024 + 33
 const PREFERENCES_UNIT = 'portable_preferences'
 const PREFERENCES_FIELDS = [
   'appearanceMode',
@@ -211,9 +212,8 @@ export class WeworkSync {
             : {}),
         }
       )
-      const encryption = await this.transcriptEncryption(turn.transcriptId)
       if (lease.currentSequence !== turn.baseSequence) {
-        const delivered = await this.reconcilePendingSegment(turn, encryption)
+        const delivered = await this.reconcilePendingSegment(turn)
         await this.releaseLease(turn, lease)
         if (delivered) {
           await this.acknowledgeNativeTurn(delivered)
@@ -224,6 +224,7 @@ export class WeworkSync {
         continue
       }
       const snapshot = turn.cloudSequence === 1 || turn.cloudSequence % SNAPSHOT_INTERVAL === 0
+      const encryption = await this.transcriptEncryption(turn.transcriptId)
       let segment
       let released = false
       try {
@@ -304,7 +305,20 @@ export class WeworkSync {
     )
   }
 
-  async reconcilePendingSegment(turn, encryption) {
+  async reconcilePendingSegment(turn) {
+    const encodedTranscriptId = encodeURIComponent(turn.transcriptId)
+    const [transcript, summaries] = await Promise.all([
+      this.request(`/wework-transcripts/${encodedTranscriptId}`),
+      this.request(
+        `/wework-transcripts/${encodedTranscriptId}/turns?after=${turn.cloudSequence - 1}&limit=1`
+      ),
+    ])
+    const existing = transcript.archives?.find(archive => archive.toSequence === turn.cloudSequence)
+    const existingSummary = summaries.turns?.find(
+      candidate => candidate.sequence === turn.cloudSequence
+    )
+    if (!existing || !existingSummary) return null
+    const encryption = await this.transcriptEncryption(turn.transcriptId)
     const snapshot = turn.cloudSequence === 1 || turn.cloudSequence % SNAPSHOT_INTERVAL === 0
     const segment = await this.source.read(turn, {
       baseSequence: turn.cloudSequence - 1,
@@ -313,19 +327,6 @@ export class WeworkSync {
       encryptionKey: encryption.key,
     })
     try {
-      const encodedTranscriptId = encodeURIComponent(turn.transcriptId)
-      const [transcript, summaries] = await Promise.all([
-        this.request(`/wework-transcripts/${encodedTranscriptId}`),
-        this.request(
-          `/wework-transcripts/${encodedTranscriptId}/turns?after=${turn.cloudSequence - 1}&limit=1`
-        ),
-      ])
-      const existing = transcript.archives?.find(
-        archive => archive.toSequence === turn.cloudSequence
-      )
-      const existingSummary = summaries.turns?.find(
-        candidate => candidate.sequence === turn.cloudSequence
-      )
       if (
         existing?.sha256 === segment.sha256 &&
         existing?.format === segment.format &&
@@ -359,7 +360,6 @@ export class WeworkSync {
       `/wework-transcripts/${encodeURIComponent(transcriptId)}/encryption-key`
     )
     if (
-      encryption?.version !== 1 ||
       encryption?.algorithm !== 'aes-256-gcm' ||
       typeof encryption?.key !== 'string' ||
       !encryption.key
@@ -399,6 +399,13 @@ export class WeworkSync {
             const segments = []
             for (const archive of archives) {
               if (!this.enabled) return
+              if (
+                !Number.isInteger(archive.sizeBytes) ||
+                archive.sizeBytes < 1 ||
+                archive.sizeBytes > MAX_ENCRYPTED_SEGMENT_BYTES
+              ) {
+                throw new Error('Transcript archive has an invalid encrypted size')
+              }
               const download = await this.request(
                 `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/download`
               )
@@ -661,5 +668,16 @@ async function downloadFile(url, path) {
   if (!response.ok || !response.body) {
     throw new Error(`Transcript object download failed (${response.status})`)
   }
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(path, { mode: 0o600 }))
+  let downloadedBytes = 0
+  const limit = new Transform({
+    transform(chunk, _encoding, callback) {
+      downloadedBytes += chunk.length
+      if (downloadedBytes > MAX_ENCRYPTED_SEGMENT_BYTES) {
+        callback(new Error('Transcript object exceeds the encrypted size limit'))
+        return
+      }
+      callback(null, chunk)
+    },
+  })
+  await pipeline(Readable.fromWeb(response.body), limit, createWriteStream(path, { mode: 0o600 }))
 }

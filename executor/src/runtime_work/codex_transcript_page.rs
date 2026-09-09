@@ -205,9 +205,24 @@ async fn load_rollout_transcript_page(
 
 fn rollout_turns(text: &str) -> Result<Vec<Value>, String> {
     let mut turns = Vec::<Value>::new();
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        let value: Value = serde_json::from_str(line)
-            .map_err(|error| format!("canonical Codex rollout is invalid JSONL: {error}"))?;
+    let lines = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(error)
+                if index + 1 == lines.len()
+                    && !text.ends_with('\n')
+                    && error.classify() == serde_json::error::Category::Eof =>
+            {
+                break;
+            }
+            Err(error) => {
+                return Err(format!("canonical Codex rollout is invalid JSONL: {error}"));
+            }
+        };
         if string_field(&value, "type").as_deref() != Some("event_msg") {
             continue;
         }
@@ -468,5 +483,28 @@ mod tests {
         assert_eq!(turns[0]["completedAt"], 12_000);
         assert_eq!(turns[0]["durationMs"], 2_000);
         assert_eq!(turns[0]["items"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn ignores_only_an_unterminated_partial_final_rollout_record() {
+        let complete = json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "turn-1",
+                "item": {"id": "user-1", "type": "UserMessage"},
+            },
+        })
+        .to_string();
+        let turns = rollout_turns(&format!("{complete}\n{{\"type\":\"event_msg\""))
+            .expect("partial final writes should not hide completed records");
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["id"], "turn-1");
+        assert!(rollout_turns(&format!(
+            "{complete}\n{{\"type\":\"event_msg\"\n{complete}\n"
+        ))
+        .is_err());
+        assert!(rollout_turns(&format!("{complete}\nnot-json")).is_err());
     }
 }

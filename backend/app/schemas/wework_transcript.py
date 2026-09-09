@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+MAX_ENCRYPTED_TRANSCRIPT_SEGMENT_BYTES = 256 * 1024 * 1024 + 33
+
 
 class TranscriptSegmentRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -19,7 +21,11 @@ class TranscriptSegmentRequest(BaseModel):
     title: str | None = Field(default=None, max_length=512)
     sequence: int = Field(ge=1)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    size_bytes: int = Field(alias="sizeBytes", gt=0)
+    size_bytes: int = Field(
+        alias="sizeBytes",
+        gt=0,
+        le=MAX_ENCRYPTED_TRANSCRIPT_SEGMENT_BYTES,
+    )
     format: str = Field(
         pattern=r"^codex-rollout-(delta|snapshot)\.v1\.tgz\.aes256gcm$",
         max_length=64,
@@ -81,7 +87,6 @@ class TranscriptSegmentPrepareResponse(BaseModel):
 class TranscriptEncryptionKeyResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    version: int
     algorithm: str
     key: str
 

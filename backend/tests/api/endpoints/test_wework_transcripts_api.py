@@ -4,6 +4,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.models.wework_transcript import (
     WeworkTranscript,
     WeworkTranscriptArchive,
@@ -58,7 +60,6 @@ def test_commits_native_object_metadata_and_structured_summary(
         headers=_headers(test_token),
     )
     assert encryption.status_code == 200
-    assert encryption.json()["version"] == 1
     assert encryption.json()["algorithm"] == "aes-256-gcm"
     assert len(encryption.json()["key"]) == 44
     storage = wework_transcript_service.wework_transcript_storage
@@ -116,7 +117,11 @@ def test_commits_native_object_metadata_and_structured_summary(
     assert turns.json()["turns"][0]["payload"]["taskId"] == "task-1"
 
 
-def test_encryption_keys_are_scoped_to_each_transcript(test_client, test_token):
+def test_encryption_key_is_shared_by_one_user_across_transcripts(
+    test_client, test_token
+):
+    from app.core.wework_transcript_encryption import transcript_encryption_key
+
     _lease(test_client, test_token, transcript_id="transcript-1")
     _lease(test_client, test_token, transcript_id="transcript-2")
 
@@ -131,7 +136,8 @@ def test_encryption_keys_are_scoped_to_each_transcript(test_client, test_token):
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert first.json()["key"] != second.json()["key"]
+    assert first.json()["key"] == second.json()["key"]
+    assert transcript_encryption_key(1) != transcript_encryption_key(2)
 
 
 def test_prunes_segments_older_than_previous_snapshot(
@@ -180,6 +186,136 @@ def test_prunes_segments_older_than_previous_snapshot(
     assert test_db.query(WeworkTranscriptTurn).count() == 20
     assert len(deleted_keys) == 9
     assert all(f"/{sequence}-" in key for sequence, key in enumerate(deleted_keys, 1))
+
+
+def test_pruning_hides_obsolete_metadata_and_retries_object_deletion(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.services import wework_transcript_service
+    from app.services.wework_transcript_storage import WeworkTranscriptStorageError
+
+    lease = _lease(test_client, test_token)
+    storage = wework_transcript_service.wework_transcript_storage
+    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    failures = 1
+
+    def delete(_key):
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise WeworkTranscriptStorageError("temporary failure")
+
+    monkeypatch.setattr(storage, "delete", delete)
+    for sequence in (1, 2, 3):
+        response = test_client.post(
+            "/api/wework-transcripts/transcript-1/segments",
+            headers=_headers(test_token),
+            json=_segment(
+                lease,
+                baseSequence=sequence - 1,
+                sequence=sequence,
+                sha256=f"{sequence:064x}",
+                turnId=f"turn-{sequence}",
+                format="codex-rollout-snapshot.v1.tgz.aes256gcm",
+            ),
+        )
+        assert response.status_code == 200
+
+    obsolete = (
+        test_db.query(WeworkTranscriptArchive)
+        .filter(WeworkTranscriptArchive.to_sequence == 1)
+        .one()
+    )
+    listing = test_client.get(
+        "/api/wework-transcripts/transcript-1",
+        headers=_headers(test_token),
+    )
+    assert [item["toSequence"] for item in listing.json()["archives"]] == [2, 3]
+    download = test_client.get(
+        f"/api/wework-transcripts/transcript-1/archives/{obsolete.id}/download",
+        headers=_headers(test_token),
+    )
+    assert download.status_code == 404
+
+    wework_transcript_service._prune_obsolete_segments(
+        test_db, obsolete.transcript_db_id
+    )
+    assert (
+        test_db.query(WeworkTranscriptArchive)
+        .filter(WeworkTranscriptArchive.to_sequence == 1)
+        .count()
+        == 0
+    )
+
+
+def test_pruning_hides_metadata_when_database_delete_commit_fails(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.services import wework_transcript_service
+    from app.services.wework_transcript_storage import WeworkTranscriptStorageError
+
+    lease = _lease(test_client, test_token)
+    storage = wework_transcript_service.wework_transcript_storage
+    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    monkeypatch.setattr(
+        storage,
+        "delete",
+        lambda _key: (_ for _ in ()).throw(WeworkTranscriptStorageError("defer")),
+    )
+    for sequence in (1, 2, 3):
+        response = test_client.post(
+            "/api/wework-transcripts/transcript-1/segments",
+            headers=_headers(test_token),
+            json=_segment(
+                lease,
+                baseSequence=sequence - 1,
+                sequence=sequence,
+                sha256=f"{sequence:064x}",
+                turnId=f"turn-{sequence}",
+                format="codex-rollout-snapshot.v1.tgz.aes256gcm",
+            ),
+        )
+        assert response.status_code == 200
+
+    obsolete = (
+        test_db.query(WeworkTranscriptArchive)
+        .filter(WeworkTranscriptArchive.to_sequence == 1)
+        .one()
+    )
+    deleted_keys = []
+    monkeypatch.setattr(storage, "delete", deleted_keys.append)
+    real_commit = test_db.commit
+    failures = 1
+
+    def commit():
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise SQLAlchemyError("temporary commit failure")
+        real_commit()
+
+    monkeypatch.setattr(test_db, "commit", commit)
+    wework_transcript_service._prune_obsolete_segments(
+        test_db, obsolete.transcript_db_id
+    )
+
+    assert len(deleted_keys) == 1
+    assert test_db.query(WeworkTranscriptArchive).filter_by(id=obsolete.id).count() == 1
+    listing = test_client.get(
+        "/api/wework-transcripts/transcript-1",
+        headers=_headers(test_token),
+    )
+    assert [item["toSequence"] for item in listing.json()["archives"]] == [2, 3]
+    download = test_client.get(
+        f"/api/wework-transcripts/transcript-1/archives/{obsolete.id}/download",
+        headers=_headers(test_token),
+    )
+    assert download.status_code == 404
+
+    wework_transcript_service._prune_obsolete_segments(
+        test_db, obsolete.transcript_db_id
+    )
+    assert test_db.query(WeworkTranscriptArchive).filter_by(id=obsolete.id).count() == 0
 
 
 def test_rejects_stale_sequence_before_upload(test_client, test_token, monkeypatch):
@@ -239,6 +375,38 @@ def test_rejects_mismatched_summary_for_committed_segment(
                 "assistantMessage": "Different",
             },
         },
+    )
+
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "turn_conflict"
+
+
+def test_reports_turn_conflict_when_turn_identity_exists_at_another_sequence(
+    test_client, test_token, test_db, monkeypatch
+):
+    from app.services import wework_transcript_service
+
+    lease = _lease(test_client, test_token)
+    transcript = test_db.query(WeworkTranscript).one()
+    test_db.add(
+        WeworkTranscriptTurn(
+            transcript_db_id=transcript.id,
+            sequence=9,
+            turn_id="turn-1",
+            payload={"assistantMessage": "Existing"},
+        )
+    )
+    test_db.commit()
+    monkeypatch.setattr(
+        wework_transcript_service.wework_transcript_storage,
+        "size",
+        lambda _key: 4096,
+    )
+
+    conflict = test_client.post(
+        "/api/wework-transcripts/transcript-1/segments",
+        headers=_headers(test_token),
+        json=_segment(lease),
     )
 
     assert conflict.status_code == 409

@@ -732,11 +732,20 @@ wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "backend/app/services/wework_transcript_service.py" \
-  "executor/src/runtime_work/codex_transcript_page.rs" \
   "executor/src/runtime_work/native_transcript.rs" \
   "executor/src/runtime_work/handler/transcript_sync.rs" \
   "wework/dsh/transcript-sync/index.js" \
   "wework/e2e/desktop/scenarios/transcript-sync.scenario.mjs"
+
+assert_desktop_case "Codex rollout paging invokes transcript and environment regressions" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"environment-panel-scroll"},{"id":"core-16","name":"Core / shard 16","segments":"transcript-sync"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "executor/src/runtime_work/codex_transcript_page.rs"
 
 assert_desktop_case "plugin files select plugin lifecycle and project plugin coverage" \
   'wework_desktop_e2e=true

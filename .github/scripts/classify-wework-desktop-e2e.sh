@@ -749,6 +749,10 @@ classify_path() {
       backend/app/api/endpoints/plugin_connections.py)
       select_target "cloud:plugin-account-auth"
       ;;
+    executor/src/runtime_work/codex_transcript_page.rs)
+      select_target "core:transcript-sync"
+      select_target "core:environment-panel-scroll"
+      ;;
     backend/alembic/versions/*wework_transcript* | \
       backend/app/api/endpoints/wework_transcripts.py | \
       backend/app/core/wework_transcript_encryption.py | \
@@ -757,7 +761,6 @@ classify_path() {
       backend/app/services/wework_transcript_* | \
       backend/tests/api/endpoints/test_wework_transcripts_api.py | \
       backend/tests/models/test_wework_transcript_schema.py | \
-      executor/src/runtime_work/codex_transcript_page.rs | \
       executor/src/runtime_work/native_transcript.rs | \
       executor/src/runtime_work/handler/transcript_sync.rs)
       select_target "core:transcript-sync"

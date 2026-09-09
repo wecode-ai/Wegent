@@ -35,6 +35,13 @@ const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
 const ENCRYPTED_MAGIC: &[u8; 4] = b"WTRN";
 const ENCRYPTED_VERSION: u8 = 1;
 const ENCRYPTED_HEADER_BYTES: usize = ENCRYPTED_MAGIC.len() + 1 + 12;
+const AES_GCM_TAG_BYTES: u64 = 16;
+const MAX_ROLLOUT_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_PLAINTEXT_SEGMENT_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ENCRYPTED_SEGMENT_BYTES: u64 =
+    MAX_PLAINTEXT_SEGMENT_BYTES + ENCRYPTED_HEADER_BYTES as u64 + AES_GCM_TAG_BYTES;
+const MAX_WORKSPACE_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_WORKSPACE_BYTES: u64 = 512 * 1024 * 1024;
 const MANIFEST_PATH: &str = "manifest.json";
 const ROLLOUT_PATH: &str = "rollout.jsonl";
 const WORKSPACE_PREFIX: &str = "workspace";
@@ -108,7 +115,6 @@ pub(crate) struct RestoreSegment {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RestoredTranscript {
-    pub task_id: String,
     pub title: String,
     pub workspace_path: PathBuf,
     pub thread_id: String,
@@ -137,8 +143,7 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .ok_or_else(|| "Codex thread state has no rollout_path".to_owned())?;
-    let rollout = fs::read(&rollout_path)
-        .map_err(|error| format!("failed to read native Codex rollout: {error}"))?;
+    let rollout = read_limited(&rollout_path, MAX_ROLLOUT_BYTES, "native Codex rollout")?;
     let rollout_start = if request.snapshot {
         0
     } else {
@@ -200,8 +205,17 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         cleanup(&plaintext_path);
         return Err(error);
     }
-    let plaintext = fs::read(&plaintext_path)
-        .map_err(|error| format!("failed to read transcript segment for encryption: {error}"))?;
+    let plaintext = match read_limited(
+        &plaintext_path,
+        MAX_PLAINTEXT_SEGMENT_BYTES,
+        "transcript segment for encryption",
+    ) {
+        Ok(plaintext) => plaintext,
+        Err(error) => {
+            cleanup(&plaintext_path);
+            return Err(error);
+        }
+    };
     let encrypted = encrypt_segment(
         &plaintext,
         &request.encryption_key,
@@ -249,6 +263,7 @@ pub(crate) fn restore_segments(
         .join("runtime-work")
         .join("transcript-restore")
         .join(Uuid::new_v4().to_string());
+    let staging_guard = CleanupGuard::new(staging_root.clone());
     let staging_workspace = staging_root.join("workspace");
     fs::create_dir_all(&staging_workspace)
         .map_err(|error| format!("failed to create transcript restore staging: {error}"))?;
@@ -261,8 +276,11 @@ pub(crate) fn restore_segments(
                 segment.sequence
             ));
         }
-        let bytes = fs::read(&segment.path)
-            .map_err(|error| format!("failed to read transcript segment: {error}"))?;
+        let bytes = read_limited(
+            &segment.path,
+            MAX_ENCRYPTED_SEGMENT_BYTES,
+            "transcript segment",
+        )?;
         if format!("{:x}", Sha256::digest(&bytes)) != segment.sha256 {
             cleanup(&staging_root);
             return Err("native transcript segment failed SHA-256 verification".to_owned());
@@ -290,6 +308,13 @@ pub(crate) fn restore_segments(
                 cleanup(&staging_root);
                 return Err("native transcript rollout delta is not contiguous".to_owned());
             }
+            let merged_size = rollout
+                .len()
+                .checked_add(segment_rollout.len())
+                .ok_or_else(|| "native transcript rollout is too large".to_owned())?;
+            if merged_size as u64 > MAX_ROLLOUT_BYTES {
+                return Err("native transcript rollout is too large".to_owned());
+            }
             rollout.extend(segment_rollout);
         }
         if rollout.len() as u64 != manifest.rollout_end {
@@ -307,6 +332,7 @@ pub(crate) fn restore_segments(
     }
     fs::rename(&staging_workspace, &destination_workspace)
         .map_err(|error| format!("failed to bind restored workspace: {error}"))?;
+    let mut destination_guard = CleanupGuard::new(destination_workspace.clone());
     let codex_home = wework_codex_home();
     let state_path = codex_state_home(&codex_home).join(STATE_DB_FILENAME);
     let thread_id = unused_thread_id(&state_path, &manifest.source_thread_id)?;
@@ -322,10 +348,10 @@ pub(crate) fn restore_segments(
         &manifest.source_workspace_path,
         &destination_workspace,
     )?;
+    let rewritten_rollout_end = rewritten.len() as u64;
     let write_result =
         create_private_file(&rollout_path).and_then(|mut output| output.write_all(&rewritten));
     if let Err(error) = write_result {
-        cleanup(&destination_workspace);
         cleanup(&staging_root);
         return Err(format!("failed to write restored native rollout: {error}"));
     }
@@ -337,18 +363,17 @@ pub(crate) fn restore_segments(
         &rollout_path,
     ) {
         cleanup(&rollout_path);
-        cleanup(&destination_workspace);
         cleanup(&staging_root);
         return Err(error);
     }
-    cleanup(&staging_root);
+    destination_guard.disarm();
+    drop(staging_guard);
     Ok(RestoredTranscript {
-        task_id: transcript_id.to_owned(),
         title: manifest.title,
         workspace_path: destination_workspace,
         thread_id,
         sequence: manifest.sequence,
-        rollout_end: manifest.rollout_end,
+        rollout_end: rewritten_rollout_end,
     })
 }
 
@@ -417,7 +442,7 @@ fn decrypt_segment(
         .map_err(|error| format!("failed to initialize transcript cipher: {error}"))?;
     let nonce_start = ENCRYPTED_MAGIC.len() + 1;
     let nonce_end = nonce_start + 12;
-    cipher
+    let plaintext = cipher
         .decrypt(
             Nonce::from_slice(&encrypted[nonce_start..nonce_end]),
             Payload {
@@ -425,7 +450,21 @@ fn decrypt_segment(
                 aad: &encryption_aad(transcript_id, sequence, format),
             },
         )
-        .map_err(|_| "transcript segment authentication failed".to_owned())
+        .map_err(|_| "transcript segment authentication failed".to_owned())?;
+    if plaintext.len() as u64 > MAX_PLAINTEXT_SEGMENT_BYTES {
+        return Err("decrypted transcript segment is too large".to_owned());
+    }
+    Ok(plaintext)
+}
+
+fn read_limited(path: &Path, max_bytes: u64, label: &str) -> Result<Vec<u8>, String> {
+    let size = fs::metadata(path)
+        .map_err(|error| format!("failed to inspect {label}: {error}"))?
+        .len();
+    if size > max_bytes {
+        return Err(format!("{label} exceeds the {max_bytes}-byte limit"));
+    }
+    fs::read(path).map_err(|error| format!("failed to read {label}: {error}"))
 }
 
 fn create_private_file(path: &Path) -> std::io::Result<fs::File> {
@@ -531,6 +570,7 @@ fn append_workspace(
     if !workspace.is_dir() {
         return Err(format!("workspace does not exist: {}", workspace.display()));
     }
+    let mut total_bytes = 0_u64;
     for entry in WalkBuilder::new(workspace)
         .hidden(false)
         .git_ignore(false)
@@ -559,6 +599,27 @@ fn append_workspace(
         {
             continue;
         }
+        if entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
+        {
+            let size = entry
+                .metadata()
+                .map_err(|error| format!("failed to inspect workspace member: {error}"))?
+                .len();
+            if size > MAX_WORKSPACE_FILE_BYTES {
+                return Err(format!(
+                    "workspace member exceeds the {MAX_WORKSPACE_FILE_BYTES}-byte limit: {}",
+                    relative.display()
+                ));
+            }
+            total_bytes = total_bytes
+                .checked_add(size)
+                .ok_or_else(|| "workspace is too large to synchronize".to_owned())?;
+            if total_bytes > MAX_WORKSPACE_BYTES {
+                return Err("workspace is too large to synchronize".to_owned());
+            }
+        }
         archive
             .append_path_with_name(path, Path::new(WORKSPACE_PREFIX).join(relative))
             .map_err(|error| format!("failed to append workspace member: {error}"))?;
@@ -574,6 +635,7 @@ fn extract_segment(
     let mut archive = Archive::new(GzDecoder::new(bytes));
     let mut manifest = None;
     let mut rollout = None;
+    let mut workspace_bytes = 0_u64;
     for entry in archive
         .entries()
         .map_err(|error| format!("failed to open transcript segment: {error}"))?
@@ -588,10 +650,7 @@ fn extract_segment(
             return Err("transcript segment contains an unsafe path".to_owned());
         }
         if path == Path::new(MANIFEST_PATH) {
-            let mut bytes = Vec::new();
-            entry
-                .read_to_end(&mut bytes)
-                .map_err(|error| format!("failed to read transcript manifest: {error}"))?;
+            let bytes = read_archive_member(&mut entry, 1024 * 1024, "transcript manifest")?;
             let value: NativeTranscriptManifest = serde_json::from_slice(&bytes)
                 .map_err(|error| format!("invalid transcript manifest: {error}"))?;
             if value.transcript_id != transcript_id || value.version != 1 {
@@ -599,16 +658,25 @@ fn extract_segment(
             }
             manifest = Some(value);
         } else if path == Path::new(ROLLOUT_PATH) {
-            let mut bytes = Vec::new();
-            entry
-                .read_to_end(&mut bytes)
-                .map_err(|error| format!("failed to read transcript rollout: {error}"))?;
+            let bytes = read_archive_member(&mut entry, MAX_ROLLOUT_BYTES, "transcript rollout")?;
             rollout = Some(bytes);
         } else if let Ok(relative) = path.strip_prefix(WORKSPACE_PREFIX) {
             let destination = workspace.join(relative);
             let entry_type = entry.header().entry_type();
             if !entry_type.is_file() && !entry_type.is_dir() {
                 return Err("transcript segment contains an unsupported workspace entry".to_owned());
+            }
+            if entry_type.is_file() {
+                let size = entry.size();
+                if size > MAX_WORKSPACE_FILE_BYTES {
+                    return Err("transcript workspace member is too large".to_owned());
+                }
+                workspace_bytes = workspace_bytes
+                    .checked_add(size)
+                    .ok_or_else(|| "transcript workspace is too large".to_owned())?;
+                if workspace_bytes > MAX_WORKSPACE_BYTES {
+                    return Err("transcript workspace is too large".to_owned());
+                }
             }
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)
@@ -623,6 +691,22 @@ fn extract_segment(
         manifest.ok_or_else(|| "transcript segment has no manifest".to_owned())?,
         rollout.ok_or_else(|| "transcript segment has no rollout".to_owned())?,
     ))
+}
+
+fn read_archive_member(
+    reader: &mut impl Read,
+    max_bytes: u64,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(max_bytes + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read {label}: {error}"))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(format!("{label} is too large"));
+    }
+    Ok(bytes)
 }
 
 fn validate_jsonl(bytes: &[u8]) -> Result<(), String> {
@@ -860,6 +944,28 @@ fn cleanup(path: &Path) {
     }
 }
 
+struct CleanupGuard {
+    path: Option<PathBuf>,
+}
+
+impl CleanupGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path: Some(path) }
+    }
+
+    fn disarm(&mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.as_deref() {
+            cleanup(path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -1040,6 +1146,7 @@ mod tests {
                     && name.ends_with(&format!("-{}.jsonl", restored.thread_id))
             }));
         let restored_rollout = fs::read_to_string(&rollout_path).unwrap();
+        assert_eq!(restored.rollout_end, restored_rollout.len() as u64);
         assert!(restored_rollout.contains(&restored.thread_id));
         assert!(!restored_rollout.contains(thread_id));
         let connection = Connection::open(database_path).unwrap();
@@ -1061,8 +1168,40 @@ mod tests {
         assert_eq!(restored_history_mode, "paginated");
         assert!(restored_rollout.contains("\"history_mode\":\"paginated\""));
         assert!(restored_rollout.contains(restored.workspace_path.to_string_lossy().as_ref()));
+        let continued = export_segment(ExportRequest {
+            transcript_id: "transcript-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            title: "Task".to_owned(),
+            workspace_path: restored.workspace_path.clone(),
+            thread_id: restored.thread_id.clone(),
+            sequence: 3,
+            base_sequence: 2,
+            rollout_start: restored.rollout_end,
+            snapshot: false,
+            encryption_key: BASE64.encode([7_u8; 32]),
+        })
+        .expect("restored rollout cursor should permit the next delta");
+        cleanup(&continued.path);
+        assert!(executor_home
+            .join("runtime-work/transcript-restore")
+            .read_dir()
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true));
         std::env::remove_var("WEGENT_EXECUTOR_HOME");
         std::env::remove_var("WEGENT_CODEX_HOME");
         std::env::remove_var("CODEX_SQLITE_HOME");
+    }
+
+    #[test]
+    fn rejects_files_larger_than_the_native_segment_limit_before_reading() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("oversized-segment");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_ENCRYPTED_SEGMENT_BYTES + 1).unwrap();
+
+        let error = read_limited(&path, MAX_ENCRYPTED_SEGMENT_BYTES, "transcript segment")
+            .expect_err("oversized segment should be rejected");
+
+        assert!(error.contains("exceeds"));
     }
 }

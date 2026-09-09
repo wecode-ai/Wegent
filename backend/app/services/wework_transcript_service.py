@@ -269,7 +269,7 @@ def commit_segment(
             request=request,
         ) and _turn_matches(existing_turn, request):
             return transcript, False
-        if existing_archive is None or not _segment_matches(
+        if existing_archive is not None and not _segment_matches(
             existing_archive,
             from_sequence=from_sequence,
             object_key=object_key,
@@ -329,9 +329,13 @@ def list_archives(
     *,
     transcript_db_id: int,
 ) -> list[WeworkTranscriptArchive]:
+    retained_floor = _retained_archive_floor(db, transcript_db_id)
     return (
         db.query(WeworkTranscriptArchive)
-        .filter(WeworkTranscriptArchive.transcript_db_id == transcript_db_id)
+        .filter(
+            WeworkTranscriptArchive.transcript_db_id == transcript_db_id,
+            WeworkTranscriptArchive.to_sequence >= retained_floor,
+        )
         .order_by(WeworkTranscriptArchive.to_sequence)
         .all()
     )
@@ -373,6 +377,12 @@ def get_archive(
         .first()
     )
     if archive is None:
+        raise WeworkTranscriptError(
+            "archive_not_found",
+            "Wework transcript segment not found",
+            status_code=404,
+        )
+    if archive.to_sequence < _retained_archive_floor(db, transcript.id):
         raise WeworkTranscriptError(
             "archive_not_found",
             "Wework transcript segment not found",
@@ -496,7 +506,6 @@ def _prune_obsolete_segments(db: Session, transcript_db_id: int) -> None:
         .order_by(WeworkTranscriptArchive.to_sequence)
         .all()
     )
-    deleted = []
     for segment in obsolete:
         try:
             wework_transcript_storage.delete(segment.storage_key)
@@ -510,20 +519,33 @@ def _prune_obsolete_segments(db: Session, transcript_db_id: int) -> None:
                 exc_info=True,
             )
             continue
-        deleted.append(segment)
-    if not deleted:
-        return
-    try:
-        for segment in deleted:
+        try:
             db.delete(segment)
-        db.commit()
-    except SQLAlchemyError:
-        db.rollback()
-        logger.warning(
-            "Failed to remove pruned Wework transcript metadata",
-            extra={"transcript_db_id": transcript_db_id},
-            exc_info=True,
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.warning(
+                "Failed to remove pruned Wework transcript metadata",
+                extra={
+                    "transcript_db_id": transcript_db_id,
+                    "sequence": segment.to_sequence,
+                },
+                exc_info=True,
+            )
+
+
+def _retained_archive_floor(db: Session, transcript_db_id: int) -> int:
+    snapshots = (
+        db.query(WeworkTranscriptArchive.to_sequence)
+        .filter(
+            WeworkTranscriptArchive.transcript_db_id == transcript_db_id,
+            WeworkTranscriptArchive.from_sequence == 0,
         )
+        .order_by(WeworkTranscriptArchive.to_sequence.desc())
+        .limit(2)
+        .all()
+    )
+    return snapshots[1][0] if len(snapshots) == 2 else 0
 
 
 def _require_lease(

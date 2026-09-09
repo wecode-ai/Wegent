@@ -28,8 +28,9 @@ transcript 持续追加进单个字段；完整数据容量和精确恢复均由
 仅当对象元数据与摘要都完全一致时，重复提交才视为幂等；任一侧缺失或不一致都会报冲突，
 不会形成“数据库显示已同步但摘要或 tgz 缺一份”的半状态。
 
-Backend 基于服务端 `SECRET_KEY`、用户 ID 和 transcript ID 派生稳定的每会话密钥，通过已认证的
-`GET /{id}/encryption-key` 接口短暂下发。密钥不写入同步状态、outbox 或对象存储。
+Backend 基于 `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET` 和用户 ID 派生稳定的每用户密钥，
+通过已认证的 `GET /{id}/encryption-key` 接口短暂下发。同一用户的所有 transcript 使用
+同一密钥，不同用户的密钥不同。密钥不写入同步状态、outbox 或对象内容。
 每个 segment 的 nonce 由密钥、AAD 和明文摘要确定性派生；AAD 绑定 transcript ID、
 sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-256 对账；不同内容不会
 复用 nonce。
@@ -136,6 +137,10 @@ GitHub CI 的执行前提。
 | ----------------------------------------------- | -------------------- | --------------------------- |
 | `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | 私有原生会话 segment bucket |
 | `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | 上传/下载签名地址有效期     |
+| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`            | 空                   | 派生每用户密钥的稳定高熵根密钥 |
 
 部署前执行 Alembic migration。对象存储不可用时，segment 不会提交到 MySQL，outbox
 继续保留定位信息，本地任务仍可离线执行。
+
+未配置独立根密钥时兼容使用 `SECRET_KEY`。生产环境应配置独立值，并在相关 tgz 保留期间
+保持不变。
