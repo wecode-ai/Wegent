@@ -60,6 +60,7 @@ from app.api.endpoints import (
     users,
     utils,
     web_scraper,
+    wework_api,
     wework_auth,
     wework_notifications,
     wework_transcripts,
@@ -263,6 +264,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(wework_api.router, tags=["openapi-discovery"])
 api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(

@@ -4165,6 +4165,7 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
             is_active=True,
             json={
                 "spec": {
+                    "protocol": "openai-responses",
                     "modelConfig": {
                         "env": {
                             "model": "codex",
@@ -4172,7 +4173,7 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
                             "api_key": "test-runtime-key",
                             "base_url": "https://runtime.example.com",
                         }
-                    }
+                    },
                 }
             },
         )

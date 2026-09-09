@@ -24,6 +24,9 @@ def runtime_notification_sender(monkeypatch):
 
     sender = AsyncMock(return_value={"sent": 0, "results": []})
     monkeypatch.setattr(
+        "app.services.wework_api.events.publish_runtime_event", AsyncMock()
+    )
+    monkeypatch.setattr(
         device_namespace.im_notification_dispatcher,
         "send_runtime_task_update_for_user",
         sender,
