@@ -324,7 +324,7 @@ export function DocumentList({
     documentProtectionState.requestKey === documentProtectionRequestKey
       ? documentProtectionState.protection
       : failClosedDocumentProtection
-  const allowDownload = !isOrganization && documentProtection.original_download_allowed
+  const allowDownload = documentProtection.original_download_allowed
 
   // Folder state
   const {

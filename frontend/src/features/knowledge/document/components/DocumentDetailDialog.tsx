@@ -95,7 +95,7 @@ interface DocumentDetailDialogProps {
   knowledgeBaseName?: string
   /** Current knowledge base namespace - used for resolving cross-namespace relative links */
   knowledgeBaseNamespace?: string
-  /** Whether this KB belongs to an organization-level namespace */
+  /** Whether this KB belongs to an organization-level namespace (affects URL format) */
   isOrganization?: boolean
   /** Whether the KB may deliver original document files. */
   allowDownload?: boolean
@@ -113,14 +113,12 @@ export function DocumentDetailDialog({
   knowledgeBaseName = '',
   knowledgeBaseNamespace = 'default',
   isOrganization = false,
-  allowDownload: configuredAllowDownload = true,
+  allowDownload = true,
   watermarkText,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const downloadDocument = useKnowledgeDocumentDownload()
-  const allowDownload = !isOrganization && configuredAllowDownload
-  const allowSourcePreview = isOrganization || configuredAllowDownload
-  const protectedPreview = isOrganization || !configuredAllowDownload
+  const protectedPreview = !allowDownload
   const effectiveWatermarkText = watermarkText || t('document.document.detail.protectedWatermark')
   const [copiedContent, setCopiedContent] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
@@ -135,9 +133,7 @@ export function DocumentDetailDialog({
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
   const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>(() =>
-    document && allowSourcePreview && isKnowledgeSourcePreviewSupported(document)
-      ? 'source'
-      : 'parsed'
+    document && allowDownload && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
   )
   const [isSummaryOpen, setIsSummaryOpen] = useState(contentSourceMode === 'parsed')
   const summaryManuallyToggledRef = useRef(false)
@@ -148,8 +144,6 @@ export function DocumentDetailDialog({
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
   const [chunkStorageEnabled, setChunkStorageEnabled] = useState(false)
-  // Extraction guards apply to the read-only protected preview, never the editor.
-  const protectedContent = protectedPreview && !isEditing
 
   // Fetch knowledge config on mount to check if chunk storage is enabled
   useEffect(() => {
@@ -189,8 +183,8 @@ export function DocumentDetailDialog({
     [allowDownload, document?.source_type, document?.file_extension, canEdit]
   )
   const canPreviewSource = useMemo(
-    () => Boolean(document && allowSourcePreview && isKnowledgeSourcePreviewSupported(document)),
-    [allowSourcePreview, document]
+    () => Boolean(document && allowDownload && isKnowledgeSourcePreviewSupported(document)),
+    [allowDownload, document]
   )
   // Source governance metadata for imported external documents.
   const externalSourceInfo = useMemo(
@@ -259,8 +253,7 @@ export function DocumentDetailDialog({
   }
 
   const handleSourceDownload = useCallback(async () => {
-    if (!allowDownload) return
-    if (!document) return
+    if (!allowDownload || !document) return
     try {
       await downloadDocument(document)
     } catch {
@@ -590,8 +583,7 @@ export function DocumentDetailDialog({
               isSourceView || (isEditing && isFullscreen)
                 ? 'flex flex-col overflow-hidden'
                 : 'overflow-y-auto',
-              isEditing && !isFullscreen && 'flex flex-col',
-              protectedContent && 'select-none'
+              isEditing && !isFullscreen && 'flex flex-col'
             )}
           >
             {!isEditing && !isFullscreen && detail?.summary && (

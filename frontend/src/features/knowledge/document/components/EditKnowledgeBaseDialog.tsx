@@ -26,7 +26,7 @@ import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getKnowledgeBase } from '@/apis/knowledge'
+import { getDocumentProtection, getKnowledgeBase } from '@/apis/knowledge'
 import type {
   DirectAccessRequirement,
   KnowledgeBase,
@@ -71,6 +71,7 @@ export function EditKnowledgeBaseDialog({
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
   const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
+  const [effectiveAllowDocumentDownload, setEffectiveAllowDocumentDownload] = useState(false)
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   // Editable so a wiki created before the field existed can be given a model. Left
@@ -123,13 +124,29 @@ export function EditKnowledgeBaseDialog({
   const loadFullKnowledgeBase = useCallback(async (knowledgeBaseId: number) => {
     const requestId = ++fullKnowledgeBaseRequestId.current
     setFullKnowledgeBase(null)
+    setAllowDocumentDownload(undefined)
+    setEffectiveAllowDocumentDownload(false)
     setIsLoadingFullKnowledgeBase(true)
     setFullKnowledgeBaseLoadFailed(false)
 
     try {
       const fullKb = await getKnowledgeBase(knowledgeBaseId)
+      const configuredAllowDownload =
+        typeof fullKb.allow_document_download === 'boolean'
+          ? fullKb.allow_document_download
+          : undefined
+      let effectiveAllowDownload = configuredAllowDownload ?? false
+      if (configuredAllowDownload === undefined) {
+        try {
+          const protection = await getDocumentProtection(knowledgeBaseId)
+          effectiveAllowDownload = protection.original_download_allowed
+        } catch (err) {
+          console.error('Failed to fetch effective document download permission:', err)
+        }
+      }
       if (fullKnowledgeBaseRequestId.current === requestId) {
         setFullKnowledgeBase(fullKb)
+        setEffectiveAllowDocumentDownload(effectiveAllowDownload)
       }
     } catch (err) {
       console.error('Failed to fetch full knowledge base data:', err)
@@ -150,6 +167,8 @@ export function EditKnowledgeBaseDialog({
     } else {
       fullKnowledgeBaseRequestId.current += 1
       setFullKnowledgeBase(null)
+      setAllowDocumentDownload(undefined)
+      setEffectiveAllowDocumentDownload(false)
       setIsLoadingFullKnowledgeBase(false)
       setFullKnowledgeBaseLoadFailed(false)
     }
@@ -166,7 +185,9 @@ export function EditKnowledgeBaseDialog({
       setName(kb.name)
       setDescription(kb.description || '')
       setDirectAccessRequirement(kb.direct_access_requirement ?? 'read')
-      setAllowDocumentDownload(kb.allow_document_download)
+      setAllowDocumentDownload(
+        typeof kb.allow_document_download === 'boolean' ? kb.allow_document_download : undefined
+      )
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setExecutionModelRef(kb.execution_model_ref || null)
@@ -434,7 +455,7 @@ export function EditKnowledgeBaseDialog({
                   onDescriptionChange={value => setDescription(value)}
                   directAccessRequirement={directAccessRequirement}
                   onDirectAccessRequirementChange={setDirectAccessRequirement}
-                  allowDocumentDownload={allowDocumentDownload}
+                  allowDocumentDownload={allowDocumentDownload ?? effectiveAllowDocumentDownload}
                   onAllowDocumentDownloadChange={setAllowDocumentDownload}
                   summaryEnabled={summaryEnabled}
                   onSummaryEnabledChange={checked => {

@@ -9,6 +9,8 @@ deployments can add UI presentation details without becoming an authorization
 dependency of the core backend.
 """
 
+from typing import Callable
+
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -20,14 +22,36 @@ class DocumentDownloadDisabledError(ValueError):
     code = "DOCUMENT_DOWNLOAD_DISABLED"
 
 
+DocumentDownloadAllowedResolver = Callable[[Session, Kind], bool]
+_document_download_allowed_resolver: DocumentDownloadAllowedResolver | None = None
+
+
+def set_document_download_allowed_resolver(
+    resolver: DocumentDownloadAllowedResolver | None,
+) -> None:
+    """Install a deployment policy without coupling core code to deployment concepts."""
+    global _document_download_allowed_resolver
+    _document_download_allowed_resolver = resolver
+
+
+def is_default_original_download_allowed(db: Session, knowledge_base: Kind) -> bool:
+    """Resolve the open-source policy: an absent setting allows downloads."""
+    del db
+    spec = knowledge_base.json.get("spec", {}) if knowledge_base.json else {}
+    return spec.get("allowDocumentDownload", True) is not False
+
+
 def is_original_download_allowed(db: Session, knowledge_base: Kind) -> bool:
     """Resolve the one core policy shared by all original-file exits.
 
     A missing, null, or true ``allowDocumentDownload`` all mean "allowed";
-    only an explicit false protects the knowledge base.
+    only an explicit false protects the knowledge base. A deployment resolver,
+    when installed, replaces this default decision.
     """
-    spec = knowledge_base.json.get("spec", {}) if knowledge_base.json else {}
-    return spec.get("allowDocumentDownload", True) is not False
+    resolver = _document_download_allowed_resolver
+    if resolver is not None:
+        return resolver(db, knowledge_base)
+    return is_default_original_download_allowed(db, knowledge_base)
 
 
 def require_document_download_allowed(db: Session, knowledge_base: Kind) -> None:
