@@ -436,7 +436,9 @@ async def test_runtime_notification_failure_does_not_break_wework_relay(
 
 
 @pytest.mark.asyncio
-async def test_runtime_event_projects_app_device_id_to_logical_device_id(monkeypatch):
+async def test_runtime_event_projects_logical_id_but_publishes_runtime_route(
+    monkeypatch,
+):
     namespace = DeviceNamespace()
     sio = AsyncMock()
     forward = AsyncMock()
@@ -489,7 +491,7 @@ async def test_runtime_event_projects_app_device_id_to_logical_device_id(monkeyp
         device_id="app-device",
         payload=relayed,
     )
-    publish.assert_awaited_once_with(7, "app-device", relay_payload)
+    publish.assert_awaited_once_with(7, "runtime-device", relay_payload)
 
 
 @pytest.mark.asyncio
