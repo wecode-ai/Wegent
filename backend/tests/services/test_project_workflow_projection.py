@@ -554,3 +554,125 @@ def test_workflow_projection_matches_binding_through_device_identity(
     node = updated.metadata_json["workflow"]["nodes"][0]
     assert node["status"] == "completed"
     assert node["task_statuses"]["app-device-1:identity-task"] == "succeeded"
+
+
+@pytest.mark.parametrize("task_status", ["running", "succeeded", "failed", "cancelled"])
+@pytest.mark.parametrize("execution_mode", ["robot", "human"])
+@pytest.mark.parametrize(
+    "orchestration_status,node_status",
+    [("waiting_human", "running"), ("completed", "completed"), ("paused", "failed")],
+)
+def test_task_progress_updates_results_without_resuming_ai(
+    test_db: Session,
+    workflow_project: CloudProject,
+    task_status: str,
+    execution_mode: str,
+    orchestration_status: str,
+    node_status: str,
+) -> None:
+    workflow = {
+        "version": 1,
+        "advancement_policy": "ai",
+        "orchestration_status": orchestration_status,
+        "assignment": {
+            "id": "assignment-1",
+            "node_id": "review",
+            "status": (
+                "waiting_human"
+                if orchestration_status == "waiting_human"
+                else "completed"
+            ),
+        },
+        "nodes": [
+            {
+                "id": "review",
+                "execution_mode": execution_mode,
+                "status": node_status,
+                "execution_error": "cancelled",
+                "task_statuses": {"local-device:old-task": "running"},
+            }
+        ],
+    }
+    item = LoopItem(
+        id="ai-assignment-progress",
+        cloud_project_id=workflow_project.id,
+        sequence_number=105,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="AI assignment progress",
+        description="",
+        status="completed" if orchestration_status == "completed" else "in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={"workflow": workflow},
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=item.id,
+        task_user_id=workflow_project.created_by_user_id,
+        device_id="local-device",
+        task_id="current-task",
+        linked_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={"workflow_node_id": "review"},
+    )
+    test_db.add_all([item, binding])
+    test_db.commit()
+    original_status = item.status
+
+    updated = update_workflow_task_status(
+        test_db,
+        user_id=workflow_project.created_by_user_id,
+        device_id="local-device",
+        task_id="current-task",
+        execution_status=task_status,
+    )
+
+    assert updated is not None
+    projected = updated.metadata_json["workflow"]
+    assert projected["orchestration_status"] == orchestration_status
+    assert projected["assignment"] == workflow["assignment"]
+    expected_status = node_status
+    if execution_mode == "robot" and orchestration_status != "waiting_human":
+        expected_status = {
+            "running": "running",
+            "succeeded": "completed",
+            "failed": "failed",
+            "cancelled": "failed",
+        }[task_status]
+    assert projected["nodes"][0]["status"] == expected_status
+    if (
+        execution_mode == "robot"
+        and orchestration_status != "waiting_human"
+        and task_status in {"running", "succeeded"}
+    ):
+        assert projected["nodes"][0]["execution_error"] is None
+    assert (
+        projected["nodes"][0]["task_statuses"]["local-device:current-task"]
+        == task_status
+    )
+    assert updated.status == original_status
+
+
+def test_repeated_ai_task_attempts_replace_cancelled_result_without_advancing() -> None:
+    from app.services.project_workflow_projection import project_ai_task_result
+
+    workflow = {"advancement_policy": "ai", "orchestration_status": "paused"}
+    node = {
+        "id": "design",
+        "execution_mode": "robot",
+        "status": "failed",
+        "execution_error": "cancelled",
+        "task_ids": ["device:task"],
+    }
+    for runtime_status, expected_status in [
+        ("running", "running"),
+        ("succeeded", "completed"),
+        ("running", "running"),
+        ("failed", "failed"),
+        ("succeeded", "completed"),
+    ]:
+        node = project_ai_task_result(
+            workflow, {**node, "task_statuses": {"device:task": runtime_status}}
+        )
+        assert node["status"] == expected_status
+        assert node["execution_error"] is None
+        assert workflow["orchestration_status"] == "paused"

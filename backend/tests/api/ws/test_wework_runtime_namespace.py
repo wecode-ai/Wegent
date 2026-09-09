@@ -1099,3 +1099,21 @@ async def test_project_chat_manager_continue_opens_custom_manager_reply(monkeypa
         message,
         room="wework-project-chat:task:project-1:task-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_native_event_fanout_uses_authenticated_runtime_device(monkeypatch):
+    publish = AsyncMock()
+    monkeypatch.setattr("app.services.wework_api.events.publish_runtime_event", publish)
+    result = await _relay_runtime_event(
+        DeviceNamespace(),
+        monkeypatch,
+        {
+            "event_type": "response.output_text.delta",
+            "taskId": "task-1",
+            "deviceId": "untrusted-device",
+            "data": {"delta": "result"},
+        },
+    )
+    assert result == {"success": True}
+    assert publish.await_args.args[:2] == (7, "local-device")

@@ -149,7 +149,7 @@ class BoardTeamContinuationService:
             content="",
             metadata_json={
                 "execution_id": execution.id,
-                "executor_type": "wegent_team",
+                "executor_type": execution.executor_type,
                 "executor_ref": str(team.id),
                 "backend_task_id": native_task.id,
                 "backend_subtask_id": created.assistant_subtask.id,
@@ -244,7 +244,7 @@ class BoardTeamContinuationService:
         metadata = (
             row.metadata_json if row and isinstance(row.metadata_json, dict) else {}
         )
-        if row is None or metadata.get("executor_type") != "wegent_team":
+        if row is None or metadata.get("executor_type") != "project_robot":
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Reply target is not a Wegent board execution",
@@ -403,7 +403,7 @@ def _continuation_activity(
     metadata = row.metadata_json if row and isinstance(row.metadata_json, dict) else {}
     if (
         row is None
-        or metadata.get("executor_type") != "wegent_team"
+        or metadata.get("executor_type") != "project_robot"
         or metadata.get("backend_task_id") != task_id
         or metadata.get("backend_subtask_id") != subtask_id
     ):

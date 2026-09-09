@@ -50,6 +50,7 @@ interface WorkflowTaskBinding {
 }
 
 interface IssueWorkflowDagProps {
+  currentRoleId?: string | null
   nodes: WorkflowNodeInstance[]
   tasks: WorkflowTaskBinding[]
   deliveries?: Delivery[]
@@ -321,6 +322,7 @@ function loopBodyLayout(
 }
 
 export function IssueWorkflowDag({
+  currentRoleId,
   nodes,
   tasks,
   deliveries = [],
@@ -354,7 +356,11 @@ export function IssueWorkflowDag({
   } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement | null>(null)
   const flowInstanceRef = useRef<ReactFlowInstance<RuntimeFlowNode, Edge> | null>(null)
-  const currentStageId = useMemo(() => getCurrentWorkflowNode(nodes)?.id ?? null, [nodes])
+  const currentStageId = useMemo(
+    () =>
+      currentRoleId !== undefined ? currentRoleId : (getCurrentWorkflowNode(nodes)?.id ?? null),
+    [nodes, currentRoleId]
+  )
   const effectiveSelectedStageId =
     stageSelection?.currentStageId === currentStageId &&
     nodes.some(stage => stage.id === stageSelection.stageId)
@@ -567,7 +573,7 @@ export function IssueWorkflowDag({
               const stageTasks = tasks.filter(task => task.workflow_node_id === stage.id)
               const automated = workflowNodeExecutionMode(stage) === 'robot'
               const startHumanStage = stageTasks.length === 0 && stage.status === 'ready'
-              const awaitingApproval = stage.status === 'awaiting_approval'
+              const awaitingApproval = !automated && stage.status === 'awaiting_approval'
               const canRunAutomation =
                 automated &&
                 Boolean(stage.automation_rule_id) &&

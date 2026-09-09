@@ -27,6 +27,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectIncomingEvent,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -143,6 +144,41 @@ def test_todo_attachment_flow(
     )
     assert deleted.status_code == 204
     assert not delivery_storage.objects
+
+
+def test_backend_stored_todo_comment_uses_project_activity(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.loop_items.comment_provider.push_project_chat_message",
+        lambda _message: None,
+    )
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Backend comment target"},
+    ).json()["id"]
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/comments",
+        headers=_auth(test_token),
+        json={"body": "Stored in the activity stream"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["author"] == test_user.user_name
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.task_id == item_id)
+        .one()
+    )
+    assert message.sender_type == "user"
+    assert message.content == "Stored in the activity stream"
 
 
 @pytest.fixture
@@ -1476,7 +1512,7 @@ def test_pausing_planning_does_not_claim_success_without_runtime_confirmation(
     assert plan.status == "planning"
 
 
-def test_executor_workflow_plan_submission_binds_current_manager_run(
+def test_assignment_endpoint_preserves_coordinator_identity(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -1493,57 +1529,28 @@ def test_executor_workflow_plan_submission_binds_current_manager_run(
     )
     test_db.add(issue)
     test_db.commit()
-    plan = WorkflowPlanView(
-        run_id="workflow-run-1",
-        issue_id=issue.id,
-        stage_id="__issue__",
-        plan_version=1,
-        approval_policy="required",
-        status="awaiting_approval",
-        summary="Implement the task.",
-        items=[],
-        manager_run=None,
-    )
-    submit = MagicMock(return_value=plan)
-    monkeypatch.setattr(
-        deliveries_endpoint.project_automation_execution,
-        "submit_manager_workflow_plan",
-        submit,
-    )
-    published_events: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        deliveries_endpoint,
-        "publish_loop_item_changed",
-        lambda db, *, item, reason, actor_user_id: published_events.append(
-            (item.id, reason)
-        ),
-    )
+    submit = AsyncMock(return_value={"orchestration_status": "completed"})
+    monkeypatch.setattr(deliveries_endpoint.issue_assignment_service, "decide", submit)
 
     response = test_client.post(
-        f"/api/v1/loop-items/{issue.id}/workflow-plan",
+        f"/api/v1/loop-items/{issue.id}/assignment",
         headers={
             **_auth(test_token),
             "X-Wegent-Automation-Run-ID": "automation-run-1",
         },
         json={
-            "summary": "Implement the task.",
-            "items": [
-                {
-                    "client_key": "implementation",
-                    "title": "Implement",
-                    "description": "Implement the requested behavior.",
-                    "assignee_type": "agent",
-                    "assignee_id": "agent-1",
-                }
-            ],
+            "request_id": "decision-1",
+            "expected_assignment_version": 0,
+            "action": "complete",
+            "reason": "Acceptance verified",
         },
     )
 
     assert response.status_code == 200
-    submit.assert_called_once()
-    assert submit.call_args.kwargs["run_id"] == "automation-run-1"
-    assert submit.call_args.kwargs["issue_id"] == issue.id
-    assert published_events == [(issue.id, "workflow_plan_submitted")]
+    submit.assert_awaited_once()
+    assert submit.await_args.kwargs["manager_run_id"] == "automation-run-1"
+    assert submit.await_args.kwargs["issue_id"] == issue.id
+    assert submit.await_args.kwargs["decision"].action == "complete"
 
 
 def test_workflow_task_binding_requires_a_ready_non_automated_stage(
@@ -1794,20 +1801,19 @@ def test_workflow_task_binding_survives_missing_dependency_delivery_content(
     assert response.json()["workflow_node_id"] == "deploy"
     binding = test_db.get(LoopItemTaskBinding, response.json()["id"])
     assert binding is not None
-    stage_input = binding.metadata_json["workflow_stage_input"]
-    dependency_delivery = stage_input["dependencies"][0]["deliveries"][0]
-    assert dependency_delivery["id"] == draft["id"]
-    assert dependency_delivery["markdown"] == ""
-    assert dependency_delivery["content_available"] is False
+    assert "workflow_stage_input" not in binding.metadata_json
     context_response = test_client.get(
         f"/api/v1/loop-items/{item['id']}/workflow-nodes/deploy/input-context",
         headers=_auth(test_token),
     )
     assert context_response.status_code == 200
     compiled_instruction = context_response.json()["compiled_task_instruction"]
-    assert "## 任务定位" in compiled_instruction
-    assert "## 上游已交付内容" in compiled_instruction
-    assert f'"id": "{draft["id"]}"' in compiled_instruction
+    assert "workflow_node_id: deploy" in compiled_instruction
+    assert "get_board_item" in compiled_instruction
+    assert "read_delivery" in compiled_instruction
+    assert draft["id"] in compiled_instruction
+    assert context_response.json()["upstream_deliverables"][0]["stage_id"] == "develop"
+    assert "dependencies" not in context_response.json()
 
 
 def test_binding_subscription_backend_task_uses_task_store(

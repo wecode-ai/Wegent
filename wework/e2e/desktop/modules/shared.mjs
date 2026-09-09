@@ -1433,7 +1433,10 @@ async function selectE2EModel(
       'The model selector did not retain the expected provider'
     )
   }
-  await control.command('press', 'body', { key: 'Escape' })
+  const menuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (menuSnapshot.testIds.includes('model-selector-menu')) {
+    await control.command('press', 'body', { key: 'Escape' })
+  }
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('model-selector-menu'),

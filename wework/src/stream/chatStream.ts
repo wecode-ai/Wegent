@@ -48,6 +48,9 @@ export interface ProjectTaskAssignedPayload {
   itemId: string
   itemTitle: string
   assignerName: string
+  assignmentId?: string
+  instruction?: string
+  url?: string
 }
 
 export interface ChatStreamHandlers {

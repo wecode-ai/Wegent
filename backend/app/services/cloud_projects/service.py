@@ -266,13 +266,13 @@ class CloudProjectService:
                     values.pull_request_automation.model_dump()
                 )
                 updates.pop("pull_request_automation", None)
-            if (
-                "workflow_definition" in values.model_fields_set
-                and values.workflow_definition is not None
-            ):
-                metadata["workflow_definition"] = (
-                    values.workflow_definition.model_dump()
-                )
+            if "workflow_definition" in values.model_fields_set:
+                if values.workflow_definition is None:
+                    metadata.pop("workflow_definition", None)
+                else:
+                    metadata["workflow_definition"] = (
+                        values.workflow_definition.model_dump()
+                    )
                 updates.pop("workflow_definition", None)
             if (
                 "provider_config" in values.model_fields_set

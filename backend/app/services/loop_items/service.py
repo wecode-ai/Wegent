@@ -471,12 +471,9 @@ class LoopItemService:
         team_id = payload.get("assignee_team_id")
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
-        if explicit_workflow is not None:
-            task_metadata["workflow"] = explicit_workflow.model_dump()
-        elif values.parent_id is None:
-            project_metadata = (
-                project.metadata_json if isinstance(project.metadata_json, dict) else {}
-            )
+        workflow = explicit_workflow
+        if workflow is None and values.parent_id is None:
+            project_metadata = project.metadata_json or {}
             raw_definition = project_metadata.get("workflow_definition")
             if isinstance(raw_definition, dict):
                 definition = ProjectWorkflowDefinition.model_validate(raw_definition)
@@ -485,27 +482,30 @@ class LoopItemService:
                     or definition.advancement_policy == "ai"
                 ):
                     workflow = instantiate_workflow(definition)
-                    if (
-                        workflow.advancement_policy == "ai"
-                        and workflow.ai_automation_rule_id
-                    ):
-                        rule = db.get(
-                            ProjectAutomationRule,
-                            workflow.ai_automation_rule_id,
-                        )
-                        if rule is not None:
-                            from app.services.issue_execution_configuration import (
-                                project_automation_execution_config,
-                            )
+        if workflow is not None:
+            if (
+                workflow.advancement_policy == "ai"
+                and workflow.execution_config is None
+            ):
+                rule = db.get(ProjectAutomationRule, workflow.ai_automation_rule_id)
+                if rule is not None:
+                    from app.services.issue_execution_configuration import (
+                        project_automation_execution_config,
+                    )
 
-                            workflow.execution_config = (
-                                project_automation_execution_config(
-                                    db,
-                                    rule,
-                                    issue_creator_user_id=user_id,
-                                )
-                            )
-                    task_metadata["workflow"] = workflow.model_dump()
+                    if str(rule.cloud_project_id) != str(project.id):
+                        raise ValueError("The experience belongs to another project")
+                    workflow.execution_config = project_automation_execution_config(
+                        db,
+                        rule,
+                        issue_creator_user_id=user_id,
+                    )
+            task_metadata["workflow"] = workflow.model_dump(mode="json")
+        if "workflow" in task_metadata:
+            task_metadata["workflow"]["intent"] = "\n\n".join(
+                filter(None, [values.title, values.description])
+            )
+            task_metadata["workflow"]["coordinator_user_id"] = user_id
         if explicit_execution_config is not None:
             task_metadata["execution_config"] = explicit_execution_config.model_dump(
                 mode="json"
@@ -760,6 +760,13 @@ class LoopItemService:
         self._require_item_access(db, item, user_id)
         return item
 
+    def get_for_edit(self, db: Session, item_id: str, user_id: int) -> LoopItem:
+        """Return one board item after enforcing comment/update permission."""
+
+        item = self._get_item_row(db, item_id)
+        self._require_item_access(db, item, user_id, edit=True)
+        return item
+
     def list_attachments(
         self, db: Session, item_id: str, user_id: int
     ) -> list[LoopItemAttachment]:
@@ -998,9 +1005,21 @@ class LoopItemService:
                 metadata["tags"] = updates.pop("tags") or []
             if "workflow" in values.model_fields_set:
                 workflow = values.workflow
-                metadata["workflow"] = (
+                from app.services.issue_assignment_state import (
+                    validate_human_assignment_update,
+                )
+
+                next_workflow = (
                     workflow.model_dump(mode="json") if workflow is not None else None
                 )
+                try:
+                    validate_human_assignment_update(
+                        metadata.get("workflow") or {},
+                        next_workflow,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+                metadata["workflow"] = next_workflow
                 updates.pop("workflow", None)
             if "execution_config" in values.model_fields_set:
                 execution_config = values.execution_config
@@ -1605,7 +1624,6 @@ class LoopItemService:
         item_id: str,
         values: LoopItemTaskBind,
         user_id: int,
-        stage_snapshot: dict[str, Any] | None = None,
         commit: bool = True,
     ) -> LoopItemTaskBinding:
         """Bind a trusted Issue execution, optionally to its workflow stage."""
@@ -1616,7 +1634,6 @@ class LoopItemService:
             values=values,
             user_id=user_id,
             allow_automated_stage=True,
-            stage_snapshot=stage_snapshot,
             commit=commit,
         )
 
@@ -1628,7 +1645,6 @@ class LoopItemService:
         values: LoopItemTaskBind,
         user_id: int,
         allow_automated_stage: bool,
-        stage_snapshot: dict[str, Any] | None = None,
         commit: bool = True,
     ) -> LoopItemTaskBinding:
         item = self.get(db, item_id, user_id)
@@ -1671,19 +1687,6 @@ class LoopItemService:
                         ),
                         **metadata_updates,
                     }
-                if values.workflow_node_id:
-                    from app.services.workflow_stage_context import (
-                        workflow_stage_context_resolver,
-                    )
-
-                    if workflow_stage_context_resolver.binding_snapshot(active) is None:
-                        workflow_stage_context_resolver.freeze_binding(
-                            active,
-                            stage_snapshot
-                            or workflow_stage_context_resolver.resolve(
-                                db, item=item, target_node_id=values.workflow_node_id
-                            ),
-                        )
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
@@ -1706,18 +1709,6 @@ class LoopItemService:
             linked_at=self._now(),
             metadata_json=_task_binding_metadata(values) or None,
         )
-        if values.workflow_node_id:
-            from app.services.workflow_stage_context import (
-                workflow_stage_context_resolver,
-            )
-
-            workflow_stage_context_resolver.freeze_binding(
-                binding,
-                stage_snapshot
-                or workflow_stage_context_resolver.resolve(
-                    db, item=item, target_node_id=values.workflow_node_id
-                ),
-            )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
         if commit:

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Route loop-item creation through the configured project provider."""
+"""Route loop-item operations through the configured project provider."""
 
 from dataclasses import dataclass
 from typing import Any, BinaryIO
@@ -12,6 +12,7 @@ from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem
 from app.models.user import User
 from app.schemas.delivery import LoopItemCreate
+from app.services.loop_items.comment_provider import backend_loop_item_comment_provider
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
 
@@ -70,6 +71,36 @@ class LoopItemProviderRouter:
 
 
 loop_item_provider_router = LoopItemProviderRouter()
+
+
+class LoopItemCommentProviderRouter:
+    """Route comments by the board item's configured storage provider."""
+
+    def add_comment(
+        self,
+        db: Session,
+        *,
+        item_id: str,
+        user_id: int,
+        user_name: str,
+        body: str,
+        automation_run_id: str = "",
+        execution_id: int = 0,
+    ) -> dict[str, object]:
+        if external_loop_item_provider.is_external_item(db, item_id):
+            return external_loop_item_provider.add_comment(db, item_id, user_id, body)
+        return backend_loop_item_comment_provider.add_comment(
+            db,
+            item_id=item_id,
+            user_id=user_id,
+            user_name=user_name,
+            body=body,
+            automation_run_id=automation_run_id,
+            execution_id=execution_id,
+        )
+
+
+loop_item_comment_provider_router = LoopItemCommentProviderRouter()
 
 
 class LoopItemAttachmentProviderRouter:

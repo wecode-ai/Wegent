@@ -1,3 +1,4 @@
+import { nodeTypes } from './AutomationCanvasNodes.jsx'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   BaseEdge,
@@ -47,632 +48,6 @@ import {
   branchNodeHeight,
   loopBodyNodeSize,
 } from './canvasGeometry'
-
-const INSERT_ITEM_DEFS = {
-  task: { label: '执行任务', Icon: Box },
-  dynamic: { label: 'AI 动态分配', Icon: Sparkles },
-  loop: { label: '循环', Icon: Repeat },
-  branch: { label: '分支', Icon: Webhook },
-  loopEnd: { label: '循环结束', Icon: Flag },
-}
-
-const TOP_LEVEL_INSERT_KINDS = ['task', 'dynamic', 'loop', 'branch']
-const BRANCH_HANDLER_KINDS = TOP_LEVEL_INSERT_KINDS
-const LOOP_BODY_INSERT_KINDS = ['task', 'branch', 'loopEnd']
-const LOOP_BRANCH_HANDLER_KINDS = LOOP_BODY_INSERT_KINDS
-
-function selectNodeFromMouse(event, onSelect) {
-  if (
-    (event.button != null && event.button !== 0) ||
-    (event.target instanceof Element && event.target.closest('.nodrag, .nopan'))
-  ) {
-    return
-  }
-  onSelect()
-}
-
-const HorizontalHandles = ({ hidden = true }) => (
-  <>
-    <Handle
-      type="target"
-      position={Position.Left}
-      className={automationClass(hidden ? 'automation-hidden-handle' : 'automation-node-handle')}
-    />
-    <Handle
-      type="source"
-      position={Position.Right}
-      className={automationClass(hidden ? 'automation-hidden-handle' : 'automation-node-handle')}
-    />
-  </>
-)
-
-function withCanvasNodeSelection(Component) {
-  const SelectionSyncedNode = memo(function SelectionSyncedNode(props) {
-    const { selected, id } = props
-    const selectNode = useCanvasEventBus(eventBus => eventBus.selectNode)
-    const selectionId = useMemo(() => canvasNodeIdToSelection(id), [id])
-
-    useEffect(() => {
-      if (selected) selectNode(selectionId)
-    }, [selected, selectNode, selectionId])
-
-    return <Component {...props} />
-  })
-  SelectionSyncedNode.displayName = `SelectionSyncedNode(${
-    Component.displayName || Component.name || 'CanvasNode'
-  })`
-  return SelectionSyncedNode
-}
-
-const WorkflowNodeInsertControl = memo(function WorkflowNodeInsertControl({
-  nodeId,
-  placement,
-  kinds,
-  onInsert,
-}) {
-  const [open, setOpen] = useState(false)
-  const placementLabel = placement === 'before' ? '之前' : '之后'
-
-  return (
-    <div
-      className={automationClass(`workflow-node-insert ${placement}`)}
-      onPointerDown={event => event.stopPropagation()}
-      onClick={event => event.stopPropagation()}
-    >
-      <button
-        type="button"
-        className={automationClass('workflow-node-insert-trigger nodrag nopan')}
-        data-testid={`automation-node-insert-${placement}-${nodeId}`}
-        aria-label={`在当前节点${placementLabel}添加流程节点`}
-        aria-expanded={open}
-        onClick={() => setOpen(current => !current)}
-      >
-        <Plus size={16} />
-      </button>
-      {open ? (
-        <div className={automationClass(`workflow-node-insert-menu nodrag nopan ${placement}`)}>
-          {kinds.map(kind => {
-            const { label, Icon } = INSERT_ITEM_DEFS[kind]
-            return (
-              <button
-                key={kind}
-                type="button"
-                data-testid={`automation-node-insert-${placement}-${kind}-${nodeId}`}
-                onClick={() => {
-                  onInsert(placement, kind)
-                  setOpen(false)
-                }}
-              >
-                <Icon size={14} />
-                {label}
-              </button>
-            )
-          })}
-        </div>
-      ) : null}
-    </div>
-  )
-})
-
-const WorkflowNodeInsertControls = memo(function WorkflowNodeInsertControls({
-  nodeId,
-  allowBefore = true,
-  kinds = TOP_LEVEL_INSERT_KINDS,
-  onInsert,
-}) {
-  return (
-    <>
-      {allowBefore ? (
-        <WorkflowNodeInsertControl
-          nodeId={nodeId}
-          placement="before"
-          kinds={kinds}
-          onInsert={onInsert}
-        />
-      ) : null}
-      <WorkflowNodeInsertControl
-        nodeId={nodeId}
-        placement="after"
-        kinds={kinds}
-        onInsert={onInsert}
-      />
-    </>
-  )
-})
-
-const BranchContinuationControl = memo(function BranchContinuationControl({
-  branchId,
-  kinds,
-  onInsertContinuation,
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div
-      className={automationClass('react-flow-branch-continuation')}
-      onPointerDown={event => event.stopPropagation()}
-      onClick={event => event.stopPropagation()}
-    >
-      <button
-        type="button"
-        className={automationClass('react-flow-branch-continuation-trigger nodrag nopan')}
-        data-testid={`branch-continuation-${branchId}`}
-        aria-label="添加完成后继续节点"
-        aria-expanded={open}
-        onClick={() => setOpen(current => !current)}
-      >
-        <Plus size={12} />
-      </button>
-      {open ? (
-        <div className={automationClass('react-flow-branch-continuation-menu nodrag nopan')}>
-          {kinds.map(candidate => {
-            const { label, Icon } = INSERT_ITEM_DEFS[candidate]
-            return (
-              <button
-                key={candidate}
-                type="button"
-                onClick={() => {
-                  onInsertContinuation(branchId, candidate)
-                  setOpen(false)
-                }}
-              >
-                <Icon size={13} />
-                {label}
-              </button>
-            )
-          })}
-        </div>
-      ) : null}
-    </div>
-  )
-})
-
-const TriggerCanvasNode = memo(function TriggerCanvasNode({ data, selected }) {
-  const TriggerIcon = data.triggerType === 'schedule' ? Clock3 : Webhook
-  return (
-    <article
-      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
-      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
-    >
-      <HorizontalHandles />
-      <button
-        type="button"
-        className={automationClass(`flow-node trigger ${selected ? 'selected' : ''}`)}
-        data-testid="automation-trigger-node"
-        onClick={data.onSelect}
-      >
-        <span className={automationClass('node-icon trigger')}>
-          <TriggerIcon size={17} />
-        </span>
-        <span className={automationClass('flow-node-copy')}>
-          <small>触发规则</small>
-          <strong>{data.title}</strong>
-          <span>{data.meta}</span>
-        </span>
-        <ChevronRight size={14} />
-      </button>
-      <WorkflowNodeInsertControls nodeId="trigger" allowBefore={false} onInsert={data.onInsert} />
-    </article>
-  )
-})
-const SelectionSyncedTriggerCanvasNode = withCanvasNodeSelection(TriggerCanvasNode)
-
-function executionSummary(environment, model) {
-  const normalizedEnvironment = /^(Local Executor|本机执行器)(\s*·.*)?$/i.test(environment)
-    ? '本机'
-    : environment.replace(/\s*·\s*(在线|忙碌)$/, '')
-  return [normalizedEnvironment, model].filter(Boolean).join(' · ') || '尚未配置执行环境'
-}
-
-const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data, selected }) {
-  return (
-    <article
-      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
-      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
-    >
-      <HorizontalHandles />
-      <button
-        type="button"
-        className={automationClass(`flow-node step ${selected ? 'selected' : ''}`)}
-        data-testid={`execution-node-${data.step.id}`}
-        onClick={data.onSelect}
-      >
-        <span className={automationClass('node-icon step')}>
-          <Box size={17} />
-        </span>
-        <span className={automationClass('flow-node-copy')}>
-          <small>{data.step.executionMode === 'automatic' ? '自动执行' : '手动执行'}</small>
-          <strong>{data.step.name || '未命名执行节点'}</strong>
-          <span>
-            {data.step.executionMode === 'automatic'
-              ? executionSummary(data.step.environment, data.step.model)
-              : '由成员手动完成'}
-          </span>
-        </span>
-        <ChevronRight size={14} />
-      </button>
-      <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
-    </article>
-  )
-})
-const SelectionSyncedExecutionCanvasNode = withCanvasNodeSelection(ExecutionCanvasNode)
-
-const DynamicCanvasNode = memo(function DynamicCanvasNode({ data, selected }) {
-  return (
-    <article
-      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
-      data-testid={`ai-allocation-node-${data.step.id}`}
-      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
-    >
-      <HorizontalHandles />
-      <div className={automationClass(`dynamic-flow-node ${selected ? 'selected' : ''}`)}>
-        <button
-          type="button"
-          className={automationClass('dynamic-node-main')}
-          onClick={data.onSelect}
-        >
-          <span className={automationClass('node-icon coordinator')}>
-            <Sparkles size={17} />
-          </span>
-          <span className={automationClass('flow-node-copy')}>
-            <small>AI 动态分配 · 无约束</small>
-            <strong>{data.step.name}</strong>
-            <span>{executionSummary(data.step.environment, data.step.model)}</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          className={automationClass('dynamic-node-add-stage nodrag nopan')}
-          data-testid={`dag-stage-add-first-${data.step.id}`}
-          aria-label="添加第一个阶段"
-          onClick={data.onAddFirstStage}
-        >
-          <GitBranch size={13} />
-          添加编排约束
-        </button>
-      </div>
-      <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
-    </article>
-  )
-})
-const SelectionSyncedDynamicCanvasNode = withCanvasNodeSelection(DynamicCanvasNode)
-
-const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data, selected }) {
-  return (
-    <section
-      className={automationClass(`react-flow-dynamic-group ${selected ? 'selected' : ''}`)}
-      data-testid={`ai-allocation-node-${data.step.id}`}
-      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
-    >
-      <HorizontalHandles />
-      <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
-      <button
-        type="button"
-        className={automationClass('react-flow-group-header')}
-        onClick={data.onSelect}
-      >
-        <span className={automationClass('node-icon coordinator')}>
-          <Sparkles size={17} />
-        </span>
-        <span>
-          <small>AI 动态分配 · DAG 子图</small>
-          <strong>{data.step.name}</strong>
-          <em>{executionSummary(data.step.environment, data.step.model)}</em>
-        </span>
-        <span className={automationClass('subgraph-count')}>
-          {data.step.subgraph?.nodes.length ?? 0} 个节点
-        </span>
-      </button>
-      <div className={automationClass('react-flow-group-label')}>
-        <GitBranch size={12} />
-        在画布中拖动阶段，或从连接点建立依赖
-      </div>
-    </section>
-  )
-})
-const SelectionSyncedDynamicGroupCanvasNode = withCanvasNodeSelection(DynamicGroupCanvasNode)
-
-const DagStageCanvasNode = memo(function DagStageCanvasNode({ data, selected }) {
-  return (
-    <article
-      className={automationClass(`react-flow-stage-node ${selected ? 'selected' : ''}`)}
-      data-testid={`dag-stage-container-${data.stage.id}`}
-      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
-    >
-      <Handle
-        type="target"
-        position={Position.Left}
-        className={automationClass('react-flow-stage-handle target')}
-      />
-      <button
-        type="button"
-        className={automationClass('react-flow-stage-main')}
-        data-testid={`dag-stage-node-${data.stage.id}`}
-        onClick={data.onSelect}
-      >
-        <span>{data.index + 1}</span>
-        <span>
-          <strong>{data.stage.name}</strong>
-          <small>
-            {data.stage.dependencies.length
-              ? `依赖 ${data.stage.dependencies.length} 个节点`
-              : data.stage.executionMode === 'automatic'
-                ? executionSummary(data.stage.environment, data.stage.model)
-                : '手动执行'}
-          </small>
-        </span>
-      </button>
-      <button
-        type="button"
-        className={automationClass('react-flow-stage-insert before nodrag nopan')}
-        data-testid={`dag-stage-insert-before-${data.stage.id}`}
-        aria-label={`在 ${data.stage.name} 前添加阶段`}
-        onClick={event => {
-          event.stopPropagation()
-          data.onInsert('before')
-        }}
-      >
-        <Plus size={12} />
-      </button>
-      <button
-        type="button"
-        className={automationClass('react-flow-stage-insert after nodrag nopan')}
-        data-testid={`dag-stage-insert-after-${data.stage.id}`}
-        aria-label={`在 ${data.stage.name} 后添加阶段`}
-        onClick={event => {
-          event.stopPropagation()
-          data.onInsert('after')
-        }}
-      >
-        <Plus size={12} />
-      </button>
-      <Handle
-        type="source"
-        position={Position.Right}
-        className={automationClass('react-flow-stage-handle source')}
-      />
-    </article>
-  )
-})
-const SelectionSyncedDagStageCanvasNode = withCanvasNodeSelection(DagStageCanvasNode)
-
-const BranchConditionRows = memo(function BranchConditionRows({ step }) {
-  const { t } = useTranslation('common')
-  const conditions = step.branchConditions ?? []
-  return (
-    <div className={automationClass('react-flow-branch-conditions')}>
-      {conditions.length === 0 ? (
-        <div className={automationClass('react-flow-branch-empty')}>
-          还没有分支，可通过右侧加号添加
-        </div>
-      ) : (
-        conditions.map((condition, index) => (
-          <div
-            className={automationClass('react-flow-branch-condition-row')}
-            key={`${condition.eventType}-${index}`}
-          >
-            <em>分支 {index + 1}</em>
-            <span>
-              {eventTypeLabel(condition.eventType, t) || '未选择事件'}
-              <i>{(condition.handlerNodeIds ?? []).length} 个节点</i>
-            </span>
-            <Handle
-              type="source"
-              id={`cond-${index}`}
-              position={Position.Right}
-              className={automationClass('react-flow-branch-handle')}
-            />
-          </div>
-        ))
-      )}
-    </div>
-  )
-})
-
-const BranchNodeHeader = memo(function BranchNodeHeader({ step, testId, onSelect }) {
-  return (
-    <button
-      type="button"
-      className={automationClass('react-flow-branch-header')}
-      data-testid={testId}
-      onClick={onSelect}
-    >
-      <span className={automationClass('node-icon branch', '!size-7 !rounded-md')}>
-        <Webhook size={14} />
-      </span>
-      <span>
-        <strong>{step.name || '分支'}</strong>
-        <small>按事件路由 · {(step.branchConditions ?? []).length} 个条件</small>
-      </span>
-    </button>
-  )
-})
-
-const BranchCanvasNode = memo(function BranchCanvasNode({ data, selected }) {
-  const { step, onSelect, onAddBranchHandler, onAddBranchContinuation } = data
-  return (
-    <article
-      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
-      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
-    >
-      <Handle
-        type="target"
-        position={Position.Left}
-        className={automationClass('automation-hidden-handle')}
-      />
-      <div
-        className={automationClass(`react-flow-branch-node ${selected ? 'selected' : ''}`)}
-        data-testid={`branch-node-${step.id}`}
-      >
-        <BranchNodeHeader step={step} testId={`branch-node-main-${step.id}`} onSelect={onSelect} />
-        <BranchConditionRows step={step} />
-        <div className={automationClass('react-flow-branch-footer')}>
-          <span>完成后继续</span>
-          <BranchContinuationControl
-            branchId={step.id}
-            kinds={BRANCH_HANDLER_KINDS}
-            onInsertContinuation={onAddBranchContinuation}
-          />
-          <Handle
-            type="source"
-            id="default"
-            position={Position.Right}
-            className={automationClass('react-flow-branch-handle')}
-          />
-        </div>
-      </div>
-      <WorkflowNodeInsertControls
-        nodeId={step.id}
-        allowBefore={false}
-        kinds={BRANCH_HANDLER_KINDS}
-        onInsert={(placement, kind) =>
-          onAddBranchHandler(step.id, { kind, eventType: '', select: 'branch' })
-        }
-      />
-    </article>
-  )
-})
-const SelectionSyncedBranchCanvasNode = withCanvasNodeSelection(BranchCanvasNode)
-
-const LoopBranchCanvasNode = memo(function LoopBranchCanvasNode({ data, selected }) {
-  const { step, onSelect, onAddBranchHandler } = data
-  return (
-    <article
-      className={automationClass(`react-flow-branch-node ${selected ? 'selected' : ''}`)}
-      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
-    >
-      <Handle
-        type="target"
-        position={Position.Left}
-        className={automationClass('automation-hidden-handle')}
-      />
-      <BranchNodeHeader step={step} testId={`loop-body-node-${step.id}`} onSelect={onSelect} />
-      <BranchConditionRows step={step} />
-      <WorkflowNodeInsertControls
-        nodeId={step.id}
-        allowBefore={false}
-        kinds={LOOP_BODY_INSERT_KINDS}
-        onInsert={(placement, kind) =>
-          onAddBranchHandler(step.id, { kind, eventType: '', select: 'branch' })
-        }
-      />
-    </article>
-  )
-})
-const SelectionSyncedLoopBranchCanvasNode = withCanvasNodeSelection(LoopBranchCanvasNode)
-
-const LoopMarkerCanvasNode = memo(function LoopMarkerCanvasNode({ data, selected }) {
-  const { step, onSelect, onInsert } = data
-  const isStart = step.nodeType === 'loopStart'
-  return (
-    <article
-      className={automationClass(`react-flow-loop-marker-node ${selected ? 'selected' : ''}`)}
-      title={step.name || (isStart ? '循环开始' : '循环结束')}
-      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
-    >
-      <HorizontalHandles />
-      <button
-        type="button"
-        className={automationClass(
-          `react-flow-loop-marker-main ${isStart ? 'start' : 'end'} ${selected ? 'selected' : ''}`
-        )}
-        data-testid={`loop-body-node-${step.id}`}
-        aria-label={step.name || (isStart ? '循环开始' : '循环结束')}
-        onClick={onSelect}
-      >
-        {isStart ? <CircleDot size={18} /> : <Flag size={16} />}
-      </button>
-      <WorkflowNodeInsertControls
-        nodeId={step.id}
-        allowBefore={false}
-        kinds={LOOP_BODY_INSERT_KINDS}
-        onInsert={onInsert}
-      />
-    </article>
-  )
-})
-const SelectionSyncedLoopMarkerCanvasNode = withCanvasNodeSelection(LoopMarkerCanvasNode)
-
-const LoopBodyCanvasNode = memo(function LoopBodyCanvasNode({ data, selected }) {
-  const { step, onSelect, onInsert } = data
-  const caption =
-    step.executionMode === 'automatic' ? executionSummary(step.environment, step.model) : '手动执行'
-  return (
-    <article
-      className={automationClass(`react-flow-loop-body-node ${selected ? 'selected' : ''}`)}
-      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
-    >
-      <HorizontalHandles />
-      <button
-        type="button"
-        className={automationClass('react-flow-loop-body-main')}
-        data-testid={`loop-body-node-${step.id}`}
-        onClick={onSelect}
-      >
-        <span className={automationClass('node-icon')}>
-          <Box size={14} />
-        </span>
-        <span>
-          <strong>{step.name || '未命名节点'}</strong>
-          <small>{caption}</small>
-        </span>
-      </button>
-      <WorkflowNodeInsertControls
-        nodeId={step.id}
-        allowBefore={false}
-        kinds={LOOP_BODY_INSERT_KINDS}
-        onInsert={onInsert}
-      />
-    </article>
-  )
-})
-const SelectionSyncedLoopBodyCanvasNode = withCanvasNodeSelection(LoopBodyCanvasNode)
-
-const LoopGroupCanvasNode = memo(function LoopGroupCanvasNode({ id, data, selected }) {
-  const { step, onSelect, onInsert } = data
-  const childSelected = useStore(
-    useCallback(state => state.nodes.some(node => node.parentId === id && node.selected), [id])
-  )
-  const highlighted = selected || childSelected
-  const loopConfig = step.loopConfig ?? {
-    maxAttempts: 5,
-    timeoutSeconds: null,
-  }
-  const attemptSummary =
-    (loopConfig.maxAttempts ?? 5) === 0 ? '无限次' : `最多 ${loopConfig.maxAttempts ?? 5} 次`
-  const timeoutSummary = loopConfig.timeoutSeconds ? ` · ${loopConfig.timeoutSeconds}s 超时` : ''
-  return (
-    <section
-      className={automationClass(`react-flow-loop-group ${highlighted ? 'selected' : ''}`)}
-      data-testid={`loop-node-${step.id}`}
-      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
-    >
-      <HorizontalHandles />
-      <WorkflowNodeInsertControls nodeId={step.id} onInsert={onInsert} />
-      <div className={automationClass('react-flow-loop-body-area')} />
-      <div className={automationClass('react-flow-loop-header')}>
-        <button
-          type="button"
-          className={automationClass('react-flow-loop-header-main')}
-          data-testid={`loop-node-main-${step.id}`}
-          onClick={onSelect}
-        >
-          <span className={automationClass('node-icon coordinator')}>
-            <Repeat size={15} />
-          </span>
-          <span>
-            <small>循环</small>
-            <strong>{step.name || '未命名循环'}</strong>
-            <em>
-              {attemptSummary}
-              {timeoutSummary}
-            </em>
-          </span>
-        </button>
-      </div>
-    </section>
-  )
-})
-const SelectionSyncedLoopGroupCanvasNode = withCanvasNodeSelection(LoopGroupCanvasNode)
 
 const DifyStyleEdge = memo(function DifyStyleEdge({
   id,
@@ -734,19 +109,6 @@ const DifyConnectionLine = memo(function DifyConnectionLine({ fromX, fromY, toX,
     </g>
   )
 })
-
-const nodeTypes = {
-  trigger: SelectionSyncedTriggerCanvasNode,
-  execution: SelectionSyncedExecutionCanvasNode,
-  dynamic: SelectionSyncedDynamicCanvasNode,
-  dynamicGroup: SelectionSyncedDynamicGroupCanvasNode,
-  dagStage: SelectionSyncedDagStageCanvasNode,
-  branch: SelectionSyncedBranchCanvasNode,
-  loopGroup: SelectionSyncedLoopGroupCanvasNode,
-  loopBranch: SelectionSyncedLoopBranchCanvasNode,
-  loopMarker: SelectionSyncedLoopMarkerCanvasNode,
-  loopBody: SelectionSyncedLoopBodyCanvasNode,
-}
 
 const edgeTypes = {
   dify: DifyStyleEdge,
@@ -858,6 +220,7 @@ function createsCycle(nodes, sourceId, targetId) {
 
 export function AutomationWorkflowCanvas({
   draft,
+  readOnly = false,
   trigger,
   selectedNode,
   rightPanelInset,
@@ -865,9 +228,6 @@ export function AutomationWorkflowCanvas({
   onInsertNode,
   onAddBranchHandler,
   onAddBranchContinuation,
-  onAddDagStage,
-  onToggleDagDependency,
-  onMoveDagStage,
   onToggleStepDependency,
   onMoveStep,
   onInsertLoopBodyNode,
@@ -898,6 +258,8 @@ export function AutomationWorkflowCanvas({
         y: centerY - OUTER_NODE_HEIGHT / 2,
       },
       data: {
+        readOnly,
+        advancement: draft.advancement,
         triggerType: draft.trigger.type,
         title: trigger.label,
         meta: trigger.detail,
@@ -911,90 +273,7 @@ export function AutomationWorkflowCanvas({
       const stepX = Number.isFinite(step.x) ? step.x : 440 + index * 420
       const stepY = Number.isFinite(step.y) ? step.y : centerY - OUTER_NODE_HEIGHT / 2
 
-      if (step.kind === 'dynamic') {
-        const subgraphNodes = step.subgraph?.nodes ?? []
-        if (subgraphNodes.length === 0) {
-          nodes.push({
-            id: step.id,
-            type: 'dynamic',
-            position: {
-              x: stepX,
-              y: stepY,
-            },
-            data: {
-              step,
-              onSelect: () => onSelectNode({ type: 'step', id: step.id }),
-              onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
-              onAddFirstStage: () => onAddDagStage(step.id),
-            },
-            style: { width: DYNAMIC_NODE_WIDTH, height: DYNAMIC_NODE_HEIGHT },
-          })
-        } else {
-          const graphWidth = Math.max(
-            GROUP_MIN_WIDTH,
-            ...subgraphNodes.map(stage => (stage.x ?? 0) + STAGE_WIDTH + 40)
-          )
-          const graphHeight = Math.max(
-            280,
-            ...subgraphNodes.map(stage => (stage.y ?? 0) + STAGE_HEIGHT + 36)
-          )
-          const groupHeight = GROUP_HEADER_HEIGHT + graphHeight
-          nodes.push({
-            id: step.id,
-            type: 'dynamicGroup',
-            position: {
-              x: stepX,
-              y: stepY,
-            },
-            data: {
-              step,
-              onSelect: () => onSelectNode({ type: 'step', id: step.id }),
-              onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
-            },
-            style: { width: graphWidth, height: groupHeight },
-          })
-
-          subgraphNodes.forEach((stage, stageIndex) => {
-            const stageNodeId = `dag:${step.id}:${stage.id}`
-            nodes.push({
-              id: stageNodeId,
-              type: 'dagStage',
-              parentId: step.id,
-              extent: 'parent',
-              position: {
-                x: (stage.x ?? 0) + 20,
-                y: (stage.y ?? 0) + GROUP_HEADER_HEIGHT,
-              },
-              data: {
-                stepId: step.id,
-                stage,
-                index: stageIndex,
-                onSelect: () =>
-                  onSelectNode({ type: 'dagStage', stepId: step.id, stageId: stage.id }),
-                onInsert: placement => onAddDagStage(step.id, stage.id, placement),
-              },
-              style: { width: STAGE_WIDTH, height: STAGE_HEIGHT },
-            })
-          })
-
-          subgraphNodes.forEach(stage => {
-            stage.dependencies.forEach(dependencyId => {
-              edges.push({
-                id: `dag-edge:${step.id}:${dependencyId}:${stage.id}`,
-                source: `dag:${step.id}:${dependencyId}`,
-                target: `dag:${step.id}:${stage.id}`,
-                type: 'dify',
-                data: {
-                  kind: 'dag',
-                  stepId: step.id,
-                  sourceStageId: dependencyId,
-                  targetStageId: stage.id,
-                },
-              })
-            })
-          })
-        }
-      } else if (step.kind === 'loop') {
+      if (step.kind === 'loop') {
         const bodySteps = step.subgraph?.nodes ?? []
         const graphWidth = Math.max(
           GROUP_MIN_WIDTH,
@@ -1013,6 +292,7 @@ export function AutomationWorkflowCanvas({
             y: stepY,
           },
           data: {
+            readOnly,
             step,
             onSelect: () => onSelectNode({ type: 'step', id: step.id }),
             onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
@@ -1038,6 +318,7 @@ export function AutomationWorkflowCanvas({
               y: (bodyStep.y ?? 0) + LOOP_HEADER_HEIGHT,
             },
             data: {
+              readOnly,
               step: bodyStep,
               loopId: step.id,
               onSelect: () =>
@@ -1059,6 +340,7 @@ export function AutomationWorkflowCanvas({
               target: `loop:${step.id}:${bodyStep.id}`,
               type: 'dify',
               data: {
+                readOnly,
                 kind: 'loopBody',
                 loopId: step.id,
                 sourceBodyId: dependencyId,
@@ -1095,6 +377,7 @@ export function AutomationWorkflowCanvas({
             y: stepY,
           },
           data: {
+            readOnly,
             step,
             onSelect: () => onSelectNode({ type: 'step', id: step.id }),
             onAddBranchHandler,
@@ -1111,6 +394,7 @@ export function AutomationWorkflowCanvas({
             y: stepY,
           },
           data: {
+            readOnly,
             step,
             onSelect: () => onSelectNode({ type: 'step', id: step.id }),
             onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
@@ -1137,6 +421,7 @@ export function AutomationWorkflowCanvas({
           type: 'dify',
           selectable: sourceId !== 'trigger',
           data: {
+            readOnly,
             kind: sourceId === 'trigger' ? 'trigger' : 'outerDependency',
             sourceStepId: sourceId,
             targetStepId: step.id,
@@ -1165,9 +450,9 @@ export function AutomationWorkflowCanvas({
     return { nodes, edges }
   }, [
     draft,
+    readOnly,
     onAddBranchContinuation,
     onAddBranchHandler,
-    onAddDagStage,
     onInsertLoopBodyNode,
     onInsertNode,
     onSelectNode,
@@ -1224,17 +509,6 @@ export function AutomationWorkflowCanvas({
 
   const onNodeDragStop = useCallback(
     (_, node) => {
-      if (node.type === 'dagStage') {
-        node.data.onSelect?.()
-        const { stepId, stage } = node.data
-        onMoveDagStage(
-          stepId,
-          stage.id,
-          Math.max(0, Math.round(node.position.x - 20)),
-          Math.max(0, Math.round(node.position.y - GROUP_HEADER_HEIGHT))
-        )
-        return
-      }
       if (node.type === 'loopBody' || node.type === 'loopBranch' || node.type === 'loopMarker') {
         node.data.onSelect?.()
         const { loopId, step } = node.data
@@ -1246,18 +520,12 @@ export function AutomationWorkflowCanvas({
         )
         return
       }
-      if (
-        node.type === 'execution' ||
-        node.type === 'dynamic' ||
-        node.type === 'dynamicGroup' ||
-        node.type === 'loopGroup' ||
-        node.type === 'branch'
-      ) {
+      if (node.type === 'execution' || node.type === 'loopGroup' || node.type === 'branch') {
         node.data.onSelect?.()
         onMoveStep(node.id, Math.round(node.position.x), Math.round(node.position.y))
       }
     },
-    [onMoveDagStage, onMoveLoopBodyNode, onMoveStep]
+    [onMoveLoopBodyNode, onMoveStep]
   )
 
   const onConnect = useCallback(
@@ -1273,26 +541,7 @@ export function AutomationWorkflowCanvas({
         return
       }
       if (
-        sourceNode?.type === 'dagStage' &&
-        targetNode?.type === 'dagStage' &&
-        sourceNode.data.stepId === targetNode.data.stepId
-      ) {
-        const step = draft.steps.find(item => item.id === sourceNode.data.stepId)
-        const subgraphNodes = step?.subgraph?.nodes ?? []
-        if (
-          !step ||
-          createsCycle(subgraphNodes, sourceNode.data.stage.id, targetNode.data.stage.id) ||
-          targetNode.data.stage.dependencies.includes(sourceNode.data.stage.id)
-        ) {
-          return
-        }
-        onToggleDagDependency(step.id, targetNode.data.stage.id, sourceNode.data.stage.id)
-        return
-      }
-      if (
         sourceNode?.type !== 'execution' &&
-        sourceNode?.type !== 'dynamic' &&
-        sourceNode?.type !== 'dynamicGroup' &&
         sourceNode?.type !== 'branch' &&
         sourceNode?.type !== 'loopBranch' &&
         sourceNode?.type !== 'loopMarker' &&
@@ -1302,8 +551,6 @@ export function AutomationWorkflowCanvas({
       }
       if (
         targetNode?.type !== 'execution' &&
-        targetNode?.type !== 'dynamic' &&
-        targetNode?.type !== 'dynamicGroup' &&
         targetNode?.type !== 'branch' &&
         targetNode?.type !== 'loopBranch' &&
         targetNode?.type !== 'loopMarker' &&
@@ -1342,15 +589,12 @@ export function AutomationWorkflowCanvas({
       }
       onToggleStepDependency(targetNode.id, sourceNode.id)
     },
-    [draft.steps, nodes, onToggleDagDependency, onToggleLoopBodyDependency, onToggleStepDependency]
+    [draft.advancement, draft.steps, nodes, onToggleLoopBodyDependency, onToggleStepDependency]
   )
 
   const onEdgesDelete = useCallback(
     edges => {
       edges.forEach(edge => {
-        if (edge.data?.kind === 'dag') {
-          onToggleDagDependency(edge.data.stepId, edge.data.targetStageId, edge.data.sourceStageId)
-        }
         if (edge.data?.kind === 'loopBody') {
           onToggleLoopBodyDependency(
             edge.data.loopId,
@@ -1363,7 +607,7 @@ export function AutomationWorkflowCanvas({
         }
       })
     },
-    [onToggleDagDependency, onToggleLoopBodyDependency, onToggleStepDependency]
+    [draft.advancement, onToggleLoopBodyDependency, onToggleStepDependency]
   )
 
   const onNodesDelete = useCallback(
@@ -1407,8 +651,8 @@ export function AutomationWorkflowCanvas({
         onEdgesDelete={onEdgesDelete}
         onNodesDelete={onNodesDelete}
         connectionLineComponent={DifyConnectionLine}
-        nodesDraggable
-        nodesConnectable
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
         elementsSelectable
         onlyRenderVisibleElements
         panOnDrag={interactionMode === 'hand' ? true : [1, 2]}
@@ -1423,7 +667,7 @@ export function AutomationWorkflowCanvas({
         maxZoom={1.8}
         defaultViewport={{ x: 176, y: 136, zoom: 0.99 }}
         proOptions={{ hideAttribution: true }}
-        deleteKeyCode={['Backspace', 'Delete']}
+        deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
       >
         <CanvasNewNodeFocus
           canvasRef={canvasRef}
@@ -1471,9 +715,7 @@ export function AutomationWorkflowCanvas({
           nodeColor={node =>
             node.type === 'trigger'
               ? 'rgb(var(--color-focus))'
-              : node.type === 'dynamicGroup'
-                ? 'rgb(var(--color-text-secondary) / 0.5)'
-                : 'rgb(var(--color-text-muted) / 0.5)'
+              : 'rgb(var(--color-text-muted) / 0.5)'
           }
           maskColor="rgb(var(--color-bg-base) / 0.76)"
         />

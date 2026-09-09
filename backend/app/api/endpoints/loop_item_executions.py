@@ -583,7 +583,7 @@ def cancel_execution(
         user_id=current_user.id,
     )
     row = loop_item_execution_service.cancel(
-        db, execution_id=execution_id, note=values.note
+        db, execution_id=execution_id, note=values.note, user_initiated=True
     )
     if row.team_id and row.backend_task_id:
         from app.services.project_automation_managed_execution import (
@@ -631,6 +631,7 @@ def stop_execution(
         db,
         execution_id=execution_id,
         note="Stopped from the automation queue",
+        user_initiated=True,
     )
     if row.team_id and row.backend_task_id:
         from app.services.project_automation_managed_execution import (

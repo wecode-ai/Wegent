@@ -9,6 +9,8 @@ export const DESKTOP_CHECKPOINTS = [
   'workbench-mode',
   'automation-lifecycle',
   'project-automation',
+  'project-automation-workflow',
+  'event-center',
   'project-event-sources',
   'project-assignment-notification',
   'offline-local-project-space',
@@ -82,3 +84,22 @@ export const PLUGIN_SEGMENTS = [
   'skill-mention-rendering',
   'sites-plugin-auto-install',
 ]
+
+export const COMPOSITE_CHECKPOINTS = new Map([
+  ['project-automation', ['project-automation-workflow', 'event-center']],
+  [
+    'browser-annotation',
+    ['browser-annotation-core', 'browser-annotation-anchors', 'browser-annotation-design'],
+  ],
+  [
+    'cloud-git-worktree',
+    [
+      'cloud-worktree-capability',
+      'cloud-worktree-create',
+      'cloud-worktree-queued-cancel',
+      'cloud-worktree-tools',
+      'cloud-worktree-archive-restore',
+      'cloud-worktree-device-restart',
+    ],
+  ],
+])

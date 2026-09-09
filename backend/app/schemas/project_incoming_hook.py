@@ -96,6 +96,12 @@ class ProjectIncomingEventView(ProjectChatSchema):
     collection_mode: str
     status: Literal[
         "received",
+        "waiting_configuration",
+        "queued",
+        "clarifying",
+        "dispatching",
+        "routed",
+        "handoff_failed",
         "processing",
         "processed",
         "unresolved",

@@ -1,6 +1,5 @@
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type {
   Attachment,
   ProjectWithTasks,
@@ -11,42 +10,14 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { ModelOptions, ModelSelectionConfig, ModelType, UnifiedModel } from '@/types/api'
-import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
+import { activityTaskRequest, taskActivityExecutionConfig } from './taskActivityExecutionConfig'
+import type { CreateProjectRuntimeTaskOptions } from '@/features/workbench/workbenchContextTypes'
 
 export interface TaskAiRuntimeBridge {
   createProjectRuntimeTask: (
     input: string,
-    options: {
-      project?: ProjectWithTasks | null
-      modelId?: string | null
-      collaborationMode?: 'default' | 'plan'
-      cloudProjectId?: string
-      origin?: {
-        type: 'board_comment'
-        cloudProjectId: string
-        loopItemId: string
-        rootCommentId?: string
-        projectStore: CloudProject['project_store']
-      }
-      executionModel?: {
-        modelId?: string | null
-        modelType?: string | null
-        modelOptions?: ModelOptions
-      } | null
-      modelSelection?: {
-        modelName: string
-        modelType: ModelType | null
-        options: ModelOptions
-      } | null
-      additionalContext?: RuntimeAdditionalContext
-      deviceId?: string | null
-      attachments?: Attachment[]
-      onError?: (error: string) => void
-      prepareRuntimeTask?: (
-        address: RuntimeTaskAddress
-      ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
-      onRuntimeTaskOptimisticOpen?: (address: RuntimeTaskAddress) => void | Promise<void>
-    }
+    options: CreateProjectRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
   sendRuntimePaneMessage: (
     input: {
@@ -66,13 +37,6 @@ export interface TaskAiRuntimeBridge {
   ) => Promise<boolean>
 }
 
-function sessionDefinitelyUnavailable(error: string | null): boolean {
-  if (!error) return false
-  return /(?:thread|task|session).*(?:not found|不存在|已删除|不可用)|(?:not found|不存在).*(?:thread|task|session)/i.test(
-    error
-  )
-}
-
 export interface StartTaskAiRunInput {
   client: ProjectChatClient
   services: Pick<WorkbenchServices, 'deliveryApi'> & {
@@ -81,26 +45,21 @@ export interface StartTaskAiRunInput {
   runtime: TaskAiRuntimeBridge
   project: CloudProject
   task: CloudLoopItem
-  agent: ProjectChatAgent
   /** Bound local code project (task feature). Resolved before calling:
-   * user selection first, then the robot's binding, then none. */
+   * user selection overrides the Issue workflow workspace. */
   executionProject?: ProjectWithTasks | null
   prompt: string
   trigger?: ProjectChatMessage
   autoRetry?: boolean
-  messages: ProjectChatMessage[]
-  /** Model list retained for the caller contract; Runtime selection owns defaults. */
-  models?: UnifiedModel[]
   /** Per-comment model selection. */
   selectedModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
   /** When replying to an existing AI message, continue the executor session of
    * that message's parent comment instead of starting a new session. */
   replyTo?: { runtimeDeviceId: string; runtimeTaskId: string } | null
-  /** The parent comment owning this run. Scopes rebuilt-session history to a
-   * single thread when a lost session has to be recreated for a reply. */
+  /** The parent activity owning this task; replies must keep its address. */
   threadRootId?: string | null
-  /** Target the run at the robot's execution environment device. */
+  /** Explicit execution device override. */
   deviceId?: string | null
   /** Files attached to the comment; uploaded before the run starts. */
   attachments?: Attachment[]
@@ -108,37 +67,6 @@ export interface StartTaskAiRunInput {
   onMessages: (messages: ProjectChatMessage[]) => void
   onTaskUpdated?: (task: CloudLoopItem) => void
   startFailedText: string
-}
-
-export function buildRobotRoleDescription(agent: { name: string; systemPrompt?: string }): string {
-  // The task title/description is read by the AI itself (injected context and
-  // wework_space get_board_item); the sent content is the robot role only.
-  return agent.systemPrompt
-    ? `你是 ${agent.name}，这个项目任务的 AI 执行者。\n${agent.systemPrompt}`
-    : `你是 ${agent.name}，这个项目任务的 AI 执行者。`
-}
-
-export function formatThreadHistory(
-  threadRootId: string,
-  current: ProjectChatMessage[],
-  trigger?: ProjectChatMessage
-): string {
-  const thread = mergeProjectChatMessages(current, trigger ? [trigger] : []).filter(
-    message =>
-      message.status === 'completed' &&
-      message.content.trim() &&
-      (message.rootMessageId === threadRootId || message.messageId === threadRootId)
-  )
-  const lines = thread.slice(-40).map(message => {
-    const role = message.sender.type === 'agent' ? `AI ${message.sender.name}` : message.sender.name
-    return `[${role}] ${message.content.trim()}`
-  })
-  return [
-    '<project_chat_thread>',
-    lines.join('\n').slice(-20_000),
-    '</project_chat_thread>',
-    'This is the comment thread that owns this session. Do not reference other comments.',
-  ].join('\n')
 }
 
 export function mergeProjectChatMessages(
@@ -159,12 +87,10 @@ export async function startTaskAiRun({
   runtime,
   project,
   task,
-  agent,
   executionProject,
   prompt,
   trigger,
   autoRetry,
-  messages,
   selectedModel,
   selectedModelOptions,
   replyTo,
@@ -176,6 +102,7 @@ export async function startTaskAiRun({
   onTaskUpdated,
   startFailedText,
 }: StartTaskAiRunInput): Promise<boolean> {
+  let stopWatching: (() => void) | undefined
   const responseRef: { current: ProjectChatMessage | null } = { current: null }
   // The executor can fail a turn asynchronously (lost thread, no model
   // progress). The backend event relay is not guaranteed to close the
@@ -210,6 +137,7 @@ export async function startTaskAiRun({
         unsubscribe()
       },
     })
+    return unsubscribe
   }
   const executionModel = selectedModel
     ? selectedModelExecutionFields(selectedModel, selectedModelOptions ?? {})
@@ -222,37 +150,19 @@ export async function startTaskAiRun({
       }
     : null
   const usedModel = executionModel?.modelId
+  const context = buildWorkItemRuntimeContext(
+    project,
+    task,
+    task.workflow?.current_stage_id ?? undefined
+  )
+  const configuredRequest = activityTaskRequest(taskActivityExecutionConfig(task), prompt)
   const additionalContext: RuntimeAdditionalContext = {
-    ...projectSpaceChatRuntimeContext(project),
-    projectChatTask: {
-      kind: 'application',
-      value: [
-        '<current_task>',
-        JSON.stringify({
-          id: String(task.id),
-          title: task.title,
-          description: task.description ?? '',
-          status: task.status,
-        }),
-        '</current_task>',
-        'This run is bound to this task in the current project space.',
-      ].join('\n'),
-    },
-    projectChat: {
-      kind: 'application',
-      value: [
-        trigger
-          ? `This run was started by task activity ${trigger.messageId}.`
-          : 'This run was started by assigning this task to the project AI.',
-        `Reply to task cloud://projects/${project.id}/todos/${task.id}.`,
-        'Read the task with the wework_space get_board_item tool before executing; the task link already contains the space_id and item_id, so do not call list_spaces to find the project.',
-        'Your final response is a reviewable task comment. Report actual changes, verification, unfinished work, and risks.',
-      ].join('\n'),
-    },
-    projectChatAgent: {
-      kind: 'application',
-      value: buildRobotRoleDescription(agent),
-    },
+    ...configuredRequest?.additionalContext,
+    ...context.additionalContext,
+  }
+  if (threadRootId && !replyTo) {
+    onError(startFailedText)
+    return false
   }
 
   if (replyTo?.runtimeDeviceId && replyTo?.runtimeTaskId) {
@@ -274,7 +184,6 @@ export async function startTaskAiRun({
         projectId: project.id,
         taskId: task.id,
         triggerMessageId: trigger?.messageId,
-        agentId: agent.id,
         runtimeDeviceId: replyTo.runtimeDeviceId,
         runtimeTaskId: replyTo.runtimeTaskId,
         prompt,
@@ -301,6 +210,7 @@ export async function startTaskAiRun({
         // The send itself failed; closing the placeholder is best-effort.
       }
     }
+    stopWatching = watchRuntimeFailure(replyTo.runtimeDeviceId, replyTo.runtimeTaskId)
     const continued = await runtime.sendRuntimePaneMessage(
       {
         address: {
@@ -329,34 +239,20 @@ export async function startTaskAiRun({
       }
     )
     if (continued) {
-      watchRuntimeFailure(replyTo.runtimeDeviceId, replyTo.runtimeTaskId)
       onMessages(responseRef.current ? [responseRef.current] : [])
       await refreshTask(services, task.id, onTaskUpdated)
       return true
     }
-    if (continuationRejectedReason && /running|执行中/i.test(continuationRejectedReason)) {
-      // The bound turn is still active; starting a fresh run would double
-      // execute the same reply.
-      await closePendingMessage(continuationRejectedReason)
-      onError(continuationRejectedReason)
-      return false
-    }
+    stopWatching?.()
     const rejection = continuationRejectedReason ?? startFailedText
     await closePendingMessage(rejection)
-    if (!sessionDefinitelyUnavailable(continuationRejectedReason)) {
-      // A transport failure is ambiguous: the executor may have accepted the
-      // turn before the acknowledgement was lost. Starting another session
-      // here could execute the same comment twice. Rebuild only when the
-      // runtime explicitly confirms that the old session no longer exists.
-      onError(rejection)
-      return false
-    }
-    // Fall through silently: the bound session is gone or its device is
-    // unavailable, so start a fresh persistent run for this new floor below.
+    onError(rejection)
+    return false
   }
 
   const address = await runtime.createProjectRuntimeTask(prompt, {
     project: executionProject ?? null,
+    runtime: 'codex',
     ...(executionModel ? { executionModel } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     collaborationMode: 'default',
@@ -372,47 +268,64 @@ export async function startTaskAiRun({
     },
     ...(deviceId ? { deviceId } : {}),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
-    // When a lost session is rebuilt for a reply, attach only the owning
-    // thread's history; parent comments and live-session replies never receive
-    // other threads' messages.
-    additionalContext: threadRootId
+    additionalContext,
+    ...(configuredRequest
       ? {
-          ...additionalContext,
-          projectChatHistory: {
-            kind: 'untrusted',
-            value: formatThreadHistory(threadRootId, messages, trigger),
+          taskRequest: {
+            ...configuredRequest,
+            ...(executionModel
+              ? {
+                  modelId: executionModel.modelId ?? undefined,
+                  modelType: executionModel.modelType as ModelType,
+                  modelOptions: executionModel.modelOptions,
+                  modelSelection,
+                }
+              : {}),
+            ...(executionProject
+              ? {
+                  projectId: undefined,
+                  deviceWorkspaceId: undefined,
+                  runtimeProjectKey: undefined,
+                  standaloneChatWorkspace: false,
+                  deviceId: deviceId ?? undefined,
+                }
+              : {}),
+            additionalContext,
           },
         }
-      : additionalContext,
+      : {}),
     prepareRuntimeTask: async nextAddress => {
       const deliveryApi = services.deliveryApi
       if (!deliveryApi) {
         throw new Error('项目空间任务绑定服务不可用')
       }
       await deliveryApi.bindTask(task.id, nextAddress, task.title)
+      try {
+        responseRef.current = await startTaskAiResponse(client, {
+          projectId: project.id,
+          taskId: task.id,
+          triggerMessageId: trigger?.messageId,
+          runtimeDeviceId: nextAddress.deviceId,
+          runtimeTaskId: nextAddress.taskId,
+          prompt,
+          autoRetry,
+          model: usedModel,
+        })
+        onMessages([responseRef.current])
+        stopWatching = watchRuntimeFailure(nextAddress.deviceId, nextAddress.taskId)
+      } catch (error) {
+        await deliveryApi.unbindTask(task.id, nextAddress)
+        throw error
+      }
       return () => deliveryApi.unbindTask(task.id, nextAddress)
     },
     onError,
-    onRuntimeTaskOptimisticOpen: async nextAddress => {
-      responseRef.current = await startTaskAiResponse(client, {
-        projectId: project.id,
-        taskId: task.id,
-        triggerMessageId: trigger?.messageId,
-        agentId: agent.id,
-        runtimeDeviceId: nextAddress.deviceId,
-        runtimeTaskId: nextAddress.taskId,
-        prompt,
-        autoRetry,
-        model: usedModel,
-      })
-      onMessages(responseRef.current ? [responseRef.current] : [])
+    onRuntimeTaskOptimisticOpen: async () => {
       await refreshTask(services, task.id, onTaskUpdated)
     },
   })
-  if (address) {
-    watchRuntimeFailure(address.deviceId, address.taskId)
-  }
   if (!address) {
+    stopWatching?.()
     if (responseRef.current) {
       try {
         const failed = await client.failAgentResponse({

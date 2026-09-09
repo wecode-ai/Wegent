@@ -20,6 +20,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectChatAgent,
     ProjectIncomingHook,
+    ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
     loop_unset_datetime_for_connection,
@@ -61,7 +62,8 @@ from app.services.project_automation_execution import (
 from app.services.project_chat.service import bot_config
 from app.services.project_event_sources import EXECUTION_TARGETS, event_source
 from app.services.share import team_share_service
-from app.services.workflow_stage_context import workflow_stage_context_resolver
+from app.services.workflow_stage_launch import resolve_workflow_stage_launch
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +334,16 @@ class ProjectAutomationService:
         try:
             from app.schemas.issue_workflow import ProjectWorkflowDefinition
 
-            ProjectWorkflowDefinition.model_validate(raw_definition)
+            definition = ProjectWorkflowDefinition.model_validate(raw_definition)
+            if definition.advancement_policy == "manual" and not any(
+                node.node_type in {"loop", "branch"} for node in definition.nodes
+            ):
+                for index, node in enumerate(definition.nodes):
+                    expected = [definition.nodes[index - 1].id] if index else []
+                    if node.depends_on != expected:
+                        raise ValueError(
+                            "Workflow advancement requires an explicit serial role order"
+                        )
         except ValueError as exc:
             errors = exc.errors() if hasattr(exc, "errors") else []
             error_detail = errors[0].get("msg", str(exc)) if errors else str(exc)
@@ -712,7 +723,7 @@ class ProjectAutomationService:
             "workflow_execution_config": execution_config.model_dump(
                 mode="json", by_alias=True
             ),
-            "workflow_stage_input": workflow_stage_context_resolver.resolve(
+            "workflow_stage_launch": resolve_workflow_stage_launch(
                 db,
                 item=item,
                 target_node_id=workflow_node_id,
@@ -734,6 +745,7 @@ class ProjectAutomationService:
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         )
 
+    @trace_async()
     async def run_ai_workflow_manager(
         self,
         db: Session,
@@ -777,6 +789,13 @@ class ProjectAutomationService:
             },
             "workflow_execution_config": execution_config,
         }
+        planning_run = db.get(ProjectWorkflowRun, workflow_run_id)
+        if planning_run is None or planning_run.parent_id != item.id:
+            raise RuntimeError("AI workflow coordinator turn is unavailable")
+        planning_run.metadata_json = {
+            **(planning_run.metadata_json or {}),
+            "project_automation_run_id": str(run.id),
+        }
         db.commit()
         db.refresh(run)
         await project_automation_execution.dispatch(db, rule, run)
@@ -795,12 +814,13 @@ class ProjectAutomationService:
             return None
         return text(binding.get("run_id")) or None
 
+    @trace_async()
     async def run_direct_workflow_node(
         self,
         db: Session,
         project_id: str,
         item_id: str,
-        workflow_node_id: str,
+        workflow_node_id: str | None,
         user_id: int,
     ) -> dict:
         """Run a workflow stage from its snapshotted Runtime configuration."""
@@ -826,6 +846,20 @@ class ProjectAutomationService:
             ),
             None,
         )
+        assignment = workflow.get("assignment") if isinstance(workflow, dict) else None
+        assigned_work = bool(
+            isinstance(assignment, dict)
+            and assignment.get("status") == "dispatching"
+            and assignment.get("node_id") == workflow_node_id
+        )
+        if workflow_node_id is None and assigned_work:
+            node = {
+                "id": "issue-work",
+                "name": item.title or "Issue",
+                "prompt": "",
+                "execution_mode": "robot",
+                "status": "ready",
+            }
         if node is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
         if node.get("automation_rule_id"):
@@ -870,15 +904,32 @@ class ProjectAutomationService:
                 "workflow_parent_run_id": self._workflow_parent_run_id(item),
                 "workflow_node_id": workflow_node_id,
                 "workflow_node_name": str(node.get("name") or ""),
-                "instruction_override": str(node.get("prompt") or ""),
+                "instruction_override": "\n\n".join(
+                    filter(
+                        None,
+                        [
+                            str(node.get("prompt") or ""),
+                            (
+                                str(workflow.get("current_work") or "")
+                                if assigned_work
+                                else ""
+                            ),
+                        ],
+                    )
+                ),
+                "issue_assignment_id": assignment.get("id") if assigned_work else None,
                 "dependency_context": node.get("dependency_context") or {},
                 "workflow_execution_config": execution_config.model_dump(
                     mode="json", by_alias=True
                 ),
-                "workflow_stage_input": workflow_stage_context_resolver.resolve(
-                    db,
-                    item=item,
-                    target_node_id=workflow_node_id,
+                "workflow_stage_launch": (
+                    resolve_workflow_stage_launch(
+                        db,
+                        item=item,
+                        target_node_id=workflow_node_id,
+                    )
+                    if workflow_node_id
+                    else None
                 ),
             },
         )
@@ -916,7 +967,7 @@ class ProjectAutomationService:
                 if workspace_binding
                 else None
             ),
-            "workflow_stage_input": run_metadata.get("workflow_stage_input"),
+            "workflow_stage_launch": run_metadata.get("workflow_stage_launch"),
             **execution_config.runtime_request_options(),
         }
         execution = loop_item_execution_service.enqueue_generic_robot(
@@ -940,13 +991,25 @@ class ProjectAutomationService:
         run.version += 1
         from app.services.project_workflow_projection import update_workflow_node
 
-        update_workflow_node(
-            db,
-            item_id=item.id,
-            node_id=workflow_node_id,
-            node_status="queued",
-            automation_run_id=str(run.id),
-        )
+        if workflow_node_id:
+            update_workflow_node(
+                db,
+                item_id=item.id,
+                node_id=workflow_node_id,
+                node_status="queued",
+                automation_run_id=str(run.id),
+            )
+        if assigned_work:
+            item_metadata = dict(item.metadata_json or {})
+            current_workflow = dict(item_metadata["workflow"])
+            current_workflow["assignment"] = {
+                **current_workflow["assignment"],
+                "status": "running",
+                "automation_run_id": str(run.id),
+            }
+            current_workflow["orchestration_status"] = "running"
+            item_metadata["workflow"] = current_workflow
+            item.metadata_json = item_metadata
         db.commit()
         db.refresh(run)
         logger.info(
@@ -1124,6 +1187,7 @@ class ProjectAutomationService:
                 db,
                 execution_id=execution.id,
                 note="Automation run cancelled by user",
+                user_initiated=True,
             )
             if execution.status == "cancel_requested":
                 from app.tasks.robot_queue_tasks import emit_runtime_cancels
@@ -1144,10 +1208,13 @@ class ProjectAutomationService:
             return self._run_view(run, timezone_name)
 
         if run.backend_task_id:
+            from app.services.issue_assignments import pause_assignment_for_user_stop
             from app.services.project_automation_managed_execution import (
                 project_automation_managed_execution_service,
             )
 
+            pause_assignment_for_user_stop(db, run.id)
+            db.commit()
             cancelled = await project_automation_managed_execution_service.cancel(
                 task_id=int(run.backend_task_id),
                 # Project authorization belongs to the requester, while the
@@ -1189,7 +1256,40 @@ class ProjectAutomationService:
         db.refresh(run)
         return self._run_view(run, timezone_name)
 
+    @trace_async()
     async def check_due(self, db: Session) -> int:
+        from app.services.issue_workflow_start import issue_workflow_start_service
+
+        waiting = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.status == "in_progress",
+                loop_datetime_is_unset(LoopItem.deleted_at),
+                LoopItem.metadata_json["workflow"]["advancement_policy"].as_string()
+                == "ai",
+                LoopItem.metadata_json["workflow"]["orchestration_status"].as_string()
+                == "planning",
+            )
+            .all()
+        )
+        for item in waiting:
+            workflow = (item.metadata_json or {}).get("workflow") or {}
+            if workflow.get("active_run_id") or not workflow.get("coordinator_user_id"):
+                continue
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is not None and project.status == "active":
+                try:
+                    await issue_workflow_start_service.start(
+                        db,
+                        item=item,
+                        project=project,
+                        user_id=int(workflow["coordinator_user_id"]),
+                    )
+                except Exception:
+                    db.rollback()
+                    logger.exception(
+                        "Issue coordination recovery failed issue_id=%s", item.id
+                    )
         now = utcnow()
         active_project = aliased(CloudProject)
         rule_ids = (

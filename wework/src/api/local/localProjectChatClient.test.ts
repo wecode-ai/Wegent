@@ -37,7 +37,7 @@ describe('createLocalProjectChatClient', () => {
     vi.useRealTimers()
   })
 
-  it('creates a comment and enqueues a robot run when an agent is mentioned', async () => {
+  it('persists mentions without dispatching a second execution', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
         return commentRecord({
@@ -72,14 +72,7 @@ describe('createLocalProjectChatClient', () => {
         }),
       })
     )
-    expect(request).toHaveBeenCalledWith(
-      'executions.enqueue',
-      expect.objectContaining({
-        agent_id: 'a1',
-        trigger_message_id: 'm-1',
-        payload: expect.objectContaining({ text: '@Bot 跑一下' }),
-      })
-    )
+    expect(request).toHaveBeenCalledOnce()
   })
 
   it('does not enqueue a run without an agent mention', async () => {
@@ -98,7 +91,7 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
-  it('carries the selected local code project into the comment and enqueue payload', async () => {
+  it('persists the selected local code project with the comment', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
         return commentRecord({
@@ -132,12 +125,49 @@ describe('createLocalProjectChatClient', () => {
         }),
       })
     )
-    expect(request).toHaveBeenCalledWith(
-      'executions.enqueue',
-      expect.objectContaining({
-        payload: expect.objectContaining({ local_project_id: 91 }),
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('persists a response and its runtime address through the local IPC store', async () => {
+    request.mockResolvedValue(
+      commentRecord({
+        sender_type: 'agent',
+        status: 'streaming',
+        metadata: { runtime_address: { deviceId: 'device', taskId: 'runtime' } },
       })
     )
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const response = await client.startAgentResponse({
+      projectId: 'p1',
+      taskId: 't1',
+      triggerMessageId: 'root',
+      runtimeDeviceId: 'device',
+      runtimeTaskId: 'runtime',
+    })
+    expect(request).toHaveBeenCalledWith('todos.comment.start', {
+      comment: expect.objectContaining({
+        client_message_id: 'runtime:device:runtime:root',
+        sender_type: 'agent',
+        reply_to_message_id: 'root',
+        metadata: expect.objectContaining({ conversation_only: true }),
+      }),
+    })
+    expect(response.runtimeAddress).toEqual({ deviceId: 'device', taskId: 'runtime' })
+    request.mockResolvedValue(commentRecord({ sender_type: 'agent', status: 'failed' }))
+    await client.failAgentResponse({
+      projectId: 'p1',
+      taskId: 't1',
+      messageId: response.messageId,
+      error: 'unavailable',
+    })
+    expect(request).toHaveBeenLastCalledWith('todos.comment.fail', {
+      project_id: 'p1',
+      task_id: 't1',
+      message_id: response.messageId,
+      error: 'unavailable',
+    })
   })
 
   it('delivers initial comments and polls for status updates', async () => {

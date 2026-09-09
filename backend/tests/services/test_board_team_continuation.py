@@ -94,7 +94,7 @@ async def test_reply_creates_one_native_follow_up_and_reuses_it_on_ack_retry(
         content="Please confirm.",
         metadata_json={
             "execution_id": execution.id,
-            "executor_type": "wegent_team",
+            "executor_type": "project_robot",
             "backend_task_id": native_task.id,
         },
         status="completed",

@@ -10,7 +10,6 @@ from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
-from app.schemas.issue_workflow import WorkflowPlanView
 from app.services.loop_item_executions.profile import build_project_robot_user_input
 from app.services.project_automation_managed_execution import (
     project_automation_managed_execution_service,
@@ -170,30 +169,6 @@ def schedule_board_robot_execution_by_id(execution_id: int) -> None:
         if execution is None or not _board_robot_execution_is_schedulable(execution):
             return
     _enqueue_board_robot_execution(execution_id)
-
-
-def workflow_plan_execution_ids(
-    db: Session,
-    plan: WorkflowPlanView,
-) -> list[int]:
-    """Collect materialized execution IDs before releasing the planning session."""
-
-    execution_ids: list[int] = []
-    for plan_item in plan.items:
-        if not plan_item.task_id:
-            continue
-        execution = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.loop_item_id == plan_item.task_id,
-                LoopItemExecution.status == "queued",
-            )
-            .order_by(LoopItemExecution.id.desc())
-            .first()
-        )
-        if execution is not None:
-            execution_ids.append(execution.id)
-    return execution_ids
 
 
 def _board_robot_execution_is_schedulable(execution: LoopItemExecution) -> bool:

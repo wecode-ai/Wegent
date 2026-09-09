@@ -230,7 +230,7 @@ class ProjectAutomationManagedExecutionService:
             content="",
             metadata_json={
                 "execution_id": execution.id,
-                "executor_type": "wegent_team",
+                "executor_type": "project_robot",
                 "executor_ref": str(team.id),
                 "backend_task_id": result.task.id,
                 "run_status": "queued",

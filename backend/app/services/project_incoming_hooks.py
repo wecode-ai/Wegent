@@ -42,6 +42,7 @@ from app.services.project_event_sources import (
     normalized_event_identity,
     resource_matches,
 )
+from shared.telemetry.decorators import trace_async
 
 MAX_BODY_BYTES = 1_048_576
 MAX_STORED_PAYLOAD_BYTES = 65_536
@@ -310,6 +311,7 @@ class ProjectIncomingHookService:
             )
         return hook
 
+    @trace_async()
     async def receive(
         self,
         db: Session,
@@ -404,6 +406,7 @@ class ProjectIncomingHookService:
             "reason": None,
         }
 
+    @trace_async()
     async def process_event(self, db: Session, event_id: str) -> int:
         if not self._claim_event(db, event_id):
             return 0
@@ -416,9 +419,11 @@ class ProjectIncomingHookService:
             .with_for_update()
             .one_or_none()
         )
-        if event is None or event.status in {"processing", "processed", "ignored"}:
+        if event is None or event.status not in {"received", "failed", "unresolved"}:
             return 0
         metadata = self.metadata(event)
+        if "history" in metadata:
+            return False
         attempts = int(metadata.get("attempt_count") or 0)
         if attempts >= MAX_PROCESS_ATTEMPTS:
             return 0
@@ -456,6 +461,13 @@ class ProjectIncomingHookService:
                 if isinstance(configured_resource, dict)
                 and resource_matches(configured_resource, item.resource)
             ]
+            from app.services.project_event_center import project_event_center_service
+
+            if project_event_center_service.receive_subscription_event(
+                db, event, only_related=bool(normalized)
+            ):
+                self._record_hook_health(db, str(event.parent_id), success=True)
+                return 0
             if not normalized:
                 self._finish_event(
                     db,
@@ -472,8 +484,9 @@ class ProjectIncomingHookService:
             )
 
             matched_runs = []
+            claimed = False
             for item in normalized:
-                runs = await project_automation_processor.process_with_runs(
+                handled, runs = await project_automation_processor.dispatch_event(
                     db,
                     ProjectAutomationEvent(
                         event_type=item.event_type,
@@ -491,6 +504,7 @@ class ProjectIncomingHookService:
                         subscription_id=str(hook.id),
                     ),
                 )
+                claimed = claimed or handled
                 matched_runs.extend(runs)
             run_ids = [str(run.id) for run in matched_runs]
             unresolved_reasons = [
@@ -500,6 +514,11 @@ class ProjectIncomingHookService:
                 and isinstance(run.description, str)
                 and "binding" in run.description.lower()
             ]
+            if not claimed and project_event_center_service.receive_subscription_event(
+                db, event
+            ):
+                self._record_hook_health(db, str(event.parent_id), success=True)
+                return 0
             self._finish_event(
                 db,
                 event_id,
@@ -516,7 +535,7 @@ class ProjectIncomingHookService:
                 reason=(
                     "; ".join(dict.fromkeys(unresolved_reasons))
                     if unresolved_reasons
-                    else None if run_ids else "No automation rule matched"
+                    else None if claimed else "No automation rule matched"
                 ),
             )
             self._record_hook_health(db, str(event.parent_id), success=True)
@@ -618,6 +637,7 @@ class ProjectIncomingHookService:
             event = (
                 db.query(ProjectIncomingEvent)
                 .filter(
+                    ProjectIncomingEvent.metadata_json["history"].as_string().is_(None),
                     or_(
                         ProjectIncomingEvent.status == "received",
                         and_(

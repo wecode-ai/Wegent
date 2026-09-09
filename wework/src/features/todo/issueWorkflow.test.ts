@@ -330,3 +330,136 @@ describe('Issue workflow projection', () => {
     })
   })
 })
+
+describe('workflow execution authority', () => {
+  it('projects explicit AI stages without an automation rule through deliverable completion', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.nodes[0].execution_mode = 'robot'
+    workflow.nodes[0].required_deliverables = [
+      { id: 'report', name: 'Report', description: '', value_type: 'file' },
+    ]
+    const succeeded = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded', 'device:task')
+    expect(succeeded.nodes[0].status).toBe('awaiting_deliverables')
+    const delivered = attachIssueWorkflowDelivery(succeeded, 'develop', 'delivery', ['report'])
+    expect(delivered.nodes[0].status).toBe('completed')
+    expect(delivered.nodes[1].status).toBe('ready')
+  })
+
+  it('honors explicit human execution even when a rule is referenced', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.nodes[0].execution_mode = 'human'
+    workflow.nodes[0].automation_rule_id = 'rule'
+    const succeeded = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded')
+    expect(succeeded.nodes[0].status).toBe('awaiting_approval')
+    expect(decideIssueWorkflowNode(succeeded, 'develop', 'approve', 1, '').nodes[0].status).toBe(
+      'completed'
+    )
+  })
+
+  it.each(['approve', 'reject', 'force_advance'] as const)(
+    'rejects %s for an AI stage without a rule',
+    action => {
+      const workflow = instantiateIssueWorkflow(definition)!
+      workflow.nodes[0].execution_mode = 'robot'
+      workflow.nodes[0].status = 'awaiting_approval'
+      expect(() => decideIssueWorkflowNode(workflow, 'develop', action, 1, 'reason')).toThrow(
+        'Automated stages do not accept decisions'
+      )
+    }
+  )
+
+  it.each(['paused', 'running', 'waiting_human', 'completed'] as const)(
+    'updates AI work results without changing orchestration while %s',
+    status => {
+      let workflow = instantiateIssueWorkflow(definition)!
+      workflow.advancement_policy = 'ai'
+      workflow.orchestration_status = status
+      workflow.nodes[0].status = 'failed'
+      workflow.nodes[0].execution_mode = 'robot'
+      workflow.nodes[0].execution_error = 'cancelled'
+      workflow.nodes[0].task_ids = ['device:task']
+      workflow.nodes[0].task_statuses = { 'device:task': 'succeeded' }
+      const displayed = reconcileIssueWorkflowForTaskBindings(workflow, [])
+      expect(displayed.nodes[0]).toMatchObject({ status: 'completed', execution_error: null })
+      expect(displayed.orchestration_status).toBe(status)
+      for (const [runtimeStatus, nodeStatus] of [
+        ['running', 'running'],
+        ['succeeded', 'completed'],
+        ['running', 'running'],
+        ['failed', 'failed'],
+        ['succeeded', 'completed'],
+      ] as const) {
+        workflow = updateIssueWorkflowForRuntime(workflow, 'develop', runtimeStatus, 'device:task')
+        expect(workflow.orchestration_status).toBe(status)
+        expect(workflow.nodes[0].status).toBe(nodeStatus)
+        expect(workflow.nodes[0].execution_error).toBeNull()
+        expect(workflow.nodes[0].task_statuses?.['device:task']).toBe(runtimeStatus)
+        expect(workflow.nodes[1].status).toBe('blocked')
+      }
+    }
+  )
+
+  it.each(['dispatching', 'waiting_human'])(
+    'preserves the current %s assignment while another task completes',
+    status => {
+      const workflow = instantiateIssueWorkflow(definition)!
+      workflow.advancement_policy = 'ai'
+      workflow.nodes[0].execution_mode = 'robot'
+      workflow.assignment = {
+        id: 'assignment',
+        node_id: 'develop',
+        assignee_user_id: 1,
+        status,
+        result: null,
+        decision: { reason: '', instruction: '' },
+      }
+      const updated = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded', 'device:task')
+      expect(updated.nodes[0].status).toBe(workflow.nodes[0].status)
+      expect(updated.assignment).toEqual(workflow.assignment)
+    }
+  )
+
+  it('uses the newest bound task instead of an older running task', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.advancement_policy = 'ai'
+    workflow.orchestration_status = 'paused'
+    workflow.nodes[0] = {
+      ...workflow.nodes[0],
+      execution_mode: 'robot',
+      status: 'failed',
+      execution_error: 'cancelled',
+      task_ids: ['device:old', 'device:new'],
+      task_statuses: { 'device:old': 'running', 'device:new': 'succeeded' },
+    }
+    const displayed = reconcileIssueWorkflowForTaskBindings(workflow, [
+      { id: 1, device_id: 'device', task_id: 'old', workflow_node_id: 'develop' },
+      { id: 2, device_id: 'device', task_id: 'new', workflow_node_id: 'develop' },
+    ])
+    expect(displayed.nodes[0]).toMatchObject({
+      status: 'completed',
+      execution_error: null,
+      task_ids: ['device:new', 'device:old'],
+    })
+    expect(displayed.orchestration_status).toBe('paused')
+    expect(displayed.nodes[1].status).toBe('blocked')
+  })
+
+  it('does not mistake a human stage task result for human approval', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.advancement_policy = 'ai'
+    workflow.nodes[0].execution_mode = 'human'
+    workflow.nodes[0].status = 'running'
+    expect(
+      updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded', 'device:task').nodes[0].status
+    ).toBe('running')
+  })
+
+  it('does not advance paused sequential stages from task results', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.orchestration_status = 'paused'
+    workflow.nodes[0].status = 'failed'
+    const updated = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded', 'device:task')
+    expect(reconcileIssueWorkflowForTaskBindings(updated, []).nodes[0].status).toBe('failed')
+    expect(updated.nodes[1].status).toBe('blocked')
+  })
+})

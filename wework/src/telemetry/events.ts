@@ -58,7 +58,7 @@ export interface AnalyticsEventMap {
   }
   board_view_opened: {
     source: TelemetryDataSource
-    view: 'board' | 'table' | 'files' | 'automation' | 'manage'
+    view: 'board' | 'table' | 'files' | 'automation' | 'events' | 'manage'
   }
   board_item_created: {
     has_parent: boolean

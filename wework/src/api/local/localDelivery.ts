@@ -1244,7 +1244,10 @@ export function createLocalDeliveryApi(
             const updated = await api.updateLoopItem(current.id, {
               version: current.version,
               workflow,
-              status: workflowBoardStatus(workflow),
+              status:
+                workflow.advancement_policy === 'ai' || workflow.orchestration_status === 'paused'
+                  ? current.status
+                  : workflowBoardStatus(workflow),
             })
             console.info('[IssueTaskStatusSync] local workflow task status persisted', {
               deviceId: task.deviceId,
@@ -1420,7 +1423,10 @@ export function createLocalDeliveryApi(
             await api.updateLoopItem(item.id, {
               version: item.version,
               workflow,
-              status: workflowBoardStatus(workflow),
+              status:
+                workflow.advancement_policy === 'ai' || workflow.orchestration_status === 'paused'
+                  ? item.status
+                  : workflowBoardStatus(workflow),
             })
           }
         }

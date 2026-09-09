@@ -107,10 +107,11 @@ const recipes: Record<string, string> = {
   'dark-secondary':
     'inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-2.5 text-sm text-text-secondary shadow-md hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
   'editor-body': 'relative h-full min-h-0 overflow-hidden',
-  'editor-navigation-actions':
-    'absolute left-[var(--automation-panel-gap)] top-[var(--automation-panel-gap)] z-30 flex items-start gap-3',
+  'editor-toolbar':
+    'absolute inset-x-[var(--automation-panel-gap)] top-[var(--automation-panel-gap)] z-30 flex min-w-0 items-start justify-between gap-3',
+  'editor-navigation-actions': 'flex min-w-0 items-start gap-2',
   'editor-object-bar':
-    'inline-flex h-9 max-w-[376px] items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1 shadow-md',
+    'inline-flex h-9 min-w-32 max-w-[376px] items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1 shadow-md',
   'editor-back-button':
     'grid size-7 shrink-0 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20',
   'editor-object-divider': 'mx-0.5 h-4 w-px shrink-0 bg-border',
@@ -119,7 +120,7 @@ const recipes: Record<string, string> = {
   'editor-name-input':
     'h-7 w-52 rounded-lg border border-[#ff7a1a] bg-[#fff3e8] px-2.5 text-sm font-medium text-text-primary outline-none ring-1 ring-[#ff7a1a]/20',
   'editor-view-tabs':
-    'inline-flex h-9 items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1 shadow-md',
+    'inline-flex h-9 shrink-0 items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1 shadow-md',
   'editor-view-tab':
     'inline-flex h-7 items-center gap-2 rounded-lg px-2.5 text-sm font-medium text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20 [&.active]:bg-[#fff3e8] [&.active]:text-[#ff7a1a]',
   'workflow-canvas': 'absolute inset-0 min-h-0 overflow-hidden bg-surface',
@@ -204,8 +205,9 @@ const recipes: Record<string, string> = {
     '!bottom-4 !right-[calc(var(--automation-panel-gap)+var(--automation-right-panel-width)+16px)] !m-0 flex h-9 items-center overflow-hidden rounded-xl border border-border/80 bg-background/95 px-1 shadow-md [&_button]:grid [&_button]:size-7 [&_button]:place-items-center [&_button]:rounded-lg [&_button]:text-text-muted [&_button]:transition-colors [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_span]:min-w-12 [&_span]:text-center [&_span]:text-sm [&_span]:text-text-secondary',
   'editor-rightbar':
     'absolute bottom-[var(--automation-panel-gap)] right-[var(--automation-panel-gap)] top-[var(--automation-right-panel-top)] z-20 flex w-[var(--automation-right-panel-width)] max-w-[calc(100%_-_24px)] min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/80 bg-background/95 text-text-primary shadow-lg',
-  'editor-global-actions':
-    'absolute right-[var(--automation-panel-gap)] top-[var(--automation-panel-gap)] z-30 flex h-9 items-center justify-end gap-2',
+  'editor-global-actions': 'flex h-9 shrink-0 items-center justify-end gap-2',
+  'editor-advancement':
+    'inline-flex h-9 shrink-0 items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1 shadow-md [&_button]:inline-flex [&_button]:h-7 [&_button]:items-center [&_button]:whitespace-nowrap [&_button]:rounded-lg [&_button]:px-2 [&_button]:text-sm [&_button]:text-text-secondary [&_button]:transition-colors [&_button:hover]:bg-muted [&_button.selected]:bg-text-primary [&_button.selected]:text-background [&_button:focus-visible]:outline-none [&_button:focus-visible]:ring-2 [&_button:focus-visible]:ring-focus/30 [&_button:disabled]:cursor-not-allowed [&_button:disabled]:opacity-60',
   'editor-save-state':
     'inline-flex h-7 min-w-0 items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-2.5 text-sm text-text-muted shadow-md [&_i]:size-1.5 [&_i]:shrink-0 [&_i]:rounded-full [&.saved_i]:bg-success [&.pending_i]:bg-amber-500 [&.invalid_i]:bg-amber-500 [&.saving_i]:animate-pulse [&.saving_i]:bg-focus [&.error_i]:bg-danger [&.error:hover]:bg-muted [&.error:hover]:text-text-primary',
   'node-panel': 'flex min-h-0 flex-1 flex-col bg-background text-text-primary',

@@ -76,7 +76,7 @@ export interface ProjectChatClient {
     projectId: string
     taskId?: string
     triggerMessageId?: string
-    agentId: string
+    agentId?: string
     runtimeDeviceId: string
     runtimeTaskId: string
     prompt?: string

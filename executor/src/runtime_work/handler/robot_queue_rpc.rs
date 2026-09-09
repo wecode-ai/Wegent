@@ -187,6 +187,29 @@ impl RuntimeWorkRpcHandler {
         let Ok(store) = LocalTaskStore::open(self.task_store_path.as_ref()) else {
             return;
         };
+        let comment_status = match status {
+            AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => "completed",
+            AutomationRunStatus::Failed => "failed",
+            AutomationRunStatus::Cancelled => "cancelled",
+            _ => return,
+        };
+        if let Err(cause) = store.finish_runtime_comments(
+            &self.device_id,
+            local_task_id,
+            comment_status,
+            result_content
+                .as_deref()
+                .or(error.as_deref())
+                .unwrap_or_default(),
+        ) {
+            log_executor_event(
+                "runtime task activity writeback failed",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("error", cause.to_string()),
+                ],
+            );
+        }
         let Ok(Some(execution)) = store.execution_by_runtime_task_id(local_task_id) else {
             return;
         };

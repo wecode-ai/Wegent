@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { startTaskAiRun, type TaskAiRuntimeBridge } from './taskAiExecution'
 
 const kimiModel = {
@@ -23,19 +22,6 @@ const task = {
   title: 'Implement feature',
   description: 'Build the flow',
 } as unknown as CloudLoopItem
-
-const agent = (model: string | null): ProjectChatAgent => ({
-  id: 'agent-1',
-  projectId: '11',
-  name: 'Project AI',
-  runtime: 'codex',
-  model,
-  systemPrompt: '',
-  status: 'active',
-  version: 1,
-  createdAt: '',
-  updatedAt: '',
-})
 
 const agentMessage: ProjectChatMessage = {
   sequenceNumber: 1,
@@ -73,7 +59,9 @@ function createClient(): ProjectChatClient {
   }
 }
 
-async function run(input: Parameters<typeof startTaskAiRun>[0]) {
+async function run(
+  input: Pick<Parameters<typeof startTaskAiRun>[0], 'selectedModel' | 'selectedModelOptions'>
+) {
   const runtime = createRuntime()
   const client = createClient()
   const bindTask = vi.fn(async () => undefined)
@@ -90,10 +78,7 @@ async function run(input: Parameters<typeof startTaskAiRun>[0]) {
     runtime,
     project,
     task,
-    agent: input.agent,
     prompt: '请开始执行任务',
-    messages: [],
-    models: input.models,
     selectedModel: input.selectedModel,
     selectedModelOptions: input.selectedModelOptions,
     onError: vi.fn(),
@@ -104,13 +89,12 @@ async function run(input: Parameters<typeof startTaskAiRun>[0]) {
 }
 
 async function runWith(
-  input: Parameters<typeof startTaskAiRun>[0],
+  input: Pick<Parameters<typeof startTaskAiRun>[0], 'selectedModel' | 'selectedModelOptions'>,
   overrides: {
     task?: CloudLoopItem
     continuationAccepted?: boolean
     continuationError?: string
     replyTo?: { runtimeDeviceId: string; runtimeTaskId: string } | null
-    messages?: ProjectChatMessage[]
     threadRootId?: string | null
   } = {}
 ) {
@@ -145,10 +129,7 @@ async function runWith(
     runtime,
     project,
     task: taskUnderRun,
-    agent: input.agent,
     prompt: '请开始执行任务',
-    messages: overrides.messages ?? [],
-    models: input.models,
     selectedModel: input.selectedModel,
     selectedModelOptions: input.selectedModelOptions,
     replyTo: overrides.replyTo,
@@ -163,8 +144,6 @@ async function runWith(
 describe('startTaskAiRun model resolution', () => {
   it('passes the comment-selected model as full execution fields', async () => {
     const { runtime } = await run({
-      agent: agent(null),
-      models: [kimiModel],
       selectedModel: kimiModel,
       selectedModelOptions: {},
     })
@@ -184,36 +163,8 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('does not infer a Runtime model from the robot record', async () => {
-    const { runtime } = await run({
-      agent: agent(kimiModel.name),
-      models: [kimiModel],
-      selectedModel: null,
-      selectedModelOptions: {},
-    })
-
-    const options = runtime.createProjectRuntimeTask.mock.calls[0]?.[1]
-    expect(options).not.toHaveProperty('executionModel')
-    expect(options).not.toHaveProperty('modelSelection')
-  })
-
-  it('does not preserve a legacy raw model fallback', async () => {
-    const { runtime } = await run({
-      agent: agent('legacy-raw-model'),
-      models: [],
-      selectedModel: null,
-      selectedModelOptions: {},
-    })
-
-    const options = runtime.createProjectRuntimeTask.mock.calls[0]?.[1]
-    expect(options).not.toHaveProperty('executionModel')
-    expect(options).not.toHaveProperty('modelSelection')
-  })
-
   it('does not override the model when neither a comment nor a project model is configured', async () => {
     const { runtime } = await run({
-      agent: agent(null),
-      models: [],
       selectedModel: null,
       selectedModelOptions: {},
     })
@@ -226,7 +177,7 @@ describe('startTaskAiRun model resolution', () => {
 
   it('continues the replied AI message session when replyTo is provided', async () => {
     const { runtime, client, bindTask } = await runWith(
-      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      { selectedModel: null, selectedModelOptions: {} },
       { replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' } }
     )
 
@@ -240,7 +191,6 @@ describe('startTaskAiRun model resolution', () => {
     expect(client.startAgentResponse).toHaveBeenCalledWith(
       expect.objectContaining({
         triggerMessageId: undefined,
-        agentId: 'agent-1',
         runtimeDeviceId: 'device-1',
         runtimeTaskId: 'parent-session-1',
       })
@@ -257,7 +207,7 @@ describe('startTaskAiRun model resolution', () => {
       },
     } as unknown as CloudLoopItem
     const { runtime, client, bindTask } = await runWith(
-      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      { selectedModel: null, selectedModelOptions: {} },
       { task: previouslyBoundTask }
     )
 
@@ -285,40 +235,23 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('falls back to a fresh persistent run when the replied session cannot be resumed', async () => {
+  it('reports an unavailable original session without creating another task', async () => {
     const { runtime, client } = await runWith(
-      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      { selectedModel: null, selectedModelOptions: {} },
       {
         replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
         continuationError: 'runtime thread not found',
       }
     )
-
-    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
-      '请开始执行任务',
-      expect.objectContaining({
-        cloudProjectId: '11',
-        origin: expect.objectContaining({
-          type: 'board_comment',
-          loopItemId: 'WEG-1',
-        }),
-      })
-    )
-    expect(runtime.createProjectRuntimeTask.mock.calls[0][1]).not.toHaveProperty(
-      'hiddenFromSidebar'
-    )
-    expect(runtime.createProjectRuntimeTask.mock.calls[0][1]).not.toHaveProperty('ephemeral')
-    expect(client.startAgentResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runtimeDeviceId: 'device-1',
-        runtimeTaskId: 'runtime-task-1',
-      })
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(client.failAgentResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'runtime thread not found' })
     )
   })
 
   it('does not start a second run when continuation acknowledgement is ambiguous', async () => {
     const { runtime, client } = await runWith(
-      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      { selectedModel: null, selectedModelOptions: {} },
       {
         replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
         continuationAccepted: false,
@@ -334,7 +267,7 @@ describe('startTaskAiRun model resolution', () => {
 
   it('does not start a second run when the bound turn is still running', async () => {
     const { runtime, client } = await runWith(
-      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
+      { selectedModel: null, selectedModelOptions: {} },
       {
         replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
         continuationError: 'runtime task is already running',
@@ -357,40 +290,49 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('scopes rebuilt-session history to the owning comment thread', async () => {
-    const ownRoot: ProjectChatMessage = {
-      ...agentMessage,
-      sequenceNumber: 1,
-      messageId: 'thread-1',
-      sender: { type: 'user', id: 'user-1', name: 'Ada' },
-      type: 'text',
-      content: '本线程的评论',
+  it('binds a new activity to a completed Issue without binding the completed stage', async () => {
+    const completedIssue = {
+      ...task,
       status: 'completed',
-    }
-    const otherRoot: ProjectChatMessage = {
-      ...agentMessage,
-      sequenceNumber: 2,
-      messageId: 'thread-2',
-      sender: { type: 'user', id: 'user-2', name: 'Bob' },
-      type: 'text',
-      content: '别人的评论',
-      status: 'completed',
-    }
-    const { runtime } = await runWith(
-      { agent: agent(null), models: [], selectedModel: null, selectedModelOptions: {} },
-      {
-        replyTo: { runtimeDeviceId: 'device-1', runtimeTaskId: 'parent-session-1' },
-        continuationError: 'runtime thread not found',
-        messages: [ownRoot, otherRoot],
-        threadRootId: 'thread-1',
-      }
+      workflow: {
+        current_stage_id: null,
+        nodes: [],
+        execution_config: {
+          agent_id: null,
+          runtime_profile_id: null,
+          execution_device_id: 'configured-device',
+          model: 'workflow-model',
+          model_type: 'runtime',
+          model_options: {},
+          workspace_binding: { type: 'standalone' },
+        },
+      },
+    } as unknown as CloudLoopItem
+    const { runtime, bindTask } = await runWith({ selectedModel: null }, { task: completedIssue })
+    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        runtime: 'codex',
+        taskRequest: expect.objectContaining({
+          modelId: 'workflow-model',
+          deviceId: 'configured-device',
+        }),
+      })
     )
+    expect(bindTask).toHaveBeenCalledWith(
+      task.id,
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      task.title
+    )
+  })
 
-    const options = runtime.createProjectRuntimeTask.mock.calls[0][1] as {
-      additionalContext: { projectChatHistory: { value: string } }
-    }
-    const history = options.additionalContext.projectChatHistory.value
-    expect(history).toContain('本线程的评论')
-    expect(history).not.toContain('别人的评论')
+  it('rejects a reply without its original runtime address', async () => {
+    const { runtime, client } = await runWith(
+      { selectedModel: null },
+      { threadRootId: 'old-thread', replyTo: null }
+    )
+    expect(runtime.createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(runtime.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
   })
 })

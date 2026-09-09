@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
+import { COMPOSITE_CHECKPOINTS, DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
@@ -48,7 +48,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
-  'project-automation': './scenarios/project-automation.scenario.mjs',
+  'project-automation-workflow': './scenarios/project-automation.scenario.mjs',
+  'event-center': './scenarios/event-center.scenario.mjs',
   'project-event-sources': './scenarios/project-event-sources.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
@@ -61,6 +62,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'event-center',
   'plugin-account-auth',
   'cloud-space-mention',
   'change-request-status',
@@ -109,23 +111,6 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-tools',
   'cloud-worktree-archive-restore',
   'cloud-worktree-device-restart',
-])
-const COMPOSITE_CHECKPOINTS = new Map([
-  [
-    'browser-annotation',
-    ['browser-annotation-core', 'browser-annotation-anchors', 'browser-annotation-design'],
-  ],
-  [
-    'cloud-git-worktree',
-    [
-      'cloud-worktree-capability',
-      'cloud-worktree-create',
-      'cloud-worktree-queued-cancel',
-      'cloud-worktree-tools',
-      'cloud-worktree-archive-restore',
-      'cloud-worktree-device-restart',
-    ],
-  ],
 ])
 const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
   checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)

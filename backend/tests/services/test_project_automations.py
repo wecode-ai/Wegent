@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.models.delivery import (
     CloudProject,
+    Delivery,
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRule,
@@ -1090,7 +1091,9 @@ async def test_scheduled_workflow_creates_issue_binds_dag_and_queues_automatic_n
 
 
 @pytest.mark.asyncio
-async def test_complete_flow_adopts_existing_legacy_issue_snapshot(
+@pytest.mark.parametrize("migration_required", [False, True])
+async def test_complete_flow_preserves_snapshot_and_requires_explicit_migration(
+    migration_required,
     test_db,
     test_user,
     monkeypatch: pytest.MonkeyPatch,
@@ -1111,6 +1114,7 @@ async def test_complete_flow_adopts_existing_legacy_issue_snapshot(
         created_by_user_id=test_user.id,
         metadata_json={
             "workflow": {
+                "migration_required": migration_required,
                 "version": 2,
                 "definition_version": 2,
                 "stage_mode": "dag",
@@ -1188,9 +1192,15 @@ async def test_complete_flow_adopts_existing_legacy_issue_snapshot(
     assert [node["id"] for node in item.metadata_json["workflow"]["nodes"]] == [
         "legacy-node"
     ]
-    assert item.metadata_json["workflow_automation"]["run_id"] == str(run.id)
-    assert run.status == "running"
-    start.assert_awaited_once()
+    if migration_required:
+        assert run.status == "failed"
+        assert "reviewed experience" in run.description
+        assert "workflow_automation" not in item.metadata_json
+        start.assert_not_awaited()
+    else:
+        assert item.metadata_json["workflow_automation"]["run_id"] == str(run.id)
+        assert run.status == "waiting_runtime"
+        start.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -1367,9 +1377,10 @@ async def test_workflow_node_run_is_created_once_and_projects_queued_state(
     assert test_db.query(ProjectAutomationRun).count() == 1
 
 
+@pytest.mark.parametrize("content_size", [0, 200_000])
 @pytest.mark.asyncio
 async def test_direct_workflow_node_queues_without_robot_rule(
-    test_db, test_user, monkeypatch: pytest.MonkeyPatch
+    test_db, test_user, content_size: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = CloudProject(
         project_key="DIRECTWF",
@@ -1382,7 +1393,7 @@ async def test_direct_workflow_node_queues_without_robot_rule(
     item = LoopItem(
         cloud_project_id=project.id,
         title="Direct workflow issue",
-        description="",
+        description="UPSTREAM_CONTENT" + "长报告" * content_size,
         status="pending",
         priority="medium",
         created_by_user_id=test_user.id,
@@ -1419,6 +1430,36 @@ async def test_direct_workflow_node_queues_without_robot_rule(
         project_automations_module, "require_cloud_project_role", lambda *_args: None
     )
 
+    delivery = Delivery(
+        cloud_project_id=project.id,
+        loop_item_id=item.id,
+        status="delivered",
+        title="Existing design report",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "fulfillments": [
+                {
+                    "requirement_id": "design-report",
+                    "kind": "text",
+                    "text": "UPSTREAM_CONTENT" + "长报告" * content_size,
+                }
+            ]
+        },
+    )
+    test_db.add(delivery)
+    test_db.commit()
+
+    from app.services.workflow_stage_context import workflow_stage_context_resolver
+
+    def reject_eager_content(*_args, **_kwargs):
+        raise AssertionError("Launching must not read comments or deliveries")
+
+    monkeypatch.setattr(
+        workflow_stage_context_resolver, "resolve", reject_eager_content
+    )
+    monkeypatch.setattr(
+        workflow_stage_context_resolver, "_deliveries", reject_eager_content
+    )
     result = await project_automation_service.run_direct_workflow_node(
         test_db,
         str(project.id),
@@ -1430,6 +1471,14 @@ async def test_direct_workflow_node_queues_without_robot_rule(
     test_db.refresh(item)
     execution = test_db.get(LoopItemExecution, result["execution_id"])
     assert execution is not None
+    assert len(execution.execution_payload.encode()) < 16_384
+    assert "UPSTREAM_CONTENT" not in execution.execution_payload
+    assert "workflow_stage_input" not in execution.execution_payload
+    assert "workflowStageInput" not in execution.execution_payload
+    assert "list_board_item_comments" in execution.runtime_request["message"]
+    assert "read_delivery" in execution.runtime_request["message"]
+    assert delivery.id in execution.runtime_request["message"]
+    assert "design-report" in execution.runtime_request["message"]
     assert execution.executor_type == "generic_robot"
     assert execution.status == "queued"
     assert execution.agent_id == ""

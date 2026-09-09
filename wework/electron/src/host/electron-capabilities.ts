@@ -122,6 +122,7 @@ interface ElectronNotificationInput {
   title: string
   body: string
   taskAddressId?: string
+  onClick?: () => void
 }
 
 export function showElectronNotification(
@@ -137,7 +138,9 @@ export function showElectronNotification(
     body: input.body,
   })
   const taskAddressId = input.taskAddressId
-  if (taskAddressId) {
+  if (input.onClick) {
+    notification.once('click', input.onClick)
+  } else if (taskAddressId) {
     notification.once('click', () => openRuntimeTask(taskAddressId))
   }
   notification.show()
@@ -655,11 +658,19 @@ export function createElectronCapabilityRouter(
     }
     const title = stringParam(params, 'title')
     const body = stringParam(params, 'body')
+    const schemeUrl = optionalStringParam(params, 'schemeUrl')
+    if (schemeUrl && new URL(schemeUrl).protocol !== 'wework:') {
+      throw new HostCapabilityError(
+        'invalid_destination',
+        'Only Wework notification links are supported'
+      )
+    }
     showElectronNotification(
       {
         title,
         body,
         taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
+        ...(schemeUrl ? { onClick: () => desktopServices.openScheme(schemeUrl) } : {}),
       },
       desktopServices.openRuntimeTask
     )

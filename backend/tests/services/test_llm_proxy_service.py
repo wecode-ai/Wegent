@@ -990,3 +990,46 @@ async def test_proxy_llm_responses_rejects_unsupported_model_protocol(
     assert "unsupported-model" in exc_info.value.detail
     assert "unsupported-protocol" in exc_info.value.detail
     assert "Please update the Model CRD" in exc_info.value.detail
+
+
+@pytest.mark.parametrize(
+    ("protocol", "api_format", "env_model", "expected"),
+    [
+        (None, None, "claude", "anthropic-messages"),
+        ("claude", None, None, "anthropic-messages"),
+        ("openai", "chat/completions", None, "openai-chat-completions"),
+        ("openai-responses", "responses", None, "openai-responses"),
+    ],
+)
+@pytest.mark.parametrize("advertised_format", [None, "openai-responses"])
+def test_runtime_cloud_model_uses_provider_protocol_for_callback_workers(
+    test_db, test_user, protocol, api_format, env_model, expected, advertised_format
+):
+    from app.services.runtime_work_service import _runtime_model_override_values
+
+    model = _model_kind(
+        0,
+        name="callback-worker",
+        protocol=protocol,
+        api_format=api_format,
+        env_model=env_model,
+    )
+    test_db.add(model)
+    test_db.commit()
+    options = {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": "0",
+    }
+    if advertised_format:
+        options["weworkCloudModelUpstreamApiFormat"] = advertised_format
+    config, _, _ = _runtime_model_override_values(
+        db=test_db,
+        user_id=test_user.id,
+        runtime="codex",
+        model_id="callback-worker",
+        model_type="public",
+        model_options=options,
+    )
+    assert config["upstream_api_format"] == expected
+    assert config["api_key"] != "sk-test-key"
+    assert config["base_url"].endswith("/llm-responses-proxy")

@@ -48,7 +48,9 @@ from app.services.device.runtime_rpc_service import (
     runtime_rpc_service,
 )
 from app.services.project_chat.service import project_chat_service
+from app.services.runtime_task_stop import record_runtime_task_user_stop
 from shared.telemetry.context import set_request_context, set_user_context
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -453,6 +455,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         return {"ok": True, "result": message}
 
 
+@trace_async()
 async def relay_ipc_request(
     *,
     user_id: int,
@@ -462,6 +465,19 @@ async def relay_ipc_request(
     timeout_seconds: int,
 ) -> dict[str, Any]:
     """Relay one supported app IPC method to the owning executor."""
+
+    if method == "runtime.tasks.cancel":
+        task_id = params.get("taskId")
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise RuntimeRpcError("taskId is required", code="bad_request")
+
+        def record_stop() -> None:
+            with get_db_session() as db:
+                record_runtime_task_user_stop(
+                    db, user_id=user_id, device_id=device_id, task_id=task_id
+                )
+
+        await run_sync_in_executor(record_stop)
 
     if method == "device.execute_command":
         try:

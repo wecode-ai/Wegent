@@ -1,3 +1,4 @@
+import type { createProjectEventCenterApi } from '@/api/projectEventCenter'
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
 import type { AITableApi } from '@/api/aitable'
@@ -84,6 +85,7 @@ export interface ProjectSpaceDetailServices {
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
   runtimeProfileApi?: ReturnType<typeof createRuntimeProfileApi>
+  projectEventCenterApi?: ReturnType<typeof createProjectEventCenterApi>
   projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   loopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   deviceApi: WorkbenchServices['deviceApi']
@@ -174,6 +176,7 @@ export interface WorkbenchServices {
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
   runtimeProfileApi?: ReturnType<typeof createRuntimeProfileApi>
+  projectEventCenterApi?: ReturnType<typeof createProjectEventCenterApi>
   projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>

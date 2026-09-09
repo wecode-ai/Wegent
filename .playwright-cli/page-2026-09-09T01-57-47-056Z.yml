@@ -1,0 +1,74 @@
+- iframe [active] [ref=e2]:
+  - generic "看板事件调度原型" [ref=f1e2]:
+    - banner [ref=f1e3]:
+      - generic [ref=f1e4]: WEGENT
+      - generic [ref=f1e5]: /
+      - generic [ref=f1e6]: 产品研发看板
+      - generic [ref=f1e7]: 交互模拟
+      - navigation "看板导航" [ref=f1e8]:
+        - button "工单" [pressed] [ref=f1e9] [cursor=pointer]
+        - button "经验" [ref=f1e10] [cursor=pointer]
+        - button "Webhook" [ref=f1e11] [cursor=pointer]
+    - main [ref=f1e12]:
+      - generic [ref=f1e13]:
+        - generic [ref=f1e14]:
+          - heading "事情进来，交给合适的 AI" [level=2] [ref=f1e15]
+          - generic [ref=f1e16]: 看板总调度 · AI 已开启
+        - generic [ref=f1e17]:
+          - generic [ref=f1e18]:
+            - generic [ref=f1e19]: 模拟外部事件
+            - combobox "模拟外部事件" [ref=f1e20]:
+              - option "已有工单的 MR !88 收到 Review 意见" [selected]
+              - option "新的 MR !106 请求审查，尚无关联工单"
+          - button "再次投递同一事件" [disabled] [ref=f1e69]
+          - generic [ref=f1e22]: MR !88 · Review：登录限流未覆盖 IPv6，请补充处理。
+        - generic [ref=f1e23]:
+          - generic [ref=f1e24]:
+            - generic [ref=f1e25]:
+              - heading "工单 1" [level=3] [ref=f1e26]
+              - generic [ref=f1e27]: 点击工单查看接管过程
+            - button "#142 · !88 增加登录限流 等待 Review · 需求开发" [pressed] [ref=f1e70] [cursor=pointer]:
+              - generic [ref=f1e71]: "#142 · !88"
+              - generic [ref=f1e72]: 增加登录限流
+              - generic [ref=f1e73]: 等待 Review · 需求开发
+            - region "工单 AI 与经验" [ref=f1e33]:
+              - generic [ref=f1e74]:
+                - heading "#142 增加登录限流" [level=3] [ref=f1e75]
+                - generic [ref=f1e76]: 工单 AI · 执行决策
+              - generic [ref=f1e77]:
+                - generic [ref=f1e78]: 目标 登录接口支持限流，并完成上线
+                - generic [ref=f1e79]: 参考经验 软件交付 · AI 按需选择角色
+              - generic "参考经验中的角色" [ref=f1e80]:
+                - button "需求明确" [ref=f1e81] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e82]: →
+                - button "页面设计" [ref=f1e83] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e84]: →
+                - button "需求开发 · 当前" [pressed] [ref=f1e85] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e86]: →
+                - button "MR Review" [ref=f1e87] [cursor=pointer]
+                - generic [aria-hidden] [ref=f1e88]: →
+                - button "需求上线" [ref=f1e89] [cursor=pointer]
+              - generic [ref=f1e90]: 实际起点：需求开发 · 当前负责人：工单 AI
+              - generic [ref=f1e91]: 开发已完成，创建了 MR !88。保留需求、代码和执行上下文，等待审查反馈。
+              - generic [ref=f1e92]: 从上方发送事件，观察这张工单如何继续。
+              - group [ref=f1e94]:
+                - generic "工单动态 · 1 条" [ref=f1e95]
+                - list [ref=f1e96]:
+                  - listitem [ref=f1e97]:
+                    - generic [ref=f1e98]: 工单 AI
+                    - text: 开发已完成，创建了 MR !88。保留需求、代码和执行上下文，等待审查反馈。
+          - complementary "看板总调度" [ref=f1e59]:
+            - generic [ref=f1e60]:
+              - heading "看板总调度 AI" [level=3] [ref=f1e61]
+              - generic [ref=f1e62]: 事件归属
+            - list [ref=f1e63]:
+              - listitem [ref=f1e99]:
+                - generic [ref=f1e100]: 已有关联
+                - text: "MR !88 由工单 #142 创建；新事件可以沿这条关联回到原工单。"
+              - listitem [ref=f1e101]:
+                - generic [ref=f1e102]: 收到 Webhook · GitLab · 产品研发仓库
+                - text: MR !88 收到 Review 意见。正在查询它与现有工单的关联。
+            - button "让总调度判断归属 →" [ref=f1e104] [cursor=pointer]
+      - generic [ref=f1e66]:
+        - generic [ref=f1e67]: 本地情景模拟 · 不连接 GitLab，不运行真实 AI
+        - status [ref=f1e68]: 事件已进入看板，等待总调度判断归属

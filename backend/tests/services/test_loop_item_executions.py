@@ -49,7 +49,6 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
 from app.services.runtime_profiles import runtime_profile_service
-from app.services.workflow_stage_context import workflow_stage_task_instruction
 
 
 @pytest.fixture
@@ -409,6 +408,13 @@ def _make_running_automation_execution(
             "activity_message_id": message_id,
         },
     )
+    run.metadata_json = {"activity_message_id": message_id}
+    activity.metadata_json = {
+        **activity.metadata_json,
+        "execution_id": execution.id,
+        "executor_type": execution.executor_type,
+    }
+    db.commit()
     claimed = loop_item_execution_service.claim(
         db,
         agent_id=bot.id,
@@ -1527,6 +1533,7 @@ def test_recovery_scan_repairs_terminal_automation_projection(
     }
     activity.metadata_json = {
         "execution_id": execution.id,
+        "executor_type": "automation_manager",
         "run_status": "queued",
     }
     execution.status = "failed"
@@ -2008,6 +2015,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         f"execution_id: {claimed.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
         "请通过看板工具自行查看。\n\n"
+        "创建 MR、PR 或其他外部事项后，使用 register_external_reference 将其 provider 和规范 URL（external_id）登记到当前工单，以便后续事件返回原上下文。\n\n"
         "Verify before reporting completion."
     )
     assert execution_request["prompt"].endswith(visible_prompt)
@@ -2113,14 +2121,9 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
         ),
         cloud_project_id=str(project.id),
         origin_context={
-            "workflow_stage_input": {
-                "target_stage": {
-                    "id": "build",
-                    "prompt": "Build it",
-                    "workspace_policy": "composer",
-                    "required_deliverables": [],
-                },
-                "dependencies": [],
+            "workflow_stage_launch": {
+                "target_stage": {"id": "build", "workspace_policy": "composer"},
+                "workspace_source_task": None,
             }
         },
         execution_device_id="local-device",
@@ -2752,6 +2755,54 @@ def test_terminal_report_closes_streaming_activity(
     assert message.content == "verified and fixed"
 
 
+def test_terminal_report_closes_execution_activity_after_agent_comment(
+    test_db: Session, test_user: User
+) -> None:
+    execution, run, activity = _make_running_automation_execution(test_db, test_user)
+    comment_id = str(uuid.uuid4())
+    comment = ProjectChatMessage(
+        message_id=comment_id,
+        client_message_id=comment_id,
+        project_id=execution.cloud_project_id,
+        task_id=execution.loop_item_id,
+        sender_type="agent",
+        sender_id=activity.sender_id,
+        sender_name=activity.sender_name,
+        message_type="text",
+        content="The requested HTML file has been delivered.",
+        metadata_json={
+            "kind": "board_item_comment",
+            "automation_run_id": str(run.id),
+            "execution_id": execution.id,
+        },
+        agent_id=activity.agent_id,
+        runtime_device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        status="completed",
+    )
+    test_db.add(comment)
+    test_db.commit()
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.completed",
+        payload={"eventSeq": 2, "data": {"text": "Runtime completed."}},
+    )
+
+    assert completed is not None and completed.status == "completed"
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    test_db.refresh(comment)
+    assert run.status == "succeeded"
+    assert run.metadata_json["activity_message_id"] == activity.message_id
+    assert activity.status == "completed"
+    assert activity.content == "Runtime completed."
+    assert comment.status == "completed"
+    assert comment.content == "The requested HTML file has been delivered."
+
+
 def test_terminal_failure_closes_streaming_activity_with_error(
     test_db: Session, test_user: User
 ) -> None:
@@ -2825,100 +2876,6 @@ def test_automation_robot_uses_the_same_visible_input_and_board_origin(
     assert "Scan the checkout for reproducible bugs." not in payload["message"]
 
 
-def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> None:
-    instruction = workflow_stage_task_instruction(
-        {
-            "issue": {
-                "id": "PRJ-26",
-                "title": "发布工作流",
-                "description": "完成发布并保留完整上下文。",
-            },
-            "dependencies": [
-                {
-                    "stage_id": "build",
-                    "stage_name": "实现",
-                    "final_results": [
-                        {
-                            "task_id": "runtime-build",
-                            "content": "实现完成",
-                            "completed_at": "2026-08-26T10:00:00Z",
-                        }
-                    ],
-                    "deliveries": [
-                        {
-                            "id": "delivery-build",
-                            "markdown": "代码已提交。",
-                            "content_available": True,
-                            "fulfillments": [
-                                {
-                                    "requirement_id": "source",
-                                    "kind": "git_branch",
-                                    "branch": "feature/build",
-                                    "commit_sha": "abcdef1",
-                                }
-                            ],
-                            "assets": [],
-                        }
-                    ],
-                    "activity": [
-                        {
-                            "message_id": "message-1",
-                            "status": "completed",
-                            "content": "已完成实现与自测",
-                        }
-                    ],
-                }
-            ],
-            "target_stage": {
-                "id": "deploy",
-                "name": "部署",
-                "prompt": "部署并测试，之后交付",
-                "required_deliverables": [
-                    {
-                        "id": "deliverable-1",
-                        "name": "测试报告",
-                        "value_type": "file",
-                        "description": "",
-                        "file_constraints": {
-                            "accepted_types": ["text/markdown"],
-                            "min_files": 1,
-                            "max_files": 2,
-                        },
-                    },
-                    {
-                        "id": "deliverable-2",
-                        "name": "访问地址",
-                        "value_type": "text",
-                        "description": "必须可访问",
-                    },
-                ],
-            },
-        }
-    )
-
-    assert instruction.startswith("## 任务定位")
-    assert "Issue：发布工作流 (`PRJ-26`)" in instruction
-    assert "当前节点：部署 (`deploy`)" in instruction
-    assert "完成发布并保留完整上下文。" in instruction
-    assert "## 当前节点任务\n\n部署并测试，之后交付" in instruction
-    assert "## 上游最终结果" in instruction
-    assert '"content": "实现完成"' in instruction
-    assert "## 上游已交付内容" in instruction
-    assert '"id": "delivery-build"' in instruction
-    assert '"branch": "feature/build"' in instruction
-    assert "## 上游执行过程" in instruction
-    assert '"content": "已完成实现与自测"' in instruction
-    assert "## 当前节点交付要求" in instruction
-    assert "- [deliverable-1] 测试报告 (file)" in instruction
-    assert "允许类型：text/markdown" in instruction
-    assert "文件数量：1–2" in instruction
-    assert "- [deliverable-2] 访问地址 (text)" in instruction
-    assert "要求：必须可访问" in instruction
-    assert "## 提交约束" in instruction
-    assert "finalize_delivery" in instruction
-    assert "requirement_id" in instruction
-
-
 def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
     test_db: Session, test_user: User
 ) -> None:
@@ -2941,24 +2898,12 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
         ),
         cloud_project_id=str(project.id),
         origin_context={
-            "workflow_stage_input": {
-                "target_stage": {
-                    "id": "deploy",
-                    "prompt": "部署并测试",
-                    "workspace_policy": "inherit",
-                    "required_deliverables": [],
+            "workflow_stage_launch": {
+                "target_stage": {"id": "deploy", "workspace_policy": "inherit"},
+                "workspace_source_task": {
+                    "deviceId": "electron-app-device",
+                    "taskId": "previous-runtime-task",
                 },
-                "dependencies": [
-                    {
-                        "stage_id": "develop",
-                        "runtime_tasks": [
-                            {
-                                "device_id": "electron-app-device",
-                                "task_id": "previous-runtime-task",
-                            }
-                        ],
-                    }
-                ],
             }
         },
         execution_device_id="electron-app-device",
@@ -2995,24 +2940,12 @@ def test_inherited_stage_requires_the_executor_that_owns_the_workspace(
         ),
         cloud_project_id=str(project.id),
         origin_context={
-            "workflow_stage_input": {
-                "target_stage": {
-                    "id": "deploy",
-                    "prompt": "Deploy",
-                    "workspace_policy": "inherit",
-                    "required_deliverables": [],
+            "workflow_stage_launch": {
+                "target_stage": {"id": "deploy", "workspace_policy": "inherit"},
+                "workspace_source_task": {
+                    "deviceId": "other-app-device",
+                    "taskId": "previous-runtime-task",
                 },
-                "dependencies": [
-                    {
-                        "stage_id": "develop",
-                        "runtime_tasks": [
-                            {
-                                "device_id": "other-app-device",
-                                "task_id": "previous-runtime-task",
-                            }
-                        ],
-                    }
-                ],
             },
         },
         execution_device_id="electron-app-device",
@@ -3538,25 +3471,15 @@ def test_mark_start_requested_binds_workflow_stage_runtime_task(
         status="queued",
         created_by_user_id=test_user.id,
         metadata_json={
-            "workflow_stage_input": {
-                "version": 1,
-                "issue": {"id": item.id},
+            "workflow_node_id": "deploy",
+            "workflow_stage_launch": {
                 "target_stage": {
                     "id": "deploy",
                     "name": "部署",
-                    "prompt": "部署并测试",
                     "workspace_policy": "none",
-                    "required_deliverables": [
-                        {
-                            "id": "deliverable-1",
-                            "name": "测试报告",
-                            "value_type": "file",
-                        }
-                    ],
                 },
-                "dependencies": [],
-                "sha256": "stage-snapshot",
-            }
+                "workspace_source_task": None,
+            },
         },
     )
     test_db.add(run)
@@ -3617,7 +3540,8 @@ def test_mark_start_requested_binds_workflow_stage_runtime_task(
     )
     assert binding.device_id == "cloud-device-1"
     assert binding.workflow_node_id == "deploy"
-    assert binding.metadata_json["workflow_stage_input_sha256"] == "stage-snapshot"
+    assert "workflow_stage_input" not in binding.metadata_json
+    assert "workflow_stage_input_sha256" not in binding.metadata_json
     assert binding.metadata_json["workspace_device_id"] == "cloud-device-1"
 
 
@@ -4415,8 +4339,8 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
     assert executor_model_config["base_url"]
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
-        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
-        assert "submit_workflow_plan" in payload["message"]
+        assert "你像领导一样负责分活" in payload["message"]
+        assert "decide_issue_assignment" in payload["message"]
         assert f"task_id: {item.id}" in payload["message"]
         assert f"automation_run_id: {run.id}" in payload["message"]
         assert "Handle the task" in payload["message"]
@@ -4880,6 +4804,7 @@ async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
         f"execution_id: {execution.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
         "请通过看板工具自行查看。\n\n"
+        "创建 MR、PR 或其他外部事项后，使用 register_external_reference 将其 provider 和规范 URL（external_id）登记到当前工单，以便后续事件返回原上下文。\n\n"
         "Robot-defined execution prompt."
     )
 
@@ -5040,6 +4965,7 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     activity.metadata_json = {
         **activity.metadata_json,
         "execution_id": manager_execution.id,
+        "executor_type": "automation_manager",
     }
     test_db.commit()
 
@@ -5156,6 +5082,100 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     status_history = item.metadata_json.get("status_history", [])
     assert status_history[-1]["to_status"] == "in_review"
     assert status_history[-1]["trigger"] == "ai_completed"
+
+
+@pytest.mark.parametrize("assignment_recorded", [True, False])
+def test_manager_runtime_completion_closes_its_run_and_activity(
+    test_db: Session, test_user: User, assignment_recorded: bool
+) -> None:
+    from app.services.project_automation_execution import MISSING_MANAGER_PLAN_ERROR
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="Manager terminal projection")
+    if assignment_recorded:
+        item.assignee_user_id = test_user.id
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        task_id=item.id,
+        title="Issue coordinator turn",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={"issue_coordinator": True},
+    )
+    test_db.add(run)
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        automation_run_id=str(run.id),
+        execution_environment="local",
+        execution_device_id="device-1",
+        runtime_device_id="device-1",
+        runtime_task_id="manager-runtime-task",
+        status="running",
+        execution_payload=loop_item_execution_service._serialize_execution_intent(
+            runtime_selection={"executor_kind": "automation_manager"},
+            origin_context={},
+        ),
+    )
+    test_db.add(execution)
+    test_db.flush()
+    message_id = str(uuid.uuid4())
+    activity_metadata = {
+        "kind": "project_automation_run",
+        "automation_run_id": str(run.id),
+        "execution_id": execution.id,
+        "executor_type": "automation_manager",
+        "run_status": "running",
+    }
+    if assignment_recorded:
+        activity_metadata.update(
+            selected_assignee_type="user",
+            selected_assignee_id=str(test_user.id),
+        )
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id=f"issue_coordinator:{item.id}",
+        sender_name="工单 AI",
+        message_type="agent_chunk",
+        content="I evaluated the available assignees.",
+        metadata_json=activity_metadata,
+        status="streaming",
+    )
+    test_db.add(activity)
+    run.metadata_json = {**run.metadata_json, "activity_message_id": message_id}
+    test_db.commit()
+
+    completed = loop_item_execution_service.complete(
+        test_db,
+        execution_id=execution.id,
+        content="I assigned the owner." if assignment_recorded else "No decision.",
+    )
+
+    assert completed is not None
+    assert completed.status == "completed"
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    if assignment_recorded:
+        assert run.status == "succeeded"
+        assert activity.status == "completed"
+        assert activity.content == "I assigned the owner."
+        assert activity.metadata_json["run_status"] == "completed"
+        assert "error" not in activity.metadata_json
+    else:
+        assert run.status == "failed"
+        assert run.description == MISSING_MANAGER_PLAN_ERROR
+        assert activity.status == "failed"
+        assert activity.content == MISSING_MANAGER_PLAN_ERROR
+        assert activity.metadata_json["run_status"] == "failed"
+        assert activity.metadata_json["error"] == MISSING_MANAGER_PLAN_ERROR
 
 
 def test_manager_assigns_project_member_without_parsing_final_output(
@@ -5377,7 +5397,7 @@ def test_manager_does_not_treat_default_creator_as_a_submitted_plan(
     assert activity.metadata_json.get("selected_assignee_id") is None
 
 
-def test_manager_completion_recovers_persisted_workflow_plan_binding(
+def test_manager_completion_cannot_treat_historical_plan_as_new_assignment(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -5395,7 +5415,7 @@ def test_manager_completion_recovers_persisted_workflow_plan_binding(
         parent_id=rule.id,
         task_id=item.id,
         title="Managed run",
-        description="AI manager finished without submitting a workflow plan.",
+        description="AI coordinator finished without deciding the Issue assignment.",
         status="failed",
         created_by_user_id=test_user.id,
         metadata_json={},
@@ -5431,6 +5451,10 @@ def test_manager_completion_recovers_persisted_workflow_plan_binding(
     )
     test_db.add(workflow_run)
     test_db.flush()
+    workflow_run.metadata_json = {
+        **workflow_run.metadata_json,
+        "project_automation_run_id": str(run.id),
+    }
     test_db.add(
         ProjectWorkflowPlanItem(
             cloud_project_id=project.id,
@@ -5481,7 +5505,7 @@ def test_manager_completion_recovers_persisted_workflow_plan_binding(
     assert run.status == "failed"
     assert activity.status == "failed"
     assert activity.metadata_json.get("workflow_plan_run_id") is None
-    assert workflow_run.metadata_json.get("project_automation_run_id") is None
+    assert workflow_run.metadata_json["project_automation_run_id"] == str(run.id)
 
     project_automation_execution.finalize_manager_result(
         test_db,
@@ -5499,12 +5523,11 @@ def test_manager_completion_recovers_persisted_workflow_plan_binding(
     test_db.refresh(workflow_run)
     assert plan is not None
     assert plan.manager_run is not None
-    assert plan.manager_run.status == "succeeded"
-    assert run.status == "succeeded"
-    assert activity.status == "completed"
-    assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
-    assert activity.metadata_json["workflow_plan_version"] == 2
-    assert workflow_run.metadata_json["project_automation_run_id"] == run.id
+    assert plan.manager_run.status == "failed"
+    assert run.status == "failed"
+    assert activity.status == "failed"
+    assert activity.metadata_json.get("workflow_plan_run_id") is None
+    assert workflow_run.metadata_json["project_automation_run_id"] == str(run.id)
 
 
 def test_manager_completion_rejects_empty_trigger_created_workflow_run(
@@ -5571,7 +5594,10 @@ def test_manager_completion_rejects_empty_trigger_created_workflow_run(
     test_db.refresh(run)
     test_db.refresh(activity)
     assert run.status == "failed"
-    assert run.description == "AI manager finished without submitting a workflow plan."
+    assert (
+        run.description
+        == "AI coordinator finished without deciding the Issue assignment."
+    )
     assert activity.status == "failed"
 
 
@@ -5823,6 +5849,7 @@ def test_cancel_queued_execution_closes_linked_activity_without_runtime_device(
     activity.metadata_json = {
         **activity.metadata_json,
         "execution_id": execution.id,
+        "executor_type": "automation_manager",
     }
     test_db.commit()
     assert not execution.runtime_device_id

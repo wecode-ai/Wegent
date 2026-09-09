@@ -1125,6 +1125,11 @@ export function DesktopWorkbenchLayout({
                     ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
                     : undefined
                 }
+                focusedAssignmentId={
+                  ownedWorkspaceTab?.kind === 'board'
+                    ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'assignmentId')
+                    : undefined
+                }
                 onFocusedItemHandled={() => {
                   if (
                     !workspaceTabs ||

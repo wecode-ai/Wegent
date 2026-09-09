@@ -116,6 +116,7 @@ from app.stores.tasks.transient import (
     build_transient_task,
 )
 from shared.models.execution import ExecutionRequest
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -640,6 +641,7 @@ async def send_runtime_message(
     user_id: int,
     request: RuntimeSendRequest,
     allow_app_device_task_messaging: bool = False,
+    execution_origin: Optional[dict[str, Any]] = None,
 ) -> RuntimeSendResponse:
     """Continue a LocalTask through the owning local executor."""
 
@@ -668,6 +670,7 @@ async def send_runtime_message(
         request=request,
         rpc_method="runtime.tasks.send",
         allow_app_device_task_messaging=allow_app_device_task_messaging,
+        execution_origin=execution_origin,
     )
 
 
@@ -726,6 +729,7 @@ async def _dispatch_runtime_send(
     request: RuntimeSendRequest,
     rpc_method: str,
     allow_app_device_task_messaging: bool = False,
+    execution_origin: Optional[dict[str, Any]] = None,
 ) -> RuntimeSendResponse:
     """Send a runtime task message with the required execution request.
 
@@ -747,6 +751,8 @@ async def _dispatch_runtime_send(
                 attachment_ids=request.attachment_ids,
                 model_selection=request.model_selection,
                 additional_context=request.additional_context,
+                client_user_message_id=request.client_user_message_id,
+                origin=execution_origin,
             )
         except HTTPException:
             raise
@@ -1051,6 +1057,7 @@ async def rename_runtime_task(
     return _runtime_archive_response(result, normalized_address)
 
 
+@trace_async()
 async def cancel_runtime_task(
     *,
     db: Session,
@@ -1134,6 +1141,15 @@ async def _call_runtime_task_control(
     _touch_workspace_mapping(db, user_id, normalized_address)
     payload = _runtime_task_address_payload(normalized_address)
     payload.update(payload_patch or {})
+    if method == "runtime.tasks.cancel":
+        from app.services.runtime_task_stop import record_runtime_task_user_stop
+
+        record_runtime_task_user_stop(
+            db,
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            task_id=normalized_address.local_task_id,
+        )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -4768,6 +4784,8 @@ def _build_runtime_send_execution_request(
     attachment_ids: list[int],
     model_selection: Optional[RuntimeModelSelection] = None,
     additional_context: Optional[dict[str, dict[str, Any]]] = None,
+    client_user_message_id: Optional[str] = None,
+    origin: Optional[dict[str, Any]] = None,
 ):
     """Compile a Wework continuation using its immutable Team binding."""
     target = RuntimeTaskTarget(
@@ -4789,6 +4807,8 @@ def _build_runtime_send_execution_request(
         modelOptions=model_selection.options if model_selection else {},
         attachmentIds=attachment_ids,
         additionalContext=additional_context,
+        clientUserMessageId=client_user_message_id,
+        origin=origin,
     )
     return _build_runtime_execution_request(
         db=db,

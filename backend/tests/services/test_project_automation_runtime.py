@@ -575,20 +575,18 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         context={"trigger": "event"},
     )
 
-    assert prompt == (
-        "project_id: project-1\n"
-        "task_id: task-1\n"
-        "automation_run_id: run-1\n\n"
-        "看板任务数据位于 cloud://projects/project-1/todos/task-1，"
-        "请通过看板工具自行查看。\n\n"
-        "你是看板的 AI 管家，只负责编排，不执行具体任务。"
-        "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
-        "然后调用 submit_workflow_plan 提交结构化方案。"
-        "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
-        "不要查询、猜测或伪造阶段标识。"
-        "不要直接修改原 Issue 的负责人。\n\n"
-        "Prefer domain ownership."
-    )
+    assert "project_id: project-1" in prompt
+    assert "decide_issue_assignment" in prompt
+    assert "assign_role" in prompt
+    assert "expected_assignment_version" in prompt
+    assert "workflow.assignment_version" in prompt
+    assert "assignment_version_conflict" in prompt
+    assert "禁止猜测或递增版本号" in prompt
+    assert "next_action" in prompt
+    assert "只有负责人点击“继续推进”" in prompt
+    assert "仅发通知或说等待回复不代表已转交人工" in prompt
+    assert "子任务" not in prompt
+    assert prompt.endswith("Prefer domain ownership.")
 
 
 def test_manager_prompt_prefers_run_instruction_override():

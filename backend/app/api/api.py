@@ -41,6 +41,7 @@ from app.api.endpoints import (
     plugin_connections,
     plugin_publications,
     project_automations,
+    project_event_center,
     project_incoming_hooks,
     projects,
     prompt_optimization,
@@ -454,6 +455,11 @@ api_router.include_router(
     tags=["internal-api-keys"],
 )
 
+api_router.include_router(
+    project_event_center.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-event-center"],
+)
 api_router.include_router(
     wework_notifications.router,
     prefix="/v1/wework-notifications",

@@ -410,7 +410,7 @@ async def test_board_team_continuation_projects_to_its_comment_without_rewriting
         content="",
         metadata_json={
             "execution_id": execution.id,
-            "executor_type": "wegent_team",
+            "executor_type": "project_robot",
             "backend_task_id": task.id,
             "backend_subtask_id": continuation_subtask.id,
             "run_status": "running",
@@ -729,7 +729,11 @@ async def test_board_team_execution_reads_status_before_session_closes(
         sender_name="Board Agent",
         message_type="agent_status",
         content="",
-        metadata_json={"execution_id": execution_id, "run_status": "queued"},
+        metadata_json={
+            "execution_id": execution_id,
+            "executor_type": "project_robot",
+            "run_status": "queued",
+        },
         agent_id="board-agent-1",
         status="pending",
     )

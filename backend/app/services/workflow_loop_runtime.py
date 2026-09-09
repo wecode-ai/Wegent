@@ -696,7 +696,7 @@ async def dispatch_loop_handlers(
 
     from app.services.issue_workflow_start import issue_workflow_start_service
 
-    ready = issue_workflow_start_service.ready_robot_stage_ids(item)
+    ready = issue_workflow_start_service.ready_stage_ids(item)
     if not ready:
         return 0
     started = await issue_workflow_start_service.continue_ready_stages(

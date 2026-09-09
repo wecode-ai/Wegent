@@ -1,6 +1,10 @@
+export {
+  automationInputFromUi,
+  legacyWorkflowFromAutomationRule,
+} from './automationRuleSerialization'
+import { parseCron } from './automationSchedule'
 import type {
   ProjectAutomationEventType,
-  ProjectAutomationInput,
   ProjectAutomationRule,
   ProjectAutomationRun,
 } from '@/api/projectAutomations'
@@ -28,6 +32,7 @@ export interface AutomationUiDeliverable {
 }
 
 export interface AutomationUiStep {
+  assigneeUserId?: number | null
   id: string
   name: string
   prompt: string
@@ -79,7 +84,7 @@ export interface AutomationUiGraph {
 }
 
 export interface AutomationUiTrigger {
-  type: 'event' | 'schedule'
+  type: 'event' | 'schedule' | 'workflow'
   source: ProjectEventSourceType
   collectionMode?: ProjectEventCollectionMode
   startMode: 'immediate' | 'status'
@@ -101,6 +106,8 @@ export interface AutomationUiTrigger {
 }
 
 export interface AutomationUiRule {
+  advancement: 'sequential' | 'ai'
+  coordinator: AutomationUiStep | null
   id: string
   persisted: boolean
   origin: 'automation' | 'legacy_workflow'
@@ -161,18 +168,12 @@ interface StoredAutomationFlowV1 {
   steps: unknown[]
 }
 
-interface StoredAutomationFlowV2 {
-  version: 2
-  description: string
-  graph: {
-    nodes: unknown[]
-  }
-}
-
 interface NormalizedAutomationFlowV2 {
   version: 2
   description: string
   graph: AutomationUiGraph
+  advancement?: 'sequential' | 'ai'
+  coordinator?: AutomationUiStep | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -198,6 +199,20 @@ function formatAutomationTimestamp(value: string): string {
     minute: '2-digit',
     timeZone: 'Asia/Shanghai',
   }).format(new Date(value))
+}
+
+function deliverableValueType(value: string) {
+  if (
+    value === 'text' ||
+    value === 'file' ||
+    value === 'code_snapshot' ||
+    value === 'git_branch' ||
+    value === 'pull_request' ||
+    value === 'url'
+  ) {
+    return value
+  }
+  return 'text' as const
 }
 
 function normalizeDeliverables(value: unknown): AutomationUiDeliverable[] {
@@ -294,6 +309,7 @@ function normalizeStoredStep(
     y: typeof item.y === 'number' ? item.y : 226,
     deliverables: normalizeDeliverables(item.deliverables),
     executionMode,
+    assigneeUserId: typeof item.assigneeUserId === 'number' ? item.assigneeUserId : null,
     environment:
       typeof item.environment === 'string' ? item.environment : inherited?.environment || '',
     executionEnvironment,
@@ -414,12 +430,17 @@ function storedFlow(rule: ProjectAutomationRule): NormalizedAutomationFlowV2 | n
     return null
   }
   if (
-    candidate.version === 2 &&
+    (candidate.version === 2 || candidate.version === 3) &&
     isRecord(candidate.graph) &&
     Array.isArray(candidate.graph.nodes)
   ) {
     return {
       version: 2,
+      advancement:
+        candidate.advancement === 'ai' ? 'ai' : candidate.version === 3 ? 'sequential' : undefined,
+      coordinator: isRecord(candidate.coordinator)
+        ? normalizeStoredStep(candidate.coordinator, 0)
+        : null,
       description: typeof candidate.description === 'string' ? candidate.description : rule.prompt,
       graph: {
         nodes: candidate.graph.nodes.map((step, index) => normalizeStoredStep(step, index)),
@@ -434,56 +455,15 @@ function storedFlow(rule: ProjectAutomationRule): NormalizedAutomationFlowV2 | n
     version: 2,
     description: typeof legacy.description === 'string' ? legacy.description : rule.prompt,
     graph: {
-      nodes: legacy.steps.map((step, index) => normalizeStoredStep(step, index)),
+      nodes: legacy.steps.map((step, index) => {
+        const node = normalizeStoredStep(step, index)
+        if (index > 0 && isRecord(step) && !Array.isArray(step.dependencies)) {
+          node.dependencies = [normalizeStoredStep(legacy.steps[index - 1], index - 1).id]
+        }
+        return node
+      }),
     },
   }
-}
-
-function parseCron(expression: string | null) {
-  const parts = (expression ?? '0 3 * * *').trim().split(/\s+/)
-  const minute = Number(parts[0] ?? 0)
-  const hour = Number(parts[1] ?? 3)
-  const dayOfWeek = parts[4] ?? '*'
-  const time = `${String(Number.isFinite(hour) ? hour : 3).padStart(2, '0')}:${String(
-    Number.isFinite(minute) ? minute : 0
-  ).padStart(2, '0')}`
-  if (parts[1] === '*' && parts.slice(2).every(part => part === '*')) {
-    return {
-      frequency: 'hourly' as const,
-      weekday: 'monday',
-      time: `00:${String(minute).padStart(2, '0')}`,
-    }
-  }
-  if (dayOfWeek === '1-5') {
-    return { frequency: 'weekdays' as const, weekday: 'monday', time }
-  }
-  if (/^[0-6]$/.test(dayOfWeek)) {
-    const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    return { frequency: 'weekly' as const, weekday: weekdays[Number(dayOfWeek)], time }
-  }
-  return { frequency: 'daily' as const, weekday: 'monday', time }
-}
-
-function buildCron(trigger: AutomationUiTrigger): string {
-  const [hourText, minuteText] = trigger.schedule.time.split(':')
-  const hour = Number(hourText)
-  const minute = Number(minuteText)
-  if (trigger.schedule.frequency === 'hourly') return `${minute} * * * *`
-  const prefix = `${Number.isFinite(minute) ? minute : 0} ${Number.isFinite(hour) ? hour : 3}`
-  if (trigger.schedule.frequency === 'weekdays') return `${prefix} * * 1-5`
-  if (trigger.schedule.frequency === 'weekly') {
-    const weekday = {
-      sunday: 0,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
-    }[trigger.schedule.weekday]
-    return `${prefix} * * ${weekday ?? 1}`
-  }
-  return `${prefix} * * *`
 }
 
 function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
@@ -584,6 +564,30 @@ function normalizeCollectionMode(rule: ProjectAutomationRule): ProjectEventColle
 
 export function automationRuleFromBackend(rule: ProjectAutomationRule): AutomationUiRule {
   const flow = storedFlow(rule)
+  const definition =
+    !flow && rule.eventConfig.runtime_workflow_definition
+      ? (rule.eventConfig.runtime_workflow_definition as ProjectWorkflowDefinition)
+      : null
+  const config = definition?.execution_config
+  const generatedCoordinator =
+    definition?.advancement_policy === 'ai'
+      ? {
+          ...fallbackStep(rule),
+          kind: 'task' as const,
+          subgraph: null,
+          prompt: definition.coordinator_prompt ?? rule.prompt,
+          automationRuleId: rule.id,
+          executionConfig: config ?? null,
+          executionDeviceId: config?.execution_device_id ?? null,
+          runtimeProfileId: config?.runtime_profile_id ?? null,
+          model: config?.model ?? '',
+          modelType: config?.model_type ?? null,
+          modelOptions: config?.model_options ?? {},
+        }
+      : null
+  const storedNodes = flow ? flow.graph.nodes : [fallbackStep(rule)]
+  const oldCoordinator =
+    storedNodes.length === 1 && storedNodes[0]?.kind === 'dynamic' ? storedNodes[0] : null
   const schedule = parseCron(rule.cronExpression)
   const startMode = rule.eventType === 'task.status_changed' ? 'status' : 'immediate'
   const subscriptionId =
@@ -598,6 +602,9 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
       : null
   const source = normalizeTriggerSource(rule)
   return {
+    advancement:
+      flow?.advancement ?? (generatedCoordinator || oldCoordinator ? 'ai' : 'sequential'),
+    coordinator: flow?.coordinator ?? generatedCoordinator ?? oldCoordinator,
     id: rule.id,
     persisted: true,
     origin: 'automation',
@@ -610,7 +617,7 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     lastRunAt: rule.lastRunAt,
     lastRunStatus: rule.lastRunStatus,
     trigger: {
-      type: rule.triggerType === 'schedule' ? 'schedule' : 'event',
+      type: rule.triggerType,
       source,
       collectionMode: normalizeCollectionMode(rule),
       startMode,
@@ -632,8 +639,12 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
         timezone: rule.timezone,
       },
     },
-    steps: flow?.graph.nodes.length ? flow.graph.nodes : [fallbackStep(rule)],
-    legacyDefinition: null,
+    steps: definition
+      ? workflowNodesFromLegacy(definition, [rule])
+      : oldCoordinator
+        ? (oldCoordinator.subgraph?.nodes ?? [])
+        : storedNodes,
+    legacyDefinition: definition,
     runtimeSource: rule.runtimeSource,
     runtimeUserId: rule.runtimeUserId,
   }
@@ -768,6 +779,7 @@ function workflowNodesFromLegacy(
           : null,
       })),
       executionMode: node.execution_mode === 'robot' ? 'automatic' : 'manual',
+      assigneeUserId: node.assignee_user_id ?? null,
       environment: config?.execution_device_id
         ? `执行设备 ${config.execution_device_id}`
         : node.execution_mode === 'robot'
@@ -869,6 +881,8 @@ export function automationRuleFromLegacyWorkflow(
       : workflowNodes
   return {
     id: `legacy-workflow-${project.id}`,
+    advancement: advancementPolicy === 'ai' ? 'ai' : 'sequential',
+    coordinator: advancementPolicy === 'ai' ? { ...steps[0]!, kind: 'task', subgraph: null } : null,
     persisted: false,
     origin: 'legacy_workflow',
     version: project.version,
@@ -896,386 +910,8 @@ export function automationRuleFromLegacyWorkflow(
         timezone: 'Asia/Shanghai',
       },
     },
-    steps,
+    steps: workflowNodes,
     legacyDefinition: definition,
-  }
-}
-
-function deliverableValueType(value: string) {
-  if (
-    value === 'text' ||
-    value === 'file' ||
-    value === 'code_snapshot' ||
-    value === 'git_branch' ||
-    value === 'pull_request' ||
-    value === 'url'
-  ) {
-    return value
-  }
-  return 'text' as const
-}
-
-function executionConfigFromUiNode(node: AutomationUiStep): WorkflowExecutionConfig | null {
-  if (node.executionMode === 'manual') return node.executionConfig
-  const preserved = node.executionConfig ?? {
-    agent_id: null,
-    runtime_profile_id: null,
-    execution_device_id: null,
-    model: null,
-    model_type: null,
-    model_options: {},
-    workspace_binding: null,
-  }
-  return {
-    ...preserved,
-    runtime_profile_id: node.runtimeProfileId,
-    execution_device_id: node.executionDeviceId,
-    model: node.model || null,
-    model_type: node.modelType,
-    model_options: { ...node.modelOptions },
-    workspace_binding:
-      node.workspacePolicy === 'composer'
-        ? (preserved.workspace_binding ?? {
-            type: 'standalone',
-          })
-        : preserved.workspace_binding,
-    project_plugins: node.projectPlugins.flatMap(plugin => {
-      const id = typeof plugin.id === 'string' ? plugin.id : ''
-      const pluginName = typeof plugin.pluginName === 'string' ? plugin.pluginName : ''
-      const marketplaceId = typeof plugin.marketplaceId === 'string' ? plugin.marketplaceId : ''
-      const displayName = typeof plugin.displayName === 'string' ? plugin.displayName : ''
-      return id && pluginName && marketplaceId && displayName
-        ? [{ id, pluginName, marketplaceId, displayName }]
-        : []
-    }),
-  }
-}
-
-function workflowNodeFromUi(
-  node: AutomationUiStep,
-  includeExecutionConfig = true
-): WorkflowNodeDefinition {
-  return {
-    id: node.id,
-    name: node.name,
-    prompt: node.prompt,
-    node_type:
-      node.nodeType === 'event'
-        ? 'event'
-        : node.nodeType === 'loop'
-          ? 'loop'
-          : node.nodeType === 'loopStart'
-            ? 'loop_start'
-            : node.nodeType === 'branch'
-              ? 'branch'
-              : node.nodeType === 'loopEnd'
-                ? 'loop_end'
-                : 'task',
-    role: node.role === 'start' ? 'start' : undefined,
-    loop_id: node.loopId ?? undefined,
-    body_node_ids: node.nodeType === 'loop' ? [...(node.bodyNodeIds ?? [])] : undefined,
-    loop_config:
-      node.nodeType === 'loop' && node.loopConfig
-        ? {
-            max_attempts: node.loopConfig.maxAttempts,
-            timeout_seconds: node.loopConfig.timeoutSeconds,
-          }
-        : undefined,
-    branch_conditions:
-      node.nodeType === 'branch'
-        ? (node.branchConditions ?? []).map(condition => ({
-            source_type: condition.sourceType,
-            event_type: condition.eventType,
-            handler_node_ids: [...condition.handlerNodeIds],
-          }))
-        : undefined,
-    event_wait:
-      node.nodeType === 'branch'
-        ? {
-            subject_source: 'upstream_pull_request',
-            collection_mode: node.eventWait?.collectionMode ?? 'poll',
-            ...(node.eventWait?.collectionMode === 'webhook'
-              ? { subscription_id: node.eventWait?.subscriptionId ?? null }
-              : {}),
-            poll_interval_seconds:
-              node.eventWait?.collectionMode === 'webhook'
-                ? null
-                : (node.eventWait?.pollIntervalSeconds ?? 300),
-          }
-        : undefined,
-    execution_mode: node.executionMode === 'automatic' ? 'robot' : 'human',
-    depends_on: [...node.dependencies],
-    dependency_context: Object.fromEntries(
-      node.dependencies.map(dependencyId => [
-        dependencyId,
-        node.dependencyContext[dependencyId] ?? ['final_result', 'deliveries'],
-      ])
-    ),
-    required: node.required,
-    required_deliverables: node.deliverables.map(deliverable => ({
-      id: deliverable.id,
-      name: deliverable.name,
-      description: deliverable.description,
-      value_type: deliverable.valueType,
-      file_constraints:
-        deliverable.valueType === 'file'
-          ? (deliverable.fileConstraints ?? {
-              accepted_types: [],
-              min_files: 1,
-              max_files: 1,
-            })
-          : null,
-    })),
-    workspace_policy: includeExecutionConfig ? node.workspacePolicy : 'none',
-    automation_rule_id: node.automationRuleId,
-    execution_config: includeExecutionConfig ? executionConfigFromUiNode(node) : null,
-    execution_config_override: includeExecutionConfig && node.executionConfigOverride,
-  }
-}
-
-export function legacyWorkflowFromAutomationRule(
-  rule: AutomationUiRule
-): ProjectWorkflowDefinition {
-  const dynamicNode =
-    rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic' ? rule.steps[0] : null
-  const previous = rule.legacyDefinition
-  if (dynamicNode) {
-    return {
-      version: Math.max(1, previous?.version ?? 1),
-      stage_mode: dynamicNode.subgraph?.nodes.length ? 'dag' : 'none',
-      advancement_policy: 'ai',
-      coordinator_prompt: dynamicNode.prompt,
-      approval_policy: dynamicNode.approvalPolicy ?? previous?.approval_policy ?? 'required',
-      ai_automation_rule_id: dynamicNode.automationRuleId,
-      execution_config: executionConfigFromUiNode(dynamicNode),
-      nodes: (dynamicNode.subgraph?.nodes ?? []).map(node => workflowNodeFromUi(node, false)),
-    }
-  }
-  const startConfig = ((): WorkflowNodeDefinition['start_config'] => {
-    if (rule.trigger.type === 'event') {
-      return {
-        trigger_type: 'event',
-        event_type: rule.trigger.event ?? null,
-        cron_expression: null,
-        source_type: rule.trigger.source ?? null,
-      }
-    }
-    return {
-      trigger_type: 'schedule',
-      event_type: null,
-      cron_expression: buildCron(rule.trigger),
-      source_type: null,
-    }
-  })()
-  const loopNodes: WorkflowNodeDefinition[] = []
-  const topLevelNodes: WorkflowNodeDefinition[] = rule.steps.flatMap(step => {
-    if (step.kind !== 'loop') {
-      return [workflowNodeFromUi(step)]
-    }
-    const bodySteps = step.subgraph?.nodes ?? []
-    const bodyNodes = bodySteps.map(bodyStep => ({
-      ...workflowNodeFromUi(bodyStep),
-      node_type:
-        bodyStep.nodeType === 'loopStart'
-          ? ('loop_start' as const)
-          : bodyStep.nodeType === 'branch'
-            ? ('branch' as const)
-            : bodyStep.nodeType === 'loopEnd'
-              ? ('loop_end' as const)
-              : ('task' as const),
-      loop_id: step.id,
-      depends_on: bodyStep.nodeType === 'loopStart' ? [] : [...(bodyStep.dependencies ?? [])],
-    }))
-    loopNodes.push(...bodyNodes)
-    return [
-      {
-        ...workflowNodeFromUi(step),
-        node_type: 'loop' as const,
-        body_node_ids: bodyNodes.map(bodyNode => bodyNode.id),
-        depends_on: step.dependencies.length > 0 ? [...step.dependencies] : ['start'],
-      },
-    ]
-  })
-  const startNode: WorkflowNodeDefinition = {
-    id: 'start',
-    name: '开始',
-    prompt: '',
-    node_type: 'event',
-    role: 'start',
-    start_config: startConfig,
-    execution_mode: 'human',
-    depends_on: [],
-    dependency_context: {},
-    required: false,
-    required_deliverables: [],
-    workspace_policy: 'none',
-    automation_rule_id: null,
-    execution_config: null,
-    execution_config_override: false,
-  }
-  const rewired = topLevelNodes.map(node => ({
-    ...node,
-    depends_on:
-      node.node_type !== 'loop' && node.depends_on.length === 0 ? ['start'] : node.depends_on,
-  }))
-  return {
-    version: Math.max(1, previous?.version ?? 1),
-    stage_mode: rule.steps.length ? 'dag' : 'none',
-    advancement_policy: 'manual',
-    coordinator_prompt: previous?.coordinator_prompt ?? '',
-    approval_policy: previous?.approval_policy ?? 'required',
-    ai_automation_rule_id: null,
-    execution_config: previous?.execution_config ?? null,
-    nodes: [startNode, ...rewired, ...loopNodes],
-  }
-}
-
-function storedStageConstraint(node: AutomationUiStep): Record<string, unknown> {
-  return {
-    id: node.id,
-    name: node.name,
-    prompt: node.prompt,
-    kind: 'task',
-    dependencies: [...(node.dependencies ?? [])],
-    dependencyContext: Object.fromEntries(
-      Object.entries(node.dependencyContext ?? {}).map(([dependencyId, sources]) => [
-        dependencyId,
-        [...sources],
-      ])
-    ),
-    x: node.x,
-    y: node.y,
-    deliverables: (node.deliverables ?? []).map(deliverable => ({ ...deliverable })),
-    executionMode: node.executionMode,
-    required: node.required,
-    automationRuleId: node.automationRuleId,
-  }
-}
-
-function storedStepFromUi(node: AutomationUiStep): Record<string, unknown> {
-  return {
-    ...node,
-    dependencies: [...(node.dependencies ?? [])],
-    dependencyContext: Object.fromEntries(
-      Object.entries(node.dependencyContext ?? {}).map(([dependencyId, sources]) => [
-        dependencyId,
-        [...sources],
-      ])
-    ),
-    deliverables: (node.deliverables ?? []).map(deliverable => ({ ...deliverable })),
-    plugins: [...(node.plugins ?? [])],
-    projectPlugins: (node.projectPlugins ?? []).map(plugin => ({ ...plugin })),
-    modelOptions: { ...(node.modelOptions ?? {}) },
-    subgraph:
-      node.kind === 'dynamic'
-        ? {
-            nodes: (node.subgraph?.nodes ?? []).map(storedStageConstraint),
-          }
-        : node.kind === 'loop'
-          ? {
-              nodes: (node.subgraph?.nodes ?? []).map(storedStepFromUi),
-            }
-          : null,
-  }
-}
-
-function flowPrompt(rule: AutomationUiRule): string {
-  const describeNodes = (nodes: AutomationUiStep[], depth = 0): string[] =>
-    nodes.map((step, index) => {
-      const deliverables = step.deliverables.length
-        ? `\n交付物：${step.deliverables.map(item => item.name).join('、')}`
-        : ''
-      const dependencies = (step.dependencies ?? []).length
-        ? `\n前置节点：${step.dependencies.join('、')}`
-        : ''
-      const subgraph =
-        (step.kind === 'dynamic' || step.kind === 'loop') && step.subgraph?.nodes.length
-          ? `\n子图：\n${describeNodes(step.subgraph.nodes, depth + 1).join('\n')}`
-          : ''
-      return `${'  '.repeat(depth)}${index + 1}. ${step.name}\n${'  '.repeat(depth)}${step.prompt}${deliverables}${dependencies}${subgraph}`
-    })
-  const steps = describeNodes(rule.steps)
-  const description = rule.description.trim()
-  return [
-    ...(description ? [`自动化目标：${description}`] : []),
-    '按照以下流程完成任务：',
-    ...steps,
-  ].join('\n\n')
-}
-
-export function automationInputFromUi(
-  rule: AutomationUiRule,
-  currentUserId: string | number
-): ProjectAutomationInput {
-  const runtimeUserId = Number(currentUserId)
-  if (!Number.isInteger(runtimeUserId) || runtimeUserId <= 0) {
-    throw new Error('当前用户缺少可用的 Runtime 身份，无法保存自动化')
-  }
-  const eventTrigger = rule.trigger.type === 'event'
-  const externalEventTrigger = eventTrigger && rule.trigger.source !== 'wework'
-  const isAiDynamicWorkflow = rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic'
-  const directStep =
-    !isAiDynamicWorkflow && rule.steps.length === 1 && rule.steps[0]?.executionMode === 'automatic'
-      ? rule.steps[0]
-      : null
-  const directConfig = directStep ? executionConfigFromUiNode(directStep) : null
-  const directAgentId = directConfig?.agent_id ?? null
-  const runtimeProfileId = directConfig?.runtime_profile_id ?? null
-  const description = rule.description.trim()
-  return {
-    name: rule.name.trim(),
-    prompt: flowPrompt(rule),
-    triggerType: eventTrigger ? 'event' : 'schedule',
-    eventType: externalEventTrigger
-      ? (rule.trigger.event as ProjectAutomationEventType)
-      : eventTrigger
-        ? rule.trigger.startMode === 'status'
-          ? 'task.status_changed'
-          : 'task.created'
-        : null,
-    eventConfig: {
-      ...(externalEventTrigger
-        ? {
-            source_type: rule.trigger.source,
-            collection_mode: rule.trigger.collectionMode ?? 'webhook',
-            subscription_id: rule.trigger.subscriptionId,
-            execution_target: 'create_issue',
-            poll_interval_seconds:
-              rule.trigger.collectionMode === 'poll'
-                ? (rule.trigger.pollIntervalSeconds ?? 300)
-                : undefined,
-            target_branches: rule.trigger.targetBranches ?? [],
-            repositories: rule.trigger.repositories ?? [],
-          }
-        : {
-            tags: rule.trigger.tags,
-            ...(rule.trigger.startMode === 'status' ? { transition: 'entered_processing' } : {}),
-          }),
-      runtime_workflow_definition: legacyWorkflowFromAutomationRule(rule),
-      [FLOW_KEY]: {
-        version: 2,
-        description,
-        graph: {
-          nodes: rule.steps.map(storedStepFromUi),
-        },
-      } satisfies StoredAutomationFlowV2,
-    },
-    cronExpression: eventTrigger ? null : buildCron(rule.trigger),
-    timezone: rule.trigger.schedule.timezone,
-    enabled: rule.enabled,
-    assignmentMode: isAiDynamicWorkflow ? 'ai_managed' : 'manual',
-    managerType: isAiDynamicWorkflow ? 'custom' : null,
-    agentId: directAgentId,
-    wegentTeamId: null,
-    model: directAgentId ? null : (directConfig?.model ?? null),
-    executionEnvironment: directAgentId ? null : (directStep?.executionEnvironment ?? null),
-    executionDeviceId: directAgentId ? null : (directConfig?.execution_device_id ?? null),
-    roleSource: directAgentId ? 'agent' : 'generic',
-    runtimeSource: directAgentId
-      ? 'agent_default'
-      : (rule.runtimeSource ?? (runtimeProfileId !== null ? 'fixed_profile' : 'runtime_user')),
-    runtimeProfileId: directAgentId ? null : runtimeProfileId,
-    runtimeUserId: rule.runtimeUserId ?? runtimeUserId,
   }
 }
 

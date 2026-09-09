@@ -50,6 +50,8 @@ function backendRule(overrides: Partial<ProjectAutomationRule> = {}): ProjectAut
 function uiRule(): AutomationUiRule {
   return {
     id: 'draft-1',
+    advancement: 'sequential',
+    coordinator: null,
     persisted: false,
     version: 1,
     name: 'Issue 自动开发',
@@ -225,7 +227,7 @@ describe('automationRuleBackend', () => {
     expect(input.eventType).toBe('task.status_changed')
     expect(input.eventConfig.transition).toBe('entered_processing')
     expect(input.eventConfig).not.toHaveProperty('statuses')
-    expect(storedFlow.version).toBe(2)
+    expect(storedFlow.version).toBe(3)
     expect(storedFlow.graph.nodes[0]).toMatchObject({
       executionDeviceId: 'device-1',
       model: 'codex-runtime',
@@ -416,20 +418,12 @@ describe('automationRuleBackend', () => {
     })
   })
 
-  test('persists empty AI dynamic allocation as unconstrained Issue planning', () => {
+  test('persists AI advancement without a reference graph', () => {
     const rule = uiRule()
-    rule.steps = [
-      {
-        ...rule.steps[0],
-        kind: 'dynamic',
-        name: 'AI 动态分配',
-        approvalPolicy: 'automatic',
-        subgraph: { nodes: [] },
-      },
-    ]
-
+    rule.advancement = 'ai'
+    rule.coordinator = rule.steps[0]
+    rule.steps = []
     const input = automationInputFromUi(rule, 7)
-
     expect(input.eventConfig.runtime_workflow_definition).toMatchObject({
       stage_mode: 'none',
       advancement_policy: 'ai',
@@ -438,45 +432,40 @@ describe('automationRuleBackend', () => {
     })
     expect(input.assignmentMode).toBe('ai_managed')
     expect(input.managerType).toBe('custom')
+    const decoded = automationRuleFromBackend(backendRule({ eventConfig: input.eventConfig }))
+    expect(decoded.advancement).toBe('ai')
+    expect(decoded.steps).toEqual([])
+    expect(decoded.coordinator?.model).toBe('codex-runtime')
   })
 
-  test('keeps the AI dynamic allocation DAG when the automation is disabled', () => {
+  test('keeps role execution configuration in an AI reference graph', () => {
     const rule = uiRule()
-    const stage = {
-      ...rule.steps[0],
-      id: 'analysis',
-      name: '分析需求',
-      executionConfigOverride: true,
-    }
+    rule.advancement = 'ai'
+    rule.coordinator = { ...rule.steps[0], id: 'coordinator' }
+    rule.steps[0].executionConfigOverride = true
     rule.enabled = false
-    rule.steps = [
-      {
-        ...rule.steps[0],
-        kind: 'dynamic',
-        name: 'AI 动态分配',
-        subgraph: { nodes: [stage] },
-      },
-    ]
-
     const input = automationInputFromUi(rule, 7)
-
     expect(input.eventConfig.runtime_workflow_definition).toMatchObject({
-      stage_mode: 'dag',
       advancement_policy: 'ai',
       nodes: [
         expect.objectContaining({
-          id: 'analysis',
-          execution_config: null,
-          execution_config_override: false,
+          id: 'step-1',
+          execution_config: expect.objectContaining({ model: 'codex-runtime' }),
+          execution_config_override: true,
         }),
       ],
     })
-    const storedFlow = input.eventConfig.wework_flow as {
-      graph: { nodes: Array<{ subgraph: { nodes: Array<Record<string, unknown>> } }> }
-    }
-    expect(storedFlow.graph.nodes[0].subgraph.nodes[0]).not.toHaveProperty('model')
-    expect(storedFlow.graph.nodes[0].subgraph.nodes[0]).not.toHaveProperty('executionDeviceId')
-    expect(storedFlow.graph.nodes[0].subgraph.nodes[0]).not.toHaveProperty('plugins')
+    expect(input.eventConfig.wework_flow).toMatchObject({
+      version: 3,
+      advancement: 'ai',
+      graph: { nodes: [expect.objectContaining({ model: 'codex-runtime', subgraph: null })] },
+    })
+  })
+
+  test('rejects parallel or mixed flows instead of silently choosing a serial order', () => {
+    const rule = uiRule()
+    rule.steps.push({ ...rule.steps[0], id: 'parallel' })
+    expect(() => automationInputFromUi(rule, 7)).toThrow('串行')
   })
 
   test('projects and round-trips the legacy Issue workflow without losing node execution data', () => {
@@ -807,4 +796,19 @@ test.each([0, 17, 59])('round trips hourly schedules at minute %s', minute => {
     timezone: 'UTC',
     triggerType: 'schedule',
   })
+})
+
+test('saving a dispatch-only experience preserves its trigger and roles', () => {
+  const source = uiRule()
+  source.trigger.type = 'workflow'
+  const input = automationInputFromUi(source, 7)
+  expect(input.triggerType).toBe('workflow')
+  expect(input.eventType).toBeNull()
+  expect(input.cronExpression).toBeNull()
+  const restored = automationRuleFromBackend(backendRule({ ...input, id: 'saved-experience' }))
+  expect(restored.trigger.type).toBe('workflow')
+  expect(restored.steps.map(role => role.name)).toEqual(source.steps.map(role => role.name))
+  const saved = automationInputFromUi(restored, 7)
+  expect(saved.triggerType).toBe('workflow')
+  expect(saved.eventType).toBeNull()
 })

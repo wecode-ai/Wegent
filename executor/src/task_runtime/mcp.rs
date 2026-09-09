@@ -42,7 +42,13 @@ pub(crate) struct SpaceContextGrant {
     item_id: Option<String>,
     device_id: Option<String>,
     automation_run_id: Option<String>,
+    #[serde(default)]
+    execution_id: Option<u64>,
     automation_manager: bool,
+    #[serde(default)]
+    event_id: Option<String>,
+    #[serde(default)]
+    event_execution_id: Option<u64>,
     expires_at_unix: i64,
 }
 
@@ -155,7 +161,18 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
             .and_then(|origin| origin.get("run_id"))
             .and_then(id_value)
             .filter(|value| !value.is_empty()),
+        execution_id: origin
+            .and_then(|origin| origin.get("executionId"))
+            .and_then(Value::as_u64),
         automation_manager,
+        event_id: origin
+            .filter(|value| value.get("type").and_then(Value::as_str) == Some("project_event"))
+            .and_then(|value| value.get("event_id"))
+            .and_then(id_value),
+        event_execution_id: origin
+            .filter(|value| value.get("type").and_then(Value::as_str) == Some("project_event"))
+            .and_then(|value| value.get("executionId"))
+            .and_then(Value::as_u64),
         expires_at_unix: Local::now().timestamp() + SPACE_CONTEXT_GRANT_TTL_SECONDS,
     };
     let encoded = serde_json::to_vec(&grant)
@@ -704,6 +721,14 @@ async fn call_tool_with_runtime_context(
     backend_url: Option<&str>,
     auth_token: Option<&str>,
 ) -> Value {
+    if grant.as_ref().is_some_and(|value| value.event_id.is_some())
+        && !matches!(name, "get_event_context" | "decide_event")
+    {
+        return text_result(
+            "Event routers can only read their event and record its routing decision".to_owned(),
+            true,
+        );
+    }
     if is_automation_manager(grant.as_ref()) && !is_automation_manager_tool(name) {
         return text_result(
             format!("AI-managed automation cannot call wework_space tool: {name}"),
@@ -894,12 +919,11 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "get_assignment_candidates"
-        | "submit_workflow_plan"
-        | "report_workflow_outcome"
-        | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
-            "AI-managed orchestration requires a backend project space".to_owned(),
-        )),
+        "get_assignment_candidates" | "decide_issue_assignment" | "assign_board_item" => {
+            Err(super::TaskRuntimeError::Invalid(
+                "AI-managed orchestration requires a backend project space".to_owned(),
+            ))
+        }
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
             let input = parse(
@@ -1523,6 +1547,20 @@ async fn call_backend_tool(
             }));
         }
         "get_board_item" => client.get(format!("{base}/loop-items/{}", encode_segment(task_id()?))),
+        "get_event_context" | "decide_event" => {
+            let context = grant.ok_or_else(|| "An event router context is required".to_owned())?;
+            let event_id = context.event_id.as_deref().ok_or_else(|| "Event identity is missing".to_owned())?;
+            let execution_id = context.event_execution_id.ok_or_else(|| "Event execution identity is missing".to_owned())?;
+            let endpoint = format!("{base}/cloud-projects/{project_id}/events/{}/{}", encode_segment(event_id),
+                if name == "get_event_context" { "context" } else { "decision" });
+            let request = if name == "get_event_context" { client.get(endpoint) } else {
+                client.post(endpoint).json(arguments.get("decision").unwrap_or(arguments))
+            };
+            request.header("X-Event-Execution-Id", execution_id.to_string())
+        }
+        "register_external_reference" => client.post(format!(
+            "{base}/cloud-projects/{project_id}/events/references/{}", encode_segment(task_id()?)
+        )).json(arguments.get("reference").unwrap_or(arguments)),
         "get_assignment_candidates" => {
             let members = backend_json(
                 client
@@ -1544,25 +1582,13 @@ async fn call_backend_tool(
             .await?;
             return Ok(normalize_assignment_candidates(members, robots));
         }
-        "submit_workflow_plan" => {
+        "decide_issue_assignment" => {
+            let decision = assignment_decision_body(arguments)?;
             let request = client
-                .post(format!(
-                    "{base}/loop-items/{}/workflow-plan",
-                    encode_segment(task_id()?)
-                ))
-                .json(arguments.get("plan").unwrap_or(arguments));
+                .post(format!("{base}/loop-items/{}/assignment", encode_segment(task_id()?)))
+                .json(&decision);
             with_automation_run_header(request, grant)
         }
-        "report_workflow_outcome" => client
-            .post(format!(
-                "{base}/loop-items/{}/workflow-outcome",
-                encode_segment(task_id()?)
-            ))
-            .json(&json!({
-                "verdict": arguments.get("verdict").and_then(Value::as_str).unwrap_or_default(),
-                "summary": arguments.get("summary").and_then(Value::as_str).unwrap_or_default(),
-                "findings": arguments.get("findings").cloned().unwrap_or_else(|| json!([])),
-            })),
         "assign_board_item" => {
             let notify = arguments.get("notify_assignee").and_then(Value::as_bool).unwrap_or(true);
             if let Some(run_id) = grant.and_then(|grant| grant.automation_run_id.as_deref()) {
@@ -1582,14 +1608,16 @@ async fn call_backend_tool(
         "update_board_item" => client
             .patch(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
             .json(arguments.get("item").unwrap_or(arguments)),
-        "add_board_item_comment" => client
-            .post(format!(
+        "add_board_item_comment" => {
+            let request = client.post(format!(
                 "{base}/loop-items/{}/comments",
                 encode_segment(task_id()?)
             ))
             .json(&json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default()
-            })),
+            }));
+            with_comment_actor_headers(request, grant)
+        },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
@@ -2020,6 +2048,17 @@ fn with_automation_run_header(
     }
 }
 
+fn with_comment_actor_headers(
+    request: reqwest::RequestBuilder,
+    grant: Option<&SpaceContextGrant>,
+) -> reqwest::RequestBuilder {
+    let request = with_automation_run_header(request, grant);
+    match grant.and_then(|value| value.execution_id) {
+        Some(execution_id) => request.header("X-Wegent-Execution-ID", execution_id.to_string()),
+        None => request,
+    }
+}
+
 async fn download_backend_object(
     client: &reqwest::Client,
     access: &Value,
@@ -2395,59 +2434,23 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
-            "submit_workflow_plan",
-            "Submit the AI manager's structured child-task plan; the platform binds the active planning scope",
+            "decide_issue_assignment",
+            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when requirements are met. Pass every decision field directly at the top level; there is no decision wrapper. For clarification, approval, or a human decision, use assign_user with the responsible member and concrete questions. This enters waiting_human: only that person's explicit Continue action returns control to AI. Comments, notifications, external events, and completion of tasks they start do not authorize advancement. Never submit a human result on their behalf. Submit one decision and end this turn immediately. Do not sleep or poll: the backend resumes coordination through a result callback. Roles can be skipped or revisited.",
             json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "plan": {
-                        "type": "object",
-                        "properties": {
-                            "summary": {"type": "string"},
-                            "items": {
-                                "type": "array",
-                                "minItems": 1,
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "client_key": {"type": "string"},
-                                        "title": {"type": "string"},
-                                        "description": {"type": "string"},
-                                        "assignee_type": {"enum": ["user", "agent", "team"]},
-                                        "assignee_id": {"type": "string"},
-                                        "assignee_name": {"type": "string"},
-                                        "rationale": {"type": "string"}
-                                    },
-                                    "required": [
-                                        "client_key",
-                                        "title",
-                                        "assignee_type",
-                                        "assignee_id"
-                                    ]
-                                }
-                            }
-                        },
-                        "required": ["items"]
-                    }
+                    "request_id": {"type": "string", "minLength": 1, "description": "Generate a new unique ID for every new decision. Reuse an ID only when retrying the exact same payload. After a callback, never reuse the finished assignment ID."},
+                    "expected_assignment_version": {"type": "integer", "minimum": 0, "description": "Copy workflow.assignment_version from get_board_item. Do not use the Issue version or workflow.version. On assignment_version_conflict, re-read the Issue and reconsider the decision; never guess or increment versions. Other conflicts require following next_action."},
+                    "action": {"enum": ["assign_role", "assign_user", "execute", "complete"]},
+                    "node_id": {"type": ["string", "null"], "description": "Required only for assign_role."},
+                    "assignee_user_id": {"type": ["integer", "null"], "minimum": 1, "description": "Required only for assign_user."},
+                    "instruction": {"type": "string", "description": "Required for assign_role, assign_user, and execute."},
+                    "reason": {"type": "string", "minLength": 1}
                 },
-                "required": ["space_id", "item_id", "plan"]
-            }),
-        ),
-        tool(
-            "report_workflow_outcome",
-            "Report the current workflow child task as passed or needing replanning",
-            json!({
-                "type": "object",
-                "properties": {
-                    "space_id": {"type": "string"},
-                    "item_id": {"type": "string"},
-                    "verdict": {"enum": ["passed", "needs_rework"]},
-                    "summary": {"type": "string"},
-                    "findings": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": ["space_id", "item_id", "verdict", "summary"]
+                "required": ["space_id", "item_id", "request_id", "expected_assignment_version", "action", "reason"]
             }),
         ),
         tool(
@@ -2819,6 +2822,17 @@ fn tools() -> Vec<Value> {
 }
 
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
+    if context
+        .grant()
+        .is_some_and(|grant| grant.event_id.is_some())
+    {
+        return vec![
+            tool("get_event_context", "Read this event, clarification history, related Issue, available experiences and decision schema", json!({"type":"object","properties":{}})),
+            tool("decide_event", "Persist one routing decision using the schema returned by get_event_context. Clarify, route to an existing Issue, select an experience, create an Issue-only workflow, or ignore", json!({
+                "type":"object", "properties":{"decision":{"type":"object"}}, "required":["decision"]
+            })),
+        ];
+    }
     if is_automation_manager(context.grant()) {
         return tools()
             .into_iter()
@@ -2845,14 +2859,41 @@ fn is_automation_manager_tool(name: &str) -> bool {
         "get_current_context"
             | "get_board_item"
             | "get_assignment_candidates"
-            | "submit_workflow_plan"
+            | "decide_issue_assignment"
             | "send_notification"
     )
 }
 
 fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> Vec<Value> {
-    let _ = (runtime, project_id);
-    tools()
+    let mut result = tools()
+        .into_iter()
+        .filter(|tool| {
+            tool["name"]
+                .as_str()
+                .map_or(true, |name| !is_coordinator_only_tool(name))
+        })
+        .collect::<Vec<_>>();
+    if project_id.map_or(true, |id| {
+        is_locally_routed_project(runtime, id, "register_external_reference")
+    }) {
+        return result;
+    }
+    result.push(tool("register_external_reference", "After creating an external artifact, register its provider and stable external_id with this Issue so later webhook events return to it. Prefer the canonical artifact URL as external_id", json!({
+        "type":"object", "properties": {
+            "space_id":{"type":"string"}, "item_id":{"type":"string"},
+            "reference":{"type":"object", "properties":{
+                "provider":{"type":"string"}, "external_id":{"type":"string"}, "url":{"type":"string"}
+            }, "required":["provider","external_id"]}
+        }, "required":["reference"]
+    })));
+    result
+}
+
+fn is_coordinator_only_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_assignment_candidates" | "decide_issue_assignment"
+    )
 }
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
@@ -2870,6 +2911,70 @@ fn string_argument<'a>(value: &'a Value, key: &str) -> Result<&'a str, super::Ta
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| super::TaskRuntimeError::Invalid(format!("{key} is required")))
+}
+
+fn assignment_decision_body(arguments: &Value) -> Result<Value, String> {
+    if arguments.get("decision").is_some() {
+        return Err(
+            "Invalid decide_issue_assignment call: put request_id, expected_assignment_version, action, node_id, assignee_user_id, instruction, and reason directly at the top level; do not use a decision wrapper. Re-read the tool schema and retry once."
+                .to_owned(),
+        );
+    }
+    let request_id = non_empty_assignment_string(arguments, "request_id")?;
+    let reason = non_empty_assignment_string(arguments, "reason")?;
+    let action = non_empty_assignment_string(arguments, "action")?;
+    let expected_version = arguments
+        .get("expected_assignment_version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            assignment_shape_error("expected_assignment_version must be an integer >= 0")
+        })?;
+    if !matches!(
+        action,
+        "assign_role" | "assign_user" | "execute" | "complete"
+    ) {
+        return Err(assignment_shape_error(
+            "action must be assign_role, assign_user, execute, or complete",
+        ));
+    }
+    if action == "assign_role" {
+        non_empty_assignment_string(arguments, "node_id")?;
+    } else if action == "assign_user"
+        && arguments
+            .get("assignee_user_id")
+            .and_then(Value::as_u64)
+            .map_or(true, |value| value == 0)
+    {
+        return Err(assignment_shape_error(
+            "assignee_user_id must be an integer >= 1 for assign_user",
+        ));
+    }
+    if action != "complete" {
+        non_empty_assignment_string(arguments, "instruction")?;
+    }
+    Ok(json!({
+        "request_id": request_id,
+        "expected_assignment_version": expected_version,
+        "action": action,
+        "node_id": arguments.get("node_id"),
+        "assignee_user_id": arguments.get("assignee_user_id"),
+        "instruction": arguments.get("instruction").cloned().unwrap_or_else(|| json!("")),
+        "reason": reason,
+    }))
+}
+
+fn non_empty_assignment_string<'a>(arguments: &'a Value, key: &str) -> Result<&'a str, String> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| assignment_shape_error(&format!("{key} must be a non-empty string")))
+}
+
+fn assignment_shape_error(detail: &str) -> String {
+    format!(
+        "Invalid decide_issue_assignment call: {detail}. Use top-level fields from the tool schema, copy expected_assignment_version from get_board_item.workflow.assignment_version, and retry once."
+    )
 }
 
 fn cells_argument(
@@ -2993,6 +3098,52 @@ mod tests {
         serde_json::from_slice(&decoded).expect("JSON grant")
     }
 
+    #[tokio::test]
+    async fn event_router_grant_restricts_tools_and_project_scope() {
+        let mut request = ExecutionRequest {
+            task_id: "router-runtime".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert("origin".to_owned(), json!({
+            "type": "project_event", "cloudProjectId": "board-42", "event_id": "event-7", "executionId": 93
+        }));
+        let grant = decode_grant(&request);
+        assert_eq!(grant.event_id.as_deref(), Some("event-7"));
+        assert_eq!(grant.event_execution_id, Some(93));
+        assert_eq!(grant.space_id.as_deref(), Some("board-42"));
+        let directory = tempfile::tempdir().unwrap();
+        let runtime =
+            TaskRuntime::new(LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap())
+                .unwrap();
+        let context = SpaceMcpRequestContext::new(Some(grant.clone()), None, None);
+        let names: Vec<String> = visible_tools(&runtime, &context)
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(names, vec!["get_event_context", "decide_event"]);
+        let denied = call_tool_with_runtime_context(
+            &runtime,
+            "create_board_item",
+            json!({}),
+            Some(grant.clone()),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(denied["isError"], true);
+        let forged = call_tool_with_runtime_context(
+            &runtime,
+            "get_event_context",
+            json!({"space_id": "another-board"}),
+            Some(grant),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(forged["isError"], true);
+        assert!(forged.to_string().contains("outside this Agent session"));
+    }
+
     #[test]
     fn leaves_space_context_unbound_without_project_context() {
         let request = ExecutionRequest::default();
@@ -3070,7 +3221,8 @@ mod tests {
             json!({
                 "type": "project_automation",
                 "automationRole": "manager",
-                "run_id": "run-1"
+                "run_id": "run-1",
+                "executionId": 42
             }),
         );
 
@@ -3078,6 +3230,7 @@ mod tests {
 
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
+        assert_eq!(grant.execution_id, Some(42));
         assert!(grant.automation_manager);
     }
 
@@ -3100,6 +3253,36 @@ mod tests {
                 .get("X-Wegent-Automation-Run-ID")
                 .and_then(|value| value.to_str().ok()),
             Some("run-1")
+        );
+    }
+
+    #[test]
+    fn comment_request_carries_its_ai_execution_identity() {
+        let grant = SpaceContextGrant {
+            automation_run_id: Some("run-1".to_owned()),
+            execution_id: Some(42),
+            ..SpaceContextGrant::default()
+        };
+        let request = with_comment_actor_headers(
+            reqwest::Client::new().post("http://backend.test/comments"),
+            Some(&grant),
+        )
+        .build()
+        .expect("comment request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Wegent-Automation-Run-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Wegent-Execution-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("42")
         );
     }
 
@@ -3155,7 +3338,10 @@ mod tests {
             item_id: Some("item-1".to_owned()),
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
+            execution_id: None,
             automation_manager: false,
+            event_id: None,
+            event_execution_id: None,
             expires_at_unix: Local::now().timestamp() + 60,
         };
 
@@ -3182,7 +3368,10 @@ mod tests {
             item_id: Some("item-1".to_owned()),
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
+            execution_id: None,
             automation_manager: false,
+            event_id: None,
+            event_execution_id: None,
             expires_at_unix: Local::now().timestamp() - 1,
         };
         let encoded = STANDARD.encode(serde_json::to_vec(&grant).unwrap());
@@ -3264,6 +3453,8 @@ mod tests {
         }
         assert!(names.iter().any(|name| name == "list_space_files"));
         assert!(names.iter().any(|name| name == "list_deliveries"));
+        assert!(!names.iter().any(|name| name == "get_assignment_candidates"));
+        assert!(!names.iter().any(|name| name == "decide_issue_assignment"));
         assert!(is_locally_routed_project(
             &runtime,
             "cloud-aitable",
@@ -3435,8 +3626,7 @@ mod tests {
             "list_spaces",
             "get_board_item",
             "get_assignment_candidates",
-            "submit_workflow_plan",
-            "report_workflow_outcome",
+            "decide_issue_assignment",
             "assign_board_item",
             "list_item_attachments",
             "read_item_attachment",
@@ -3445,6 +3635,91 @@ mod tests {
         ] {
             assert!(serialized.contains(required), "missing {required}");
         }
+    }
+
+    #[tokio::test]
+    async fn assignment_conflict_preserves_versions_and_recovery_instructions() {
+        use axum::{extract::Json, http::StatusCode, routing::post, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/api/v1/loop-items/ISSUE-1/assignment",
+            post(|Json(body): Json<Value>| async move {
+                assert_eq!(body["expected_assignment_version"], 13);
+                assert!(body.get("expected_version").is_none());
+                assert!(body.get("item_id").is_none());
+                assert!(body.get("space_id").is_none());
+                assert!(body.get("decision").is_none());
+                (
+                    StatusCode::CONFLICT,
+                    Json(json!({"detail": {
+                        "code": "assignment_version_conflict",
+                        "expected_assignment_version": 13,
+                        "current_assignment_version": 1,
+                        "next_action": "read_issue"
+                    }})),
+                )
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let error = call_backend_tool(
+            &format!("http://{address}"),
+            "unit-token",
+            "12",
+            "decide_issue_assignment",
+            &json!({"space_id": "12", "item_id": "ISSUE-1",
+                "request_id": "decision-1", "expected_assignment_version": 13,
+                "action": "complete", "reason": "Acceptance verified"
+            }),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("409"), "{error}");
+        let detail: Value = serde_json::from_str(error.split_once(": ").unwrap().1).unwrap();
+        assert_eq!(detail["detail"]["code"], "assignment_version_conflict");
+        assert_eq!(detail["detail"]["expected_assignment_version"], 13);
+        assert_eq!(detail["detail"]["current_assignment_version"], 1);
+        assert_eq!(detail["detail"]["next_action"], "read_issue");
+        server.abort();
+    }
+
+    #[test]
+    fn assignment_schema_identifies_the_assignment_lock_version() {
+        let assignment = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "decide_issue_assignment")
+            .unwrap();
+        let schema = &assignment["inputSchema"];
+        assert!(schema["properties"].get("decision").is_none());
+        assert!(schema["properties"].get("expected_version").is_none());
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("expected_assignment_version")));
+        let description = schema["properties"]["expected_assignment_version"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.contains("workflow.assignment_version"));
+        assert!(description.contains("never guess or increment"));
+        let request_id_description = schema["properties"]["request_id"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(request_id_description.contains("new unique ID"));
+        assert!(request_id_description.contains("exact same payload"));
+    }
+
+    #[test]
+    fn assignment_input_error_explains_the_exact_shape_to_retry() {
+        let error = assignment_decision_body(&json!({
+            "item_id": "ISSUE-1",
+            "decision": {"action": "complete"}
+        }))
+        .unwrap_err();
+
+        assert!(error.contains("directly at the top level"));
+        assert!(error.contains("do not use a decision wrapper"));
+        assert!(error.contains("retry once"));
     }
 
     #[tokio::test]
@@ -3515,7 +3790,10 @@ mod tests {
                 item_id: Some("ISSUE-1".to_owned()),
                 device_id: None,
                 automation_run_id: None,
+                execution_id: None,
                 automation_manager: false,
+                event_id: None,
+                event_execution_id: None,
                 expires_at_unix: Local::now().timestamp() + 60,
             });
             let result = call_tool_with_runtime_context(
@@ -3562,7 +3840,7 @@ mod tests {
     }
 
     #[test]
-    fn automation_manager_has_read_plan_and_notification_tools() {
+    fn automation_manager_has_read_assignment_and_notification_tools() {
         let names = tools()
             .into_iter()
             .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
@@ -3576,7 +3854,7 @@ mod tests {
                 "get_board_item",
                 "send_notification",
                 "get_assignment_candidates",
-                "submit_workflow_plan",
+                "decide_issue_assignment",
             ]
         );
         for forbidden in [
@@ -3923,7 +4201,10 @@ mod tests {
             item_id: Some(task.id.clone()),
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
+            execution_id: None,
             automation_manager: false,
+            event_id: None,
+            event_execution_id: None,
             expires_at_unix: Local::now().timestamp() + 60,
         };
 

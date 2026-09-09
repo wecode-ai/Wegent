@@ -23,7 +23,6 @@ from app.models.delivery import (
 )
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
-from app.schemas.issue_workflow import WorkflowPlanSubmit
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 
 
@@ -209,6 +208,43 @@ def test_local_project_tools_use_canonical_loop_item_service(
     assert detail["tags"] == ["automation"]
 
 
+def test_local_comment_preserves_automation_manager_identity(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    item, _robot = _workflow_issue(test_db, project, test_user)
+    run, activity = _manager_run(test_db, project, item, test_user)
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(
+        wework_space,
+        "_board_context",
+        lambda *_args, **_kwargs: {
+            "source": "project_automation",
+            "space_id": str(project.id),
+            "item_id": item.id,
+            "project_automation_run_id": str(run.id),
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.loop_items.comment_provider.push_project_chat_message",
+        lambda _message: None,
+    )
+
+    response = wework_space.add_board_item_comment(
+        _token(test_user), body="Coordinator conclusion"
+    )
+
+    assert response["author"] == activity.sender_name
+    comment = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response["id"])
+        .one()
+    )
+    assert comment.sender_type == "agent"
+    assert comment.sender_id == activity.sender_id
+    assert comment.content == "Coordinator conclusion"
+
+
 def test_current_context_resolves_space_and_item_from_authenticated_task(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
@@ -294,7 +330,7 @@ def test_project_details_expose_assignable_members(
     ]
 
 
-async def test_ai_manager_submits_structured_plan_for_current_issue(
+async def test_ai_coordinator_assigns_same_issue_to_a_person(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
@@ -324,24 +360,39 @@ async def test_ai_manager_submits_structured_plan_for_current_issue(
         },
     )
 
-    submitted = await wework_space.submit_workflow_plan(
+    rejected = await wework_space.decide_issue_assignment(
         _token(test_user),
-        _workflow_plan(robot),
+        request_id="wrong-snapshot-version",
+        expected_assignment_version=13,
+        action="complete",
+        reason="Test a confused workflow version",
+    )
+    assert rejected["error"]["code"] == "assignment_version_conflict"
+    assert rejected["error"]["expected_assignment_version"] == 13
+    assert rejected["error"]["current_assignment_version"] == 0
+    assert rejected["error"]["next_action"] == "read_issue"
+
+    submitted = await wework_space.decide_issue_assignment(
+        _token(test_user),
+        request_id="assign-member",
+        expected_assignment_version=0,
+        action="assign_user",
+        assignee_user_id=test_user.id,
+        instruction="Verify release",
+        reason="Human confirmation required",
     )
 
     test_db.refresh(workflow_run)
     test_db.refresh(activity)
-    assert submitted["run_id"] == workflow_run.id
-    assert submitted["stage_id"] == "__issue__"
-    assert submitted["items"][0]["stage_id"] == "__issue__"
-    assert submitted["status"] == "awaiting_approval"
-    assert submitted["items"][0]["task_id"] is None
+    assert submitted["assignment"]["assignee_user_id"] == test_user.id
+    assert submitted["orchestration_status"] == "waiting_human"
+    assert test_db.query(LoopItem).filter(LoopItem.parent_id == item.id).count() == 0
     assert workflow_run.metadata_json["project_automation_run_id"] == manager_run.id
     assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
     assert activity.metadata_json["workflow_plan_version"] == 1
 
 
-async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
+async def test_inactive_coordinator_cannot_assign_issue(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
@@ -372,11 +423,19 @@ async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
         },
     )
 
-    with pytest.raises(RuntimeError, match="not active"):
-        await wework_space.submit_workflow_plan(
-            _token(test_user),
-            _workflow_plan(robot),
-        )
+    result = await wework_space.decide_issue_assignment(
+        _token(test_user),
+        request_id="assign-member",
+        expected_assignment_version=0,
+        action="assign_user",
+        assignee_user_id=test_user.id,
+        instruction="Verify release",
+        reason="Human confirmation required",
+    )
+
+    detail = result["error"]
+    assert detail["code"] == "coordinator_invalid"
+    assert detail["next_action"] == "end_turn"
 
     test_db.expire_all()
     restored = issue_workflow_planning_service.get(
@@ -390,52 +449,24 @@ async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
     assert restored.items == []
 
 
-async def test_workflow_child_reports_one_parent_review_outcome(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
+def test_assignment_tool_publishes_version_source_and_conflict_recovery():
+    info = wework_space.decide_issue_assignment._mcp_tool_info
+    request_id = next(
+        parameter
+        for parameter in info["parameters"]
+        if parameter["name"] == "request_id"
     )
-    test_db.commit()
-    issue_workflow_planning_service.submit(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-        values=WorkflowPlanSubmit.model_validate(_workflow_plan(robot)),
+    version = next(
+        parameter
+        for parameter in info["parameters"]
+        if parameter["name"] == "expected_assignment_version"
     )
-    approved = issue_workflow_planning_service.approve(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-    )
-    child_id = approved.items[0].task_id
-    assert child_id is not None
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "board_team_assignment",
-            "space_id": str(project.id),
-            "item_id": child_id,
-            "board_team_execution_id": "42",
-        },
-    )
-
-    reported = await wework_space.report_workflow_outcome(
-        _token(test_user),
-        "passed",
-        "Implementation and tests passed.",
-    )
-
-    assert reported["issue_id"] == item.id
-    assert reported["status"] == "awaiting_review"
-    assert test_db.get(LoopItem, child_id).status == "in_review"
-    assert test_db.get(LoopItem, item.id).status == "in_review"
+    assert not any(parameter["name"] == "decision" for parameter in info["parameters"])
+    assert "new unique ID" in request_id["description"]
+    assert "exact same payload" in request_id["description"]
+    assert "workflow.assignment_version" in version["description"]
+    assert "never guess or increment" in version["description"]
+    assert "next_action" in version["description"]
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(
@@ -605,4 +636,78 @@ def test_notification_tool_uses_bound_project_and_current_user(
     with pytest.raises(ValueError, match="Space does not match"):
         wework_space.send_notification(
             _token(test_user), "Review", "Wrong project", space_id="999"
+        )
+
+
+def test_comment_reader_paginates_and_keeps_thread_roots(
+    test_db, test_user, monkeypatch
+):
+    from app.mcp_server.tools import wework_space_comments as comments
+
+    project = _project(test_db, test_user, provider="local")
+    item, _ = _workflow_issue(test_db, project, test_user)
+    monkeypatch.setattr(comments, "SessionLocal", lambda: _SessionContext(test_db))
+    rows = []
+    for index in range(3):
+        row = ProjectChatMessage(
+            message_id=f"read-comment-{index}",
+            project_id=str(project.id),
+            task_id=item.id,
+            sender_type="user",
+            sender_id=str(test_user.id),
+            sender_name="User",
+            message_type="text",
+            content=f"Conclusion {index}",
+            status="completed",
+        )
+        if index:
+            row.reply_to_message_id = "read-comment-0"
+            row.thread_root_message_id = "read-comment-0"
+        rows.append(row)
+    other = ProjectChatMessage(
+        message_id="unrelated-comment",
+        project_id=str(project.id),
+        task_id="other-item",
+        sender_type="user",
+        sender_id=str(test_user.id),
+        sender_name="User",
+        message_type="text",
+        content="Unrelated",
+        status="completed",
+    )
+    test_db.add_all([*rows, other])
+    test_db.commit()
+    args = {
+        "token_info": _token(test_user),
+        "space_id": str(project.id),
+        "item_id": item.id,
+        "limit": 1,
+    }
+    page = comments.list_board_item_comments(**args)
+    assert [row["message_id"] for row in page["items"]] == [
+        "read-comment-0",
+        "read-comment-2",
+    ]
+    assert page["next_before_sequence"] == rows[2].id
+    next_page = comments.list_board_item_comments(
+        **args, before_sequence=page["next_before_sequence"]
+    )
+    assert [row["message_id"] for row in next_page["items"]] == [
+        "read-comment-0",
+        "read-comment-1",
+    ]
+    assert "Unrelated" not in str(page)
+    assert test_db.dirty == set()
+
+
+def test_comment_reader_requires_item_access(test_db, test_user, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.mcp_server.tools import wework_space_comments as comments
+
+    project = _project(test_db, test_user, provider="local")
+    monkeypatch.setattr(comments, "SessionLocal", lambda: _SessionContext(test_db))
+    with pytest.raises(HTTPException):
+        comments.list_board_item_comments(
+            _token(test_user), space_id=str(project.id), item_id="missing-item"
         )

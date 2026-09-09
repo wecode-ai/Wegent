@@ -213,7 +213,7 @@ class LoopItemExecution(Base):
         """Return the transport role without persisting redundant state."""
 
         configured = self.runtime_selection.get("executor_kind")
-        if configured in {"generic_robot", "automation_manager"}:
+        if configured in {"generic_robot", "automation_manager", "event_router"}:
             return str(configured)
         if self.agent_id:
             return "project_robot"

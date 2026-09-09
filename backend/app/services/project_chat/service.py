@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemTaskBinding,
     ProjectChatAgent,
     adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
@@ -482,6 +483,11 @@ class ProjectChatService:
                 query.order_by(ProjectChatMessage.id.desc()).limit(request.limit).all()
             )
             rows.reverse()
+        from app.services.project_chat.thread_context import include_thread_context
+
+        rows = include_thread_context(
+            db, query=query, rows=rows, task_id=request.task_id
+        )
         reconciled = False
         for row in rows:
             reconciled = self._reconcile_ai_run_projection(db, row=row) or reconciled
@@ -617,12 +623,37 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
-        configured_agent = self._agent_row(
-            db,
-            project_id=request.project_id,
-            agent_id=request.agent_id,
-            active_only=True,
+        configured_agent = (
+            self._agent_row(
+                db,
+                project_id=request.project_id,
+                agent_id=request.agent_id or "",
+                active_only=True,
+            )
+            if request.agent_id
+            else None
         )
+        if configured_agent is None:
+            binding = (
+                db.query(LoopItemTaskBinding)
+                .filter(
+                    LoopItemTaskBinding.cloud_project_id == request.project_id,
+                    LoopItemTaskBinding.loop_item_id == request.task_id,
+                    LoopItemTaskBinding.task_user_id == user_id,
+                    LoopItemTaskBinding.device_id == request.runtime_device_id,
+                    LoopItemTaskBinding.task_id == request.runtime_task_id,
+                    loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                )
+                .first()
+            )
+            if binding is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Task is not bound to this Issue"
+                )
+            binding.metadata_json = {
+                **(binding.metadata_json or {}),
+                "conversation_only": True,
+            }
         trigger = None
         if request.trigger_message_id:
             trigger = (
@@ -644,7 +675,7 @@ class ProjectChatService:
         existing = self._agent_response_for_runtime(
             db,
             trigger_message_id=request.trigger_message_id,
-            agent_id=request.agent_id,
+            agent_id=request.agent_id or "",
             runtime_device_id=request.runtime_device_id,
             runtime_task_id=request.runtime_task_id,
         )
@@ -668,6 +699,7 @@ class ProjectChatService:
             "run_id": run_id,
             "run_status": "running",
             "auto_retry": request.auto_retry,
+            "conversation_only": configured_agent is None,
         }
         if request.model is not None:
             metadata["model"] = request.model
@@ -686,8 +718,12 @@ class ProjectChatService:
             project_id=request.project_id,
             task_id=request.task_id or "",
             sender_type="agent",
-            sender_id=request.agent_id,
-            sender_name=str(configured_agent.title or configured_agent.name),
+            sender_id=request.agent_id or request.runtime_task_id,
+            sender_name=(
+                str(configured_agent.title or configured_agent.name)
+                if configured_agent
+                else "AI"
+            ),
             message_type="agent_chunk",
             content="",
             metadata_json=metadata,
@@ -698,7 +734,7 @@ class ProjectChatService:
                 if trigger
                 else ""
             ),
-            agent_id=request.agent_id,
+            agent_id=request.agent_id or "",
             runtime_device_id=request.runtime_device_id or "",
             runtime_task_id=request.runtime_task_id or "",
             status="streaming",
@@ -723,7 +759,7 @@ class ProjectChatService:
             existing = self._agent_response_for_runtime(
                 db,
                 trigger_message_id=request.trigger_message_id,
-                agent_id=request.agent_id,
+                agent_id=request.agent_id or "",
                 runtime_device_id=request.runtime_device_id,
                 runtime_task_id=request.runtime_task_id,
             )
@@ -944,14 +980,33 @@ class ProjectChatService:
         runtime_task_id: str,
         event_name: str,
         payload: dict,
+        execution_id: int | None = None,
     ) -> tuple[ProjectChatMessageView, str] | None:
-        row = self._streaming_activity_for_runtime(db, device_id, runtime_task_id)
-        if row is None:
-            row = self._open_activity_from_execution(
-                db,
-                runtime_device_id=device_id,
-                runtime_task_id=runtime_task_id,
+        row = None
+        if execution_id is not None:
+            from app.models.loop_item_execution import LoopItemExecution
+            from app.services.loop_item_executions.service import (
+                loop_item_execution_service,
             )
+
+            execution = db.get(LoopItemExecution, execution_id)
+            if execution is None:
+                return None
+            row = loop_item_execution_service._linked_activity(db, execution)
+            if row is None:
+                loop_item_execution_service.open_execution_activity(
+                    db,
+                    execution=execution,
+                )
+                row = loop_item_execution_service._linked_activity(db, execution)
+        else:
+            row = self._streaming_activity_for_runtime(db, device_id, runtime_task_id)
+            if row is None:
+                row = self._open_activity_from_execution(
+                    db,
+                    runtime_device_id=device_id,
+                    runtime_task_id=runtime_task_id,
+                )
         if row is None:
             return None
         if self._project_automation_activity_is_terminal(db, row):
@@ -1720,47 +1775,6 @@ class ProjectChatService:
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
-
-        ProjectChatService._sync_issue_workflow_from_completed_task(
-            db,
-            task=task,
-        )
-
-    @staticmethod
-    def _sync_issue_workflow_from_completed_task(
-        db: Session,
-        *,
-        task: LoopItem,
-    ) -> None:
-        """Keep a secondary workflow projection from aborting finalization."""
-
-        metadata = task.metadata_json if isinstance(task.metadata_json, dict) else {}
-        plan = metadata.get("workflow_plan")
-        if (
-            not task.parent_id
-            or not isinstance(plan, dict)
-            or not str(plan.get("run_id") or "")
-        ):
-            return
-        # Flush the activity and task truth before opening the projection
-        # savepoint. A failure in these primary writes must still abort the
-        # caller's transaction.
-        db.flush()
-        from app.services.issue_workflow_planning import (
-            issue_workflow_planning_service,
-        )
-
-        try:
-            with db.begin_nested():
-                issue_workflow_planning_service.sync_from_child(
-                    db,
-                    child_id=task.id,
-                )
-        except Exception:
-            logger.exception(
-                "[ProjectChat] Issue workflow projection failed task_id=%s",
-                task.id,
-            )
 
     def fail_agent_response(
         self,

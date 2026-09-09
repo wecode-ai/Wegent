@@ -24,6 +24,9 @@ use super::model::{
     TaskUpdate,
 };
 
+#[path = "store_comments.rs"]
+mod comments;
+
 const LOCAL_SCHEMA_VERSION: i64 = 7;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
@@ -2355,6 +2358,7 @@ impl LocalTaskStore {
                      AND device_id = ?3 AND task_id = ?4
                      AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
                      AND json_extract(metadata, '$.workflow_node_id') IS NULL
+                     AND COALESCE(json_extract(metadata, '$.conversation_only'), 0) != 1
                      AND CAST(COALESCE(
                          json_extract(metadata, '$.runtime_status_observed_at_ms'),
                          0
@@ -2384,6 +2388,7 @@ impl LocalTaskStore {
                AND device_id = ?3 AND task_id = ?4
                AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
                AND json_extract(metadata, '$.workflow_node_id') IS NULL
+                     AND COALESCE(json_extract(metadata, '$.conversation_only'), 0) != 1
                AND CAST(COALESCE(
                    json_extract(metadata, '$.runtime_status_observed_at_ms'),
                    0
@@ -3761,22 +3766,23 @@ fn insert_comment(
 ) -> Result<LocalComment, TaskRuntimeError> {
     let message_id = Uuid::new_v4().to_string();
     let now = now();
-    let (reply_to_message_id, thread_root_message_id) =
-        if let Some(reply_to) = &create.reply_to_message_id {
-            let root = connection
+    let (reply_to_message_id, thread_root_message_id) = if let Some(reply_to) =
+        &create.reply_to_message_id
+    {
+        let root = connection
                 .query_row(
                     "SELECT COALESCE(thread_root_message_id, message_id)
                      FROM loop_item_comments
-                     WHERE message_id = ?1 AND deleted_at IS NULL",
-                    params![reply_to],
+                     WHERE message_id = ?1 AND project_id = ?2 AND task_id = ?3 AND deleted_at IS NULL",
+                    params![reply_to, create.project_id, create.task_id],
                     |row| row.get::<_, String>(0),
                 )
                 .optional()?
-                .unwrap_or_else(|| reply_to.clone());
-            (Some(reply_to.clone()), Some(root))
-        } else {
-            (None, Some(message_id.clone()))
-        };
+                .ok_or_else(|| TaskRuntimeError::Invalid("Reply activity does not belong to this Issue".into()))?;
+        (Some(reply_to.clone()), Some(root))
+    } else {
+        (None, Some(message_id.clone()))
+    };
     let sequence_number = connection.query_row(
         "SELECT COALESCE(MAX(sequence_number), 0) + 1
          FROM loop_item_comments WHERE task_id = ?1",

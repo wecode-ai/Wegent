@@ -810,88 +810,97 @@ describe('local delivery API', () => {
     })
   })
 
-  test('writes a completed user-bound runtime task into its Issue workflow', async () => {
-    const workflowTask = {
-      ...taskRecord,
-      status: 'in_progress',
-      metadata: {
-        tags: [],
+  test.each(['manual', 'ai'] as const)(
+    'writes a completed user-bound runtime task into its %s workflow',
+    async policy => {
+      const workflowTask = {
+        ...taskRecord,
+        status: 'in_progress',
+        metadata: {
+          tags: [],
+          workflow: {
+            version: 1,
+            definition_version: 1,
+            stage_mode: 'dag',
+            advancement_policy: policy,
+            orchestration_status: policy === 'ai' ? 'paused' : 'idle',
+            nodes: [
+              {
+                id: 'stage-1',
+                name: 'Develop',
+                execution_mode: policy === 'ai' ? 'robot' : 'human',
+                depends_on: [],
+                required: true,
+                status: 'failed',
+                execution_error: 'cancelled',
+                task_ids: [],
+                task_statuses: {},
+                required_deliverables: [],
+              },
+            ],
+          },
+        },
+      }
+      const binding = {
+        id: 'binding-1',
+        cloud_project_id: 'project-1',
+        loop_item_id: 'LOCAL-1',
+        task_user_id: 0,
+        device_id: 'local-device',
+        task_id: 'runtime-1',
+        task_title: 'Runtime task',
+        backend_task_id: null,
+        workflow_node_id: 'stage-1',
+        binding_type: 'user',
+        linked_at: '2026-08-24T00:00:00Z',
+      }
+      const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+        if (method === 'runtime_tasks.context') return binding
+        if (method === 'projects.list') return [projectRecord]
+        if (method === 'todos.get') return workflowTask
+        if (method === 'todos.bindings') return [binding]
+        if (method === 'todos.update') {
+          const todo = params?.todo as {
+            status: string
+            workflow: {
+              nodes: Array<{
+                status: string
+                task_statuses: Record<string, string>
+              }>
+            }
+          }
+          expect(todo.workflow.nodes[0].task_statuses['local-device:runtime-1']).toBe('succeeded')
+          expect(todo.workflow.nodes[0].status).toBe(
+            policy === 'ai' ? 'completed' : 'awaiting_approval'
+          )
+          if (policy === 'ai') expect(todo.status).toBe('in_progress')
+          return {
+            ...workflowTask,
+            status: todo.status,
+            metadata: { ...workflowTask.metadata, workflow: todo.workflow },
+            version: 2,
+          }
+        }
+        throw new Error(`Unexpected method: ${method}`)
+      })
+      const api = createLocalDeliveryApi(request)
+
+      await expect(
+        api.updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
+      ).resolves.toMatchObject({
+        id: 'LOCAL-1',
         workflow: {
-          version: 1,
-          definition_version: 1,
-          stage_mode: 'dag',
-          advancement_policy: 'manual',
+          orchestration_status: policy === 'ai' ? 'paused' : 'idle',
           nodes: [
             {
-              id: 'stage-1',
-              name: 'Develop',
-              execution_mode: 'human',
-              depends_on: [],
-              required: true,
-              status: 'ready',
-              task_ids: [],
-              task_statuses: {},
-              required_deliverables: [],
+              status: policy === 'ai' ? 'completed' : 'awaiting_approval',
+              task_statuses: { 'local-device:runtime-1': 'succeeded' },
             },
           ],
         },
-      },
+      })
     }
-    const binding = {
-      id: 'binding-1',
-      cloud_project_id: 'project-1',
-      loop_item_id: 'LOCAL-1',
-      task_user_id: 0,
-      device_id: 'local-device',
-      task_id: 'runtime-1',
-      task_title: 'Runtime task',
-      backend_task_id: null,
-      workflow_node_id: 'stage-1',
-      binding_type: 'user',
-      linked_at: '2026-08-24T00:00:00Z',
-    }
-    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'runtime_tasks.context') return binding
-      if (method === 'projects.list') return [projectRecord]
-      if (method === 'todos.get') return workflowTask
-      if (method === 'todos.bindings') return [binding]
-      if (method === 'todos.update') {
-        const todo = params?.todo as {
-          status: string
-          workflow: {
-            nodes: Array<{
-              status: string
-              task_statuses: Record<string, string>
-            }>
-          }
-        }
-        expect(todo.workflow.nodes[0].task_statuses['local-device:runtime-1']).toBe('succeeded')
-        expect(todo.workflow.nodes[0].status).toBe('awaiting_approval')
-        return {
-          ...workflowTask,
-          status: todo.status,
-          metadata: { ...workflowTask.metadata, workflow: todo.workflow },
-          version: 2,
-        }
-      }
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await expect(
-      api.updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
-    ).resolves.toMatchObject({
-      id: 'LOCAL-1',
-      workflow: {
-        nodes: [
-          {
-            status: 'awaiting_approval',
-            task_statuses: { 'local-device:runtime-1': 'succeeded' },
-          },
-        ],
-      },
-    })
-  })
+  )
 
   test('synchronizes a friendly runtime title through executor IPC', async () => {
     const renamedTask = { ...taskRecord, title: '修复登录回调', version: 2 }

@@ -78,6 +78,36 @@ const plan: WorkflowPlan = {
 }
 
 describe('TodoEditor workflow manager execution', () => {
+  it.each(['planning', 'dispatching', 'running', 'waiting_human', 'paused', 'completed'] as const)(
+    'offers pause only for active AI advancement (%s)',
+    status => {
+      const current = { ...item, workflow: { ...item.workflow!, orchestration_status: status } }
+      const api = {
+        listDeliveries: vi.fn(async () => ({ items: [] })),
+        listTaskBindings: vi.fn(async () => []),
+        listLoopItemAttachments: vi.fn(async () => []),
+        listLoopItemCollaborators: vi.fn(async () => []),
+        listCloudProjectMembers: vi.fn(async () => []),
+        getWorkflowPlan: vi.fn(async () => plan),
+        pauseWorkflowPlan: vi.fn(),
+      } as never
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          item={current}
+          project={project}
+          allItems={[current]}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={api}
+        />
+      )
+      const pause = screen.queryByTestId('cloud-todo-workflow-pause')
+      if (status === 'paused' || status === 'completed') expect(pause).not.toBeInTheDocument()
+      else expect(pause).toBeEnabled()
+    }
+  )
   it('opens the queued manager execution by clicking the whole manager card', async () => {
     const user = userEvent.setup()
     const api = {
@@ -106,7 +136,6 @@ describe('TodoEditor workflow manager execution', () => {
 
     const managerCard = await screen.findByTestId('cloud-todo-workflow-manager-run')
     expect(managerCard).toBeEnabled()
-    expect(screen.getByTestId('cloud-todo-workflow-manager-open-execution')).toBeInTheDocument()
 
     await user.click(managerCard)
 

@@ -10,7 +10,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.exc import IntegrityError
@@ -23,8 +23,6 @@ from app.models.delivery import (
     LoopItemTaskBinding,
     ProjectAutomationRule,
     ProjectAutomationRun,
-    ProjectChatAgent,
-    ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_unset_datetime_for_connection,
@@ -76,10 +74,9 @@ from app.services.project_event_sources import supported_event_type
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
-MISSING_MANAGER_PLAN_ERROR = "AI manager finished without submitting a workflow plan."
-
-if TYPE_CHECKING:
-    from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowPlanView
+MISSING_MANAGER_PLAN_ERROR = (
+    "AI coordinator finished without deciding the Issue assignment."
+)
 
 
 class AutomationRunNotRetryable(RuntimeError):
@@ -247,6 +244,12 @@ class ProjectAutomationExecution:
         ):
             return
         existing_workflow = item_metadata.get("workflow")
+        if isinstance(existing_workflow, dict) and existing_workflow.get(
+            "migration_required"
+        ):
+            raise RuntimeError(
+                "Choose a reviewed experience on the Issue before continuing its historical workflow"
+            )
         run_metadata = metadata(run)
         adopt_existing_workflow = (
             text(run_metadata.get("task_origin")) == "existing_issue"
@@ -258,6 +261,9 @@ class ProjectAutomationExecution:
             if adopt_existing_workflow
             else instantiate_workflow(definition)
         )
+        if not adopt_existing_workflow:
+            workflow.intent = "\n\n".join(filter(None, [item.title, item.description]))
+            workflow.coordinator_user_id = owner.id
         workflow_snapshot = workflow.model_dump(mode="json")
         item_metadata["workflow"] = workflow_snapshot
         item_metadata["workflow_automation"] = {
@@ -724,12 +730,23 @@ class ProjectAutomationExecution:
         *,
         owner: User,
         project: CloudProject,
-        rule: ProjectAutomationRule,
+        rule: ProjectAutomationRule | None,
         run: ProjectAutomationRun,
         context: dict,
     ) -> str:
-        del db, owner, context
+        del owner, context
         task_id = run.task_id or ""
+        from app.models.delivery import ProjectIncomingEvent
+
+        incoming = (
+            db.query(ProjectIncomingEvent)
+            .filter(
+                ProjectIncomingEvent.cloud_project_id == str(project.id),
+                ProjectIncomingEvent.loop_item_id == task_id,
+            )
+            .order_by(ProjectIncomingEvent.created_at.asc())
+            .all()
+        )
         sections = [
             (
                 f"project_id: {project.id}\n"
@@ -741,23 +758,72 @@ class ProjectAutomationExecution:
                 "请通过看板工具自行查看。"
             ),
             (
-                "你是看板的 AI 管家，只负责编排，不执行具体任务。"
-                "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
-                "然后调用 submit_workflow_plan 提交结构化方案。"
-                "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
-                "不要查询、猜测或伪造阶段标识。"
-                "不要直接修改原 Issue 的负责人。"
+                "你像领导一样负责分活。看板是工单系统，自动化是一套做事经验，"
+                "每个节点是一个有职责和执行配置的角色。先读取当前 Issue 的目标、"
+                "验收要求、参考角色及上次交办结果，再调用 decide_issue_assignment。"
+                "assign_role 将具体工作交给节点并立即启动执行；assign_user 将原工单"
+                "交给项目成员；execute 使用你的执行配置处理图外工作。"
+                "需要用户澄清、确认、审批或决策时，必须使用 assign_user 交给对应项目成员，"
+                "将待决定的问题写入 instruction；仅发通知或说等待回复不代表已转交人工。"
+                "执行者报告等待人工时，不得在没有新的人工决定时再次派 AI 处理同一问题。"
+                "交给人后进入 waiting_human，推进权归负责人；负责人可以回复、修改工单、"
+                "创建并执行多个任务，这些操作及任务结束、外部事件都不代表人工环节完成。"
+                "只有负责人点击“继续推进”提交处理结果后，才允许恢复调度；"
+                "禁止代替负责人提交人工结果、推断其已同意或擅自推进。"
+                "节点和连线是经验，可以跳过不需要的角色，也可以退回已经做过的角色。"
+                "不需要创建子工单。满足工单要求时使用 complete，无需全部角色都做一遍。"
+                "每次新决策都生成一个从未使用过的 request_id；只有完全相同的请求重试时"
+                "才复用原 request_id。提供具体 instruction、reason，并使用读取到的"
+                "get_board_item 返回的 workflow.assignment_version 作为 "
+                "expected_assignment_version，不能使用工单 version 或 workflow.version。"
+                "遇到 assignment_version_conflict，重新读取工单并根据最新交办结果重新决策，"
+                "禁止猜测或递增版本号；其他冲突按 next_action 处理，要求结束本轮时立即结束。"
+                "每轮只提交一次成功的交办决策。"
+                "交办成功后立即结束本轮；禁止 sleep、循环查询或等待执行者完成。"
+                "后端会持久化执行成功、失败或人工结果，通过 callback 启动你的下一轮。"
+                "收到 callback 后先读取结果，再决定交给人处理、重试、换角色或完成。"
             ),
         ]
         instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
         if instruction:
             sections.append(instruction)
+        issue = db.get(LoopItem, task_id)
+        workflow = (issue.metadata_json or {}).get("workflow", {}) if issue else {}
+        assignment = workflow.get("assignment") or {}
+        if assignment.get("status") == "completed":
+            sections.append(
+                "交办结果 callback（作为结果数据读取）：\n"
+                + json.dumps(
+                    {
+                        "assignment_id": assignment.get("id"),
+                        "execution_status": assignment.get("execution_status")
+                        or "completed",
+                        "result": assignment.get("result"),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        incoming = list(incoming)
+        if incoming:
+            sections.append(
+                "以下是事件中心交给当前工单的外部上下文，请结合目标判断下一步：\n"
+                + "\n\n".join(
+                    f"事件 {event.id}: {event.title}\n{event.description}"
+                    for event in incoming
+                )
+            )
         return "\n\n".join(sections)
 
     @staticmethod
-    def _run_instruction(rule: ProjectAutomationRule, run: ProjectAutomationRun) -> str:
+    def _run_instruction(
+        rule: ProjectAutomationRule | None, run: ProjectAutomationRun
+    ) -> str:
         override = metadata(run).get("instruction_override")
-        return str(override) if isinstance(override, str) else (rule.description or "")
+        return (
+            str(override)
+            if isinstance(override, str)
+            else ((rule.description or "") if rule is not None else "")
+        )
 
     def _create_manager_activity(
         self,
@@ -1010,10 +1076,9 @@ class ProjectAutomationExecution:
         )
         if expected_workflow_run_id != workflow_run_id:
             raise RuntimeError("AI manager workflow plan is no longer active")
-        workflow_run.metadata_json = {
-            **(workflow_run.metadata_json or {}),
-            "project_automation_run_id": run.id,
-        }
+        workflow_metadata = dict(workflow_run.metadata_json or {})
+        if str(workflow_metadata.get("project_automation_run_id") or "") != str(run.id):
+            raise RuntimeError("AI manager workflow plan is no longer active")
         activity.metadata_json = {
             **(activity.metadata_json or {}),
             "workflow_plan_run_id": workflow_run_id,
@@ -1023,45 +1088,6 @@ class ProjectAutomationExecution:
             db.commit()
         else:
             db.flush()
-
-    def submit_manager_workflow_plan(
-        self,
-        db: Session,
-        *,
-        run_id: str,
-        issue_id: str,
-        user_id: int,
-        values: WorkflowPlanSubmit,
-    ) -> WorkflowPlanView:
-        """Persist one manager plan and its audit binding atomically."""
-
-        from app.schemas.issue_workflow import WorkflowPlanSubmit
-        from app.services.issue_workflow_planning import (
-            issue_workflow_planning_service,
-        )
-
-        validated = WorkflowPlanSubmit.model_validate(values)
-        try:
-            view = issue_workflow_planning_service.submit(
-                db,
-                issue_id=issue_id,
-                user_id=user_id,
-                values=validated,
-                commit=False,
-            )
-            self.record_manager_plan_submission(
-                db,
-                run_id=run_id,
-                user_id=user_id,
-                workflow_run_id=view.run_id,
-                plan_version=view.plan_version,
-                commit=False,
-            )
-            db.commit()
-            return view
-        except Exception:
-            db.rollback()
-            raise
 
     def finalize_manager_result(
         self,
@@ -1080,11 +1106,13 @@ class ProjectAutomationExecution:
             return False
         rule = db.get(ProjectAutomationRule, run.parent_id)
         owner = db.get(User, run.created_by_user_id)
-        if rule is None or owner is None:
+        if owner is None or (
+            rule is None and not metadata(run).get("issue_coordinator")
+        ):
             return False
         task = self._task_values(
             db,
-            project_id=str(rule.cloud_project_id),
+            project_id=str(run.cloud_project_id),
             task_id=str(run.task_id or ""),
             user_id=owner.id,
         )
@@ -1099,19 +1127,6 @@ class ProjectAutomationExecution:
             )
         activity_metadata = dict(activity.metadata_json or {}) if activity else {}
         workflow_plan_run_id = str(activity_metadata.get("workflow_plan_run_id") or "")
-        if not workflow_plan_run_id:
-            workflow_plan = self._workflow_plan_for_manager_run(db, run)
-            if workflow_plan is not None:
-                workflow_plan_run_id = str(workflow_plan.id)
-                workflow_metadata = dict(workflow_plan.metadata_json or {})
-                workflow_metadata["project_automation_run_id"] = run.id
-                workflow_plan.metadata_json = workflow_metadata
-                if activity is not None:
-                    activity_metadata["workflow_plan_run_id"] = workflow_plan_run_id
-                    activity_metadata["workflow_plan_version"] = int(
-                        workflow_metadata.get("plan_version") or 0
-                    )
-                    activity.metadata_json = activity_metadata
         selected_type = str(activity_metadata.get("selected_assignee_type") or "")
         selected_id = str(activity_metadata.get("selected_assignee_id") or "")
         selected_agent_id = (
@@ -1438,61 +1453,6 @@ class ProjectAutomationExecution:
             .first()
         )
 
-    @staticmethod
-    def _workflow_plan_for_manager_run(
-        db: Session,
-        run: ProjectAutomationRun,
-    ) -> ProjectWorkflowRun | None:
-        candidates = (
-            db.query(ProjectWorkflowRun)
-            .filter(ProjectWorkflowRun.parent_id == run.task_id)
-            .order_by(ProjectWorkflowRun.created_at.desc())
-            .all()
-        )
-        for candidate in candidates:
-            candidate_metadata = (
-                candidate.metadata_json
-                if isinstance(candidate.metadata_json, dict)
-                else {}
-            )
-            if str(candidate_metadata.get("project_automation_run_id") or "") == str(
-                run.id
-            ) and ProjectAutomationExecution._workflow_plan_has_items(db, candidate):
-                return candidate
-        run_metadata = metadata(run)
-        event = run_metadata.get("event")
-        payload = event.get("payload") if isinstance(event, dict) else None
-        workflow_run_id = (
-            str(payload.get("workflow_run_id") or "")
-            if isinstance(payload, dict)
-            else ""
-        )
-        if not workflow_run_id:
-            return None
-        candidate = db.get(ProjectWorkflowRun, workflow_run_id)
-        if candidate is None or candidate.parent_id != run.task_id:
-            return None
-        return (
-            candidate
-            if ProjectAutomationExecution._workflow_plan_has_items(db, candidate)
-            else None
-        )
-
-    @staticmethod
-    def _workflow_plan_has_items(
-        db: Session,
-        run: ProjectWorkflowRun,
-    ) -> bool:
-        return (
-            db.query(ProjectWorkflowPlanItem.id)
-            .filter(
-                ProjectWorkflowPlanItem.parent_id == run.id,
-                ProjectWorkflowPlanItem.status != "superseded",
-            )
-            .first()
-            is not None
-        )
-
 
 project_automation_execution = ProjectAutomationExecution()
 
@@ -1752,11 +1712,22 @@ class ProjectAutomationProcessor:
         *,
         automation_id: str | None = None,
     ) -> list[ProjectAutomationRun]:
+        _, runs = await self.dispatch_event(db, event, automation_id=automation_id)
+        return runs
+
+    @trace_async()
+    async def dispatch_event(
+        self,
+        db: Session,
+        event: ProjectAutomationEvent,
+        *,
+        automation_id: str | None = None,
+    ) -> tuple[bool, list[ProjectAutomationRun]]:
         if not supported_event_type(event.event_type):
             logger.info(
                 "[ProjectAutomation] Ignoring unsupported event=%s", event.event_type
             )
-            return []
+            return False, []
         from app.services.workflow_loop_runtime import (
             dispatch_loop_handlers,
             route_event_to_workflow_loop,
@@ -1777,7 +1748,7 @@ class ProjectAutomationProcessor:
                 item=loop_item,
                 user_id=event.actor_user_id or 0,
             )
-            return []
+            return True, []
         matching_rules = self.matching_rules(db, event, automation_id=automation_id)
         logger.info(
             "[ProjectAutomation] Event matched project=%s subject=%s event=%s "
@@ -1825,7 +1796,7 @@ class ProjectAutomationProcessor:
                     event.subject_id,
                     [str(rule.id) for rule in matching_rules],
                 )
-                return []
+                return False, []
 
         runs: list[ProjectAutomationRun] = []
         for rule in matching_rules:
@@ -1932,7 +1903,7 @@ class ProjectAutomationProcessor:
             from app.tasks.robot_queue_tasks import consume_queues_background
 
             await consume_queues_background()
-        return runs
+        return bool(runs), runs
 
     @staticmethod
     def _event_run(
@@ -2131,20 +2102,10 @@ class ProjectAutomationProcessor:
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
-        intent = execution.execution_intent if execution is not None else {}
-        selection = intent.get("runtime_selection")
-        selection = selection if isinstance(selection, dict) else {}
-        model = str(selection.get("model") or "").strip()
-        if not model:
-            return None
-        return RuntimeModelSelection(
-            model_name=model,
-            model_type=(
-                str(selection["model_type"])
-                if selection.get("model_type") is not None
-                else None
-            ),
-            options=dict(selection.get("model_options") or {}),
+        return (
+            loop_item_execution_service.runtime_model_selection(execution)
+            if execution is not None
+            else None
         )
 
     @staticmethod
