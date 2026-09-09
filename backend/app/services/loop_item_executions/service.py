@@ -36,7 +36,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 from app.models.user import User
-from app.schemas.runtime_work import RuntimeTaskCreateRequest
+from app.schemas.runtime_work import RuntimeModelSelection, RuntimeTaskCreateRequest
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
     WeworkExecutionProfileError,
@@ -3520,6 +3520,23 @@ class LoopItemExecutionService:
             db,
             execution=execution,
             execution_target_id=None,
+        )
+
+    @staticmethod
+    def runtime_model_selection(
+        execution: LoopItemExecution,
+    ) -> RuntimeModelSelection | None:
+        """Return the immutable model identity selected for one execution."""
+
+        selection = execution.runtime_selection
+        model = str(selection.get("model") or "").strip()
+        if not model:
+            return None
+        model_type = selection.get("model_type")
+        return RuntimeModelSelection(
+            model_name=model,
+            model_type=str(model_type) if model_type is not None else None,
+            options=dict(selection.get("model_options") or {}),
         )
 
     def build_executor_runtime_payload(

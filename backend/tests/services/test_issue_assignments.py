@@ -373,6 +373,17 @@ async def test_human_continue_reuses_the_original_coordinator_runtime_task(
         runtime_device_id="device-1",
         runtime_task_id="coordinator-task-1",
         status="completed",
+        execution_payload=loop_item_execution_service._serialize_execution_intent(
+            runtime_selection={
+                "model": "deepseek-v4-flash",
+                "model_type": "user",
+                "model_options": {
+                    "weworkCloudModelNamespace": "private-models",
+                    "weworkCloudModelResourceUserId": test_user.id,
+                },
+            },
+            origin_context={},
+        ),
     )
     test_db.add(execution)
     test_db.flush()
@@ -416,6 +427,12 @@ async def test_human_continue_reuses_the_original_coordinator_runtime_task(
     request = send.await_args.kwargs["request"]
     assert request.address.device_id == "device-1"
     assert request.address.task_id == "coordinator-task-1"
+    assert request.model_selection.model_name == "deepseek-v4-flash"
+    assert request.model_selection.model_type == "user"
+    assert request.model_selection.options == {
+        "weworkCloudModelNamespace": "private-models",
+        "weworkCloudModelResourceUserId": test_user.id,
+    }
     assert "Just test it; choose the details" in request.message
     assert "previous request_id was assignment-1" in request.message
     assert "MUST NOT be reused" in request.message

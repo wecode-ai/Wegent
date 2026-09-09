@@ -17,14 +17,20 @@ from app.models.delivery import (
     loop_unset_datetime_for_connection,
 )
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+from app.schemas.runtime_work import (
+    RuntimeModelSelection,
+    RuntimeSendRequest,
+    RuntimeTaskAddress,
+)
 from app.services import runtime_work_service
 from app.services.chat.storage.task_manager import TaskCreationParams, create_chat_task
 from app.services.issue_assignment_comments import queue_assignment_comment
 from app.services.issue_workflow_planning import issue_workflow_planning_service
+from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_automation_managed_execution import (
     ManagedTeamExecutionHandle,
@@ -77,8 +83,14 @@ class IssueAssignmentContinuationService:
         prompt = self._prompt(issue.id, assignment_id, summary)
         response = self._response(issue, context, trigger)
         wegent_turn = None
+        custom_model_selection = None
         if context.manager_type == "custom":
-            self._validate_custom_runtime(db, issue=issue, context=context)
+            execution = self._custom_execution(db, issue=issue, context=context)
+            custom_model_selection = (
+                loop_item_execution_service.runtime_model_selection(execution)
+            )
+            if custom_model_selection is None:
+                raise ValueError("The original coordinator model is unavailable")
         elif context.manager_type == "wegent":
             wegent_turn = await self._prepare_wegent_turn(
                 db, context=context, response=response, prompt=prompt
@@ -92,7 +104,12 @@ class IssueAssignmentContinuationService:
         db.commit()
         try:
             if wegent_turn is None:
-                await self._send_custom(db, context=context, prompt=prompt)
+                await self._send_custom(
+                    db,
+                    context=context,
+                    prompt=prompt,
+                    model_selection=custom_model_selection,
+                )
             else:
                 self._dispatch_wegent(context, wegent_turn, prompt)
         except Exception as exc:
@@ -226,15 +243,34 @@ class IssueAssignmentContinuationService:
         )
 
     @staticmethod
-    def _validate_custom_runtime(
+    def _custom_execution(
         db: Session, *, issue: LoopItem, context: _CoordinatorContext
-    ) -> None:
+    ) -> LoopItemExecution:
         project_chat_service._custom_manager_reply_target(
             db,
             project_id=str(issue.cloud_project_id),
             task_id=str(issue.id),
             message_id=context.activity.message_id,
         )
+        metadata = (
+            context.activity.metadata_json
+            if isinstance(context.activity.metadata_json, dict)
+            else {}
+        )
+        try:
+            execution_id = int(metadata["execution_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "The original coordinator execution is unavailable"
+            ) from exc
+        execution = db.get(LoopItemExecution, execution_id)
+        if (
+            execution is None
+            or execution.executor_owner_user_id != context.owner.id
+            or execution.automation_run_id != context.run.id
+        ):
+            raise ValueError("The original coordinator execution is unavailable")
+        return execution
 
     @staticmethod
     async def _prepare_wegent_turn(
@@ -336,7 +372,11 @@ class IssueAssignmentContinuationService:
 
     @staticmethod
     async def _send_custom(
-        db: Session, *, context: _CoordinatorContext, prompt: str
+        db: Session,
+        *,
+        context: _CoordinatorContext,
+        prompt: str,
+        model_selection: RuntimeModelSelection,
     ) -> None:
         result = await runtime_work_service.send_runtime_message(
             db=db,
@@ -347,6 +387,7 @@ class IssueAssignmentContinuationService:
                     taskId=context.activity.runtime_task_id,
                 ),
                 message=prompt,
+                modelSelection=model_selection,
             ),
             allow_app_device_task_messaging=True,
         )

@@ -2103,20 +2103,10 @@ class ProjectAutomationProcessor:
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
-        intent = execution.execution_intent if execution is not None else {}
-        selection = intent.get("runtime_selection")
-        selection = selection if isinstance(selection, dict) else {}
-        model = str(selection.get("model") or "").strip()
-        if not model:
-            return None
-        return RuntimeModelSelection(
-            model_name=model,
-            model_type=(
-                str(selection["model_type"])
-                if selection.get("model_type") is not None
-                else None
-            ),
-            options=dict(selection.get("model_options") or {}),
+        return (
+            loop_item_execution_service.runtime_model_selection(execution)
+            if execution is not None
+            else None
         )
 
     @staticmethod
