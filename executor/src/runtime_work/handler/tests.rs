@@ -3843,6 +3843,21 @@ async fn codex_instructions_write_rejects_non_string_payload() {
 }
 
 #[tokio::test]
+async fn codex_login_cancel_requires_a_login_id() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.auth.login.cancel",
+            "payload": {}
+        }))
+        .await;
+
+    let error = result.expect_err("missing login id should be rejected");
+    assert_eq!(error.code, "invalid_request");
+}
+
+#[tokio::test]
 async fn codex_personality_write_rejects_unsupported_value() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
