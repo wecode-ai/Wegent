@@ -10,26 +10,18 @@ import {
   ListTodo,
   UserRound,
 } from 'lucide-react'
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { ActivityShimmerText } from '@/components/chat/ActivityShimmerText'
-import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
-import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import {
   getToolActivityFilePaths,
   getToolActivityKind,
   getToolActivitySearchItem,
+  unwrapShellCommand,
 } from '@/components/chat/blocks/toolBlockActivity'
 import { getInputField } from '@/components/chat/blocks/toolBlockKinds'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -47,7 +39,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { WorkbenchMessage } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
 import {
@@ -71,6 +63,8 @@ export interface BoardCardDisplaySettings {
   showTags: boolean
   showDate: boolean
 }
+
+export type BoardCardProgressDisplay = 'compact' | 'focused'
 
 const priorityLabels: Record<CloudLoopItem['priority'], string> = {
   none: '普通',
@@ -309,6 +303,7 @@ interface CloudTodoBoardCardProps {
   dragDisabled?: boolean
   previewDisabled?: boolean
   archiveDisabled?: boolean
+  progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
   onContinueChangeRequestRepair?: (
     binding: CloudTodoBoardTaskBinding,
@@ -329,6 +324,7 @@ export function CloudTodoBoardCard({
   dragDisabled = false,
   previewDisabled = false,
   archiveDisabled = false,
+  progressDisplay = 'compact',
   changeRequestMonitor = null,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
@@ -382,7 +378,7 @@ export function CloudTodoBoardCard({
       data-testid={`cloud-todo-card-drop-${item.id}`}
       style={{ transform: CSS.Translate.toString(transform) }}
       className={cn(
-        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition hover:-translate-y-px hover:shadow-md',
+        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition-shadow hover:shadow-md',
         item.is_unread
           ? 'border-focus/30 bg-focus/10 hover:border-focus/40 hover:bg-focus/[0.14]'
           : 'border-border bg-background hover:border-text-primary/15',
@@ -484,6 +480,7 @@ export function CloudTodoBoardCard({
               item={item}
               binding={binding}
               compact
+              progressDisplay={progressDisplay}
               active={binding.running || (binding.id === currentTaskBinding?.id && hasActiveTask)}
               changeRequestSnapshot={
                 binding.id === currentTaskBinding?.id ? changeRequestSnapshot : null
@@ -539,127 +536,47 @@ export function CloudTodoBoardCard({
   )
 }
 
-function RuntimeTaskLiveActivity({
-  itemId,
-  activity,
-  expanded = false,
-}: {
-  itemId: string
-  activity: RuntimeLiveActivity
-  expanded?: boolean
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const lastTool = activity.tools.at(-1)
-  const completedTools = activity.tools.filter(
-    block => block.status === 'done' || block.status === 'error'
-  )
-  const activeTools = activity.tools.filter(
-    block => block.status !== 'done' && block.status !== 'error'
-  )
-  const processingBlocks = useMemo<ProcessingBlock[]>(
-    () =>
-      activity.tools.map(block => ({
-        ...block,
-        type: 'tool',
-        subtaskId: `board:${itemId}`,
-      })),
-    [activity.tools, itemId]
-  )
-
-  useLayoutEffect(() => {
-    const scrollArea = scrollRef.current
-    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [activity.thinking, activity.tools.length, lastTool?.status, lastTool?.toolInput])
-
-  return (
-    <div
-      ref={scrollRef}
-      data-testid={
-        expanded ? `cloud-todo-card-popup-activity-${itemId}` : `cloud-todo-card-activity-${itemId}`
-      }
-      className={cn(
-        'scrollbar-none min-w-0 overflow-y-auto',
-        expanded
-          ? 'max-h-44 text-chat text-text-primary'
-          : 'ml-5 mt-1.5 max-h-15 border-l border-border/70 pl-2 text-xs leading-5 text-text-muted'
-      )}
-    >
-      {expanded ? (
-        processingBlocks.length > 0 ? (
-          <ToolBlocksDisplay
-            blocks={processingBlocks}
-            isStreaming={activity.active}
-            processingPhase="live"
-            showInterToolThinking
-            thinkingContent={activity.thinking}
-            stateKey={`cloud-todo-card:${itemId}:progress-popup`}
-          />
-        ) : activity.thinking ? (
-          <AssistantThinkingIndicator
-            content={activity.thinking}
-            testId={`cloud-todo-card-popup-thinking-${itemId}`}
-          />
-        ) : null
-      ) : (
-        <>
-          {completedTools.map(block => (
-            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
-          ))}
-          {activity.thinking ? (
-            <div className="flex h-5 min-w-0 items-center">
-              <AssistantThinkingIndicator
-                content={activity.thinking}
-                testId={`cloud-todo-card-thinking-${itemId}`}
-                className="text-xs leading-5"
-              />
-            </div>
-          ) : null}
-          {activeTools.map(block => (
-            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
-          ))}
-        </>
-      )}
-    </div>
-  )
-}
-
 function RuntimeTaskCompactActivity({
   itemId,
   activity,
   responsePreview,
   reserveTrailingAction,
+  focused,
 }: {
   itemId: string
   activity: RuntimeLiveActivity
   responsePreview: string | null
   reserveTrailingAction: boolean
+  focused: boolean
 }) {
-  const latestTool = activity.tools.at(-1)
+  const processText = activity.processText || responsePreview
+  const visibleTools = focused ? activity.tools.slice(-3) : activity.tools.slice(-1)
 
   return (
     <div data-testid={`cloud-todo-card-activity-${itemId}`} className="min-w-0 text-xs">
-      {responsePreview ? (
+      {processText ? (
         <div
-          data-testid={`cloud-todo-card-response-${itemId}`}
-          className={cn('h-5 truncate leading-5 text-text-muted', reserveTrailingAction && 'pr-7')}
+          data-testid={`cloud-todo-card-process-${itemId}`}
+          className={cn(
+            'whitespace-pre-wrap leading-5 text-text-secondary',
+            focused ? 'line-clamp-8' : 'line-clamp-3',
+            reserveTrailingAction && 'pr-7'
+          )}
         >
-          {responsePreview}
-        </div>
-      ) : activity.thinking ? (
-        <div className={cn('flex h-5 min-w-0 items-center', reserveTrailingAction && 'pr-7')}>
-          <AssistantThinkingIndicator
-            content={activity.thinking}
-            testId={`cloud-todo-card-thinking-${itemId}`}
-            className="text-xs leading-5"
-          />
+          {processText}
         </div>
       ) : null}
-      {latestTool ? (
+      {visibleTools.length > 0 ? (
         <div
           data-testid={`cloud-todo-card-tool-line-${itemId}`}
-          className="ml-2 min-w-0 border-l border-border pl-3 text-text-muted"
+          className={cn(
+            'ml-2 min-w-0 border-l border-border pl-3 text-text-muted',
+            processText && 'mt-1'
+          )}
         >
-          <RuntimeTaskToolActivity itemId={itemId} block={latestTool} />
+          {visibleTools.map(block => (
+            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
+          ))}
         </div>
       ) : null}
     </div>
@@ -670,6 +587,7 @@ function RuntimeTaskProgressSummary({
   item,
   binding,
   compact,
+  progressDisplay = 'compact',
   active,
   changeRequestSnapshot,
   repairingChangeRequest,
@@ -678,6 +596,7 @@ function RuntimeTaskProgressSummary({
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
   compact: boolean
+  progressDisplay?: BoardCardProgressDisplay
   active: boolean
   changeRequestSnapshot: TaskChangeRequestSnapshot | null
   repairingChangeRequest: boolean
@@ -744,6 +663,7 @@ function RuntimeTaskProgressSummary({
           activity={activity}
           responsePreview={responsePreview}
           reserveTrailingAction={showCompactChangeRequest}
+          focused={progressDisplay === 'focused'}
         />
       ) : !compact ? (
         <div
@@ -775,8 +695,6 @@ function RuntimeTaskProgressSummary({
         >
           {responsePreview}
         </div>
-      ) : activity.active ? (
-        <RuntimeTaskLiveActivity itemId={item.id} activity={activity} />
       ) : null}
     </div>
   )
@@ -943,7 +861,10 @@ function runtimeToolActivityText(
   const running = block.status !== 'done' && block.status !== 'error'
 
   if (kind === 'command') {
-    return activityLabel(t('tool_activity.command_action'), command)
+    return activityLabel(
+      t('tool_activity.command_action'),
+      command ? unwrapShellCommand(command) : undefined
+    )
   }
   if (kind === 'file') {
     return activityLabel(t('tool_activity.file_action'), path)

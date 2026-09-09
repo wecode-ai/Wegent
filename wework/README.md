@@ -30,6 +30,19 @@ stage and support dark mode and reduced motion. Core DSH has up to 120 seconds
 to become ready. If it times out or another desktop runtime fails to start,
 replace the preparation animation with the concrete error and a retry action.
 
+## Project Space Board Progress
+
+项目空间看板中的运行中卡片展示智能体当前输出的过程文本，而不是内部思考文本。标准视图按内容自然增高，最多展示三行过程文本，并在其下展示已移除 Shell 启动包装的真实命令摘要。状态分组下可启用“专注视图”，将进行中列从 `292px` 展开到 `480px`，展示最多八行过程文本和最近三条工具活动；该偏好按用户和项目保存，切换到其他分组时隐藏，返回状态分组后恢复。
+
+Running cards on project-space boards show the agent's current process output
+instead of internal thinking text. The standard view grows naturally with the
+content, shows up to three process lines, and displays the actual command
+summary without Shell launcher wrappers. In status grouping, **Focus view**
+expands the In progress column from `292px` to `480px`, showing up to eight
+process lines and the latest three tool activities. The preference is stored
+per user and project, hidden for other grouping modes, and restored when the
+board returns to status grouping.
+
 ## Development
 
 Requires Node.js 20+ and pnpm.
