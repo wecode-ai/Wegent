@@ -4543,4 +4543,128 @@ describe('ScrollableMessageArea', () => {
       behavior: 'auto',
     })
   })
+
+  test('preserves an upward user scroll that stays within the bottom tolerance', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    const streamingMessage = {
+      id: 'within-bottom-tolerance-stream',
+      role: 'assistant' as const,
+      content: '正在流式输出',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="within-bottom-tolerance"
+          externalScrollRef={externalScrollRef}
+          messages={[streamingMessage]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    flushScheduledTimers()
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    // The user begins scrolling upward but the browser only moves a few pixels, so the
+    // scroll event still reports the scroller within the bottom tolerance. The up-scroll
+    // pause must survive so the follow engine does not yank the viewport back down.
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    scroller.scrollTop = -4
+    fireEvent.scroll(scroller)
+
+    rerender(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="within-bottom-tolerance"
+          externalScrollRef={externalScrollRef}
+          messages={[{ ...streamingMessage, content: '正在流式输出\n\n更多流式内容\n\n仍在增长' }]}
+        />
+      </div>
+    )
+    flushScheduledTimers()
+    flushStreamingFollow()
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('keeps the conversation pinned to the bottom while it keeps growing after jump-to-bottom', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    const streamingMessage = {
+      id: 'jump-to-bottom-growing-stream',
+      role: 'assistant' as const,
+      content: '正在流式输出',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="jump-to-bottom-growing"
+          externalScrollRef={externalScrollRef}
+          messages={[streamingMessage]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: -300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -120 })
+    fireEvent.scroll(scroller)
+    flushScheduledTimers()
+
+    fireEvent.click(screen.getByTestId('scroll-to-bottom-button'))
+    flushScheduledTimers()
+    flushStreamingFollow()
+
+    // The conversation keeps growing well past the original release window. The bottom
+    // follow must stay pinned so the viewport does not end up in the middle.
+    for (let index = 0; index < 8; index += 1) {
+      rerender(
+        <div ref={externalScrollRef}>
+          <ScrollableMessageArea
+            conversationKey="jump-to-bottom-growing"
+            externalScrollRef={externalScrollRef}
+            messages={[
+              {
+                ...streamingMessage,
+                content: `正在流式输出\n\n增长批次 ${index + 1}\n\n${Array.from(
+                  { length: 40 },
+                  (_, p) => `段落 ${index + 1}-${p + 1}`
+                ).join('\n')}`,
+              },
+            ]}
+          />
+        </div>
+      )
+      flushScheduledTimers()
+      flushStreamingFollow()
+    }
+
+    expect(getConversationScrollSnapshot('jump-to-bottom-growing')?.pinnedToBottom).toBe(true)
+    expect(scroller.scrollTop).toBeCloseTo(0)
+  })
 })

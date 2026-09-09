@@ -38,6 +38,7 @@ import {
 const BOTTOM_THRESHOLD = 48
 const SCROLLED_TO_BOTTOM_THRESHOLD = 8
 const STABLE_SCROLL_DELAYS = [0, 50, 150, 300, 600, 1000]
+const STABLE_SCROLL_RELEASE_RETRIES = 12
 const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
 interface RuntimeTranscriptGap {
   start: number
@@ -298,6 +299,11 @@ function ScrollableMessagePaneContent({
   } | null>(null)
   const virtualInitialPositionOwnerRef = useRef<{ key: string | null } | null>(null)
   const followingBottomKeyRef = useRef<string | null>(null)
+  // Set while the user explicitly requested "jump to bottom". During this window the
+  // follow engine must snap to the current bottom instead of letting the streaming spring
+  // chase a growing viewport, so a concurrently growing response cannot leave the view in
+  // the middle of the conversation.
+  const explicitBottomFollowRef = useRef(false)
   const preserveLatestUserTurnRef = useRef(false)
   const userScrollPausedAutoFollowRef = useRef(false)
   const userScrollIntentRef = useRef(false)
@@ -573,9 +579,11 @@ function ScrollableMessagePaneContent({
       lastScrollPositionRef.current = scrollPosition
       isAtBottomRef.current = isAtBottom
       const pausedBeforeUpdate = userScrollPausedAutoFollowRef.current
-      // Anchor restoration can emit a clamped scroll event at the bottom. Only user input
-      // may release an existing pause; explicit follow paths clear the pause themselves.
-      if (isScrolledToBottom && (!pausedBeforeUpdate || options.forceSave)) {
+      // Anchor restoration can emit a clamped scroll event at the bottom. Only a downward
+      // user scroll may release an existing pause; explicit follow paths clear the pause
+      // themselves. An upward user scroll that has not yet crossed the bottom threshold must
+      // keep the pause so the follow engine does not yank the viewport back to the bottom.
+      if (isScrolledToBottom && !scrolledUp && (!pausedBeforeUpdate || options.forceSave)) {
         userScrollPausedAutoFollowRef.current = false
         userViewportAnchorRef.current = null
       } else if (options.forceSave) {
@@ -824,24 +832,32 @@ function ScrollableMessagePaneContent({
         }, delay)
       })
       if (options.releaseAfterStable) {
-        scheduleScrollTimer(
-          () => {
-            if (followingBottomKeyRef.current === currentScrollKey) {
-              followingBottomKeyRef.current = null
-              const element = activeScrollRefRef.current.current
-              const distanceToBottom = element
-                ? getDistanceFromBottom(element, bottomOrigin)
-                : Number.POSITIVE_INFINITY
-              if (
-                distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD &&
-                !userScrollPausedAutoFollowRef.current
-              ) {
-                preserveLatestUserTurnRef.current = false
-              }
-            }
-          },
-          Math.max(...STABLE_SCROLL_DELAYS) + 50
-        )
+        const releaseCheck = (attempt: number) => {
+          if (followingBottomKeyRef.current !== currentScrollKey) return
+          const element = activeScrollRefRef.current.current
+          const distanceToBottom = element
+            ? getDistanceFromBottom(element, bottomOrigin)
+            : Number.POSITIVE_INFINITY
+          if (
+            distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD &&
+            !userScrollPausedAutoFollowRef.current
+          ) {
+            followingBottomKeyRef.current = null
+            explicitBottomFollowRef.current = false
+            preserveLatestUserTurnRef.current = false
+            return
+          }
+          // The viewport has not reached the bottom yet (e.g. content kept growing while the
+          // view was pinned). Keep the explicit bottom follow and re-check after another
+          // stable window instead of dropping the pin and letting the view linger mid-flight.
+          if (attempt < STABLE_SCROLL_RELEASE_RETRIES) {
+            scheduleScrollTimer(
+              () => releaseCheck(attempt + 1),
+              Math.max(...STABLE_SCROLL_DELAYS) + 50
+            )
+          }
+        }
+        scheduleScrollTimer(() => releaseCheck(0), Math.max(...STABLE_SCROLL_DELAYS) + 50)
       }
     },
     [
@@ -933,6 +949,7 @@ function ScrollableMessagePaneContent({
       restoredScrollSnapshotRef.current = null
       virtualInitialPositionOwnerRef.current = null
       preserveLatestUserTurnRef.current = false
+      explicitBottomFollowRef.current = false
       releasePendingLayoutScrollPosition()
     } else if (latestUserMessageChanged) {
       preserveLatestUserTurnRef.current = true
@@ -1153,7 +1170,7 @@ function ScrollableMessagePaneContent({
       (currentScrollKey !== null &&
         getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
     if (shouldFollowBottom) {
-      if (streamingFollowActive) {
+      if (streamingFollowActive && !explicitBottomFollowRef.current) {
         followStreamingToBottom()
       } else {
         setScrollToBottom('auto', { saveSnapshot: false })
@@ -1212,6 +1229,7 @@ function ScrollableMessagePaneContent({
     userScrollPausedAutoFollowRef.current = false
     userViewportAnchorRef.current = null
     preserveLatestUserTurnRef.current = false
+    explicitBottomFollowRef.current = true
     scheduleStableScrollToBottom('smooth', {
       saveSnapshot: true,
       releaseAfterStable: true,
@@ -1228,6 +1246,7 @@ function ScrollableMessagePaneContent({
 
       clearScheduledScrolls()
       captureUserViewportAnchor()
+      explicitBottomFollowRef.current = false
       userScrollPausedAutoFollowRef.current = true
     },
     [captureUserViewportAnchor, clearScheduledScrolls]
@@ -1262,7 +1281,7 @@ function ScrollableMessagePaneContent({
       const distanceFromBottom =
         scroller === null ? Number.POSITIVE_INFINITY : getDistanceFromBottom(scroller, bottomOrigin)
       if (shouldFollowBottom && distanceFromBottom > SCROLLED_TO_BOTTOM_THRESHOLD) {
-        if (streamingFollowActive) {
+        if (streamingFollowActive && !explicitBottomFollowRef.current) {
           followStreamingToBottom()
         } else {
           setScrollToBottom('auto', { saveSnapshot: false })
