@@ -4,7 +4,9 @@
 
 use std::{
     collections::BTreeMap,
+    fs::File,
     io,
+    io::Read,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -148,6 +150,10 @@ fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<ResolvedHookC
         ));
     }
     if suffix.trim().is_empty() {
+        #[cfg(unix)]
+        if has_shebang(&canonical)? {
+            return Ok(ResolvedHookCommand::Shell(shell_quote(&canonical)));
+        }
         return Ok(ResolvedHookCommand::Executable { program: canonical });
     }
     Ok(ResolvedHookCommand::Shell(format!(
@@ -155,6 +161,13 @@ fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<ResolvedHookC
         shell_quote(&canonical),
         suffix
     )))
+}
+
+#[cfg(unix)]
+fn has_shebang(path: &Path) -> io::Result<bool> {
+    let mut prefix = [0_u8; 2];
+    let mut file = File::open(path)?;
+    Ok(file.read(&mut prefix)? == prefix.len() && prefix == *b"#!")
 }
 
 fn split_program(command: &str) -> Option<(&str, &str)> {
@@ -355,6 +368,17 @@ mod tests {
         fs::write(&tool, "placeholder").unwrap();
 
         let resolved = resolve_command("./bin/tool --flag", directory.path()).unwrap();
+        assert!(matches!(resolved, ResolvedHookCommand::Shell(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_shebang_scripts_in_the_shell() {
+        let directory = tempdir().unwrap();
+        let script = directory.path().join("reader.sh");
+        fs::write(&script, "#!/bin/sh\n").unwrap();
+
+        let resolved = resolve_command("./reader.sh", directory.path()).unwrap();
         assert!(matches!(resolved, ResolvedHookCommand::Shell(_)));
     }
 }
