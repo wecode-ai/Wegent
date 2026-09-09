@@ -65,6 +65,7 @@ RUNTIME_MODEL_CONFIG_METHODS = frozenset(
     }
 )
 RUNTIME_MODEL_CONFIG_KEYS = frozenset({"model_config", "modelConfig"})
+APP_DEVICE_TASK_MESSAGE_METHODS = frozenset({"runtime.tasks.send"})
 
 
 def _load_remote_runtime_proxy_url(user_id: int) -> str:
@@ -181,6 +182,7 @@ class RuntimeRpcService:
         method: str,
         payload: dict[str, Any],
         timeout_seconds: int = DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
+        allow_app_device_task_messaging: bool = False,
     ) -> dict[str, Any]:
         """Call `runtime:rpc` on an online local executor and return its result."""
 
@@ -198,7 +200,15 @@ class RuntimeRpcService:
                 details=exc.details,
             ) from exc
 
-        if not remote_control_is_enabled(route.device_type):
+        app_task_messaging_allowed = (
+            allow_app_device_task_messaging
+            and route.device_type == DeviceType.APP
+            and method in APP_DEVICE_TASK_MESSAGE_METHODS
+        )
+        if (
+            not remote_control_is_enabled(route.device_type)
+            and not app_task_messaging_allowed
+        ):
             raise RuntimeRpcError(
                 REMOTE_CONTROL_DISABLED_MESSAGE,
                 code="remote_control_disabled",

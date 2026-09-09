@@ -714,7 +714,7 @@ export function nextTaskTrackingStatus(
   if (executionStatus === 'running' && itemStatus !== 'in_progress') {
     return 'in_progress'
   }
-  if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
+  if (executionStatus === 'succeeded' && itemStatus !== 'completed' && itemStatus !== 'in_review') {
     return 'in_review'
   }
   if (
@@ -1064,6 +1064,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         assigneeType: 'user' | 'agent' | 'team'
         assigneeId: string
+        notifyAssignee?: boolean
       }
     ): Promise<CloudLoopItem> {
       return client.post(

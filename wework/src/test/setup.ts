@@ -246,6 +246,15 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.boardCardStatus, []],
     [WEWORK_DSH_SLOTS.composerAction, []],
     [WEWORK_DSH_SLOTS.environmentSection, []],
+    [
+      WEWORK_DSH_SLOTS.home,
+      [
+        {
+          id: 'developer-home',
+          module: 'plugins/wework-ui-home-developer.js',
+        },
+      ],
+    ],
     [WEWORK_DSH_SLOTS.projectCreateSection, []],
     [WEWORK_DSH_SLOTS.projectWorkSection, []],
     [WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy, []],
@@ -277,6 +286,7 @@ function installDefaultDshUiTestModules() {
     'plugins/wework-ui-core-settings.js': () =>
       import('../../dsh/ui-core-settings/src/settings-page'),
     'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),
+    'plugins/wework-ui-home-developer.js': () => import('../../dsh/ui-home-developer/src/home'),
     'plugins/wework-ui-plugin-center-catalog.js': {
       default: () => null,
       preload: () => undefined,

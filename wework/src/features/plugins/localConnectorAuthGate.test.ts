@@ -66,6 +66,17 @@ function pluginWithLocalQr(overrides?: Partial<InstalledPlugin>): InstalledPlugi
 }
 
 describe('localConnectorAuthGate', () => {
+  test('does not start local login preflight for an account-managed connector', () => {
+    const plugin = pluginWithLocalQr()
+    plugin.spec.components.connectors![0].accountAuth = {
+      protocolVersion: 1,
+      credentialType: 'oauth2',
+      adapter: 'scripts/account-auth.py',
+    }
+    expect(listLocalConnectors([plugin])).toEqual([])
+    expect(findLocalConnectorsForMessage('plugin://weibo-api-wiki@wegent', [plugin])).toEqual([])
+  })
+
   test('lists local qr connectors', () => {
     const items = listLocalConnectors([pluginWithLocalQr()])
     expect(items).toHaveLength(1)

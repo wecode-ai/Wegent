@@ -217,3 +217,59 @@ fn ndjson_parser_extracts_claude_session_id_from_init_or_result_events() {
         Some("result-session")
     );
 }
+
+#[test]
+fn ndjson_parser_uses_result_when_present() {
+    let output = r#"
+{"type":"result","is_error":true,"result":"Invalid model ID","errors":["other error"],"subtype":"error_during_execution"}
+"#;
+
+    assert_eq!(
+        collect_ndjson_outcome(output),
+        ExecutionOutcome::Failed {
+            message: "Invalid model ID".to_owned()
+        }
+    );
+}
+
+#[test]
+fn ndjson_parser_uses_message_when_result_is_empty() {
+    let output = r#"
+{"type":"result","is_error":true,"result":"","message":"Invalid model ID","subtype":"error_during_execution"}
+"#;
+
+    assert_eq!(
+        collect_ndjson_outcome(output),
+        ExecutionOutcome::Failed {
+            message: "Invalid model ID".to_owned()
+        }
+    );
+}
+
+#[test]
+fn ndjson_parser_uses_first_valid_error_string() {
+    let output = r#"
+{"type":"result","is_error":true,"errors":[null,"No conversation found with session ID: abc-123"],"subtype":"error_during_execution"}
+"#;
+
+    assert_eq!(
+        collect_ndjson_outcome(output),
+        ExecutionOutcome::Failed {
+            message: "No conversation found with session ID: abc-123".to_owned()
+        }
+    );
+}
+
+#[test]
+fn ndjson_parser_falls_back_to_default_when_no_message() {
+    let output = r#"
+{"type":"result","is_error":true,"subtype":"error_during_execution"}
+"#;
+
+    assert_eq!(
+        collect_ndjson_outcome(output),
+        ExecutionOutcome::Failed {
+            message: "Claude execution failed".to_owned()
+        }
+    );
+}

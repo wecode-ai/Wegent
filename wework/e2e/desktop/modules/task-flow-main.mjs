@@ -4140,6 +4140,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           ),
           httpRequests: control.httpRequests,
           commandHistory: control.commandHistory,
+          controlTransportHistory: control.controlTransportHistory,
         },
         null,
         2

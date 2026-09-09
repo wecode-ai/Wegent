@@ -47,6 +47,7 @@ class ProjectAutomationManagerAssign(ProjectChatSchema):
 
     model_config = ConfigDict(extra="forbid")
 
+    notify_assignee: bool = True
     assignee_type: Literal["user", "agent"]
     assignee_id: str = Field(min_length=1, max_length=128)
 

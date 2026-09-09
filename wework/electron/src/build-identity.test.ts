@@ -11,7 +11,6 @@ import identityModule from '../scripts/build-identity.cjs'
 const { DEFAULT_IDENTITY, resolveBuildIdentity } = identityModule
 const require = createRequire(import.meta.url)
 const builderConfigPath = require.resolve('../electron-builder.config.cjs')
-const builderConfig = require(builderConfigPath)
 
 test('uses the public Electron identity by default', () => {
   expect(resolveBuildIdentity({})).toEqual(DEFAULT_IDENTITY)
@@ -109,13 +108,49 @@ test.each([
   )
 })
 
-test('packages only product locales and skips individual static plugin signing', () => {
-  expect(builderConfig.extraMetadata.name).toBe(DEFAULT_IDENTITY.packageName)
-  expect(builderConfig.mac.electronLanguages).toEqual(['en', 'zh_CN'])
-  expect(builderConfig.mac.signIgnore).toEqual(['/Contents/Resources/wework-core-plugins/'])
-  expect(builderConfig.win.electronLanguages).toEqual(['en-US', 'zh-CN'])
-  expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
-})
+test.each([
+  {
+    name: 'unsigned',
+    signingIdentity: '',
+    signIgnore: ['/Contents/Resources/wework-core-plugins/'],
+  },
+  {
+    name: 'signed',
+    signingIdentity: 'test-signing-identity',
+    signIgnore: [
+      '/Contents/Resources/harness-runtime/',
+      '/Contents/Resources/bin/',
+      '/Contents/Resources/codex/',
+      '/Contents/Resources/wework-core-plugins/',
+      '/Contents/Resources/wework-app-static/',
+      '/Contents/Resources/bundled-plugins/',
+    ],
+  },
+])(
+  'packages product locales and preserves component signatures for $name builds',
+  ({ signingIdentity, signIgnore }) => {
+    const builderConfig = JSON.parse(
+      execFileSync(
+        process.execPath,
+        ['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', builderConfigPath],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            WEWORK_BRAND_CONFIG: '',
+            APPLE_SIGNING_IDENTITY: signingIdentity,
+          },
+        }
+      )
+    )
+
+    expect(builderConfig.extraMetadata.name).toBe(DEFAULT_IDENTITY.packageName)
+    expect(builderConfig.mac.electronLanguages).toEqual(['en', 'zh_CN'])
+    expect(builderConfig.mac.signIgnore).toEqual(signIgnore)
+    expect(builderConfig.win.electronLanguages).toEqual(['en-US', 'zh-CN'])
+    expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
+  }
+)
 
 test('builds a slim Host update without managed components', () => {
   const config = JSON.parse(

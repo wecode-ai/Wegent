@@ -39,11 +39,15 @@ class PluginDeviceInstallationService:
         """Materialize desired state for registered online and offline devices."""
         reconcile_plugin_device_rows(db, user_id)
         devices = await device_service.get_all_devices(db, user_id)
+        device_ids: set[str] = set()
         for device in devices:
             device_id = self._device_id(device)
-            if not device_id:
+            if not device_id or device_id in device_ids:
                 continue
             device_id = plugin_device_id(db, user_id, device_id)
+            if device_id in device_ids:
+                continue
+            device_ids.add(device_id)
             row = self._device_row(db, installed_kind_id, device_id)
             if not row:
                 row = PluginDeviceInstallation(

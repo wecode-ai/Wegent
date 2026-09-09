@@ -118,7 +118,12 @@ def lock_device_owner(db: Session, user_id: int) -> None:
 
     if db.get_bind().dialect.name == "sqlite":
         # SQLite ignores FOR UPDATE; a write reserves its database write lock.
-        db.execute(update(User).where(User.id == user_id).values(id=User.id))
+        db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(id=User.id, updated_at=User.updated_at)
+            .execution_options(synchronize_session=False)
+        )
     else:
         db.query(User.id).filter(User.id == user_id).with_for_update().first()
 
@@ -146,6 +151,7 @@ def find_registration_device(
     device_id: str,
     runtime_instance_id: str | None,
     app_device_id: str | None = None,
+    device_type: str | None = None,
 ) -> Kind | None:
     """Serialize first registration on the owner, then lock the scoped identity."""
 
@@ -155,6 +161,7 @@ def find_registration_device(
     devices = (
         db.query(Kind)
         .filter_by(user_id=user_id, kind="Device", namespace="default", name=device_id)
+        .populate_existing()
         .with_for_update()
         .order_by(Kind.id)
         .all()
@@ -169,6 +176,9 @@ def find_registration_device(
     if exact:
         # Reuse a stable record, including a previously removed installation.
         return next((device for device in exact if device.is_active), exact[0])
+    if device_type == "app":
+        # A distinct Wework installation owns an independent record-scoped route.
+        return None
     active = [device for device in devices if device.is_active]
     if len(active) > 1:
         raise DeviceIdentityConflictError(

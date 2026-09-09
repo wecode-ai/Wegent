@@ -835,6 +835,36 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   return element.textContent?.trim() ?? ''
 }
 
+async function pressNativeDesktopControlKey(selector: string, key: string): Promise<string> {
+  const windowLabel = getDesktopWindowLabel()
+  await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
+    windowLabel,
+  })
+  await waitForDesktopControlTick()
+  const element = findDesktopControlElements(selector)[0]
+  if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
+  element.scrollIntoView({ block: 'center', inline: 'nearest' })
+  element.focus()
+  if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
+  const received: KeyboardEvent[] = []
+  const recordKey = (event: KeyboardEvent) => received.push(event)
+  document.addEventListener('keydown', recordKey, true)
+  try {
+    await invokeDesktopHost('e2e.pressKey', { windowLabel, key })
+    await waitForDesktopControlTick()
+    if (!received.some(event => event.isTrusted && event.target === element)) {
+      throw new Error(
+        `Native key did not reach its target: windowFocused=${document.hasFocus()}, ` +
+          `active=${document.activeElement?.getAttribute('data-testid') ?? ''}, ` +
+          `received=${received.map(event => event.key).join(',')}`
+      )
+    }
+  } finally {
+    document.removeEventListener('keydown', recordKey, true)
+  }
+  return document.activeElement?.getAttribute('data-testid') ?? ''
+}
+
 let activeDesktopControlPointer: {
   element: HTMLElement
   options: MouseEventInit & PointerEventInit
@@ -1550,6 +1580,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'openWeworkScheme':
+      await invokeDesktopHost('shell.openExternal', { url: command.value ?? '' })
+      return ''
     case 'getSystemNotifications':
       return JSON.stringify(
         (
@@ -2388,6 +2421,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'press': {
       return pressDesktopControlKey(command.selector, command.key ?? '')
     }
+    case 'nativePress': {
+      return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+    }
     case 'select': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!(element instanceof HTMLSelectElement)) {
@@ -2451,6 +2487,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
+      cache: 'no-store',
       headers: desktopControlHeaders(),
     })
   let commandRequest = pollForCommand()
