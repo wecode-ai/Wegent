@@ -57,6 +57,7 @@ core_segments=(
   browser-annotation-core
   browser-annotation-anchors
   browser-annotation-design
+  dsh-owner-capture
 )
 plugin_segments=(
   core-dsh-ui-plugin-composition
@@ -96,6 +97,7 @@ cloud_segments=(
   automation-lifecycle
   project-automation
   plugin-auto-update
+  plugin-account-auth
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -115,7 +117,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-auto-update,plugin-workspace-publication
+  plugin-auto-update,plugin-workspace-publication,plugin-account-auth
   cloud-worktree-queued-cancel
   workspace-attachments
 )
@@ -127,7 +129,7 @@ core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
-  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle
+  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
@@ -235,6 +237,19 @@ validate_registered_checkpoint_coverage() {
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local repository_root
   repository_root="$(cd "$script_dir/../.." && pwd)"
+  local registered_checkpoints
+  if ! registered_checkpoints="$(
+    cd "$repository_root"
+    node --input-type=module -e \
+      "import { DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.join('\\n'))"
+  )"; then
+    printf 'Could not load registered desktop checkpoints\n' >&2
+    return 1
+  fi
+  if [[ -z "$registered_checkpoints" ]]; then
+    printf 'Registered desktop checkpoint catalog is empty\n' >&2
+    return 1
+  fi
   local registered
   while IFS= read -r registered; do
     [[ "$registered" == "cloud-git-worktree" || "$registered" == "browser-annotation" ]] && continue
@@ -242,11 +257,7 @@ validate_registered_checkpoint_coverage() {
       printf 'Registered desktop checkpoint missing from CI catalogs: %s\n' "$registered" >&2
       return 1
     fi
-  done < <(
-    cd "$repository_root"
-    node --input-type=module -e \
-      "import { DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.join('\\n'))"
-  )
+  done <<< "$registered_checkpoints"
 }
 
 validate_registered_checkpoint_coverage
@@ -277,6 +288,16 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/src/components/plugins/PluginAccountConnections* | \
+      wework/src/api/cloud/pluginAccountConnections* | \
+      wework/e2e/desktop/modules/dws-account-auth.mjs | \
+      wework/e2e/desktop/modules/account-auth-command.mjs | \
+      wework/e2e/desktop/fixtures/dws-account-auth.py | \
+      wework/e2e/desktop/fixtures/dws-store/* | \
+      wework/e2e/desktop/scenarios/plugin-account-auth.scenario.mjs)
+      select_target "cloud:plugin-account-auth"
+      return
+      ;;
     wework/e2e/desktop/modules/terminal-compatibility-flows.mjs)
       select_target "cloud:core-task-flow"
       return
@@ -678,7 +699,7 @@ classify_wework_path() {
       ;;
 
     # Git hosting preferences and explicit device synchronization share one
-    # independently bootstrapped real-Tauri checkpoint.
+    # independently bootstrapped desktop checkpoint.
     wework/src/api/devices* | \
       wework/src/components/settings/GitHostingSettingsPage* | \
       wework/src/types/gitCredentials.ts | \
@@ -720,6 +741,14 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
+      executor/tests/plugin_account_auth_contract.rs | \
+      backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \
+      backend/app/services/plugin_oauth* | backend/app/services/plugin_credential* | \
+      backend/app/schemas/plugin_account_auth.py | backend/app/api/ws/plugin_auth_broker.py | \
+      backend/app/api/endpoints/plugin_connections.py)
+      select_target "cloud:plugin-account-auth"
+      ;;
     backend/app/api/ws/terminal_namespace.py | \
       backend/app/services/device/terminal_protocol.py | \
       backend/app/services/device/terminal_session_record.py | \

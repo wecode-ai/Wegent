@@ -15,6 +15,7 @@ import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
+  'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
@@ -55,8 +56,10 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
   'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
+  'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'plugin-account-auth',
   'cloud-space-mention',
   'change-request-status',
   'claude-runtime',
@@ -392,6 +395,9 @@ function parallelCheckpointLimit() {
 }
 
 function parallelCheckpointArgs(checkpoint) {
+  // Scenario modules declare their own cloud prerequisites. Cloud is a shard
+  // scope here, not a second mutually exclusive task-flow execution mode.
+  if (SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)) return ['--segment', checkpoint]
   const scope = process.env.WEWORK_E2E_PARALLEL_SCOPE ?? 'cloud'
   if (scope === 'cloud') return ['--cloud-only', '--segment', checkpoint]
   if (scope === 'core') return ['--segment', checkpoint]
@@ -406,9 +412,15 @@ async function runRequestedArgs() {
   if (checkpoints) return runCheckpoints(checkpoints)
 
   const label = requestedArgs.join(' ') || 'desktop task flow'
-  const env = await sharedBuildEnvironment()
+  const sharedEnv = await sharedBuildEnvironment()
+  const segmentIndex = requestedArgs.indexOf('--segment')
+  const checkpoint = segmentIndex >= 0 ? requestedArgs[segmentIndex + 1] : undefined
+  const env = segmentIndex >= 0 ? checkpointScenarioEnv(sharedEnv, checkpoint) : sharedEnv
+  const args = SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+    ? requestedArgs.filter(argument => argument !== '--cloud-only')
+    : requestedArgs
   console.log(`[desktop-e2e] START ${label}`)
-  const result = await runTaskFlow(requestedArgs, env, label)
+  const result = await runTaskFlow(args, env, label)
   if (result.code === 0) {
     console.log(
       `[desktop-e2e] PASS ${label}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`

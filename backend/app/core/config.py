@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -224,6 +224,12 @@ class Settings(BaseSettings):
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
     APPEND_CODE_TASK_EXPIRE_HOURS: int = 24
 
+    # Cancellation recovery configuration
+    # A task stuck in CANCELLING (or a streaming subtask whose runtime is gone) is
+    # finalized locally once no streaming activity has been observed for this long.
+    # Healthy streams touch Redis activity every ~1s, so 30min is conservative.
+    CANCELLING_STUCK_TIMEOUT_SECONDS: int = 1800
+
     # Subtask executor cleanup configuration
     # After a subtask is COMPLETED or FAILED, if executor_name/executor_namespace are set
     # and updated_at exceeds this threshold, the executor task will be deleted automatically.
@@ -267,6 +273,9 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
     CONNECTOR_OAUTH_STATE_SECRET: str = ""
     CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
+    # Dedicated versioned plugin credential keyring; validated only when used.
+    WEWORK_PLUGIN_CREDENTIAL_KEYS: SecretStr = Field(default=SecretStr(""), repr=False)
+    WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: str = ""
     # Upstream Sites Platform base URL. Wework accesses it through Backend.
     SITES_API_BASE_URL: str = ""
     # Optional bearer token for the upstream Sites Platform project API.
@@ -800,12 +809,6 @@ class Settings(BaseSettings):
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
     # Whether to reject new requests during shutdown (503 Service Unavailable)
     SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
-
-    # Data Table Configuration
-    # JSON string containing table provider credentials (DingTalk, etc.)
-    # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
-    # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
-    DATA_TABLE_CONFIG: str = ""
 
     # Knowledge base and document summary configuration
     # Enable/disable automatic summary generation after document indexing

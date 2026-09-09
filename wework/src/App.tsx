@@ -1,3 +1,5 @@
+import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import {
   Activity,
   useCallback,
@@ -634,6 +636,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
+        <NotificationEventsBridge chatStream={services.chatStream} />
         <WorkbenchProvider
           lifecycleStore={lifecycleStore}
           services={services}
@@ -661,6 +664,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
+      <NotificationEventsBridge chatStream={services.chatStream} />
       {mountedWorkspaceTabs.map(tab => (
         <WorkspaceTabSurface
           key={tab.id}
@@ -1077,6 +1081,7 @@ function AppShell() {
       restoreSessionTabs={!isMainWindow}
     >
       <ElectronWorkbenchTabBridge />
+      <WeworkSchemeBridge />
       <div
         data-testid="app-shell"
         className={cn(

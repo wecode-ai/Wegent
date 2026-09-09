@@ -15,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'core-dsh-plugin-management',
   'plugin-development',
   'plugin-auto-update',
+  'plugin-account-auth',
   'plugin-workspace-publication',
   'project-ai-settings',
   'model-routing',
@@ -68,6 +69,7 @@ export const DESKTOP_CHECKPOINTS = [
   'browser-annotation-core',
   'browser-annotation-anchors',
   'browser-annotation-design',
+  'dsh-owner-capture',
 ]
 
 export const PLUGIN_SEGMENTS = [

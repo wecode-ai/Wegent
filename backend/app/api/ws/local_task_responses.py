@@ -32,6 +32,7 @@ RUNTIME_TERMINAL_EVENT_TYPES = {
     ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value: EventType.CANCELLED,
     ResponsesAPIStreamEvents.ERROR.value: EventType.ERROR,
 }
+RUNTIME_VALUE_ORIGINS = {"final", "process_fallback", "empty"}
 
 
 def is_runtime_terminal_event_type(event_type: str) -> bool:
@@ -444,10 +445,17 @@ def runtime_terminal_event(
         return None
     error = event_data.get("error")
     if internal_type is EventType.DONE:
+        result = {"value": event_data.get("value") or ""}
+        value_origin = event_data.get("valueOrigin")
+        if value_origin in RUNTIME_VALUE_ORIGINS:
+            result["value_origin"] = value_origin
+        for field_name in ("stop_reason", "silent_exit", "silent_exit_reason"):
+            if field_name in event_data:
+                result[field_name] = event_data[field_name]
         return ExecutionEvent(
             type=internal_type.value,
             subtask_id=subtask_id,
-            result={"value": event_data.get("value") or ""},
+            result=result,
         )
     if not isinstance(error, dict):
         response = event_data.get("response")

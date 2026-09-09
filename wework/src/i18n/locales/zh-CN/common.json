@@ -32,15 +32,15 @@
     "app_weloop_requires_cloud": "连接云端后可用",
     "workspace_route_unavailable_title": "此工作区不可用",
     "workspace_route_unavailable_description": "提供此页面的插件可能已停用或卸载。你可以关闭此标签页，或重新启用对应插件。",
-    "project_chat": "私信 AI",
+    "project_chat": "问AI",
     "project_chat_subtitle": "用于项目探索和临时提问",
     "project_chat_task_subtitle": "动态",
     "project_chat_cloud_required": "连接云端后可使用动态",
     "project_chat_load_failed": "动态加载失败",
     "project_chat_send_failed": "消息发送失败",
-    "project_chat_close": "关闭私信 AI",
+    "project_chat_close": "关闭问AI",
     "project_chat_loading": "正在加载动态…",
-    "project_chat_empty_title": "私信 AI",
+    "project_chat_empty_title": "问AI",
     "project_chat_task_empty_title": "开始讨论这个任务",
     "project_chat_empty_description": "用于项目探索和临时提问；正式执行请在任务详情里指派机器人。",
     "project_chat_task_empty_description": "在这里讨论任务；消息仅属于这个任务的 Thread，并保留连续上下文。",
@@ -542,14 +542,14 @@
     "remote_short": "远程",
     "new_blank_project": "新建空白项目",
     "use_existing_folder": "使用现有文件夹",
-    "new_project_chat": "私信 AI",
+    "new_project_chat": "问AI",
     "project_space_chat": {
-      "resize": "调整私信 AI 宽度",
+      "resize": "调整问AI宽度",
       "conversation": "历史会话",
       "new_conversation": "新建会话",
       "new_conversation_option": "新会话",
       "back_to_conversation": "返回当前会话",
-      "close": "关闭私信 AI",
+      "close": "关闭问AI",
       "menu_title": "会话 · {{name}}",
       "runtime_project": "执行项目",
       "runtime_project_prefix": "项目：{{name}}",
@@ -599,6 +599,7 @@
     "archive_runtime_task_remove_failed": "任务已归档，但删除工作树失败",
     "archive_runtime_task_remove_failed_detail": "任务已归档，但删除工作树失败：{{message}}",
     "runtime_task_running": "运行中",
+    "runtime_task_running_with_goal": "运行中，有目标",
     "runtime_task_queue_paused": "追问队列已暂停",
     "task_plan_progress": "第 {{current}} / {{total}} 步",
     "task_plan_completed": "任务步骤已完成",
@@ -772,7 +773,7 @@
     "project_device_upgrade_required_short": "需升级",
     "project_device_upgrade_required_option": "（需升级）",
     "project_device_status_title": "{{device}} · {{status}}",
-    "project_chat_device_unavailable": "设备{{status}}，无法私信 AI：{{device}}",
+    "project_chat_device_unavailable": "设备{{status}}，无法问AI：{{device}}",
     "standalone_chat_device_unavailable": "暂无在线设备，无法新建对话",
     "conversation_device_unavailable": "{{device}} {{status}}，恢复在线后可继续对话",
     "conversation_device_upgrade_required": "{{device}} 版本低于 {{version}}，升级后可继续对话",
@@ -1062,6 +1063,25 @@
     "project_empty_title_suffix": "中做些什么？",
     "change_project": "更改项目",
     "project_select_placeholder": "请选择项目",
+    "focus_suggestions": {
+      "description": "从一个常见任务开始，或直接描述你的目标",
+      "research": {
+        "label": "整理和总结资料",
+        "prompt": "帮我整理并总结以下资料："
+      },
+      "writing": {
+        "label": "撰写或润色内容",
+        "prompt": "帮我撰写或润色以下内容："
+      },
+      "analysis": {
+        "label": "分析问题并给出建议",
+        "prompt": "帮我分析这个问题并给出可执行建议："
+      },
+      "planning": {
+        "label": "制定计划和拆解任务",
+        "prompt": "帮我制定计划并拆解以下任务："
+      }
+    },
     "task_suggestions": {
       "back": "返回全部建议",
       "explore": {
@@ -3668,12 +3688,9 @@
     "archive_completed_tasks": "批量归档已完成任务",
     "archive_completed_tasks_title": "归档已完成任务？",
     "archive_completed_tasks_description": "将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。",
-    "force_archive_completed_tasks_title": "强制归档已完成任务？",
-    "force_archive_completed_tasks_description": "{{count}} 个任务的工作树包含未提交修改。强制归档会删除这些工作树目录。",
     "batch_archive_failed": "{{count}} 个任务归档失败，请稍后重试",
     "archiving": "归档中…",
     "confirm_archive": "确认归档",
-    "force_archive": "强制归档",
     "search_tasks": "搜索任务",
     "new_task": "新建任务",
     "add_task": "添加任务",
@@ -3872,7 +3889,7 @@
     "dingtalk_assistant_subtitle": "可直接管理钉钉数据",
     "dingtalk_assistant_close": "收起项目助手",
     "dingtalk_assistant_intro": "直接告诉 AI 想查询、创建或修改什么，AI 会使用 dws 操作当前钉钉多维表格。",
-    "dingtalk_assistant_source_note": "钉钉是数据源，Wework 只展示实时映射。发送后将在私信 AI 中继续。",
+    "dingtalk_assistant_source_note": "钉钉是数据源，Wework 只展示实时映射。发送后将在问AI中继续。",
     "dingtalk_assistant_try": "你可以这样说：",
     "dingtalk_assistant_prompt_filter": "只看我负责且未完成的任务",
     "dingtalk_assistant_prompt_create": "新建一条任务",
@@ -4481,5 +4498,23 @@
     "minutes": "分钟",
     "hours": "小时",
     "days": "天"
+  },
+  "notifications": {
+    "title": "通知",
+    "refresh": "刷新",
+    "read_all": "全部已读",
+    "invalid_link": "通知链接无效",
+    "failed": "更新通知失败，请重试。",
+    "loading": "加载中…",
+    "empty": "暂无通知",
+    "assignment_title": "你有新的看板任务",
+    "assignment_body": "{{assigner}} 将「{{project}}」看板的「{{item}}」分配给了你",
+    "unread": "未读",
+    "more": "加载更多",
+    "ask_title": "是否通知对方？",
+    "ask_body": "保存分配后，将发送站内通知，并推送到对方已连接的 IM。",
+    "without_notification": "不通知",
+    "with_notification": "通知对方",
+    "connect": "连接云端后查看通知"
   }
 }

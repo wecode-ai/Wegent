@@ -1,3 +1,4 @@
+import { NotificationCenter } from '@/features/notifications/NotificationCenter'
 import { cn } from '@/lib/utils'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
@@ -37,14 +38,14 @@ export function ChromeTitlebar({
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
-  const feedbackSlotVisible = isDesktop && platform === 'mac'
+  const feedbackSlotVisible = isDesktop
   const fixedActionsWidth = showWorkspacePortals
     ? feedbackSlotVisible
-      ? '6.75rem'
-      : '5rem'
+      ? '9rem'
+      : '7.25rem'
     : feedbackSlotVisible
-      ? '1.75rem'
-      : '0px'
+      ? '4rem'
+      : '2.25rem'
 
   return (
     <div
@@ -108,7 +109,7 @@ export function ChromeTitlebar({
           </div>
         </div>
       )}
-      {(showWorkspacePortals || feedbackSlotVisible) && (
+      {
         <div
           data-testid="titlebar-fixed-actions"
           className="relative z-chrome flex h-full shrink-0 items-center"
@@ -121,6 +122,12 @@ export function ChromeTitlebar({
               className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
             />
           )}
+          <div
+            data-testid="titlebar-notifications"
+            className="electron-titlebar-interactive-region flex h-full w-9 shrink-0 items-center justify-center"
+          >
+            <NotificationCenter />
+          </div>
           {feedbackSlotVisible && (
             <div
               id={TITLEBAR_FEEDBACK_PORTAL_ID}
@@ -131,7 +138,7 @@ export function ChromeTitlebar({
             </div>
           )}
         </div>
-      )}
+      }
 
       {/* Linux: right spacer for native window controls */}
       {isDesktop && platform === 'linux' && (

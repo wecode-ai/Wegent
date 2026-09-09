@@ -2147,6 +2147,14 @@ export interface InstalledPluginComponents {
     slug: string
     authPolicy: 'on_install' | 'on_use' | 'optional'
     localAuth?: PluginLocalAuthDefinition | null
+    accountAuth?: {
+      protocolVersion: 1
+      credentialType: 'password' | 'bearer' | 'oauth2'
+      oauth2?: Array<'authorize' | 'refresh' | 'revoke'>
+      exportMode?: 'exclusive'
+      localEnvironment?: Record<string, { type: 'directory' } | { type: 'enum'; values: string[] }>
+      adapter: string
+    } | null
     description?: string | null
   }>
   lsps: PluginPathComponent[]

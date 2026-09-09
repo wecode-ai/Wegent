@@ -335,6 +335,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   const createdPayloads = []
   let archivedAgentPayload = null
   let createdAgentPayload = null
+  let agents = [AGENT]
   let cancelRequested = false
   let retryRequested = false
   let modelRequests = 0
@@ -2696,7 +2697,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         request.method === 'GET' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents`
       ) {
-        json(response, 200, [AGENT])
+        json(
+          response,
+          200,
+          agents.filter(agent => agent.status !== 'archived')
+        )
         return true
       }
       if (
@@ -2704,13 +2709,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents`
       ) {
         createdAgentPayload = await readJson(request)
-        json(response, 201, {
+        const createdAgent = {
           ...AGENT,
           ...createdAgentPayload,
           id: 'agent-created-without-model',
           model: createdAgentPayload.model ?? null,
           version: 1,
-        })
+        }
+        agents.push(createdAgent)
+        json(response, 201, createdAgent)
         return true
       }
       if (
@@ -2718,7 +2725,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents/${AGENT_ID}`
       ) {
         archivedAgentPayload = await readJson(request)
-        json(response, 200, { ...AGENT, ...archivedAgentPayload, version: AGENT.version + 1 })
+        const archivedAgent = {
+          ...AGENT,
+          ...archivedAgentPayload,
+          version: AGENT.version + 1,
+        }
+        agents = agents.map(agent => (agent.id === AGENT_ID ? archivedAgent : agent))
+        json(response, 200, archivedAgent)
         return true
       }
       if (
@@ -2727,13 +2740,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents/agent-created-without-model`
       ) {
         const payload = await readJson(request)
-        json(response, 200, {
+        const updatedAgent = {
           ...AGENT,
           ...createdAgentPayload,
           ...payload,
           id: 'agent-created-without-model',
           version: 2,
-        })
+        }
+        agents = agents.map(agent =>
+          agent.id === 'agent-created-without-model' ? updatedAgent : agent
+        )
+        json(response, 200, updatedAgent)
         return true
       }
       if (request.method === 'GET' && url.pathname === '/api/models/unified') {
@@ -4331,6 +4348,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       })
       assert.equal(createdAgentPayload?.model, null)
       assert.equal(createdAgentPayload?.workspaceBinding?.type, 'standalone')
+      await control.command(
+        'waitFor',
+        '[data-testid="cloud-project-chat-agent-agent-created-without-model"]',
+        {
+          text: '回归巡检机器人',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-manage-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        '[data-testid="cloud-project-chat-agent-agent-created-without-model"]',
+        {
+          text: '回归巡检机器人',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
       await captureScreenshot(control, 'project-automation-05-robot-model-optional.png')
 
       await control.command('click', `[data-testid="cloud-project-chat-agent-${AGENT_ID}"]`, {
@@ -4363,6 +4404,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         visible: true,
       })
       assert.equal(archivedAgentPayload?.status, 'archived')
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-manage-view"]`, {
+        visible: true,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="cloud-project-chat-agent-agent-created-without-model"]'
+          )
+        ),
+        0,
+        'Reloading project management restored the archived model-optional robot'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `[data-testid="cloud-project-chat-agent-${AGENT_ID}"]`
+          )
+        ),
+        0,
+        'Reloading project management restored the archived fixture robot'
+      )
       await captureScreenshot(control, 'project-automation-07-robot-templates.png')
       await control.command('click', '[data-testid="project-chat-agent-template-development"]', {
         visible: true,

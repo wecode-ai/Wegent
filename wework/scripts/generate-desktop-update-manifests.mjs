@@ -68,38 +68,6 @@ for (const targetChannel of electronChannels) {
   )
 }
 
-const tauriSource = {
-  version,
-  notes,
-  pub_date: releaseDate,
-  platforms: {
-    'darwin-aarch64': await tauriEntry(`WeWork_${version}_macos_arm64.app.tar.gz`),
-    'darwin-x86_64': await tauriEntry(`WeWork_${version}_macos_x64.app.tar.gz`),
-    'windows-x86_64': await tauriEntry(`WeWork_${version}_windows_x64-setup.exe`),
-  },
-}
-const tauriChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
-for (const targetChannel of tauriChannels) {
-  for (const [platform, entry] of Object.entries(tauriSource.platforms)) {
-    const [operatingSystem, ...architecture] = platform.split('-')
-    const target = `${targetChannel}-${operatingSystem}`
-    await writeFile(
-      resolve(output, `${target}-${architecture.join('-')}.json`),
-      `${JSON.stringify(
-        {
-          version,
-          notes,
-          pub_date: releaseDate,
-          platforms: { [target]: entry },
-        },
-        null,
-        2
-      )}\n`,
-      'utf8'
-    )
-  }
-}
-
 for (const [platform, architecture] of [
   ['macos', 'arm64'],
   ['macos', 'x64'],
@@ -139,7 +107,8 @@ for (const [platform, architecture] of [
       entryPath: component.entryPath,
     }
   }
-  for (const targetChannel of tauriChannels) {
+  const componentChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
+  for (const targetChannel of componentChannels) {
     await writeFile(
       resolve(output, `components-${targetChannel}-${platform}-${architecture}.json`),
       `${JSON.stringify(
@@ -192,14 +161,6 @@ async function requireAsset(name) {
   const path = resolve(assets, name)
   const file = await stat(path).catch(() => null)
   if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
-}
-
-async function tauriEntry(name) {
-  const signaturePath = resolve(assets, `${name}.sig`)
-  return {
-    signature: (await readFile(signaturePath, 'utf8')).trim(),
-    url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
-  }
 }
 
 function electronManifest(releaseVersion, date, releaseNotes, files) {

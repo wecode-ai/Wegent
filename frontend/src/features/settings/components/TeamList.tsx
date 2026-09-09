@@ -30,6 +30,7 @@ import { TeamChildNamespaceAuthorizationDialog } from './TeamChildNamespaceAutho
 import { TeamCardActionsMenu } from './TeamCardActionsMenu'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
+import { extractDeniedSkillName } from '@/features/settings/utils/teamCopyErrors'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useToast } from '@/hooks/use-toast'
@@ -379,9 +380,12 @@ export default function TeamList({
         title: t('teams.copy_success'),
       })
     } catch (error) {
+      const deniedSkill = extractDeniedSkillName(error)
       toast({
         variant: 'destructive',
-        title: (error as Error)?.message || t('teams.copy_failed'),
+        title: deniedSkill
+          ? t('teams.copy_skill_permission_denied', { skill: deniedSkill })
+          : (error as Error)?.message || t('teams.copy_failed'),
       })
     } finally {
       setCopyingTeamId(null)

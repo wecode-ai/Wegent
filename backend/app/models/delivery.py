@@ -296,6 +296,14 @@ class LoopItemTaskBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "execution"}
 
     @property
+    def model_selection(self) -> dict[str, object] | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get("model_selection")
+        return value if isinstance(value, dict) else None
+
+    @property
     def workflow_node_id(self) -> str | None:
         metadata = self.metadata_json
         if not isinstance(metadata, dict):

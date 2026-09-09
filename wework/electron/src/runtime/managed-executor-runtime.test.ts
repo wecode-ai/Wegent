@@ -13,7 +13,7 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
-  test('reuses the Tauri executor home by default', () => {
+  test('reuses the existing executor home by default', () => {
     const environment = prepareManagedExecutorEnvironment({
       dataDirectory: '/unused-electron-data',
       environment: {
