@@ -495,6 +495,8 @@ export function ChatInputControls({
         selectedImageModel={selectedImageModel}
         onImageModelChange={onImageModelChange}
         isImageModelsLoading={isImageModelsLoading}
+        selectedImageSize={selectedImageSize}
+        onImageSizeChange={onImageSizeChange}
         showVideoControlsInChat={showVideoControlsInChat}
         selectedResolution={selectedResolution}
         onResolutionChange={onResolutionChange}
