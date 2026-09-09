@@ -450,15 +450,17 @@ else
   export WEWORK_CUSTOM_MACOS_NOTARIZATION=true
 fi
 export WEWORK_NOTARYTOOL_S3_ACCELERATION="${WEWORK_NOTARYTOOL_S3_ACCELERATION:-true}"
-CSC_NAME="$(
-  wework_normalize_macos_signing_identity \
-    "${CSC_NAME:-${APPLE_SIGNING_IDENTITY:-}}"
-)"
-export CSC_NAME
-if [ -z "${CSC_LINK:-}" ] && [ -z "$CSC_NAME" ]; then
-  echo "CSC_LINK or APPLE_SIGNING_IDENTITY is required for a signed macOS release." >&2
+component_signing_identity="${APPLE_SIGNING_IDENTITY:-${CSC_NAME:-}}"
+if [ -z "$component_signing_identity" ]; then
+  echo "APPLE_SIGNING_IDENTITY or CSC_NAME is required to sign bundled components." >&2
   exit 1
 fi
+export APPLE_SIGNING_IDENTITY="$component_signing_identity"
+CSC_NAME="$(
+  wework_normalize_macos_signing_identity \
+    "$component_signing_identity"
+)"
+export CSC_NAME
 
 if [ -n "$RESUME_SIGNED_APP" ]; then
   if [ ! -d "$RESUME_SIGNED_APP" ] || [[ "$RESUME_SIGNED_APP" != *.app ]]; then

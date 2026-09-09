@@ -642,6 +642,15 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert "cp(zip, join(output, basename(zip)))" not in preparer
     assert "WEWORK_NOTARYTOOL_S3_ACCELERATION" in script
     assert "WEWORK_CUSTOM_MACOS_NOTARIZATION" in script
+    assert (
+        'component_signing_identity="${APPLE_SIGNING_IDENTITY:-${CSC_NAME:-}}"'
+        in script
+    )
+    assert 'export APPLE_SIGNING_IDENTITY="$component_signing_identity"' in script
+    assert (
+        "APPLE_SIGNING_IDENTITY or CSC_NAME is required to sign bundled components."
+        in script
+    )
     assert "--resume-signed-app" in script
     assert "--signed-app-only" in script
     assert "--upload-existing" in script
