@@ -21,6 +21,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-workspace-publication',
   'project-ai-settings',
   'model-routing',
+  'codex-account-login',
   'permission-modes',
   'computer-use',
   'task-status-sync',
