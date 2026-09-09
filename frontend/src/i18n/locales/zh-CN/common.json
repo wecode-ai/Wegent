@@ -341,6 +341,7 @@
     "copy_name_failed": "复制智能体名称失败",
     "copy_success": "智能体已复制",
     "copy_failed": "复制失败",
+    "copy_skill_permission_denied": "智能体依赖的技能 {{skill}} 权限不足，请先授权或添加到目标空间后再复制",
     "copy_skills_dialog_title": "复制 Skill 到群组",
     "copy_skills_dialog_desc": "以下 Skill 属于个人空间，是否一并复制到群组？",
     "copy_skills_with": "复制 Skill",

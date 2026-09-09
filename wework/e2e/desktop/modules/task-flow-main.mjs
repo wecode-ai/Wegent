@@ -52,7 +52,7 @@ import {
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyDisabledRemoteSessionCapabilities,
-  verifyLocalRemoteControlFlow,
+  verifyWeworkAppDeviceRegistrationFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
@@ -283,6 +283,7 @@ import {
 
 import {
   captureVerificationScreenshot,
+  enrichTrackedDefaultIssueTitle,
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
@@ -315,6 +316,37 @@ const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
+const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
+  'WEWORK_DESKTOP_E2E_DEFAULT_ISSUE_CONTEXT: preserve this acceptance criterion.'
+
+function assertDefaultIssueContextAbsent(request) {
+  const serializedRequest = JSON.stringify(request.body)
+  assert.ok(
+    !serializedRequest.includes('cloud://projects/default-work-items'),
+    'The first task request included the empty default Issue reference'
+  )
+  assert.ok(
+    !serializedRequest.includes('Current cloud project: 我的任务'),
+    'The first task request included the empty default Issue project context'
+  )
+  assert.ok(
+    !serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The first task request unexpectedly included later Issue content'
+  )
+}
+
+function assertDefaultIssueContextInjected(request) {
+  const serializedRequest = JSON.stringify(request.body)
+  assert.ok(
+    serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The follow-up request did not include the enriched default Issue title'
+  )
+  assert.match(
+    serializedRequest,
+    /cloud:\/\/projects\/default-work-items\/todos\/WORK-\d+/,
+    'The follow-up request did not include the bound default Issue reference'
+  )
+}
 
 async function openProjectAiSettings(control, projectId) {
   await control.command('hover', `[data-testid="project-row-${projectId}"]`)
@@ -496,8 +528,45 @@ async function verifyProjectAiSettings({
     'A new local project did not initially follow the global model'
   )
   await captureVerificationScreenshot(control, 'project-ai-settings-01-defaults.png')
+  await saveProjectAiSettings(control)
+
+  setPhase('project-ai-settings-follow-global-model-memory')
+  control.setScenario('checkpoint_task')
+  await selectRememberedTaskModel(control)
+  const inheritedConversationRequest = await sendProjectAiCheckpointPrompt(
+    control,
+    composerSelector,
+    { createsConversation: true }
+  )
+  assert.equal(
+    inheritedConversationRequest.body.model,
+    REMEMBERED_TASK_MODEL_ID,
+    'The follow-global project did not use the selected global model'
+  )
+  assert.equal(
+    inheritedConversationRequest.body.reasoning?.effort,
+    REMEMBERED_TASK_REASONING,
+    'The follow-global project did not use the selected global reasoning effort'
+  )
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await control.command('click', '[data-testid="model-selector-button"]')
+  assert.match(
+    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    /High|高/,
+    'The follow-global project did not remember the selected model and reasoning effort'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await captureVerificationScreenshot(
+    control,
+    'project-ai-settings-01-follow-global-model-remembered.png'
+  )
 
   setPhase('project-ai-settings-configure')
+  await openProjectAiSettings(control, projectId)
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
@@ -713,21 +782,21 @@ async function verifyProjectAiSettings({
     'The task-specific model override dropped the project instructions'
   )
 
-  setPhase('project-ai-settings-next-task-remembers-model')
+  setPhase('project-ai-settings-next-task-restores-project-default')
   await control.command('clickWhenEnabled', newConversationSelector)
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
     await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
     /High|高/,
-    'The next task did not remember the selected model and reasoning effort'
+    'The next task did not restore the project model and reasoning effort'
   )
   await captureVerificationScreenshot(
     control,
-    'project-ai-settings-11-next-task-model-remembered.png'
+    'project-ai-settings-11-next-task-project-default.png'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -741,6 +810,32 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  setPhase('model-catalog-refresh')
+  const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+  await control.command('waitFor', modelSelector, {
+    enabled: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const selectedModelLabel = await control.command('getText', modelSelector)
+  assert.ok(
+    selectedModelLabel,
+    'The model selector did not expose its selected model before refresh'
+  )
+  await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
+  const refreshSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.ok(
+    refreshSnapshot.testIds.includes('model-selector-button'),
+    'The model selector disappeared while refreshing an already loaded model catalog'
+  )
+  assert.ok(
+    !refreshSnapshot.testIds.includes('model-selector-loading'),
+    'The model selector was replaced by a blank loading placeholder during catalog refresh'
+  )
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
     setPhase(`local-model-switch-${switchCase.id}`)
@@ -1112,7 +1207,6 @@ async function main() {
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-      DEVICE_ID: `wework-e2e-device-${process.pid}`,
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
@@ -1156,6 +1250,7 @@ async function main() {
         : {}),
     }
     for (const key of [
+      'DEVICE_ID',
       'ELECTRON_RUN_AS_NODE',
       'WEGENT_APP_IPC_DEVICE_ID',
       'WEGENT_APP_IPC_ENDPOINT',
@@ -1372,9 +1467,20 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'dsh-owner-capture') {
+      phase = 'dsh-owner-capture-scenario'
+      assert.ok(
+        desktopScenario,
+        'The dsh-owner-capture checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      console.log(`Wework desktop dsh-owner-capture checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
-      await verifyLocalRemoteControlFlow(control, cloudEnvironment)
+      await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
       const generatedDevice = await verifyRemoteDockerCommandFlow(control, cloudEnvironment, {
         interactiveSessions: { codeServer: false, terminal: false },
       })
@@ -2369,7 +2475,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
       phase = 'initial-task'
       await sendPrompt(control, composerSelector, TASK_PROMPT)
-      await withTimeout(
+      const initialTaskRequest = await withTimeout(
         control.awaitScenarioRequest('initial'),
         DEFAULT_STEP_TIMEOUT_MS,
         'The model service did not receive the initial task request'
@@ -2431,11 +2537,21 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
       if (shouldRunDesktopCheckpoint('task-board-association')) {
         phase = 'project-space-task-board-association'
+        assertDefaultIssueContextAbsent(initialTaskRequest)
         control.releaseInitialToolExecution()
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        phase = 'project-space-default-issue-context-enriched'
+        await enrichTrackedDefaultIssueTitle(
+          control,
+          associatedTaskTabTestId,
+          `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`
+        )
+        control.setScenario('checkpoint_task')
+        const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
+        assertDefaultIssueContextInjected(enrichedIssueRequest)
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })
@@ -4049,6 +4165,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           ),
           httpRequests: control.httpRequests,
           commandHistory: control.commandHistory,
+          controlTransportHistory: control.controlTransportHistory,
         },
         null,
         2

@@ -79,4 +79,31 @@ describe('WorkbenchRuntimeManager', () => {
       DSH_HOME: '/workbench',
     })
   })
+
+  test('passes a fresh scoped Host pipe only when the workbench launch provides one', async () => {
+    const handle = fakeRuntime('http://127.0.0.1:4301', 301)
+    const options = []
+    const hostPipe = { environment: () => ({ WEWORK_ELECTRON_HOST_TOKEN: 'fresh-token' }) }
+    const manager = new WorkbenchRuntimeManager(runtimeOptions => {
+      options.push(runtimeOptions)
+      return handle
+    })
+
+    await manager.open({
+      tabId: 'smart-app:owner-capture',
+      url: 'http://127.0.0.1:4301',
+      command: '/runtime/dsh',
+      environment: { WEWORK_ELECTRON_HOST_TOKEN: 'core-token' },
+      hostPipe: hostPipe as never,
+      hostPrincipal: '@wegent/dsh-workbench',
+    })
+
+    expect(options[0]).toMatchObject({
+      hostPipe,
+      env: {
+        WEWORK_ELECTRON_HOST_TOKEN: 'fresh-token',
+        WEWORK_ELECTRON_HOST_PRINCIPAL: '@wegent/dsh-workbench',
+      },
+    })
+  })
 })

@@ -17,6 +17,11 @@ import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { pruneHarnessRuntime } from './lib/harness-runtime-pruning.mjs'
 import { assertPortableHarnessRuntime } from './lib/portable-runtime.mjs'
 import { acquireProcessLock } from './lib/process-lock.mjs'
+import {
+  fetchOptionalPublishedDescriptor,
+  fetchPublishedResource,
+  PublishedRuntimeUnavailableError,
+} from './lib/published-runtime-fetch.mjs'
 import { resolveHarnessRuntimeCachePaths } from './lib/harness-runtime-cache.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -35,7 +40,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v7'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v8'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -193,7 +198,7 @@ async function ensurePublishedAsset(descriptor, runtime) {
   }
   if (valid) return
 
-  const response = await fetch(descriptor.downloadUrl)
+  const response = await fetchPublishedResource(descriptor.downloadUrl)
   if (!response.ok || !response.body) {
     throw new Error(`Failed to fetch published Harness runtime asset: ${response.status}`)
   }
@@ -216,18 +221,19 @@ async function ensurePublishedAsset(descriptor, runtime) {
 
 async function reusePublishedRuntime(runtime) {
   if (skipRemoteReuse) return null
-  let response
-  try {
-    response = await fetch(`${baseUrl}/${runtime.descriptorName}`)
-  } catch {
-    return null
-  }
-  if (response.status === 404) return null
+  const response = await fetchOptionalPublishedDescriptor(`${baseUrl}/${runtime.descriptorName}`)
+  if (!response) return null
   if (!response.ok) {
     throw new Error(`Failed to fetch published Harness runtime descriptor: ${response.status}`)
   }
   const descriptor = validateDescriptor(await response.json(), runtime)
-  await ensurePublishedAsset(descriptor, runtime)
+  try {
+    await ensurePublishedAsset(descriptor, runtime)
+  } catch (error) {
+    if (!(error instanceof PublishedRuntimeUnavailableError)) throw error
+    console.warn(`${error.message}; building the runtime locally`)
+    return null
+  }
   await writeFile(
     path.join(assetDirectory, runtime.descriptorName),
     `${JSON.stringify(descriptor, null, 2)}\n`
@@ -287,10 +293,7 @@ async function pruneMaterializedRuntimes(descriptors) {
 }
 
 async function buildRuntime(runtime) {
-  const staging = path.join(
-    cacheDirectory,
-    `wework-harness-runtime-${runtime.dshVersion}-${process.pid}`
-  )
+  const staging = path.join(cacheDirectory, `wework-harness-runtime-${runtime.sourceFingerprint}`)
   const temporaryArchive = `${runtime.assetPath}.${process.pid}.tar.gz`
   try {
     await rm(staging, { recursive: true, force: true })
@@ -339,6 +342,7 @@ async function buildRuntime(runtime) {
         cwd: staging,
         file: temporaryArchive,
         gzip: { level: zlibConstants.Z_BEST_SPEED },
+        mtime: new Date(0),
         portable: true,
         strict: true,
       },

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 const TERMINAL_EVENTS = new Set([
   'response.completed',
@@ -8,8 +8,9 @@ const TERMINAL_EVENTS = new Set([
 ])
 
 export class ExecutorSessionProjector {
-  constructor(sessions) {
+  constructor(sessions, options = {}) {
     this.sessions = sessions
+    this.onTurnCompleted = options.onTurnCompleted ?? (() => {})
     this.tasks = new Map()
   }
 
@@ -20,6 +21,8 @@ export class ExecutorSessionProjector {
     if (!taskId) return
 
     const state = this.taskState(payload, taskId)
+    const taskTitle = stringField(payload, 'taskTitle')
+    if (taskTitle) state.title = taskTitle
     const event = stringField(envelope, 'event')
     if (!event) return
     const subtaskId = stringField(payload, 'subtaskId')
@@ -92,6 +95,10 @@ export class ExecutorSessionProjector {
     const session = this.sessions.get(sessionId) ?? this.sessions.create(sessionId)
     const state = {
       session,
+      deviceId,
+      taskId,
+      transcriptId: stringField(payload, 'transcriptId') ?? taskId,
+      title: stringField(payload, 'taskTitle') ?? '',
       turn: completedTurns(session),
       subtaskId: null,
       open: false,
@@ -264,6 +271,17 @@ export class ExecutorSessionProjector {
       turn: state.turn,
       reason: turnEndReason(event, data),
     })
+    if (syncableExecutorTurn(state.subtaskId)) {
+      this.onTurnCompleted({
+        transcriptId: state.transcriptId,
+        taskId: state.taskId,
+        title: state.title,
+        sequence: state.turn,
+        turnId: syncTurnId(state),
+        sessionId: state.session.id,
+        executorTurnId: state.subtaskId,
+      })
+    }
     state.open = false
   }
 
@@ -275,6 +293,16 @@ export class ExecutorSessionProjector {
     })
     state.sourceEventSeqs.push(appended.seq)
   }
+}
+
+function syncTurnId(state) {
+  return createHash('sha256')
+    .update(`${state.deviceId}\u0000${state.taskId}\u0000${state.subtaskId ?? state.turn}`)
+    .digest('base64url')
+}
+
+function syncableExecutorTurn(subtaskId) {
+  return !subtaskId?.endsWith('-context-compact')
 }
 
 export function executorSessionId(deviceId, taskId) {

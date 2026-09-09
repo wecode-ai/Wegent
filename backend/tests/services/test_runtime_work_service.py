@@ -2086,6 +2086,7 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
             "executionRequest": {"prompt": "continue"},
         },
         timeout_seconds=600,
+        allow_app_device_task_messaging=False,
     )
     assert test_db.query(TaskResource).count() == 0
 
@@ -2120,6 +2121,7 @@ async def test_send_runtime_message_forwards_external_user_message_identity(
     response = await runtime_work_service.send_runtime_message(
         db=test_db,
         user_id=test_user.id,
+        allow_app_device_task_messaging=True,
         request=RuntimeSendRequest.model_validate(
             {
                 "address": {
@@ -2142,6 +2144,7 @@ async def test_send_runtime_message_forwards_external_user_message_identity(
     )
 
     assert response.accepted is True
+    assert rpc.await_args.kwargs["allow_app_device_task_messaging"] is True
     payload = rpc.await_args.kwargs["payload"]
     assert payload["clientUserMessageId"] == ("im:dingtalk:77:dingtalk-message-1")
     assert payload["createdAt"] == 1_780_000_000_000
@@ -4995,6 +4998,77 @@ async def test_bind_runtime_task_to_im_sessions_persists_selected_model(
             "modelType": "public",
             "options": {"reasoningEffort": "low"},
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_bind_runtime_task_to_im_sessions_accepts_owned_app_device_id(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import BindRuntimeTaskIMSessionsRequest
+    from app.services import runtime_work_service
+
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name="local-device",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Device",
+            "metadata": {"name": "local-device", "namespace": "default"},
+            "spec": {
+                "deviceId": "local-device",
+                "deviceType": "app",
+                "runtimeInstanceId": "runtime-installation",
+                "appDeviceId": "electron-app",
+            },
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+    session = SimpleNamespace(session_key="session-a")
+    monkeypatch.setattr(
+        runtime_work_service.im_session_service,
+        "load_user_sessions_by_keys",
+        AsyncMock(return_value=[session]),
+    )
+    bind_active_runtime_task = AsyncMock()
+    monkeypatch.setattr(
+        runtime_work_service.im_session_service,
+        "bind_active_runtime_task",
+        bind_active_runtime_task,
+    )
+    monkeypatch.setattr(
+        runtime_work_service.im_notification_dispatcher,
+        "send_task_switched",
+        AsyncMock(return_value={"sent": 1}),
+    )
+
+    response = await runtime_work_service.bind_runtime_task_to_im_sessions(
+        db=test_db,
+        user_id=test_user.id,
+        request=BindRuntimeTaskIMSessionsRequest.model_validate(
+            {
+                "address": {
+                    "deviceId": "electron-app",
+                    "taskId": "codex-1",
+                },
+                "taskTitle": "App task",
+                "sessionKeys": ["session-a"],
+            }
+        ),
+    )
+
+    assert response.bound_session_keys == ["session-a"]
+    assert response.address.device_id == "electron-app"
+    assert bind_active_runtime_task.await_args.kwargs["runtime_task"] == {
+        "deviceId": f"app-record-{device.id}",
+        "taskId": "codex-1",
     }
 
 

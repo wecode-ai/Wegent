@@ -77,12 +77,11 @@ from app.services.plugin_package_storage import (
     plugin_package_storage,
 )
 from app.services.plugin_publication_artifact import (
-    canonical_complete_tree_sha256,
     canonical_plugin_files,
-    canonical_source_tree_sha256,
     canonical_source_tree_sha256_from_files,
     read_plugin_root_member,
     release_envelope_sha256,
+    release_source_tree,
     validate_release_idempotency_key,
 )
 from app.services.plugin_publication_check_service import (
@@ -1356,7 +1355,12 @@ class PluginPublicationService:
                         "requestId and revision are required"
                     ),
                 )
-        artifact_tree_sha256 = canonical_complete_tree_sha256(package)
+        artifact_tree_sha256, requires_build = release_source_tree(package)
+        build_provenance = (
+            {"build_artifact_sha256": hashlib.sha256(package).hexdigest()}
+            if requires_build
+            else {}
+        )
         try:
             self.gitlab.verify_release_provenance(
                 project_id=metadata.source.projectId,
@@ -1366,6 +1370,7 @@ class PluginPublicationService:
                 pipeline_url=metadata.source.pipelineUrl,
                 slug=metadata.plugin.slug,
                 artifact_tree_sha256=artifact_tree_sha256,
+                **build_provenance,
                 merge_request_iid=revision.merge_request_iid if revision else 0,
                 source_branch=revision.source_branch if revision else "",
             )
@@ -1457,7 +1462,7 @@ class PluginPublicationService:
                     "Published risk declaration does not match the accepted revision"
                 ),
             )
-        actual_tree_sha256 = canonical_source_tree_sha256(package)
+        actual_tree_sha256, _ = release_source_tree(package, include_metadata=False)
         if actual_tree_sha256 != revision.source_tree_sha256:
             raise HTTPException(
                 status_code=409,

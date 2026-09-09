@@ -38,7 +38,8 @@ product-oriented showcase plugins:
 The catalog covers all public host slots:
 
 - Navigation and apps: `wework.action`, `wework.app`, `wework.route`,
-  `wework.sidebar.navigation`, and `wework.settings.page`.
+  `wework.sidebar.navigation`, `wework.settings.page`, and
+  `wework.settings.section`.
 - Project and workspace: `wework.plugins.action`,
   `wework.project.create.section`, `wework.project.work.section`,
   `wework.workspace.menu.section`, `wework.workspace.tab`,
@@ -46,8 +47,8 @@ The catalog covers all public host slots:
   `wework.workspace.bottom-panel.tab`, and
   `wework.runtime-profile.workspace-policy`.
 - Composer: `wework.composer.action`.
-- Context: `wework.task.status`, `wework.environment.section`, and
-  `wework.board.card.status`.
+- Home and context: `wework.home`, `wework.task.status`,
+  `wework.environment.section`, and `wework.board.card.status`.
 - Shell: `wework.shell.before`, `wework.shell.after`, and
   `wework.shell.overlay`.
 
@@ -123,7 +124,11 @@ Start from the user-visible outcome, then select the narrowest matching slot:
 - Add a full bottom-panel tool with `wework.workspace.bottom-panel.tab`.
 - Add an input-adjacent action with `wework.composer.action`.
 - Add plugin-management actions with `wework.plugins.action`.
-- Add settings with `wework.settings.page`.
+- Add a standalone settings page with `wework.settings.page`.
+- Add controls to an existing settings page with `wework.settings.section`;
+  declare the target page in the contribution descriptor.
+- Replace the empty-task hero above the Composer with `wework.home`; use the
+  provided heading and call `onSelectSuggestion` to fill the active draft.
 - Use contextual and shell slots only when the UI genuinely belongs to that
   lifecycle.
 

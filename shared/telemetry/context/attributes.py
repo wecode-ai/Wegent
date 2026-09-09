@@ -76,7 +76,6 @@ class SpanAttributes:
     # Knowledge base attributes
     KB_IDS = "knowledge_base.ids"
     KB_DOCUMENT_IDS = "knowledge_base.document_ids"
-    KB_TABLE_CONTEXTS_COUNT = "knowledge_base.table_contexts.count"
 
     # Chat attributes
     CHAT_TYPE = "chat.type"

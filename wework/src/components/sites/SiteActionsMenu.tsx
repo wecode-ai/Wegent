@@ -1,4 +1,4 @@
-import { KeyRound, Pencil, Trash2, Upload, UserRoundPlus } from 'lucide-react'
+import { KeyRound, Pencil, ShieldCheck, Trash2, Upload, UserRoundPlus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Site } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
@@ -15,11 +15,13 @@ interface SiteActionsMenuProps {
   canConfigureEnvironment: boolean
   canDelete: boolean
   canManageCollaborators: boolean
+  canManageAccess: boolean
   onPublish: (site: Site) => void
   onEdit: (site: Site) => void
   onConfigureEnvironment: (site: Site) => void
   onDelete: (site: Site) => void
   onManageCollaborators: (site: Site) => void
+  onManageAccess: (site: Site) => void
 }
 
 export function SiteActionsMenu({
@@ -33,11 +35,13 @@ export function SiteActionsMenu({
   canConfigureEnvironment,
   canDelete,
   canManageCollaborators,
+  canManageAccess,
   onPublish,
   onEdit,
   onConfigureEnvironment,
   onDelete,
   onManageCollaborators,
+  onManageAccess,
 }: SiteActionsMenuProps) {
   const { t } = useTranslation('sites')
   const items = [
@@ -71,6 +75,17 @@ export function SiteActionsMenu({
             testId: `site-collaborators-menu-item-${site.siteid}`,
             disabled,
             onSelect: () => onManageCollaborators(site),
+          },
+        ]
+      : []),
+    ...(canManageAccess
+      ? [
+          {
+            label: t('manage_access', '访问权限'),
+            icon: ShieldCheck,
+            testId: `site-access-menu-item-${site.siteid}`,
+            disabled,
+            onSelect: () => onManageAccess(site),
           },
         ]
       : []),

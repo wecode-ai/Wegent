@@ -46,10 +46,6 @@ def build_payload() -> ChatSendPayload:
                 },
             ),
             ContextItem(
-                type="table",
-                data={"document_id": 8, "name": "数据表"},
-            ),
-            ContextItem(
                 type="knowledge_base",
                 data={
                     "knowledge_id": 13,

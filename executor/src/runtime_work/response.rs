@@ -259,7 +259,9 @@ impl RuntimeTaskLink {
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
             updated_at: if running {
-                timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms)
+                timestamp_ms_field(thread, "updatedAt")
+                    .unwrap_or_else(now_ms)
+                    .max(local_link.as_ref().map_or(0, |link| link.updated_at))
             } else {
                 local_completed_at
                     .or_else(|| timestamp_ms_field(thread, "updatedAt"))

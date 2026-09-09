@@ -115,9 +115,6 @@ class SubtaskContextBrief(BaseModel):
     folder_names: Optional[list[str]] = None
     include_subfolders: Optional[bool] = None
     scope_restricted: Optional[bool] = None
-    # Table fields (from type_data) - nested structure to match frontend expectation
-    document_id: Optional[int] = None
-    source_config: Optional[dict[str, Any]] = None
     # External knowledge fields (from type_data)
     external_provider: Optional[str] = None
     external_mode: Optional[str] = None

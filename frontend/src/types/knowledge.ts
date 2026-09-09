@@ -14,7 +14,7 @@ export type MemberRole = BaseRole
 
 export type DocumentStatus = 'enabled' | 'disabled'
 
-export type DocumentSourceType = 'file' | 'text' | 'table' | 'web' | 'external'
+export type DocumentSourceType = 'file' | 'text' | 'web' | 'external'
 
 export type DocumentIndexStatus =
   | 'not_indexed'
@@ -361,6 +361,8 @@ export interface KnowledgeBase {
   user_id: number
   namespace: string
   direct_access_requirement?: DirectAccessRequirement
+  /** Whether readers may download original documents from this knowledge base. */
+  allow_document_download?: boolean
   document_count: number
   is_active: boolean
   retrieval_config?: RetrievalConfig
@@ -375,6 +377,8 @@ export interface KnowledgeBase {
   language?: string
   /** Whether a code wiki's generation runs appear in the conversation list. */
   show_generation_task?: boolean
+  /** Default generation strategy for this code wiki. */
+  generation_strategy?: string | null
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Which model this knowledge base's own generation runs on. */
@@ -413,6 +417,8 @@ export interface KnowledgeBaseCreate {
   description?: string
   namespace?: string
   direct_access_requirement?: DirectAccessRequirement
+  /** Defaults to true for a new knowledge base. */
+  allow_document_download?: boolean
   retrieval_config?: RetrievalConfigDraft
   rag_config_mode?: RagConfigMode
   summary_enabled?: boolean
@@ -435,6 +441,8 @@ export interface KnowledgeBaseCreate {
    * sees it is the creator's choice rather than the team bot's default.
    */
   execution_model_ref?: SummaryModelRef | null
+  /** Only for `kb_type: 'code_wiki'` — leave unset to use the deployment default. */
+  generation_strategy?: string
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
@@ -467,6 +475,7 @@ export interface KnowledgeBaseUpdate {
   name?: string
   description?: string
   direct_access_requirement?: DirectAccessRequirement
+  allow_document_download?: boolean
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
@@ -475,6 +484,8 @@ export interface KnowledgeBaseUpdate {
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   /** Only for a code wiki: whether its generation runs are listed as conversations. */
   show_generation_task?: boolean
+  /** Only for a code wiki: applies to future runs. */
+  generation_strategy?: string
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number
@@ -488,6 +499,11 @@ export interface KnowledgeBaseUpdate {
   multimodal_analysis_video_prompt?: string | null
   /** Custom image analysis prompt; null/empty = use system default */
   multimodal_analysis_image_prompt?: string | null
+}
+
+export interface DocumentProtection {
+  original_download_allowed: boolean
+  watermark_text?: string | null
 }
 
 export interface KnowledgeBaseListResponse {
@@ -584,26 +600,6 @@ export interface TeamKnowledgeGroup {
 export interface AccessibleKnowledgeResponse {
   personal: AccessibleKnowledgeBase[]
   team: TeamKnowledgeGroup[]
-}
-
-// Table URL Validation types
-export interface TableUrlValidationRequest {
-  url: string
-}
-
-export interface TableUrlValidationResponse {
-  valid: boolean
-  provider?: string
-  base_id?: string
-  sheet_id?: string
-  error_code?:
-    | 'INVALID_URL_FORMAT'
-    | 'UNSUPPORTED_PROVIDER'
-    | 'PARSE_FAILED'
-    | 'MISSING_DINGTALK_ID'
-    | 'TABLE_ACCESS_FAILED'
-    | 'TABLE_ACCESS_FAILED_LINKED_TABLE'
-  error_message?: string
 }
 
 // Document Summary types

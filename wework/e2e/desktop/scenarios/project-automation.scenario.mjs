@@ -335,6 +335,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   const createdPayloads = []
   let archivedAgentPayload = null
   let createdAgentPayload = null
+  let agents = [AGENT]
   let cancelRequested = false
   let retryRequested = false
   let modelRequests = 0
@@ -1651,20 +1652,35 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', '[data-testid="automation-editor-section-menu"]')
-    await control.command('fill', '[aria-label="自动化名称"]', {
+    await control.command('click', '[data-testid="automation-editor-name"]')
+    await control.command('fill', '[data-testid="automation-editor-name-input"]', {
       value: '统一自动化回归',
+    })
+    await control.command('press', '[data-testid="automation-editor-name-input"]', {
+      key: 'Enter',
     })
     await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
     await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
     await control.command('waitFor', '[data-testid^="execution-node-name-"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '等待补全',
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', 'body', {
-      text: '请填写所有执行节点名称',
+    await control.command('press', '[data-testid^="execution-node-"]', {
+      key: 'Backspace',
+    })
+    const deletedNodeSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+    )
+    assert.ok(
+      !deletedNodeSnapshot.testIds.some(testId => testId.startsWith('execution-node-')),
+      'Backspace did not delete the selected workflow node'
+    )
+    await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+    await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
+    await control.command('waitFor', '[data-testid^="execution-node-name-"]', {
       timeoutMs: uiTimeoutMs,
     })
     await control.command('fill', '[data-testid^="execution-node-name-"]', {
@@ -1761,7 +1777,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     await captureScreenshot(control, 'project-automation-node-insert-hover.png')
     await captureScreenshot(control, 'project-automation-00-unified-editor.png')
-    await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '已保存',
       timeoutMs: uiTimeoutMs,
     })
     const unifiedRule = await waitForValue(
@@ -1823,10 +1840,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await control.command('fill', executionPrompt, { value: unsavedPrompt })
-    await control.command('waitFor', 'body', {
-      text: '有未保存更改',
-      timeoutMs: uiTimeoutMs,
-    })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
       timeoutMs: uiTimeoutMs,
@@ -2144,10 +2157,70 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       agentId: cloudAgent.id,
       enabled: true,
     })
-    const queuedScheduleRun = await cloudRequest(
-      `/api/v1/cloud-projects/${projectId}/automations/${scheduleRule.id}/run`,
-      { method: 'POST' }
+    const readyCount = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCount),
+      uiTimeoutMs * 3,
+      'The board did not reconnect for hourly automation verification'
     )
+    const scheduleProjectSelector = `[data-testid="cloud-sidebar-project-${projectId}"]`
+    await control.command('waitFor', scheduleProjectSelector, { visible: true })
+    await control.command('click', scheduleProjectSelector, { visible: true })
+    await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
+      visible: true,
+    })
+    await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+      visible: true,
+    })
+    const scheduleCard = `[data-testid="automation-card-${scheduleRule.id}"]`
+    await control.command('waitFor', scheduleCard, { visible: true })
+    await control.command('click', scheduleCard, { visible: true })
+    await control.command('select', '[data-testid="automation-trigger-frequency"]', {
+      value: 'hourly',
+    })
+    await control.command('select', '[data-testid="automation-trigger-minute"]', { value: '59' })
+    await control.command('waitFor', '[data-testid="automation-run"][disabled]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '已保存',
+    })
+    const persistedSchedule = await cloudRequest(
+      `/api/v1/cloud-projects/${projectId}/automations`
+    ).then(items => items.find(item => item.id === scheduleRule.id))
+    assert.equal(persistedSchedule.cronExpression, '59 * * * *')
+    assert.equal(persistedSchedule.timezone, 'Asia/Shanghai')
+    await control.command('clickWhenEnabled', '[data-testid="automation-run"]')
+    const queuedScheduleRun = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${scheduleRule.id}/runs`),
+      items => items.some(item => item.trigger === 'manual'),
+      'Editor run did not reach the real backend',
+      uiTimeoutMs
+    ).then(items => items.find(item => item.trigger === 'manual'))
+    await control.command('click', '[data-testid="automation-editor-back"]')
+    await control.command('waitFor', scheduleCard, { text: '59', visible: true })
+    await control.command('clickWhenEnabled', `[data-testid="automation-run-${scheduleRule.id}"]`)
+    const cardRun = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${scheduleRule.id}/runs`),
+      items => items.some(item => item.trigger === 'manual' && item.id !== queuedScheduleRun.id),
+      'Card run did not reach the real backend',
+      uiTimeoutMs
+    ).then(items =>
+      items.find(item => item.trigger === 'manual' && item.id !== queuedScheduleRun.id)
+    )
+    await control.command('waitFor', scheduleCard, { visible: true })
+    await control.command('click', scheduleCard)
+    assert.equal(
+      await control.command('getValue', '[data-testid="automation-trigger-frequency"]'),
+      'hourly'
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="automation-trigger-minute"]'),
+      '59'
+    )
+    await captureScreenshot(control, 'project-automation-hourly-manual-run.png')
+    await waitForSucceededRun(projectId, scheduleRule.id, cardRun.taskId, uiTimeoutMs * 6)
     assert.ok(queuedScheduleRun.taskId, 'Run-now did not create its board task')
     const scheduleRun = await waitForSucceededRun(
       projectId,
@@ -2158,11 +2231,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const scheduleExecution = await waitForCompletedExecution(
       projectId,
       scheduleRun.taskId,
-      'project_robot'
+      'generic_robot'
     )
-    assert.equal(scheduleExecution.automationRunId, scheduleRun.id)
-
     const boardItems = await cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`)
+    const scheduledTask = boardItems.items.find(item => item.id === scheduleRun.taskId)
+    assert.ok(scheduledTask, 'Scheduled task was not projected back to the board')
+    assert.equal(scheduledTask.workflow.nodes[0].status, 'completed')
+    assert.equal(
+      scheduleExecution.automationRunId,
+      scheduledTask.workflow.nodes[0].automation_run_id
+    )
+    await disableRule(projectId, persistedSchedule)
     for (const task of [directTeamTask, manualEventTask, customManagerTask, wegentManagerTask]) {
       assert.ok(
         boardItems.items.some(item => item.id === task.id),
@@ -2618,7 +2697,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         request.method === 'GET' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents`
       ) {
-        json(response, 200, [AGENT])
+        json(
+          response,
+          200,
+          agents.filter(agent => agent.status !== 'archived')
+        )
         return true
       }
       if (
@@ -2626,13 +2709,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents`
       ) {
         createdAgentPayload = await readJson(request)
-        json(response, 201, {
+        const createdAgent = {
           ...AGENT,
           ...createdAgentPayload,
           id: 'agent-created-without-model',
           model: createdAgentPayload.model ?? null,
           version: 1,
-        })
+        }
+        agents.push(createdAgent)
+        json(response, 201, createdAgent)
         return true
       }
       if (
@@ -2640,7 +2725,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents/${AGENT_ID}`
       ) {
         archivedAgentPayload = await readJson(request)
-        json(response, 200, { ...AGENT, ...archivedAgentPayload, version: AGENT.version + 1 })
+        const archivedAgent = {
+          ...AGENT,
+          ...archivedAgentPayload,
+          version: AGENT.version + 1,
+        }
+        agents = agents.map(agent => (agent.id === AGENT_ID ? archivedAgent : agent))
+        json(response, 200, archivedAgent)
         return true
       }
       if (
@@ -2649,13 +2740,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents/agent-created-without-model`
       ) {
         const payload = await readJson(request)
-        json(response, 200, {
+        const updatedAgent = {
           ...AGENT,
           ...createdAgentPayload,
           ...payload,
           id: 'agent-created-without-model',
           version: 2,
-        })
+        }
+        agents = agents.map(agent =>
+          agent.id === 'agent-created-without-model' ? updatedAgent : agent
+        )
+        json(response, 200, updatedAgent)
         return true
       }
       if (request.method === 'GET' && url.pathname === '/api/models/unified') {
@@ -3960,9 +4055,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="automation-editor-section-menu"]')
-      await control.command('fill', '[aria-label="自动化名称"]', {
+      await control.command('click', '[data-testid="automation-editor-name"]')
+      await control.command('fill', '[data-testid="automation-editor-name-input"]', {
         value: '统一自动化回归',
+      })
+      await control.command('press', '[data-testid="automation-editor-name-input"]', {
+        key: 'Enter',
       })
       await control.command('fill', '[data-testid="automation-rule-description"]', {
         value: '验证统一触发规则、执行节点和 DAG 持久化。',
@@ -4045,7 +4143,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         visible: true,
       })
       await captureScreenshot(control, 'project-automation-00-unified-editor.png')
-      await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+      await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+        text: '已保存',
         timeoutMs: uiTimeoutMs,
       })
       const createdAutomation = createdPayloads.find(payload => payload.name === '统一自动化回归')
@@ -4067,9 +4166,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
       assert.equal(createdGraphNodes?.[1].subgraph.nodes.length, 1)
-      await control.command('click', '[data-testid="automation-editor-section-menu"]', {
-        visible: true,
-      })
       await control.command('click', '[data-testid="open-current-automation-runs"]', {
         visible: true,
       })
@@ -4252,6 +4348,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       })
       assert.equal(createdAgentPayload?.model, null)
       assert.equal(createdAgentPayload?.workspaceBinding?.type, 'standalone')
+      await control.command(
+        'waitFor',
+        '[data-testid="cloud-project-chat-agent-agent-created-without-model"]',
+        {
+          text: '回归巡检机器人',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-manage-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        '[data-testid="cloud-project-chat-agent-agent-created-without-model"]',
+        {
+          text: '回归巡检机器人',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
       await captureScreenshot(control, 'project-automation-05-robot-model-optional.png')
 
       await control.command('click', `[data-testid="cloud-project-chat-agent-${AGENT_ID}"]`, {
@@ -4284,6 +4404,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         visible: true,
       })
       assert.equal(archivedAgentPayload?.status, 'archived')
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-manage-view"]`, {
+        visible: true,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="cloud-project-chat-agent-agent-created-without-model"]'
+          )
+        ),
+        0,
+        'Reloading project management restored the archived model-optional robot'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `[data-testid="cloud-project-chat-agent-${AGENT_ID}"]`
+          )
+        ),
+        0,
+        'Reloading project management restored the archived fixture robot'
+      )
       await captureScreenshot(control, 'project-automation-07-robot-templates.png')
       await control.command('click', '[data-testid="project-chat-agent-template-development"]', {
         visible: true,

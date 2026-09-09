@@ -9,6 +9,18 @@ import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime
 
 expect.extend(matchers)
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+Object.defineProperty(globalThis, 'ResizeObserver', {
+  configurable: true,
+  value: ResizeObserverMock,
+  writable: true,
+})
+
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
 let testAppPreferences: Record<string, unknown> = {}
@@ -81,7 +93,6 @@ const testSidebarNavigation = [
   {
     id: 'applications.navigation',
     activeItem: 'sites',
-    experimental: true,
     icon: 'applications',
     labelKey: 'workbench.sites',
     label: '应用',
@@ -235,10 +246,20 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.boardCardStatus, []],
     [WEWORK_DSH_SLOTS.composerAction, []],
     [WEWORK_DSH_SLOTS.environmentSection, []],
+    [
+      WEWORK_DSH_SLOTS.home,
+      [
+        {
+          id: 'developer-home',
+          module: 'plugins/wework-ui-home-developer.js',
+        },
+      ],
+    ],
     [WEWORK_DSH_SLOTS.projectCreateSection, []],
     [WEWORK_DSH_SLOTS.projectWorkSection, []],
     [WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy, []],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
+    [WEWORK_DSH_SLOTS.settingsSection, []],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
     [WEWORK_DSH_SLOTS.shellAfter, []],
@@ -265,6 +286,7 @@ function installDefaultDshUiTestModules() {
     'plugins/wework-ui-core-settings.js': () =>
       import('../../dsh/ui-core-settings/src/settings-page'),
     'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),
+    'plugins/wework-ui-home-developer.js': () => import('../../dsh/ui-home-developer/src/home'),
     'plugins/wework-ui-plugin-center-catalog.js': {
       default: () => null,
       preload: () => undefined,

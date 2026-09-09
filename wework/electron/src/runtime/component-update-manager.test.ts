@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import * as tar from 'tar'
 import {
@@ -31,6 +31,9 @@ describe('ComponentUpdateManager', () => {
     expect(paths.coreDsh).toBe(join(fixture.resources, 'harness-runtime'))
     expect(paths.bundledPlugins).toBe(join(fixture.resources, 'bundled-plugins'))
     expect(paths.executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
+    expect(paths.codex).toBe(
+      join(fixture.resources, 'codex', 'vendor', 'test-target', 'bin', 'codex')
+    )
     expect(paths.dws).toBe(join(fixture.resources, 'bin', 'dws'))
     await expect(
       readFile(join(paths.weworkCorePlugins, 'wework-app', 'web', 'code.js'), 'utf8')
@@ -131,7 +134,10 @@ describe('ComponentUpdateManager', () => {
     const updatedManager = createManager(fixture, fetch, targetVersion)
     const activated = await updatedManager.prepareStartup()
     expect(await readFile(activated.executor, 'utf8')).toBe('executor-v2')
-    expect(await readFile(join(activated.codex), 'utf8')).toBe('codex')
+    expect(await readFile(activated.codex, 'utf8')).toBe('codex')
+    expect(await readFile(join(dirname(activated.codex), 'codex-code-mode-host'), 'utf8')).toBe(
+      'code-mode-host'
+    )
     expect(await updatedManager.rollbackStartup()).toBe(false)
     expect(await readFile((await updatedManager.prepareStartup()).executor, 'utf8')).toBe(
       'executor-v2'
@@ -177,6 +183,40 @@ describe('ComponentUpdateManager', () => {
     expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe(
       'executor-rebuilt'
     )
+  })
+
+  test('activates a complete Codex runtime component with its code-mode host', async () => {
+    const fixture = await createFixture()
+    const update = await createCodexUpdate(fixture.root, true)
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    const activated = await manager.prepareStartup()
+
+    expect(await readFile(activated.codex, 'utf8')).toBe('codex-v2')
+    expect(await readFile(join(dirname(activated.codex), 'codex-code-mode-host'), 'utf8')).toBe(
+      'code-mode-host-v2'
+    )
+  })
+
+  test('falls back to packaged Codex when an active component omits its code-mode host', async () => {
+    const fixture = await createFixture()
+    const update = await createCodexUpdate(fixture.root, false)
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    const activated = await manager.prepareStartup()
+
+    expect(activated.codex).toBe(
+      join(fixture.resources, 'codex', 'vendor', 'test-target', 'bin', 'codex')
+    )
+    expect(await readFile(activated.codex, 'utf8')).toBe('codex')
   })
 
   test('rolls back an unconfirmed component set after a failed startup', async () => {
@@ -243,7 +283,8 @@ async function createFixture(): Promise<Fixture> {
   await mkdir(join(resources, 'wework-app-static', 'wasm'), { recursive: true })
   await mkdir(join(resources, 'bundled-plugins'), { recursive: true })
   await mkdir(join(resources, 'bin'), { recursive: true })
-  await mkdir(join(resources, 'codex'), { recursive: true })
+  const codexBin = join(resources, 'codex', 'vendor', 'test-target', 'bin')
+  await mkdir(codexBin, { recursive: true })
   await writeFile(join(resources, 'harness-runtime', 'runtime.txt'), 'dsh')
   await writeFile(
     join(resources, 'wework-core-plugins', 'wework-app', 'web', 'code.js'),
@@ -258,14 +299,21 @@ async function createFixture(): Promise<Fixture> {
   await writeFile(join(resources, 'bundled-plugins', 'marketplace.json'), 'bundled plugins')
   await writeFile(join(resources, 'bin', 'wegent-executor'), 'executor-v1')
   await writeFile(join(resources, 'bin', 'dws'), 'dws')
-  await writeFile(join(resources, 'codex', 'codex'), 'codex')
+  await writeFile(
+    join(resources, 'codex', 'WEGENT_CODEX_BINARY.json'),
+    JSON.stringify({
+      binaryPath: 'vendor/test-target/bin/codex',
+    })
+  )
+  await writeFile(join(codexBin, 'codex'), 'codex')
+  await writeFile(join(codexBin, 'codex-code-mode-host'), 'code-mode-host')
   const paths: Record<ManagedComponentId, string> = {
     coreDsh: 'harness-runtime',
     weworkCorePlugins: 'wework-core-plugins',
     weworkAppStatic: 'wework-app-static',
     bundledPlugins: 'bundled-plugins',
     executor: 'bin/wegent-executor',
-    codex: 'codex/codex',
+    codex: 'codex',
     dws: 'bin/dws',
   }
   const components = Object.fromEntries(
@@ -435,6 +483,77 @@ async function createCorePluginUpdate(root: string, content: string) {
   }
 }
 
+async function createCodexUpdate(root: string, includeHost: boolean) {
+  const source = join(root, `source-codex-${includeHost ? 'complete' : 'incomplete'}`)
+  const archivePath = join(root, `codex-${includeHost ? 'complete' : 'incomplete'}.tar.gz`)
+  const binaryDirectory = join(source, 'vendor', 'test-target', 'bin')
+  await mkdir(binaryDirectory, { recursive: true })
+  await writeFile(
+    join(source, 'WEGENT_CODEX_BINARY.json'),
+    JSON.stringify({ binaryPath: 'vendor/test-target/bin/codex' })
+  )
+  await writeFile(join(binaryDirectory, 'codex'), 'codex-v2')
+  if (includeHost) {
+    await writeFile(join(binaryDirectory, 'codex-code-mode-host'), 'code-mode-host-v2')
+  }
+  await tar.c(
+    {
+      cwd: source,
+      file: archivePath,
+      gzip: true,
+      mtime: new Date(0),
+      portable: true,
+    },
+    ['.']
+  )
+  const archive = await readFile(archivePath)
+  const archiveSha256 = sha256(archive)
+  const assetName = `WeworkComponent_codex_${archiveSha256}_macos_arm64.tar.gz`
+  const fixture = await readFixture(root)
+  const contentSha256 = await hashComponentPath(source)
+  const components = Object.fromEntries(
+    MANAGED_COMPONENT_IDS.map(id => {
+      const packaged = fixture.components[id]
+      if (id !== 'codex') {
+        return [
+          id,
+          {
+            version: packaged.version,
+            contentSha256: packaged.sha256,
+            archiveSha256: '0'.repeat(64),
+            archiveBytes: 1,
+            downloadUrl: `${updateBaseUrl}/unused-${id}.tar.gz`,
+            entryPath: '.',
+          },
+        ]
+      }
+      return [
+        id,
+        {
+          version: 'codex-v2',
+          contentSha256,
+          archiveSha256,
+          archiveBytes: archive.length,
+          downloadUrl: `${updateBaseUrl}/${assetName}`,
+          entryPath: '.',
+        },
+      ]
+    })
+  )
+  return {
+    assetName,
+    archive,
+    manifest: {
+      schemaVersion: 1,
+      appVersion,
+      channel: 'beta',
+      platform: 'macos',
+      arch: 'arm64',
+      components,
+    },
+  }
+}
+
 async function readFixture(root: string): Promise<Fixture> {
   const resources = join(root, 'resources')
   const manifest = JSON.parse(await readFile(join(resources, 'components.json'), 'utf8')) as {
@@ -481,3 +600,49 @@ async function writePackagedManifest(fixture: Fixture, targetAppVersion: string)
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
+
+test('shares a staging task and bounds component downloads to three while reporting every byte', async () => {
+  const fixture = await createFixture()
+  const ids: ManagedComponentId[] = ['executor', 'dws', 'bundledPlugins', 'coreDsh']
+  const updates = await Promise.all(
+    ids.map(id => createExecutorUpdate(fixture.root, `changed-${id}`))
+  )
+  const manifest = structuredClone(updates[0]!.manifest)
+  const assets = new Map<string, Buffer>()
+  for (let i = 0; i < ids.length; i++) {
+    const update = updates[i]!
+    manifest.components[ids[i]!] = update.manifest.components.executor
+    assets.set(`${updateBaseUrl}/${update.assetName}`, update.archive)
+  }
+  let active = 0
+  let maximum = 0
+  let requests = 0
+  let unlock!: () => void
+  const gate = new Promise<void>(resolve => {
+    unlock = resolve
+  })
+  const manager = createManager(fixture, async input => {
+    const url = String(input)
+    if (url.endsWith('.json')) return Response.json(manifest)
+    const bytes = assets.get(url)
+    if (!bytes) throw new Error(`Unexpected request: ${url}`)
+    requests++
+    active++
+    maximum = Math.max(maximum, active)
+    if (active === 3) unlock()
+    await gate
+    active--
+    return new Response(new Uint8Array(bytes))
+  })
+  const reports: number[] = []
+  const first = manager.stageUpdateForApp(appVersion, 'beta', false, p =>
+    reports.push(p.downloadedBytes)
+  )
+  const duplicate = manager.stageUpdateForApp(appVersion, 'beta')
+  await Promise.all([first, duplicate])
+  expect(maximum).toBe(3)
+  expect(requests).toBe(4)
+  expect(reports.at(-1)).toBe([...assets.values()].reduce((sum, bytes) => sum + bytes.length, 0))
+  await manager.stageUpdateForApp(appVersion, 'beta')
+  expect(requests).toBe(4)
+})

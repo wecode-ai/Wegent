@@ -7,7 +7,14 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 SitePublishStatus = Literal[
     "unpublished",
@@ -25,9 +32,11 @@ ApplicationCapability = Literal[
     "delete",
     "open_experience",
     "configure_environment",
+    "manage_access",
 ]
 EnvironmentVariableType = Literal["plain", "secret"]
 SiteAccessRole = Literal["owner", "collaborator"]
+SiteAccessAudience = Literal["all", "login", "owner", "custom"]
 
 
 class SiteResponse(BaseModel):
@@ -111,6 +120,50 @@ class SiteCollaboratorAddRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     subject: str = Field(min_length=1, max_length=255)
+
+
+class SiteAccessPolicy(BaseModel):
+    """Latest immutable inner access policy for one Project."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    project_id: str
+    target: Literal["inner"]
+    audience: SiteAccessAudience
+    subjects: list[str]
+    revision_number: int = Field(ge=1)
+    created_by: str
+    created_at: datetime
+
+
+class SiteAccessPolicyUpdateRequest(BaseModel):
+    """Replace a Project's effective inner access policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audience: SiteAccessAudience
+    subjects: list[str] = Field(default_factory=list, max_length=1000)
+
+    @field_validator("subjects")
+    @classmethod
+    def normalize_subjects(cls, subjects: list[str]) -> list[str]:
+        normalized = [subject.strip() for subject in subjects]
+        if any(not subject or len(subject) > 255 for subject in normalized):
+            raise ValueError(
+                "subjects must contain non-empty values of at most 255 characters"
+            )
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("subjects must be unique")
+        return sorted(normalized)
+
+    @model_validator(mode="after")
+    def validate_audience_subjects(self) -> "SiteAccessPolicyUpdateRequest":
+        if self.audience == "custom" and not self.subjects:
+            raise ValueError("subjects are required for custom access")
+        if self.audience != "custom" and self.subjects:
+            raise ValueError("subjects are accepted only for custom access")
+        return self
 
 
 class ApplicationCreatePluginResponse(BaseModel):

@@ -125,6 +125,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-executor-runtime': expect.stringContaining('wework-executor-runtime'),
         '@wegent/dsh-secure-storage': expect.stringContaining('wework-secure-storage'),
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
+        '@wegent/dsh-transcript-sync': expect.stringContaining('wework-transcript-sync'),
         '@wegent/dsh-plugin-runtime': expect.stringContaining('wework-plugin-runtime'),
         '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
         '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
@@ -133,6 +134,8 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-ui-automations': expect.stringContaining('wework-ui-automations'),
         '@wegent/dsh-ui-cloud-work': expect.stringContaining('wework-ui-cloud-work'),
         '@wegent/dsh-wework-plugin-developer': expect.stringContaining('wework-plugin-developer'),
+        '@wegent/dsh-ui-home-focus': expect.stringContaining('wework-ui-home-focus'),
+        '@wegent/dsh-ui-home-developer': expect.stringContaining('wework-ui-home-developer'),
         '@wegent/dsh-ui-git': expect.stringContaining('wework-ui-git'),
       },
       dsh: {
@@ -147,6 +150,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
+            '@wegent/dsh-transcript-sync',
             '@wegent/dsh-ui-core-apps',
             '@wegent/dsh-ui-core-settings',
             '@wegent/dsh-ui-plugin-center',
@@ -154,6 +158,8 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-ui-automations',
             '@wegent/dsh-ui-cloud-work',
             '@wegent/dsh-wework-plugin-developer',
+            '@wegent/dsh-ui-home-focus',
+            '@wegent/dsh-ui-home-developer',
             '@wegent/dsh-ui-git',
           ],
         },
@@ -213,6 +219,12 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-cloud-work', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-home-focus', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-home-developer', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
@@ -536,6 +548,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-secure-storage',
       '@wegent/dsh-executor-runtime',
       '@wegent/dsh-terminal-runtime',
+      '@wegent/dsh-transcript-sync',
       '@wegent/dsh-plugin-runtime',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
@@ -548,6 +561,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
       '@wegent/dsh-executor-runtime',
+      '@wegent/dsh-transcript-sync',
     ])
     await expect(
       readFile(
@@ -792,6 +806,7 @@ async function writeRuntime(
       ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
       ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
       ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
+      ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
       ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
       ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
@@ -800,6 +815,8 @@ async function writeRuntime(
       ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
       ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
       ['@wegent/dsh-wework-plugin-developer', 'wework-plugin-developer'],
+      ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
+      ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
       ['@wegent/dsh-ui-git', 'wework-ui-git'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )

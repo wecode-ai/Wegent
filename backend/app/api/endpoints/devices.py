@@ -16,6 +16,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -398,6 +399,29 @@ async def set_default_device(
     return {"message": f"Device '{device_id}' set as default"}
 
 
+@router.delete("/records/{record_id}")
+async def delete_device_by_record(
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    from app.services.device.identity import DeviceIdentityConflictError
+    from app.services.device.record_operations import delete_device_record
+
+    try:
+        deleted = await delete_device_record(db, current_user.id, record_id)
+    except DeviceIdentityConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (RedisError, TimeoutError) as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=503, detail="Device status is temporarily unavailable"
+        ) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Device record not found")
+    return {"message": "Device registration removed"}
+
+
 @router.delete("/{device_id}")
 async def delete_device(
     device_id: str,
@@ -407,6 +431,7 @@ async def delete_device(
     """
     Delete a device registration.
 
+    Only cloud devices may be removed while online or busy.
     Note: If the device reconnects via WebSocket, it will be re-registered.
 
     Args:
@@ -418,7 +443,28 @@ async def delete_device(
     Raises:
         HTTPException 404: If device not found
     """
-    success = device_service.delete_device(db, current_user.id, device_id)
+    from app.services.device.identity import (
+        DeviceIdentityConflictError,
+        owned_active_device,
+    )
+    from app.services.device.record_operations import delete_device_record
+
+    try:
+        device = owned_active_device(db, current_user.id, device_id)
+        success = False
+        if device:
+            record_id = device.id
+            db.rollback()
+            success = await delete_device_record(db, current_user.id, record_id)
+    except (RedisError, TimeoutError) as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=503, detail="Device status is temporarily unavailable"
+        ) from exc
+    except DeviceIdentityConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

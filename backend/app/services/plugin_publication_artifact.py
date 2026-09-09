@@ -18,6 +18,8 @@ from pathlib import PurePosixPath
 
 from fastapi import HTTPException
 
+from shared.plugin_build import declaration, source_paths
+
 GENERATED_PUBLICATION_FILES = {
     ".wework-publication.json",
     "plugin-risk.json",
@@ -203,6 +205,22 @@ def canonical_source_tree_sha256_from_files(
         digest.update(len(item.content).to_bytes(8, "big"))
         digest.update(item.content)
     return digest.hexdigest()
+
+
+def release_source_tree(
+    package: bytes, *, include_metadata: bool = True
+) -> tuple[str, bool]:
+    """Keep reviewed inputs exact; generated outputs require GitLab attestation."""
+    files = canonical_complete_plugin_files(package)
+    try:
+        content = {path: item.content for path, item in files.items()}
+        built = declaration(content) is not None
+        paths = source_paths(content, require_outputs=built)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not include_metadata:
+        paths -= GENERATED_PUBLICATION_FILES
+    return canonical_source_tree_sha256_from_files({p: files[p] for p in paths}), built
 
 
 def read_plugin_root_member(archive: zipfile.ZipFile, filename: str) -> bytes:

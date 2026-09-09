@@ -6,6 +6,7 @@
 
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from functools import partial
 from typing import AsyncIterator
 
@@ -149,6 +150,7 @@ async def _document_file(request: Request) -> Response:
             user_id=token_payload.user_id,
             document_id=document_id,
             disposition=token_payload.disposition,
+            document_download_exempt=token_payload.document_download_exempt,
         )
         return Response(
             content=document_file.content,
@@ -329,7 +331,10 @@ async def _authenticate_external_user(
             status_code=401,
         )
         return None
-    return user
+    return replace(
+        user,
+        document_download_exempt=bool(request.headers.get("X-User-Name", "").strip()),
+    )
 
 
 class _ExternalKnowledgeRateLimitMiddleware:

@@ -1183,6 +1183,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     associateRuntimeTaskWithExistingItem,
     associateRuntimeTaskWithNewItem,
     boundCloudItem,
+    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
@@ -1268,7 +1269,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cloudSubmission = prepareSubmission(description)
+      const cloudSubmission = await prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         additionalContext: cloudSubmission.additionalContext,
@@ -2975,6 +2976,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         integrated
         project={boundCloudProject}
         item={boundCloudItem}
+        statusOverride={boundCloudItemStatusOverride}
         api={boundProjectSpaceApi}
         currentTask={currentProjectSpaceRuntimeTask}
         projects={availableWorkItemProjects}
@@ -4400,7 +4402,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <X />
       </button>
     ) : undefined
-  const feedbackInChromeTitlebar = isDesktop && getPlatform() === 'mac'
+  const feedbackInChromeTitlebar = isDesktop
   const mainHeaderActions = activeLocalHarnessSession ? (
     <>
       {workspaceToolbarExtensions}

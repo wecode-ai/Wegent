@@ -267,10 +267,6 @@ class Metadata(BaseModel):
         True,
         description="Whether KB is explicitly selected by user (strict mode) or inherited from task (relaxed mode)",
     )
-    # Table configuration
-    table_contexts: Optional[list[dict]] = Field(
-        None, description="Table contexts for DataTableTool"
-    )
     # Task data for MCP tools
     task_data: Optional[ExecutionRequest] = Field(
         None, description="Task data for MCP tools"

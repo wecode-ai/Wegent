@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.task import TaskResource
 from app.schemas.device import DeviceType
+from app.services.device.runtime_route import resolve_runtime_route_identity
 
 if TYPE_CHECKING:
     from app.services.chat.storage.task_manager import TaskCreationParams
@@ -78,6 +80,12 @@ def resolve_local_executor_device_id(
     if not candidate:
         return None
 
+    identity = resolve_runtime_route_identity(
+        db, user_id=user_id, submitted_device_id=candidate
+    )
+    if identity and identity.device_type == DeviceType.APP:
+        return identity.runtime_device_id
+
     devices = (
         db.query(Kind)
         .filter(
@@ -91,6 +99,14 @@ def resolve_local_executor_device_id(
 
     for device in devices:
         if device.name == candidate:
+            if (
+                device.json.get("spec", {}).get("deviceType") == "app"
+                and identity is None
+            ):
+                raise HTTPException(
+                    409,
+                    "Ambiguous historical device; select a specific Wework installation",
+                )
             return candidate
 
     for device in devices:
@@ -99,6 +115,11 @@ def resolve_local_executor_device_id(
         if not isinstance(spec, dict):
             continue
         if _clean_string(spec.get("appDeviceId")) == candidate:
+            if spec.get("deviceType") == "app":
+                raise HTTPException(
+                    409,
+                    "Ambiguous historical device; select a specific Wework installation",
+                )
             return _clean_string(device.name) or candidate
 
     return candidate
