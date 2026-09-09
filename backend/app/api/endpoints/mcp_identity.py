@@ -35,7 +35,7 @@ class McpIdentityUserInfo(BaseModel):
 
 @router.get("/userinfo", response_model=McpIdentityUserInfo)
 @limiter.limit(settings.RATE_LIMIT_MCP_IDENTITY)
-def read_mcp_identity_userinfo(
+async def read_mcp_identity_userinfo(
     request: Request,
     authorization: Optional[str] = Header(default=None),
     x_wegent_token: Optional[str] = Header(default=None),
