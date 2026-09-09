@@ -7,64 +7,35 @@ const PREFIX: &str = "WEGENT_PLUGIN_AUTH_DIAGNOSTIC:";
 const MAX_LINE: usize = 4096;
 const MAX_EVENTS: usize = 256;
 
+fn identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-.:".contains(&byte))
+}
+
 fn safe_event(line: &[u8]) -> Option<Value> {
     let text = std::str::from_utf8(line).ok()?.trim();
     let input: Value = serde_json::from_str(text.strip_prefix(PREFIX)?).ok()?;
-    let mut output = json!({});
-    for (key, allowed) in [
-        ("plugin", &["sina-email"][..]),
-        (
-            "stage",
-            &[
-                "enrollment",
-                "imap",
-                "write",
-                "read",
-                "verify",
-                "tool",
-                "windows_encrypt",
-                "windows_write",
-                "windows_read",
-                "windows_decrypt",
-            ][..],
-        ),
-        ("status", &["started", "ok", "failed"][..]),
-        ("platform", &["win32", "darwin", "linux", "other"][..]),
-    ] {
-        let value = input.get(key)?.as_str()?;
-        if !allowed.contains(&value) {
-            return None;
-        }
-        output[key] = json!(value);
-    }
-    let attempt = input.get("attempt_id")?.as_str()?;
-    if attempt.len() != 32 || !attempt.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    let stage = input.get("stage")?.as_str()?;
+    let status = input.get("status")?.as_str()?;
+    if !identifier(stage) || !["started", "ok", "failed"].contains(&status) {
         return None;
     }
-    output["attempt_id"] = json!(attempt);
-    for (key, allowed) in [
-        (
-            "reason",
-            &[
-                "operation_failed",
-                "tool_missing",
-                "tool_timeout",
-                "powershell_failed",
-                "content_mismatch",
-                "permission_denied",
-                "io_error",
-                "encoding_error",
-            ][..],
-        ),
-        (
-            "error_code",
-            &["credential_write_failed", "credential_verification_failed"][..],
-        ),
-    ] {
+    let mut output = json!({"stage": stage, "status": status});
+    // Business identifiers are plugin-defined codes, never free-form messages.
+    // Plugin identity is supplied by the host rather than trusted from stderr.
+    for key in ["platform", "reason", "error_code"] {
         if let Some(value) = input.get(key).and_then(Value::as_str) {
-            if allowed.contains(&value) {
+            if identifier(value) {
                 output[key] = json!(value);
             }
+        }
+    }
+    if let Some(attempt) = input.get("attempt_id").and_then(Value::as_str) {
+        if attempt.len() == 32 && attempt.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            output["attempt_id"] = json!(attempt);
         }
     }
     for key in ["exit_code", "system_code"] {
@@ -73,6 +44,52 @@ fn safe_event(line: &[u8]) -> Option<Value> {
         }
     }
     Some(output)
+}
+
+pub(super) struct Invocation {
+    id: String,
+    plugin: Option<String>,
+    started: std::time::Instant,
+    finished: bool,
+}
+
+impl Invocation {
+    pub(super) fn new(root: &std::path::Path) -> Self {
+        let plugin = std::fs::read(root.join(".codex-plugin/plugin.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|value| value.get("name").and_then(Value::as_str).map(str::to_owned))
+            .filter(|name| identifier(name));
+        let invocation = Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            plugin,
+            started: std::time::Instant::now(),
+            finished: false,
+        };
+        invocation.emit(json!({"stage":"command", "status":"started"}));
+        invocation
+    }
+    pub(super) fn emit(&self, mut event: Value) {
+        event["invocation_id"] = json!(self.id);
+        event["plugin"] = json!(self.plugin);
+        log_event(event);
+    }
+    pub(super) fn finish(&mut self, code: Option<&str>) {
+        let mut event = json!({"stage":"command", "status": if code.is_some() {"failed"} else {"ok"},
+            "elapsed_ms": self.started.elapsed().as_millis()});
+        if let Some(code) = code {
+            event["error_code"] = json!(code);
+        }
+        self.emit(event);
+        self.finished = true;
+    }
+}
+impl Drop for Invocation {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.finish(Some("local_auth_cancelled"));
+        }
+    }
 }
 
 pub(super) async fn read_stderr<R: AsyncRead + Unpin>(
@@ -132,8 +149,32 @@ mod tests {
     fn line() -> String {
         format!(
             "{PREFIX}{}\n",
-            json!({"plugin":"sina-email","stage":"write","status":"failed","platform":"win32","attempt_id":"0123456789abcdef0123456789abcdef","password":"SECRET","reason":"permission_denied"})
+            json!({"plugin":"example-plugin","stage":"write","status":"failed","platform":"win32","attempt_id":"0123456789abcdef0123456789abcdef","password":"SECRET","reason":"permission_denied"})
         )
+    }
+    #[test]
+    fn accepts_plugin_defined_codes_without_trusting_identity() {
+        for name in ["calendar", "source-control", "custom-plugin"] {
+            let line = format!(
+                "{PREFIX}{}",
+                json!({"plugin":name,"stage":"oauth.exchange", "status":"failed", "error_code":"provider_expired", "reason":"refresh_required", "message":"SECRET", "password":"SECRET"})
+            );
+            let event = safe_event(line.as_bytes()).unwrap();
+            assert_eq!(event["error_code"], "provider_expired");
+            assert!(event.get("plugin").is_none());
+            assert!(!event.to_string().contains("SECRET"));
+        }
+    }
+    #[test]
+    fn rejects_free_text_and_unbounded_codes() {
+        for stage in [
+            "password=secret".to_string(),
+            "x".repeat(65),
+            "bad\nline".to_string(),
+        ] {
+            let line = format!("{PREFIX}{}", json!({"stage":stage,"status":"failed"}));
+            assert!(safe_event(line.as_bytes()).is_none());
+        }
     }
     #[cfg(unix)]
     #[tokio::test]

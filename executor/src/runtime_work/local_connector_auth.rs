@@ -729,6 +729,20 @@ async fn run_plugin_command(
     tool: Option<&Path>,
     timeout_seconds: u64,
 ) -> Result<Value, AppIpcError> {
+    let mut invocation = diagnostics::Invocation::new(plugin_root);
+    let result =
+        run_plugin_command_inner(plugin_root, args, tool, timeout_seconds, &invocation).await;
+    invocation.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
+}
+
+async fn run_plugin_command_inner(
+    plugin_root: &Path,
+    args: &[String],
+    tool: Option<&Path>,
+    timeout_seconds: u64,
+    invocation: &diagnostics::Invocation,
+) -> Result<Value, AppIpcError> {
     if args.is_empty() {
         return Err(AppIpcError::new(
             "local_auth_invalid",
@@ -757,21 +771,12 @@ async fn run_plugin_command(
         use tokio::io::AsyncReadExt;
         let stdout = async {
             let mut bytes = Vec::new();
-            (&mut stdout_pipe)
-                .take(1024 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .await?;
-            if bytes.len() > 1024 * 1024 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "localAuth stdout exceeded limit",
-                ));
-            }
+            stdout_pipe.read_to_end(&mut bytes).await?;
             Ok(bytes)
         };
         let (stdout, stderr, status) = tokio::try_join!(
             stdout,
-            diagnostics::read_stderr(stderr_pipe, diagnostics::log_event),
+            diagnostics::read_stderr(stderr_pipe, |event| invocation.emit(event)),
             child.wait()
         )?;
         Ok::<_, std::io::Error>(std::process::Output {
@@ -785,6 +790,7 @@ async fn run_plugin_command(
         .map_err(|_| AppIpcError::new("local_auth_timeout", "localAuth command timed out"))?
         .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;
 
+    invocation.emit(json!({"stage": "process_exit", "status": if output.status.success() { "ok" } else { "failed" }, "exit_code": output.status.code()}));
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     if stdout.is_empty() {

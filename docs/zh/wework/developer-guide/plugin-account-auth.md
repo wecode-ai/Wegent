@@ -237,10 +237,18 @@ pnpm --filter wework e2e:desktop --cloud-only --segment plugin-account-auth
 Executor 在命令退出前持续读取，筛选约定字段后写入现有 `executor.log`，复用统一反馈
 导出。stdout 仍只承载命令 JSON 结果；插件不应直接写 Executor 的日志文件。
 
-当前接入公司邮箱诊断：插件标识、阶段、状态、平台、32 位十六进制 `attempt_id`、
-固定原因和错误码、数字 `exit_code` / `system_code`。未知字段和非协议行不作为诊断
-记录。单条最多 4096 字节，每次调用最多记录 256 条；超限后仍排空管道，避免阻塞进程。
-命令 stdout 上限为 1 MiB。超时或取消前已接收的诊断保留在现有日志中。
+所有本机授权命令均记录开始、进程退出、完成、错误或取消事件，附宿主生成的
+`invocation_id`、插件清单名称（缺失时为空）和耗时。命令 `ok` 表示调用及 JSON
+解析成功，不等同于插件认证成功；认证状态仍以插件 JSON 返回值为准。
+
+详细诊断适用于任意插件：`stage`、`status` 必填，`platform`、`reason`、`error_code`、
+32 位十六进制 `attempt_id` 及数字 `exit_code` / `system_code` 可选。业务代码由插件
+定义，仅允许 1–64 字符的 ASCII 字母、数字、下划线、连字符、点和冒号，不接受自由
+文本。`status` 使用通用的 `started`、`ok`、`failed`。宿主忽略 stderr 自报的插件身份
+和未知字段，不应在代码字段中放置任何凭据。
+
+单条最多 4096 字节，每次调用最多记录 256 条详细诊断；超限后仍排空管道。
+stdout JSON 行为保持不变。超时或取消前已接收的诊断保留在现有日志中。
 
 公司邮箱需配套升级到输出此协议且透传 Windows stderr 的版本；仅升级宿主无法恢复
 被插件启动器丢弃的输出。诊断不包含账号、密码、命令参数或原始异常。

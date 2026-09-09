@@ -257,12 +257,22 @@ command exits and records allowlisted fields in the existing `executor.log`,
 which is already included in unified feedback exports. Stdout remains the command
 JSON result; plugins must not write directly to the Executor log file.
 
-The initial company-email integration accepts the plugin, stage, status, platform,
-a 32-character hexadecimal `attempt_id`, fixed reasons and error codes, and numeric
-`exit_code` / `system_code`. Unknown fields and non-protocol lines are not logged
-as diagnostics. Lines are limited to 4096 bytes and each invocation to 256 events;
-the pipe continues draining after the limit. Command stdout is limited to 1 MiB.
-Events already received remain available if authorization times out or is cancelled.
+Every local authorization invocation records start, process exit, completion, error,
+or cancellation with a host-generated invocation ID, manifest plugin name (null if
+unavailable), and elapsed time. Command success means invocation and JSON parsing
+succeeded, not that authentication succeeded; authentication status remains in the
+plugin JSON result.
+
+Any plugin can supply detailed diagnostics. Stage and status are required; platform,
+reason, error_code, hexadecimal 32-character attempt_id, and numeric exit_code and
+system_code are optional. Plugin-defined codes accept 1–64 ASCII letters, digits,
+underscores, hyphens, dots, or colons. Status is started, ok, or failed. Free-form text,
+unknown fields, and self-reported plugin identity are discarded. Never put credentials
+in code fields. The host attaches the manifest identity instead.
+
+Lines are limited to 4096 bytes and each invocation to 256 detailed events; the pipe
+continues draining after the limit. Stdout JSON behavior remains unchanged. Events
+already received remain available after timeout or cancellation.
 
 The email plugin must also emit this protocol and relay Windows stderr. Updating
 only the host cannot recover output discarded by the plugin launcher. Diagnostics
