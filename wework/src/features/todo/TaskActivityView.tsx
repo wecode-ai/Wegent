@@ -57,6 +57,7 @@ interface TaskActivityViewProps {
   taskBindings?: LoopItemTaskBinding[]
   onOpenTask?: (task: LoopItemTaskBinding) => void
   onRefreshTaskBindings?: () => void | Promise<void>
+  onHumanReplyRequested?: (text: string) => void
 }
 
 interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
@@ -83,6 +84,7 @@ export function TaskActivityView({
   taskBindings = [],
   onOpenTask,
   onRefreshTaskBindings,
+  onHumanReplyRequested,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -995,7 +997,32 @@ export function TaskActivityView({
       message => message.metadata.backend_task_id && !message.runtimeAddress
     )
     if (!cardSessionAddress(card) && !hasNativeTask) {
-      return { ok: false, error: t('workbench.task_activity_session_unavailable') }
+      try {
+        if (
+          task.workflow?.assignment?.status === 'waiting_human' &&
+          onHumanReplyRequested &&
+          String(task.workflow.assignment.assignee_user_id) ===
+            String(chatCurrentUserId ?? currentUserId)
+        ) {
+          await persistConversationAttachments(attachments)
+          onHumanReplyRequested(text)
+          return { ok: true }
+        }
+        const message = await client.send({
+          projectId: project.id,
+          taskId: task.id,
+          clientMessageId: crypto.randomUUID(),
+          text,
+          mentions: [],
+          replyToMessageId: rootId,
+          model: null,
+        })
+        setMessages(current => mergeProjectChatMessages(current, [message]))
+        await persistConversationAttachments(attachments)
+        return { ok: true }
+      } catch (cause) {
+        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
+      }
     }
     const queuedReply: TaskCardQueuedReply = {
       id: `queued-task-card-${crypto.randomUUID()}`,
@@ -1406,14 +1433,30 @@ export function TaskActivityView({
                         }
                       />
                     </div>
-                    <CardCommentComposer
-                      rootId={rootId}
-                      projectId={project.id}
-                      disabled={!client}
-                      placeholder={t('workbench.task_activity_inline_placeholder')}
-                      aiError={cardAiErrors[rootId] || null}
-                      onSend={(text, attachments) => sendCardReply(card, text, attachments)}
-                    />
+                    {task.workflow?.assignment?.status === 'waiting_human' &&
+                    onHumanReplyRequested &&
+                    String(task.workflow.assignment.assignee_user_id) ===
+                      String(chatCurrentUserId ?? currentUserId) &&
+                    (isCustomAutomationManager(card.root) ||
+                      (!cardSessionAddress(card) && !card.root.metadata.backend_task_id)) ? (
+                      <button
+                        type="button"
+                        data-testid={`cloud-task-activity-human-reply-${rootId}`}
+                        onClick={() => onHumanReplyRequested('')}
+                        className="my-3 min-h-11 text-sm underline underline-offset-2 md:min-h-7"
+                      >
+                        {t('todo.human_reply_open')}
+                      </button>
+                    ) : (
+                      <CardCommentComposer
+                        rootId={rootId}
+                        projectId={project.id}
+                        disabled={!client}
+                        placeholder={t('workbench.task_activity_inline_placeholder')}
+                        aiError={cardAiErrors[rootId] || null}
+                        onSend={(text, attachments) => sendCardReply(card, text, attachments)}
+                      />
+                    )}
                   </article>
                 )
               })}

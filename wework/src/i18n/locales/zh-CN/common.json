@@ -4656,7 +4656,21 @@
     "workflow_branch_collector_webhook_hint": "分支进入等待后，系统会为交付的 MR/PR 创建 webhook 采集入口；请在对应平台仓库设置中，把回调地址与令牌注册到该仓库。",
     "workflow_branch_collector_poll": "轮询采集中",
     "workflow_branch_collector_webhook": "webhook 待注册",
-    "workflow_branch_collector_error": "采集器不可用"
+    "workflow_branch_collector_error": "采集器不可用",
+    "human_reply_expired": "这条交办已失效。请关闭后从工单卡片打开当前待办。",
+    "human_reply_handled": "这条交办已处理，无需再次回复。",
+    "human_reply_yours": "待你处理",
+    "human_reply_waiting": "等待 {{name}} 回复",
+    "human_reply_label": "你的回复",
+    "human_reply_placeholder": "填写你的说明、决定或处理结果……",
+    "human_reply_paused": "自动调度已暂停。可以保存回复；恢复后才能继续推进。",
+    "human_reply_help": "保存回复不会恢复 AI 调度。确认处理完成后，点击“继续推进”。",
+    "human_reply_save": "保存回复",
+    "human_reply_saved": "回复已保存，仍由你决定何时继续推进。",
+    "human_reply_owner_only": "只有当前负责人可以提交回复并继续推进。",
+    "human_reply_open": "去回复",
+    "human_reply_notification_title": "待你处理：{{title}}",
+    "human_reply_dismiss": "关闭提醒"
   },
   "notifications": {
     "title": "通知",

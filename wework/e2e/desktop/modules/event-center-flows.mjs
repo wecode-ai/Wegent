@@ -373,6 +373,48 @@ export async function verifyEventCenter({
     assert.equal(current.workflow.assignment_version, expectedVersion)
   }
   const personalTasks = []
+  const inbox = await request('/api/v1/wework-notifications')
+  const handoffNotice = inbox.items.find(
+    notice => notice.payload.assignmentId === generatedIssue.workflow.assignment.id
+  )
+  assert.ok(handoffNotice, 'Human handoff did not create an inbox notification')
+  assert.equal(handoffNotice.read_at, null)
+  assert.ok(handoffNotice.url.endsWith(`/assignments/${generatedIssue.workflow.assignment.id}`))
+  await control.command('waitFor', '[data-testid="human-assignment-notification-reply"]', {
+    visible: true,
+  })
+  await control.command('click', '[data-testid="human-assignment-notification-reply"]', {
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="issue-assignment-result"]', { visible: true })
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
+  await control.command('click', '[data-testid="wework-notifications-button"]', { visible: true })
+  await control.command('click', `[data-testid="wework-notification-${handoffNotice.id}"]`, {
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="issue-assignment-result"]', { visible: true })
+  await control.command('fill', '[data-testid="issue-assignment-result"]', {
+    value: 'Review in progress; do not advance.',
+  })
+  await control.command('click', '[data-testid="issue-assignment-save-reply"]', { visible: true })
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    issue => issue.workflow.assignment.reply_draft === 'Review in progress; do not advance.',
+    'Saved human reply was not persisted',
+    timeoutMs
+  )
+  await assertHumanControl()
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
+  await control.command('click', `[data-testid="cloud-todo-card-reply-${issueId}"]`, {
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="issue-assignment-result"]', { visible: true })
+  assert.equal(
+    await control.command('getValue', '[data-testid="issue-assignment-result"]'),
+    'Review in progress; do not advance.'
+  )
+  await captureScreenshot(control, 'event-center-human-reply-saved.png')
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
   for (let index = 0; index < 2; index++) {
     const task = await request('/api/runtime-work/create', {
       method: 'POST',
@@ -501,6 +543,17 @@ export async function verifyEventCenter({
     visible: true,
   })
   await captureScreenshot(control, 'event-center-human-continued.png')
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
+  await control.command('click', '[data-testid="wework-notifications-button"]', { visible: true })
+  await control.command('click', `[data-testid="wework-notification-${handoffNotice.id}"]`, {
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="issue-assignment-expired"]', { visible: true })
+  const staleReply = await control.command(
+    'getElementCount',
+    '[data-testid="issue-assignment-submit-result"]'
+  )
+  assert.equal(Number(staleReply), 0, 'Old notification exposed a new assignment submission')
   const config = await request(`${base}/event-center`)
   await request(`${base}/event-center`, {
     method: 'PUT',

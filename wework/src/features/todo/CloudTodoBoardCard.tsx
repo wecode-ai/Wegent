@@ -464,7 +464,26 @@ export function CloudTodoBoardCard({
         </span>
       ) : null}
 
-      {progressTaskBindings.length > 0 ? (
+      {item.workflow?.assignment?.status === 'waiting_human' ? (
+        <button
+          type="button"
+          data-testid={`cloud-todo-card-reply-${item.id}`}
+          disabled={item.can_view_detail === false}
+          onClick={onClick}
+          className="flex min-h-11 w-full items-center justify-between gap-2 px-3.5 pb-3 text-left text-sm"
+        >
+          <span className="min-w-0 truncate font-medium">
+            {t('todo.human_reply_waiting', {
+              name: item.assignee_name || String(item.workflow.assignment.assignee_user_id),
+            })}
+          </span>
+          <span className="shrink-0 underline underline-offset-2">
+            {t('todo.human_reply_open')}
+          </span>
+        </button>
+      ) : null}
+
+      {progressTaskBindings.length > 0 && item.workflow?.assignment?.status !== 'waiting_human' ? (
         <div
           role={onOpenActivity ? 'button' : undefined}
           tabIndex={onOpenActivity ? 0 : undefined}

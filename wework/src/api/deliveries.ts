@@ -553,6 +553,7 @@ export interface IssueWorkflowInstance {
     assignee_user_id: number | null
     status: string
     result: string | null
+    reply_draft?: string
     decision: { reason: string; instruction: string }
     automation_run_id?: string
   } | null
@@ -1016,6 +1017,16 @@ export function createDeliveryApi(client: HttpClient) {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/assignment/adopt`, {
         automation_id: automationId,
         intent,
+      })
+    },
+    saveIssueAssignmentReply(
+      itemId: string,
+      assignmentId: string,
+      summary: string
+    ): Promise<IssueWorkflowInstance> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/assignment/reply`, {
+        assignment_id: assignmentId,
+        summary,
       })
     },
     submitIssueAssignmentResult(

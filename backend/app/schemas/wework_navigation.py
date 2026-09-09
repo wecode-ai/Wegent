@@ -37,9 +37,10 @@ def validate_wework_url(value: str) -> str:
         return value
     if (
         url.netloc == "boards"
-        and len(parts) in {1, 3}
+        and len(parts) in {1, 3, 5}
         and re.fullmatch(r"[1-9][0-9]*", parts[0])
         and (len(parts) == 1 or url.path.split("/")[2] == "issues")
+        and (len(parts) != 5 or parts[3] == "assignments")
     ):
         return value
     raise ValueError("Unsupported Wework destination")

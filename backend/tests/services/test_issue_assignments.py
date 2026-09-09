@@ -108,6 +108,11 @@ def assigned_issue(test_db, test_user):
     return issue, manager
 
 
+@pytest.fixture(autouse=True)
+def no_assignment_notification_delivery(monkeypatch):
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", MagicMock())
+
+
 def command(action="assign_role", **kwargs):
     return IssueAssignmentDecision(
         request_id="assignment-1",

@@ -786,6 +786,22 @@ async def decide_loop_item_assignment(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
+@router.post("/loop-items/{item_id}/assignment/reply")
+def save_loop_item_assignment_reply(
+    item_id: str,
+    values: IssueAssignmentResult,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    try:
+        return issue_assignment_service.save_reply(
+            db, issue_id=item_id, user_id=current_user.id, result=values
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
 @router.post("/loop-items/{item_id}/assignment/result")
 async def submit_loop_item_assignment_result(
     item_id: str,

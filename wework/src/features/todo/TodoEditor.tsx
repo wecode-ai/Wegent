@@ -72,6 +72,7 @@ import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 import { TaskActivityView } from './TaskActivityView'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
 import { IssueAssignmentPanel } from './IssueAssignmentPanel'
+import { IssueHumanReplyPanel } from './IssueHumanReplyPanel'
 import { IssueExperienceMigration } from './IssueExperienceMigration'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 import './task-detail-layout.css'
@@ -551,6 +552,7 @@ export type TodoEditorProps = {
   teamApi?: WorkbenchServices['teamApi']
   projectChatClient?: ProjectChatClient
   currentUserId?: string | number
+  expectedAssignmentId?: string | null
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
   onClose: () => void
@@ -733,6 +735,10 @@ export function TodoEditor(props: TodoEditorProps) {
   } | null>(null)
   const workflowPlanRequestIdRef = useRef(0)
   const [workflowPlanBusy, setWorkflowPlanBusy] = useState(false)
+  const [requestedHumanReply, setRequestedHumanReply] = useState<{
+    text: string
+    assignmentId?: string
+  } | null>(null)
   const [openWorkflowManagerExecution, setOpenWorkflowManagerExecution] = useState<
     (() => void) | null
   >(null)
@@ -1418,6 +1424,9 @@ export function TodoEditor(props: TodoEditorProps) {
         taskBindings={tasks}
         onOpenTask={props.onOpenTaskConversation}
         onRefreshTaskBindings={refreshTaskBindings}
+        onHumanReplyRequested={text =>
+          setRequestedHumanReply({ text, assignmentId: item?.workflow?.assignment?.id })
+        }
         linear
       />
     ) : null
@@ -1924,6 +1933,29 @@ export function TodoEditor(props: TodoEditorProps) {
             )}
           >
             <div className={cn(twoColumn && 'task-detail-left-inner')}>
+              {item ? (
+                <IssueHumanReplyPanel
+                  item={item}
+                  currentUserId={props.currentUserId}
+                  expectedAssignmentId={props.expectedAssignmentId}
+                  requestedReply={
+                    requestedHumanReply?.assignmentId === item.workflow?.assignment?.id
+                      ? requestedHumanReply
+                      : null
+                  }
+                  saveReply={
+                    'saveIssueAssignmentReply' in api ? api.saveIssueAssignmentReply : undefined
+                  }
+                  submitResult={
+                    'submitIssueAssignmentResult' in api
+                      ? api.submitIssueAssignmentResult
+                      : undefined
+                  }
+                  onUpdated={async () => {
+                    editProps?.onUpdated(await api.getLoopItem(item.id))
+                  }}
+                />
+              ) : null}
               {twoColumn && item && !workspacePanel ? (
                 <div className="task-detail-id-row">
                   <span>{item.id}</span>
@@ -2190,19 +2222,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           </button>
                         ) : null}
                       </div>
-                      <IssueAssignmentPanel
-                        key={item.id}
-                        item={item}
-                        currentUserId={props.currentUserId}
-                        submitResult={
-                          'submitIssueAssignmentResult' in api
-                            ? api.submitIssueAssignmentResult
-                            : undefined
-                        }
-                        onUpdated={async () => {
-                          editProps?.onUpdated(await api.getLoopItem(item.id))
-                        }}
-                      />
+                      <IssueAssignmentPanel key={item.id} item={item} />
                       {workflowError ? (
                         <p
                           role="alert"

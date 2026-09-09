@@ -1,8 +1,19 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
-import { IssueAssignmentPanel } from './IssueAssignmentPanel'
+import { IssueAssignmentPanel as AssignmentDetails } from './IssueAssignmentPanel'
+import { IssueHumanReplyPanel } from './IssueHumanReplyPanel'
+
+const IssueAssignmentPanel = (props: ComponentProps<typeof IssueHumanReplyPanel>) => (
+  <>
+    <AssignmentDetails item={props.item} />
+    <IssueHumanReplyPanel {...props} />
+  </>
+)
+
+beforeEach(() => sessionStorage.clear())
 
 const item = {
   id: 'issue-1',
@@ -98,7 +109,14 @@ describe('IssueAssignmentPanel', () => {
   it('keeps the original goal and distinguishes work outside the graph', () => {
     render(
       <IssueAssignmentPanel
-        item={item}
+        item={{
+          ...item,
+          workflow: {
+            ...item.workflow!,
+            orchestration_status: 'running',
+            assignment: { ...item.workflow!.assignment!, status: 'running' },
+          },
+        }}
         currentUserId={8}
         submitResult={vi.fn()}
         onUpdated={vi.fn()}
@@ -131,7 +149,7 @@ describe('IssueAssignmentPanel', () => {
     await user.type(input, 'Checkout verified')
     expect(submit).not.toHaveBeenCalled()
     expect(screen.getByTestId('issue-assignment-human-control')).toHaveTextContent(
-      'todo.assignment_human_control_help'
+      'todo.human_reply_help'
     )
     await user.click(button)
     expect(await screen.findByRole('alert')).toHaveTextContent('Connection interrupted')
@@ -205,4 +223,34 @@ describe('IssueAssignmentPanel', () => {
     )
     expect(screen.queryByTestId('issue-assignment-result')).not.toBeInTheDocument()
   })
+})
+
+it('saves a reply without submitting the assignment and restores it after reopening', async () => {
+  const user = userEvent.setup()
+  const saveReply = vi.fn().mockResolvedValue(item.workflow)
+  const submitResult = vi.fn()
+  const props = { item, currentUserId: 7, saveReply, submitResult, onUpdated: vi.fn() }
+  const view = render(<IssueHumanReplyPanel {...props} />)
+  await user.type(screen.getByTestId('issue-assignment-result'), 'A simple test website')
+  view.unmount()
+  render(<IssueHumanReplyPanel {...props} />)
+  expect(screen.getByTestId('issue-assignment-result')).toHaveValue('A simple test website')
+  await user.click(screen.getByTestId('issue-assignment-save-reply'))
+  expect(saveReply).toHaveBeenCalledWith(item.id, 'assignment-3', 'A simple test website')
+  expect(submitResult).not.toHaveBeenCalled()
+  expect(screen.getByRole('status')).toHaveTextContent('todo.human_reply_saved')
+})
+
+it('does not submit from an obsolete notification or while explicitly paused', () => {
+  const props = { item, currentUserId: 7, submitResult: vi.fn(), onUpdated: vi.fn() }
+  const view = render(<IssueHumanReplyPanel {...props} expectedAssignmentId="old-assignment" />)
+  expect(screen.getByTestId('issue-assignment-expired')).toBeInTheDocument()
+  expect(screen.queryByTestId('issue-assignment-result')).not.toBeInTheDocument()
+  view.rerender(
+    <IssueHumanReplyPanel
+      {...props}
+      item={{ ...item, workflow: { ...item.workflow!, orchestration_status: 'paused' } }}
+    />
+  )
+  expect(screen.getByTestId('issue-assignment-submit-result')).toBeDisabled()
 })

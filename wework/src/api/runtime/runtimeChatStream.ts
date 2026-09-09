@@ -474,6 +474,13 @@ function projectTaskAssignedPayload(
     itemId,
     itemTitle,
     assignerName,
+    ...(stringField(payload, 'assignmentId')
+      ? {
+          assignmentId: stringField(payload, 'assignmentId')!,
+          instruction: stringField(payload, 'instruction') ?? '',
+          url: stringField(payload, 'url') ?? '',
+        }
+      : {}),
   }
 }
 

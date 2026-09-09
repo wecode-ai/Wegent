@@ -2358,14 +2358,19 @@ describe('TaskActivityView', () => {
     await waitFor(() => expect(composer).toHaveValue(''))
   })
 
-  it('keeps the draft when the activity has no original task', async () => {
+  it('saves a plain comment reply without an original task', async () => {
     const user = userEvent.setup()
     const client = {
       subscribe: vi.fn(async () => ({
         snapshot: { messages: [userMessage], latestSequence: 1, currentUserId: '1' },
         unsubscribe: vi.fn(),
       })),
-      send: vi.fn(),
+      send: vi.fn().mockResolvedValue({
+        ...userMessage,
+        messageId: 'plain-reply',
+        content: '继续讨论',
+        replyToMessageId: userMessage.messageId,
+      }),
       startAgentResponse: vi.fn(),
       failAgentResponse: vi.fn(),
       dispose: vi.fn(),
@@ -2382,9 +2387,9 @@ describe('TaskActivityView', () => {
       `cloud-task-activity-card-composer-${userMessage.messageId}`
     )
     await user.type(composer, '继续讨论{Enter}')
-    expect(await screen.findByText('原任务不可用，请新增动态创建新任务。')).toBeInTheDocument()
-    expect(composer).toHaveValue('继续讨论')
-    expect(client.send).not.toHaveBeenCalled()
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    await waitFor(() => expect(composer).toHaveValue(''))
+    expect(sendRuntimePaneMessage).not.toHaveBeenCalled()
     expect(createProjectRuntimeTask).not.toHaveBeenCalled()
   })
 

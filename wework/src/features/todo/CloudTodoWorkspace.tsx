@@ -678,6 +678,7 @@ interface CloudTodoWorkspaceProps {
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
+  focusedAssignmentId?: string | null
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -1225,6 +1226,7 @@ export function CloudTodoWorkspace({
   activeProjectRef,
   defaultProjectRequested = false,
   focusedItemId,
+  focusedAssignmentId,
   onFocusedItemHandled,
   onActiveProjectChange,
   onOpenRuntimeTask,
@@ -1238,6 +1240,10 @@ export function CloudTodoWorkspace({
   onLogout,
 }: CloudTodoWorkspaceProps) {
   const notificationChoice = useAssignmentNotificationChoice()
+  const [replyDestination, setReplyDestination] = useState<{
+    itemId: string
+    assignmentId: string
+  } | null>(null)
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
@@ -3195,7 +3201,7 @@ export function CloudTodoWorkspace({
       return
     }
     if (!selectedProjectId || !selectedProjectKey || itemsProjectKey !== selectedProjectKey) return
-    const requestKey = `${selectedProjectKey}:${focusedItemId}`
+    const requestKey = `${selectedProjectKey}:${focusedItemId}:${focusedAssignmentId ?? ''}`
     if (focusedItemRequestRef.current === requestKey) return
     const focusedItem = items.find(item => item.id === focusedItemId)
     if (!focusedItem || focusedItem.can_view_detail === false) return
@@ -3207,6 +3213,9 @@ export function CloudTodoWorkspace({
       setProjectView('board')
       setBoardParentId(focusedItem.parent_id)
       setSelectedItem(focusedItem)
+      setReplyDestination(
+        focusedAssignmentId ? { itemId: focusedItemId, assignmentId: focusedAssignmentId } : null
+      )
       onFocusedItemHandled?.()
     })
     return () => {
@@ -3214,6 +3223,7 @@ export function CloudTodoWorkspace({
     }
   }, [
     focusedItemId,
+    focusedAssignmentId,
     items,
     itemsProjectKey,
     onFocusedItemHandled,
@@ -3849,6 +3859,7 @@ export function CloudTodoWorkspace({
   }, [advanceTaskPanelSession])
 
   const closeIssuePanelStack = useCallback(() => {
+    setReplyDestination(null)
     setBackgroundTaskItemId(null)
     setSelectedItem(null)
     closeTaskPanel()
@@ -5152,6 +5163,7 @@ export function CloudTodoWorkspace({
                                       }
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
+                                          setReplyDestination(null)
                                           setBackgroundTaskItemId(null)
                                           closeTaskPanel()
                                           setSelectedItem(item)
@@ -5486,6 +5498,11 @@ export function CloudTodoWorkspace({
                 key={selectedItem.id}
                 mode="edit"
                 presentation="workspace-panel"
+                expectedAssignmentId={
+                  replyDestination?.itemId === selectedItem.id
+                    ? replyDestination.assignmentId
+                    : null
+                }
                 selectedTaskId={
                   selectedTaskBinding?.work_item_id === selectedItem.id
                     ? selectedTaskBinding.task_id

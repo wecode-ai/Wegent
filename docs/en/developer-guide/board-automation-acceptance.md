@@ -4,6 +4,46 @@ sidebar_position: 10
 
 # Board automation interaction and acceptance
 
+## 2026-09-09 Human replies and handoff notifications
+
+Issue details and the activity modal share a prominent reply panel with the assignee, requested work, and input. Board cards, handoff activities, and notifications open this panel. Ordinary comments accept replies without an AI task; replies to actual tasks continue their existing conversations.
+
+```mermaid
+sequenceDiagram
+  participant AI as AI / Sequential workflow
+  participant API as Issue service
+  participant DB as Existing Issue, comment, notification tables
+  participant UI as Card / Inbox / Live and system notifications
+  participant H as Assignee
+  AI->>API: Hand work to a person
+  API->>DB: Commit assignment, unread state, and notification together
+  DB-->>UI: Deliver after commit with assignment-specific link
+  H->>UI: Open reply
+  UI->>API: Load Issue and compare assignment ID
+  API-->>UI: Current assignment / handled or expired
+  H->>API: Save reply
+  API->>DB: Store draft and ordinary comment, retain human control
+  H->>API: Continue
+  API->>DB: Validate assignee and assignment ID, submit result
+  API->>AI: Resume advancement
+```
+
+Drafts use existing workflow JSON; no new table is required. Only the current assignee can save or submit. Typing, saving, commenting, and completing independent tasks retain human control. Explicitly paused workflows allow saving but require resumption before Continue. Old notification links cannot submit to newer assignments. Unsaved input is isolated by user, Issue, and assignment; saved replies are available across devices.
+
+Pending user acceptance:
+
+| Scenario | Steps and expected result |
+| --- | --- |
+| Handoff | Assignee receives an unread inbox item and live prompt; system notification appears when permitted; card names the awaited person |
+| Entry points | Card, handoff activity, and notification open the top reply panel |
+| Save and reopen | Save records a comment; reopening restores text; human ownership remains and no coordinator starts |
+| Explicit submission | Only Continue submits the result and resumes AI |
+| Pause and ownership | Continue is disabled while paused; other users see read-only instructions; backend rejects unauthorized or stale submissions |
+| Old links and errors | Old notification shows handled or expired; failed requests retain input; identical save is idempotent |
+| Ordinary activity | A comment with no task accepts replies without launching execution |
+
+Backend/UI regression sources and the CI-covered event-center desktop scenario were updated. Per user instruction, tests, builds, and Electron verification were not run for this change. The user will verify in Test-Wegent; historical reports below do not establish verification of this change.
+
 The acceptance scope covers Issue creation, reusable experience configuration, sequential and AI assignment, human results, recovery, migration, and activity conversations. The [Chinese acceptance contract](../../zh/developer-guide/board-automation-acceptance.md) records the detailed requirement matrix and current evidence gaps.
 
 Final delivery requires a test report, a step-by-step interaction report with actual screenshots, an architecture diagram, and sequence diagrams. A passing focused test does not prove an entire user flow. Every requirement must link to current execution evidence, including relevant error and recovery paths.

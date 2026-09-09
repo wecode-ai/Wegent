@@ -34,3 +34,15 @@ describe('Wework scheme routing', () => {
     expect(parseWeworkScheme(url)).toBeNull()
   })
 })
+
+it('routes a human notification to its exact assignment', () => {
+  const destination = parseWeworkScheme('wework://boards/12/issues/ISS-1/assignments/handoff-2')!
+  expect(destination).toEqual({
+    kind: 'board',
+    projectId: '12',
+    itemId: 'ISS-1',
+    assignmentId: 'handoff-2',
+  })
+  const route = new URL(weworkDestinationRoute(destination), 'https://local')
+  expect(route.searchParams.get('assignmentId')).toBe('handoff-2')
+})

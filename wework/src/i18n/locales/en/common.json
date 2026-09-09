@@ -4659,7 +4659,21 @@
     "workflow_branch_collector_webhook_hint": "When the branch starts waiting, Wegent creates a webhook collector for the delivered MR/PR; register the callback URL and token on the repository in the provider settings.",
     "workflow_branch_collector_poll": "Polling collector active",
     "workflow_branch_collector_webhook": "Webhook pending registration",
-    "workflow_branch_collector_error": "Collector unavailable"
+    "workflow_branch_collector_error": "Collector unavailable",
+    "human_reply_expired": "This assignment is no longer current. Close this view and open the current request from the Issue card.",
+    "human_reply_handled": "This assignment has been handled. No further reply is needed.",
+    "human_reply_yours": "Your response needed",
+    "human_reply_waiting": "Waiting for {{name}} to reply",
+    "human_reply_label": "Your reply",
+    "human_reply_placeholder": "Enter your clarification, decision, or result…",
+    "human_reply_paused": "Automation is paused. You can save your reply; resume before continuing.",
+    "human_reply_help": "Saving a reply does not resume AI. Click Continue when you have finished handling this request.",
+    "human_reply_save": "Save reply",
+    "human_reply_saved": "Reply saved. You still control when to continue.",
+    "human_reply_owner_only": "Only the assigned person can submit a reply and continue.",
+    "human_reply_open": "Reply",
+    "human_reply_notification_title": "Your response needed: {{title}}",
+    "human_reply_dismiss": "Dismiss notification"
   },
   "notifications": {
     "title": "Notifications",

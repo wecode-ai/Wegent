@@ -22,13 +22,25 @@ from app.services.issue_assignment_errors import IssueAssignmentConflict
 from app.services.issue_assignment_state import decide_assignment, finish_assignment
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_events import publish_loop_item_changed
-from shared.telemetry.decorators import trace_async
+from shared.telemetry.decorators import trace_async, trace_sync
 
 
 def write_assignment(
     db: Session, issue: LoopItem, workflow: dict, content: str
 ) -> None:
     """Persist assignment state and its activity in the same transaction."""
+    previous = ((issue.metadata_json or {}).get("workflow") or {}).get(
+        "assignment"
+    ) or {}
+    assignment = workflow.get("assignment") or {}
+    if assignment.get("status") == "waiting_human" and assignment.get(
+        "id"
+    ) != previous.get("id"):
+        from app.services.loop_items.assignment_notification import (
+            notify_human_assignment,
+        )
+
+        notify_human_assignment(db, issue=issue, workflow=workflow)
     issue_workflow_planning_service._write_workflow(issue, workflow)
     message_id = str(uuid4())
     db.add(
@@ -147,6 +159,49 @@ def pause_assignment_for_user_stop(db: Session, run_id: str | None) -> None:
 
 
 class IssueAssignmentService:
+    @trace_sync()
+    def save_reply(
+        self, db: Session, *, issue_id: str, user_id: int, result: IssueAssignmentResult
+    ) -> dict:
+        from app.models.user import User
+        from app.schemas.project_chat import ProjectChatSend
+        from app.services.project_chat.push import push_project_chat_message
+        from app.services.project_chat.service import project_chat_service
+
+        issue = issue_workflow_planning_service._issue(
+            db, issue_id, user_id, for_update=True
+        )
+        workflow = issue_workflow_planning_service._workflow(issue)
+        assignment = workflow.get("assignment") or {}
+        if (
+            assignment.get("id") != result.assignment_id
+            or assignment.get("status") != "waiting_human"
+        ):
+            raise ValueError("This assignment is no longer waiting for a reply")
+        if assignment.get("assignee_user_id") != user_id:
+            raise ValueError("Only the assigned person can save this reply")
+        if assignment.get("reply_draft") == result.summary:
+            return workflow
+        workflow["assignment"] = {**assignment, "reply_draft": result.summary}
+        issue_workflow_planning_service._write_workflow(issue, workflow)
+        user = db.get(User, user_id)
+        message = project_chat_service.send(
+            db,
+            user_id=user_id,
+            user_name=user.user_name,
+            request=ProjectChatSend(
+                client_message_id=str(uuid4()),
+                project_id=str(issue.cloud_project_id),
+                task_id=str(issue.id),
+                content=result.summary,
+            ),
+        )
+        push_project_chat_message(message.message.model_dump(by_alias=True))
+        publish_loop_item_changed(
+            db, item=issue, reason="issue_assignment_reply", actor_user_id=user_id
+        )
+        return workflow
+
     @trace_async()
     async def decide(
         self,
