@@ -8,6 +8,13 @@ The Wework desktop application uses Electron. Formal builds and releases are
 handled by `.github/workflows/wework-app.yml`, which produces Electron
 installers for macOS, Windows, and Linux.
 
+macOS x64 releases use the `macos-15-intel` runner; arm64 releases use `macos-14`.
+Before installing dependencies, the workflow checks that the Node.js architecture
+matches the target. Harness Runtime native dependencies follow the running Node.js
+architecture, so selecting an Electron Builder target alone cannot cross-build the
+complete runtime. If the architectures differ, correct the runner and rebuild;
+do not reuse artifacts built for the wrong architecture or rerun only publication.
+
 ## Version and artifacts
 
 The release version is written to `wework/package.json` and
