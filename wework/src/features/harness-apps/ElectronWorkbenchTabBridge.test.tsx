@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ElectronWorkbenchTabBridge } from './ElectronWorkbenchTabBridge'
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
   notifyInstallationsChanged: vi.fn(),
   stop: vi.fn(),
   unregister: vi.fn(),
@@ -13,10 +12,6 @@ const workspaceTabs = {
   activeTabId: 'app-tab',
   tabs: [{ id: 'app-tab', contentRoute: '/app/harness-smart-app-1' }],
 }
-
-vi.mock('@/api/dsh/desktopHost', () => ({
-  invokeDesktopHost: mocks.invoke,
-}))
 
 vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: {
@@ -42,7 +37,6 @@ vi.mock('./harnessAppTabs', () => ({
 
 describe('ElectronWorkbenchTabBridge', () => {
   beforeEach(() => {
-    mocks.invoke.mockReset().mockResolvedValue(undefined)
     mocks.notifyInstallationsChanged.mockReset()
     mocks.stop.mockReset().mockResolvedValue(undefined)
     mocks.unregister.mockReset()
@@ -52,12 +46,6 @@ describe('ElectronWorkbenchTabBridge', () => {
 
   test('publishes the stopped state after a Smart app tab closes', async () => {
     const view = render(<ElectronWorkbenchTabBridge />)
-
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith('workbench.activate', {
-        installationId: 'smart-app-1',
-      })
-    )
 
     workspaceTabs.activeTabId = 'task-tab'
     workspaceTabs.tabs = [{ id: 'task-tab', contentRoute: '/' }]

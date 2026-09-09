@@ -31,6 +31,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       snapshot: 'snapshot',
       debug: 'getWorkbenchDebugSnapshot',
       'active-element': 'getActiveElementTestId',
+      'activate-task-notification': 'activateRuntimeTaskCompletionNotification',
       click: 'click',
       'click-at': 'clickAt',
       'click-then-macrotask': 'clickThenMacrotask',

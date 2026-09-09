@@ -274,6 +274,44 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   )
 }
 
+async function verifyRuntimeTaskNotificationNavigation({
+  composerSelector,
+  control,
+  taskRowTestId,
+}) {
+  const activeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    .workbench?.currentRuntimeTask
+  assert.equal(
+    activeTask?.taskId,
+    taskRowTestId.replace('runtime-local-task-row-', ''),
+    'The notification navigation fixture did not expose the expected active task'
+  )
+  assert.ok(activeTask?.deviceId, 'The notification navigation fixture did not expose a device ID')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await control.command('activateRuntimeTaskCompletionNotification', 'body', {
+    value: JSON.stringify({
+      deviceId: activeTask.deviceId,
+      taskId: activeTask.taskId,
+    }),
+  })
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const currentTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      .workbench?.currentRuntimeTask
+    if (
+      currentTask?.deviceId === activeTask.deviceId &&
+      currentTask?.taskId === activeTask.taskId
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.fail('Activating the task completion notification did not open its runtime task')
+}
+
 async function verifyBackgroundTaskWindowLifecycle({
   app,
   appBundlePath,
@@ -495,6 +533,20 @@ async function verifyBackgroundTaskWindowLifecycle({
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
+  )
+  setPhase('task-notification-navigation')
+  await verifyRuntimeTaskNotificationNavigation({
+    composerSelector,
+    control,
+    taskRowTestId,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('04a-task-notification-opened-target.png')
   )
   if (process.platform === 'darwin') {
     const assertionIds = await waitForMacosSleepAssertion(app.pid, false)

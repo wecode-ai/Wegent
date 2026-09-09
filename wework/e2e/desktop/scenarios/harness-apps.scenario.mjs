@@ -84,7 +84,8 @@ async function waitForEmbeddedBrowserVisibility(
           value: label,
         })
       )
-      if (lastState.visible === expectedVisible && lastState.url && lastState.isLoading === false) {
+      const ready = expectedVisible ? lastState.url && lastState.isLoading === false : true
+      if (lastState.visible === expectedVisible && ready) {
         return lastState
       }
     } catch {
@@ -1063,6 +1064,23 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
+      await captureScreenshot(control, 'harness-apps-08a-workbench-loaded.png', 'body')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-08b-workbench-add-menu.png', 'body')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('contextMenu', `[data-testid="workspace-tab-select-${appTabId}"]`)
+      await control.command('waitFor', '[data-testid="workspace-tab-context-menu"]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-08c-workbench-context-menu.png', 'body')
+      await control.command('press', 'body', { key: 'Escape' })
       const appWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         appWorkspaceSnapshot.location.includes(APP_ROUTE),
