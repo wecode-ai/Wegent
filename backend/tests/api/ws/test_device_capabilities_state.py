@@ -1077,7 +1077,11 @@ async def test_device_terminal_output_rejects_mismatched_device(monkeypatch):
         },
     )
 
-    assert result == {"error": "Terminal session does not belong to this device"}
+    assert result == {
+        "error": "Terminal session does not belong to this device",
+        "code": "terminal_session_device_mismatch",
+        "retryable": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -1111,7 +1115,56 @@ async def test_device_terminal_output_rejects_cross_user_session(monkeypatch):
         },
     )
 
-    assert result == {"error": "Terminal session does not belong to this device"}
+    assert result == {
+        "error": "Terminal session does not belong to this device",
+        "code": "terminal_session_device_mismatch",
+        "retryable": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_output_marks_stale_socket_rejection_retryable(
+    monkeypatch,
+):
+    namespace = device_namespace.DeviceNamespace()
+    record = TerminalSessionRecord(
+        session_id="terminal-1",
+        user_id=7,
+        device_id="device-1",
+        socket_id="stale-sid",
+        project_id=123,
+        path="/repo",
+        expires_at=future_terminal_expiry(),
+    )
+    service = SimpleNamespace(get=AsyncMock(return_value=record))
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "current-sid",
+        {
+            "session_id": "terminal-1",
+            "protocol_version": 2,
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "hello",
+        },
+    )
+
+    assert result == {
+        "error": "Terminal session belongs to a stale device socket",
+        "code": "terminal_session_stale_socket",
+        "retryable": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -1264,7 +1317,11 @@ async def test_device_terminal_output_rejects_expired_session(monkeypatch):
         },
     )
 
-    assert result == {"error": "Terminal session expired"}
+    assert result == {
+        "error": "Terminal session expired",
+        "code": "terminal_session_expired",
+        "retryable": False,
+    }
 
 
 def test_device_terminal_hot_path_events_skip_generic_payload_tracing():

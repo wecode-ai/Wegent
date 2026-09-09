@@ -481,6 +481,10 @@ impl LocalSessionHandler {
         self.close_terminal_session(session_id)
     }
 
+    pub fn retire_terminal_session(&mut self, session_id: &str) -> SessionResult {
+        self.close_terminal_session(session_id)
+    }
+
     fn close_terminal_session(&mut self, session_id: &str) -> SessionResult {
         let Some(mut session) = self.sessions.remove(session_id) else {
             return SessionResult::success();

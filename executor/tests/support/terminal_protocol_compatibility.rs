@@ -500,6 +500,59 @@ async fn legacy_backend_rejection_and_transport_failure_retry_output_and_exit() 
 }
 
 #[tokio::test]
+async fn permanent_backend_rejection_retires_terminal_without_reconnecting_device() {
+    let (handler, terminal) = fixture(VecDeque::from([b"stale output".to_vec()]));
+    let transport = RecordingTransport::default();
+    transport
+        .terminal_responses
+        .lock()
+        .unwrap()
+        .push_back(Ok(json!({
+            "success": false,
+            "error": "Terminal session does not belong to this device",
+            "code": "terminal_session_device_mismatch",
+            "retryable": false,
+        })));
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(10);
+    let runner = LocalBackendRunner::with_task_runner(
+        config,
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_session_handler(handler);
+    let task = tokio::spawn(runner.run_forever());
+    wait_until(|| transport.handler("terminal:attach").is_some()).await;
+    assert_eq!(attach(&transport, Some(2)).await["success"], true);
+    wait_until(|| *transport.terminal_completion_count.lock().unwrap() == 1).await;
+    let heartbeat_count = || {
+        transport
+            .emits()
+            .iter()
+            .filter(|call| call.event == "device:heartbeat")
+            .count()
+    };
+    wait_until(|| heartbeat_count() >= 3).await;
+
+    assert_eq!(*transport.connects.lock().unwrap(), 1);
+    assert_eq!(*transport.disconnects.lock().unwrap(), 0);
+    assert_eq!(
+        transport
+            .calls()
+            .iter()
+            .filter(|call| call.event == "terminal:output")
+            .count(),
+        1,
+    );
+    let terminal = terminal.lock().unwrap();
+    assert!(terminal.terminated);
+    assert!(terminal.closed);
+
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test]
 async fn terminal_delivery_is_sequential_per_session_and_concurrent_across_sessions() {
     let (mut handler, terminal) = fixture(VecDeque::from([b"first".to_vec()]));
     assert!(

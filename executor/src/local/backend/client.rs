@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    fmt,
     future::Future,
     path::Path,
     pin::Pin,
@@ -25,6 +26,29 @@ const REGISTER_EVENT: &str = "device:register";
 const HEARTBEAT_EVENT: &str = "device:heartbeat";
 const RUNTIME_TASK_PULL_EVENT: &str = "runtime.tasks.pull";
 const RUNTIME_TASK_ACCEPT_EVENT: &str = "runtime.tasks.accept";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum RawEventCallError {
+    Transport(String),
+    Rejected {
+        code: Option<String>,
+        message: String,
+        retryable: bool,
+    },
+}
+
+impl fmt::Display for RawEventCallError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transport(message) => formatter.write_str(message),
+            Self::Rejected { code, message, .. } => match code {
+                Some(code) => write!(formatter, "{message} ({code})"),
+                None => formatter.write_str(message),
+            },
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LocalBackendClient<T>
 where
@@ -195,21 +219,39 @@ where
         self.transport.emit(event, payload).await
     }
 
-    pub async fn call_raw_event(
+    pub(super) async fn call_raw_event(
         &self,
         event: &str,
         payload: Value,
         timeout: Duration,
-    ) -> Result<(), String> {
-        let response = self.transport.call(event, payload, timeout).await?;
+    ) -> Result<(), RawEventCallError> {
+        let response = self
+            .transport
+            .call(event, payload, timeout)
+            .await
+            .map_err(RawEventCallError::Transport)?;
         if ack_success(&response) {
             return Ok(());
         }
-        Err(ack_payload(&response)
+        let payload = ack_payload(&response);
+        let message = payload
             .and_then(|value| value.get("error"))
             .and_then(Value::as_str)
             .unwrap_or("Backend rejected executor event")
-            .to_owned())
+            .to_owned();
+        let code = payload
+            .and_then(|value| value.get("code"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let retryable = payload
+            .and_then(|value| value.get("retryable"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        Err(RawEventCallError::Rejected {
+            code,
+            message,
+            retryable,
+        })
     }
 
     pub fn set_running_task_ids<I>(&self, task_ids: I)

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::client::RawEventCallError;
 use super::*;
 use std::collections::HashMap;
 
@@ -112,6 +113,26 @@ where
                 .call_raw_event(event_name, payload, TERMINAL_DELIVERY_TIMEOUT)
                 .await
             {
+                if let RawEventCallError::Rejected {
+                    code,
+                    message,
+                    retryable: false,
+                } = &error
+                {
+                    handler
+                        .lock()
+                        .expect("session handler lock")
+                        .retire_terminal_session(&session_id);
+                    write_executor_error_line(&format_executor_log(
+                        "terminal session delivery rejected",
+                        &[
+                            ("session_id", session_id),
+                            ("code", code.clone().unwrap_or_else(|| "unknown".to_owned())),
+                            ("error", message.clone()),
+                        ],
+                    ));
+                    return Ok(());
+                }
                 if let Some(sequence) = sequence {
                     let should_reconnect = handler
                         .lock()

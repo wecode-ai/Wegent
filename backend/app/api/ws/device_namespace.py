@@ -178,6 +178,16 @@ DEVICE_TRACE_EXCLUDED_EVENTS = {
 }
 
 
+def _terminal_event_error(
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+) -> dict:
+    """Return a machine-readable terminal delivery rejection."""
+    return {"error": message, "code": code, "retryable": retryable}
+
+
 @dataclass(frozen=True)
 class DeviceRegistrationFingerprint:
     """Persisted registration fields used to debounce exact reconnects only."""
@@ -2644,32 +2654,53 @@ class DeviceNamespace(socketio.AsyncNamespace):
         user_id = session.get("user_id")
         device_id = session.get("device_id")
         if not user_id or not device_id:
-            return None, {"error": "Not authenticated or not registered"}
+            return None, _terminal_event_error(
+                "terminal_not_registered",
+                "Not authenticated or not registered",
+            )
 
         session_id = normalize_terminal_session_id(
             data.get("session_id") if isinstance(data, dict) else None
         )
         if not session_id:
-            return None, {"error": "Missing session_id"}
+            return None, _terminal_event_error(
+                "terminal_session_id_missing",
+                "Missing session_id",
+            )
 
         record = await terminal_session_service.get(session_id)
         if not record:
-            return None, {"error": "Terminal session not found"}
+            return None, _terminal_event_error(
+                "terminal_session_not_found",
+                "Terminal session not found",
+            )
         if record.is_expired():
-            return None, {"error": "Terminal session expired"}
+            return None, _terminal_event_error(
+                "terminal_session_expired",
+                "Terminal session expired",
+            )
         if record.user_id != user_id or record.device_id != device_id:
-            return None, {"error": "Terminal session does not belong to this device"}
+            return None, _terminal_event_error(
+                "terminal_session_device_mismatch",
+                "Terminal session does not belong to this device",
+            )
         if record.socket_id != sid:
             online_info = await device_service.get_device_online_info(
                 user_id, device_id
             )
             if not online_info or online_info.get("socket_id") != sid:
-                return None, {
-                    "error": "Terminal session belongs to a stale device socket"
-                }
+                return None, _terminal_event_error(
+                    "terminal_session_stale_socket",
+                    "Terminal session belongs to a stale device socket",
+                    retryable=True,
+                )
             record = await terminal_session_service.rebind_socket(record, sid)
             if not record:
-                return None, {"error": "Terminal session could not be rebound"}
+                return None, _terminal_event_error(
+                    "terminal_session_rebind_failed",
+                    "Terminal session could not be rebound",
+                    retryable=True,
+                )
         return record, None
 
     # ============================================================
