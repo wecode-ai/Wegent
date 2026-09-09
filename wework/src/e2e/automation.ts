@@ -2277,14 +2277,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
       const startedAt = Date.now()
       while (Date.now() - startedAt < timeoutMs) {
-        const element = findDesktopControlElements(command.selector).find(
+        const elements = findDesktopControlElements(command.selector).filter(
           candidate =>
-            (!command.visible || desktopControlElementVisible(candidate)) &&
+            (!command.visible || desktopControlElementRendered(candidate)) &&
             desktopControlElementEnabled(candidate) &&
             (candidate.textContent ?? '').includes(text)
         )
-        if (element) {
+        for (const element of elements) {
           element.scrollIntoView({ block: 'center', inline: 'nearest' })
+          if (command.visible && !desktopControlElementVisible(element)) continue
           element.click()
           return element.textContent?.trim() ?? ''
         }
