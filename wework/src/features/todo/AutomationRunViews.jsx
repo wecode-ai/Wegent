@@ -59,7 +59,8 @@ export function AutomationCard({
   onRun,
   running,
 }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
+  const [menuOpen, setMenuOpen] = useState(false)
   const trigger = triggerPresentation(rule.trigger, t)
   const TriggerIcon = rule.trigger.type === 'schedule' ? Clock3 : Webhook
   const statusText = running

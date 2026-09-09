@@ -1,15 +1,67 @@
+import { useState } from 'react'
+import { eventTypeLabel } from './eventTypeLabel'
+import { EventSubscriptionPicker } from './EventSubscriptionManager'
+import { PollIntervalField } from './AutomationBranchSettings.jsx'
 import { Check, Clock3, Webhook, Zap } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { automationClass } from './automationStyles'
 import { weekdayLabels, triggerPresentation } from './AutomationRuleModel.jsx'
 
-export function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
-  const { t } = useTranslation()
+export function TriggerSettings({
+  draft,
+  projectTags,
+  eventSourceCatalog = [],
+  projectIncomingHookApi,
+  projectId,
+  canManage,
+  onChange,
+  onRuleChange,
+  onCollectionModeChange,
+}) {
+  const { t } = useTranslation('common')
+  const [pollError, setPollError] = useState('')
   const trigger = draft.trigger
   const presentation = triggerPresentation(trigger, t)
   const TriggerIcon = trigger.type === 'schedule' ? Clock3 : Webhook
   const startMode = trigger.startMode ?? 'immediate'
-
+  const isSchedule = trigger.type === 'schedule'
+  const isWework = trigger.source === 'wework'
+  const isGeneric = trigger.source === 'generic'
+  const collectionMode = trigger.collectionMode ?? 'webhook'
+  const triggerKind =
+    trigger.type === 'workflow'
+      ? 'workflow'
+      : isSchedule
+        ? 'schedule'
+        : isWework
+          ? 'wework'
+          : isGeneric
+            ? 'generic'
+            : collectionMode
+  const selectedSource = eventSourceCatalog.find(source => source.sourceType === trigger.source)
+  const platformSources = mode =>
+    eventSourceCatalog.filter(
+      item =>
+        item.sourceType !== 'wework' &&
+        item.sourceType !== 'generic' &&
+        (item.collectionModes ?? []).includes(mode)
+    )
+  const candidatePlatforms = platformSources(triggerKind)
+  const hasPlatformStep =
+    (triggerKind === 'webhook' || triggerKind === 'poll') && candidatePlatforms.length > 0
+  const selectedPlatforms = hasPlatformStep ? candidatePlatforms : []
+  const sourceLabel = sourceType => {
+    const labels = {
+      schedule: t('todo.automation_trigger_schedule_label'),
+      wework: t('todo.automation_trigger_wework_label'),
+      webhook: t('todo.automation_trigger_webhook_label'),
+      poll: t('todo.automation_trigger_poll_label'),
+      github: t('todo.automation_trigger_github_label'),
+      gitlab: t('todo.automation_trigger_gitlab_label'),
+      generic: t('todo.automation_trigger_generic_label'),
+    }
+    return labels[sourceType] ?? sourceType
+  }
   const toggleTag = tag => {
     onChange(
       'tags',
@@ -23,8 +75,68 @@ export function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) 
     onChange('schedule', { ...trigger.schedule, [key]: value })
   }
 
+  const handleSubscriptionChange = subscriptionId => {
+    onChange('subscriptionId', subscriptionId)
+    onChange('event', selectedSource?.eventTypes[0] ?? 'change_request.checks_failed')
+  }
+
+  const handlePollIntervalChange = value => {
+    onChange('pollIntervalSeconds', value)
+    const subscriptionId = trigger.subscriptionId
+    if (!subscriptionId || !projectIncomingHookApi || !projectId) return
+    setPollError('')
+    void projectIncomingHookApi
+      .list(projectId)
+      .then(subscriptions => {
+        const subscription = subscriptions.find(item => item.id === subscriptionId)
+        if (!subscription) throw new Error(t('todo.event_subscription_update_failed'))
+        return projectIncomingHookApi.update(projectId, subscriptionId, {
+          version: subscription.version,
+          pollIntervalSeconds: value,
+        })
+      })
+      .catch(error => setPollError(error instanceof Error ? error.message : String(error)))
+  }
+
+  const applyPlatform = sourceType => {
+    const source = eventSourceCatalog.find(item => item.sourceType === sourceType)
+    onChange('source', sourceType)
+    onChange('subscriptionId', null)
+    onChange('event', source?.eventTypes[0] ?? 'change_request.checks_failed')
+  }
+
+  const handleTriggerKindChange = value => {
+    if (value === 'workflow') {
+      onChange('type', 'workflow')
+      return
+    }
+    if (value === 'schedule') {
+      onChange('type', 'schedule')
+      return
+    }
+    onChange('type', 'event')
+    if (value === 'wework') {
+      onChange('source', 'wework')
+      onChange('collectionMode', null)
+      onChange('subscriptionId', null)
+      onChange('event', trigger.startMode === 'status' ? 'status_changed' : 'created')
+      return
+    }
+    // Webhook and polling are collection mechanisms; keep the current platform
+    // when it supports the new mechanism and fall back to the first one otherwise.
+    const platforms = platformSources(value)
+    const nextSource =
+      selectedSource && platforms.some(item => item.sourceType === selectedSource.sourceType)
+        ? selectedSource.sourceType
+        : (platforms[0]?.sourceType ?? 'github')
+    onChange('collectionMode', value)
+    applyPlatform(nextSource)
+    onCollectionModeChange?.()
+  }
+
   return (
     <div className={automationClass('panel-settings')}>
+      {pollError ? <p role="alert">{pollError}</p> : null}
       <label className={automationClass('panel-field')}>
         <span>自动化说明（可选）</span>
         <textarea
@@ -44,15 +156,22 @@ export function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) 
       <label className={automationClass('panel-field')}>
         <span>
           <i className={automationClass('cascade-index')}>1</i>
-          触发来源
+          事件源
         </span>
         <select
           data-testid="automation-trigger-type"
-          value={trigger.type}
-          onChange={event => onChange('type', event.target.value)}
+          value={triggerKind}
+          onChange={event => handleTriggerKindChange(event.target.value)}
         >
-          <option value="schedule">按计划执行</option>
-          <option value="event">Issue 触发</option>
+          <option value="schedule">{t('todo.automation_trigger_schedule_label')}</option>
+          <option value="wework">{t('todo.automation_trigger_wework_label')}</option>
+          <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
+          <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
+          {isGeneric ? (
+            <option value="generic" disabled>
+              {t('todo.automation_trigger_generic_label')}
+            </option>
+          ) : null}
           <option value="workflow">{t('workbench.board_automation_dispatch_trigger')}</option>
         </select>
       </label>
@@ -144,6 +263,105 @@ export function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) 
               <option value="UTC">UTC</option>
             </select>
           </label>
+        </section>
+      ) : trigger.source !== 'wework' ? (
+        <section className={automationClass('event-source-settings')}>
+          <div className={automationClass('event-source-heading')}>
+            <div>
+              <strong>外部事件源</strong>
+              <span>选择接收方式与代码托管平台</span>
+            </div>
+            <small>{sourceLabel(collectionMode)}</small>
+          </div>
+          {selectedPlatforms.length ? (
+            <label className={automationClass('panel-field')}>
+              <span>
+                <i className={automationClass('cascade-index')}>2</i>
+                {t('todo.automation_trigger_platform')}
+              </span>
+              <select
+                data-testid="automation-trigger-platform"
+                value={trigger.source}
+                onChange={event => applyPlatform(event.target.value)}
+              >
+                {selectedPlatforms.map(item => (
+                  <option key={item.sourceType} value={item.sourceType}>
+                    {sourceLabel(item.sourceType)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {collectionMode === 'poll' ? (
+            <PollIntervalField
+              testId="automation-trigger-poll-interval"
+              value={trigger.pollIntervalSeconds}
+              index={hasPlatformStep ? 3 : 2}
+              onChange={handlePollIntervalChange}
+            />
+          ) : null}
+          {collectionMode === 'webhook' ? (
+            <EventSubscriptionPicker
+              key={`${collectionMode}:${trigger.source}`}
+              api={projectIncomingHookApi}
+              projectId={projectId}
+              catalog={eventSourceCatalog}
+              sourceTypes={[trigger.source]}
+              collectionMode="webhook"
+              cascadeIndex={hasPlatformStep ? 3 : 2}
+              canManage={canManage}
+              value={trigger.subscriptionId}
+              onChange={handleSubscriptionChange}
+            />
+          ) : null}
+          <label className={automationClass('panel-field')}>
+            <span>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 4 : 3}</i>
+              {t('todo.automation_target_branches')}
+            </span>
+            <input
+              data-testid="automation-target-branches"
+              value={(trigger.targetBranches ?? []).join(', ')}
+              onChange={event =>
+                onChange(
+                  'targetBranches',
+                  event.target.value
+                    .split(',')
+                    .map(value => value.trim())
+                    .filter(Boolean)
+                )
+              }
+              placeholder="main, release"
+            />
+          </label>
+          <label className={automationClass('panel-field')}>
+            <span>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 5 : 4}</i>
+              {t('todo.automation_event_type')}
+            </span>
+            <select
+              data-testid="automation-external-event-type"
+              value={trigger.event}
+              onChange={event => onChange('event', event.target.value)}
+            >
+              {(selectedSource?.eventTypes ?? []).map(eventType => (
+                <option key={eventType} value={eventType}>
+                  {eventTypeLabel(eventType, t)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {trigger.event === 'change_request.comment_created' ? (
+            <p
+              className={automationClass('execution-hint')}
+              data-testid="automation-event-comment-loop-hint"
+            >
+              {t('todo.automation_event_comment_loop_hint')}
+            </p>
+          ) : null}
+          <p className={automationClass('execution-hint')}>
+            收到事件后会新建一个 Issue，并只沿当前自动化的后续节点执行。
+          </p>
         </section>
       ) : (
         <>

@@ -2309,6 +2309,7 @@ def test_device_runtime_event_projects_bound_workflow_task_status(
     )
 
     continuation = _execution_runtime_event_sync(
+        test_user.id,
         "local-device",
         "codex-queue-workflow-1",
         "runtime.task.completed",
@@ -2405,6 +2406,7 @@ def test_streaming_runtime_event_does_not_project_workflow_status(
     )
 
     continuation = _execution_runtime_event_sync(
+        test_user.id,
         "local-device",
         "codex-queue-stream-1",
         "response.block.updated",

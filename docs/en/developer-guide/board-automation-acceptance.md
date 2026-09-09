@@ -247,3 +247,49 @@ returned control to AI. The final run had no DetachedInstanceError. Isolated env
 An independent verification startup hit SIGTRAP while using the shared app package during a
 parallel build. Final verification used a separate copy of the completed package and passed;
 no product startup behavior or assertions were bypassed. These changes are not committed, pushed, or deployed.
+
+## 2026-09-09 main integration verification
+
+The merge baseline is `origin/main` at `b34fd4572`. Global advancement policy, issue-specific experiences, assignment callbacks, manual stops, and human advancement authority are preserved alongside upstream event subscriptions, polling, branches, and loops.
+
+```mermaid
+flowchart TD
+  A[Persist webhook / polling input] --> B{Related board issue?}
+  B -->|Yes| R[Event-center router]
+  B -->|No| C{Subscription rule or waiting loop handled it?}
+  C -->|Yes| D[Continue its existing flow without another router execution]
+  C -->|No and router configured| R
+  R --> I[Existing or new issue experience]
+  I --> H{Human owns advancement?}
+  H -->|Yes| W[Preserve the assignment until the assignee continues]
+  H -->|No| E[Assign AI work and wait for its callback]
+```
+
+Collection and routing reuse existing records with separate processing ownership. A collector cannot reclaim an event once handed to the router. Loop reactions count as handled even when they create no new run. Existing issue references take precedence over new automation matching, preventing review events from bypassing human ownership.
+
+The QA environment uses isolated databases, Redis, Runtime, and Electron, without accessing the deployed Test-Wegent. Coverage includes intake deduplication, already-handled events, incoming events during human ownership, failed-worker callbacks, manual stops, two human-created tasks before Continue, and the branch/loop editor with global AI coordination. Failure logs are retained. The first real desktop run exposed an upstream `publish_runtime_event` call referencing an undefined `logical_device_id`; it now uses the authenticated session's `device_id`, with an identity regression assertion.
+
+Screenshot review also exposed an existing role-state overwrite: a failed historical task retained running status, so a later task update projected an already completed AI role back to running. The test database and IssueTaskStatusSync logs confirmed the cause. Under AI advancement, the assignment lifecycle owns role state; ordinary task callbacks record task progress without overwriting that state. Sequential workflows retain task-driven projection.
+
+```mermaid
+flowchart LR
+  T[Runtime task progress] --> A[Update task status and bindings]
+  A --> P{Advancement policy}
+  P -->|Sequential| N[Project node state]
+  P -->|AI| K[Preserve assignment-owned node state]
+  C[Assignment callback / assignee Continue] --> L[Complete current assignment]
+  L --> N
+```
+
+Completed checks: 374 backend integration tests, 125 UI tests, and 60 focused projection/assignment tests (including 9 new task-state combinations). TypeScript, ESLint, JSX undefined-variable checks, Black/isort, and formatting checks passed.
+
+The editor and workflow checkpoint passed in 9m 21s; evidence:
+`wework/test-results/desktop-e2e/2026-09-09T12-18-24-616Z-23563/`.
+The event-subscription matrix passed in 37s; evidence:
+`wework/test-results/desktop-e2e/2026-09-09T12-19-07-436Z-25714/`.
+
+The final event-center checkpoint passed in 7m 1s; evidence:
+`wework/test-results/desktop-e2e/2026-09-09T12-27-53-232Z-48799/`.
+The independent ai-verify Electron journey passed; evidence:
+`wework/test-results/desktop-e2e/2026-09-09T12-27-51-934Z-48048/`.
+Reviewed the waiting-human and continued screenshots and asserted completion of both the Issue and its role node. Completing two tasks, receiving an external event, and drafting a result all preserve human control. Isolated applications and backends were cleaned up.

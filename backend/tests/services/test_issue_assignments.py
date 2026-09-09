@@ -469,6 +469,10 @@ async def test_runtime_result_returns_to_coordinator_and_ignores_stale_replay(
     )
     test_db.add(role_run)
     test_db.flush()
+    role_run.status = "running"
+    sync_automation_workflow_node(test_db, role_run)
+    assert issue.metadata_json["workflow"]["nodes"][0]["status"] == "running"
+    role_run.status = "failed"
     sync_automation_workflow_node(test_db, role_run)
     test_db.flush()
     workflow = issue.metadata_json["workflow"]

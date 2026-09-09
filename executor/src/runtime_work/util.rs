@@ -562,11 +562,11 @@ pub(crate) fn workspace_group_path(path: &str) -> String {
 
 pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
     let normalized = normalize_workspace_path(path);
-    if let Some((worktree_root, _)) = resolved_worktree_root_and_id(&normalized) {
-        return worktree_root;
-    }
     if infer_workspace_kind(&normalized) == "chat" {
         return normalized;
+    }
+    if let Some((worktree_root, _)) = resolved_worktree_root_and_id(&normalized) {
+        return worktree_root;
     }
     if group_path.is_empty() {
         normalized
@@ -957,6 +957,30 @@ mod tests {
 
         assert_eq!(infer_workspace_kind(&nested_path), "workspace");
         assert_eq!(infer_worktree_id(&nested_path), None);
+    }
+
+    #[test]
+    fn standalone_chat_inside_a_worktree_keeps_its_own_workspace() {
+        let directory = tempdir().expect("temporary directory");
+        let common_dir = directory.path().join("repo").join(".git");
+        let outer_worktree = directory.path().join("outer");
+        let outer_git_dir = common_dir.join("worktrees").join("outer");
+        std::fs::create_dir_all(&outer_git_dir).expect("outer worktree metadata");
+        std::fs::create_dir_all(&outer_worktree).expect("outer worktree");
+        std::fs::write(
+            outer_worktree.join(".git"),
+            format!("gitdir: {}\n", outer_git_dir.display()),
+        )
+        .expect("outer worktree git file");
+        let chat = outer_worktree.join("executor-home/Documents/Codex/chat");
+        std::fs::create_dir_all(&chat).expect("standalone chat workspace");
+        let chat_path = chat.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&chat_path), "chat");
+        assert_eq!(
+            workspace_task_path(&chat_path, &outer_worktree.display().to_string()),
+            chat_path
+        );
     }
 
     #[test]

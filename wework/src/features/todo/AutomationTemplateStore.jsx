@@ -25,7 +25,8 @@ export const automationTemplates = [
     icon: 'development',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
+      collectionMode: 'webhook',
       startMode: 'immediate',
       event: 'created',
       tags: ['自动开发'],
@@ -87,7 +88,7 @@ export const automationTemplates = [
     icon: 'testing',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: ['自动测试'],
@@ -128,7 +129,7 @@ export const automationTemplates = [
     icon: 'schedule',
     trigger: {
       type: 'schedule',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: [],
@@ -161,7 +162,7 @@ export const automationTemplates = [
     icon: 'defect',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'status',
       event: 'created',
       tags: ['缺陷'],
@@ -195,7 +196,7 @@ export const automationTemplates = [
 ]
 
 export function TemplateStore({ templates, onClose, onApply }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('all')
   const [selectedId, setSelectedId] = useState(templates[0]?.id)
@@ -392,7 +393,7 @@ export function TemplateStore({ templates, onClose, onApply }) {
 }
 
 export function TemplateCard({ template, selected, onSelect, onApply }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const trigger = triggerPresentation(template.trigger, t)
   return (
     <article className={automationClass(`template-card ${selected ? 'selected' : ''}`)}>

@@ -810,8 +810,12 @@ function RuntimeTaskProgressPopup({
       className="min-w-0 space-y-2"
     >
       <div className="min-w-0 border-b border-border/60 pb-2">
-        <div className="text-sm font-medium leading-5 text-text-primary">
-          {t('todo.task_progress_details', '当前任务进展')}
+        <div
+          data-testid={`cloud-todo-card-progress-title-${item.id}`}
+          className="truncate text-sm font-medium leading-5 text-text-primary"
+          title={item.title}
+        >
+          {item.title}
         </div>
         {!focusedBindingId && bindings.length > 1 ? (
           <div className="mt-0.5 text-xs leading-5 text-text-secondary">

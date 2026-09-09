@@ -70,6 +70,10 @@ from app.schemas.issue_workflow import (
     WorkflowNodeDecisionRequest,
     WorkflowPlanView,
 )
+from app.schemas.project_incoming_hook import (
+    ChangeRequestBindingInput,
+    ChangeRequestBindingView,
+)
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.issue_assignment_errors import IssueAssignmentConflict
@@ -94,6 +98,10 @@ from app.services.project_automations import (
     project_automation_service,
 )
 from app.services.project_board_snapshot import project_board_snapshot_service
+from app.services.project_change_request_bindings import (
+    project_change_request_binding_service,
+)
+from app.services.project_incoming_hooks import project_incoming_hook_service
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 router = APIRouter()
@@ -541,7 +549,7 @@ async def create_loop_item(
 
     try:
         if not has_bound_workflow and selected_automation_id:
-            await project_automation_processor.process(
+            await project_incoming_hook_service.ingest_internal(
                 db,
                 ProjectAutomationEvent(
                     event_type="task.created",
@@ -656,7 +664,7 @@ def mark_loop_item_read(
     "/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/decision",
     response_model=LoopItemResponse,
 )
-def decide_loop_item_workflow_node(
+async def decide_loop_item_workflow_node(
     item_id: str,
     workflow_node_id: str,
     values: WorkflowNodeDecisionRequest,
@@ -670,6 +678,23 @@ def decide_loop_item_workflow_node(
         values=values,
         user_id=current_user.id,
     )
+    from app.services.project_automations import project_automation_service
+    from app.services.workflow_loop_runtime import forced_loop_handler_run_ids
+
+    for run_id in forced_loop_handler_run_ids(item):
+        try:
+            await project_automation_service.cancel_run(
+                db,
+                str(item.cloud_project_id),
+                run_id,
+                current_user.id,
+            )
+        except Exception:
+            logger.exception(
+                "Loop force advance cancel failed item=%s run=%s",
+                item_id,
+                run_id,
+            )
     publish_loop_item_changed(
         db,
         item=item,
@@ -1029,22 +1054,24 @@ async def update_loop_item(
         )
         workflow_before_automation = item_metadata_before_automation.get("workflow")
         try:
-            dispatched_automations = await project_automation_processor.process(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.status_changed",
-                    project_id=str(item.cloud_project_id),
-                    subject_id=str(item.id),
-                    source="board",
-                    actor_user_id=current_user.id,
-                    payload={
-                        **_loop_item_response(db, item, current_user).model_dump(
-                            mode="json"
-                        ),
-                        "previous_status": previous_status,
-                    },
-                ),
-                automation_id=selected_automation_id,
+            dispatched_automations = (
+                await project_incoming_hook_service.ingest_internal(
+                    db,
+                    ProjectAutomationEvent(
+                        event_type="task.status_changed",
+                        project_id=str(item.cloud_project_id),
+                        subject_id=str(item.id),
+                        source="board",
+                        actor_user_id=current_user.id,
+                        payload={
+                            **_loop_item_response(db, item, current_user).model_dump(
+                                mode="json"
+                            ),
+                            "previous_status": previous_status,
+                        },
+                    ),
+                    automation_id=selected_automation_id,
+                )
             )
             db.refresh(item)
             item_metadata_after_automation = (
@@ -1248,6 +1275,29 @@ def bind_loop_item_task(
     external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     binding = loop_item_service.bind_task(db, item_id, values, current_user.id)
     return LoopItemTaskBindingResponse.model_validate(binding)
+
+
+@router.post(
+    "/loop-items/{item_id}/tasks/{binding_id}/change-requests",
+    response_model=ChangeRequestBindingView,
+)
+def bind_change_request(
+    item_id: str,
+    binding_id: int,
+    values: ChangeRequestBindingInput,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChangeRequestBindingView:
+    bindings = loop_item_service.list_task_bindings(db, item_id, current_user.id)
+    binding = next((item for item in bindings if int(item.id) == binding_id), None)
+    if binding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Task binding not found")
+    stored = project_change_request_binding_service.upsert(
+        db,
+        binding=binding,
+        values=values,
+    )
+    return ChangeRequestBindingView.model_validate(stored)
 
 
 @router.post(

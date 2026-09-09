@@ -1,3 +1,10 @@
+import { createLoopNode, createBranchNode } from './AutomationRuleModel.jsx'
+import {
+  OUTER_NODE_WIDTH,
+  OUTER_NODE_HEIGHT,
+  OUTER_NODE_GAP,
+  stepCanvasSize,
+} from './canvasGeometry'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
@@ -41,6 +48,10 @@ export function AutomationRulesView({
   error = '',
   canManage = true,
   projectTags = [],
+  eventSourceCatalog = [],
+  projectIncomingHookApi,
+  projectId,
+  project,
   executionCatalog: initialExecutionCatalog = EMPTY_EXECUTION_CATALOG,
   onReload,
   onLoadExecutionCatalog,
@@ -52,7 +63,7 @@ export function AutomationRulesView({
   onDuplicateRule,
   onDeleteRule,
 }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const runningRef = useRef(new Set())
   const [runningIds, setRunningIds] = useState(new Set())
   const runRule = async rule => {
@@ -96,6 +107,7 @@ export function AutomationRulesView({
   const executionCatalogRequestRef = useRef(null)
   const executionPluginRequestRef = useRef(null)
   const runsRequestRef = useRef(null)
+  const pollingSubscriptionRef = useRef(null)
   const toastTimerRef = useRef(null)
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
@@ -241,6 +253,54 @@ export function AutomationRulesView({
     setPanelTab('settings')
     setView('editor')
     refreshExecutionCatalog()
+  }
+
+  const ensureTriggerPollingSubscription = async trigger => {
+    if (
+      !projectIncomingHookApi ||
+      !projectId ||
+      trigger.collectionMode !== 'poll' ||
+      trigger.subscriptionId
+    ) {
+      return
+    }
+    const repository = project?.provider_config?.repository?.trim()
+    const domain = project?.provider_config?.domain?.trim()
+    if (!repository || project?.task_provider !== trigger.source) return
+    const defaultDomain = trigger.source === 'github' ? 'github.com' : 'gitlab.com'
+    const resourceUrl = `https://${domain || defaultDomain}/${repository}`
+    try {
+      const existing = (await projectIncomingHookApi.list(projectId)).find(
+        item =>
+          item.collectionMode === 'poll' &&
+          item.sourceType === trigger.source &&
+          item.resource?.url === resourceUrl
+      )
+      if (existing) {
+        pollingSubscriptionRef.current = existing
+        updateDraft(current =>
+          current.trigger.subscriptionId === existing.id
+            ? current
+            : { ...current, trigger: { ...current.trigger, subscriptionId: existing.id } }
+        )
+        return
+      }
+      const created = await projectIncomingHookApi.create(projectId, {
+        name: `${project.name} 轮询`,
+        sourceType: trigger.source,
+        collectionMode: 'poll',
+        resource: { url: resourceUrl },
+        pollIntervalSeconds: 300,
+        credentialRef: 'project-provider',
+      })
+      pollingSubscriptionRef.current = created
+      updateDraft(current => ({
+        ...current,
+        trigger: { ...current.trigger, subscriptionId: created.id },
+      }))
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const applyTemplate = template => {
@@ -487,13 +547,18 @@ export function AutomationRulesView({
     }
   }
 
-  const addStep = (anchorStepId, placement = 'after') => {
-    const step = createExecutionNode({
-      ...defaultExecutionConfiguration(executionCatalog),
-      id: `step-${Date.now()}`,
-      name: '',
-      prompt: '',
-    })
+  const addStep = (anchorStepId, placement = 'after', kind = 'task') => {
+    const step =
+      kind === 'loop'
+        ? createLoopNode()
+        : kind === 'branch'
+          ? createBranchNode()
+          : createExecutionNode({
+              ...defaultExecutionConfiguration(executionCatalog),
+              id: `step-${Date.now()}`,
+              name: '',
+              prompt: '',
+            })
     updateDraft(current => {
       const anchorIndex = anchorStepId
         ? current.steps.findIndex(candidate => candidate.id === anchorStepId)
@@ -502,11 +567,21 @@ export function AutomationRulesView({
       if (anchorStepId && !anchor) return current
       if (placement === 'before' && !anchor) return current
 
-      const insertionX = placement === 'before' ? (anchor?.x ?? 440) : anchor ? anchor.x + 420 : 440
+      const anchorSize = anchor
+        ? stepCanvasSize(anchor)
+        : { width: OUTER_NODE_WIDTH, height: OUTER_NODE_HEIGHT }
+      const stepSize = stepCanvasSize(step)
+      const insertionX =
+        placement === 'before'
+          ? (anchor?.x ?? 440)
+          : anchor
+            ? anchor.x + anchorSize.width + OUTER_NODE_GAP
+            : 440
       const insertionY = anchor?.y ?? 226
+      const shift = Math.max(OUTER_NODE_WIDTH + OUTER_NODE_GAP, stepSize.width + OUTER_NODE_GAP)
       const shifted = current.steps.map(candidate =>
         candidate.id !== anchor?.id && candidate.x >= insertionX
-          ? { ...candidate, x: candidate.x + 420 }
+          ? { ...candidate, x: candidate.x + shift }
           : candidate
       )
       const inheritedDependencies =
@@ -569,26 +644,35 @@ export function AutomationRulesView({
     setSelectedNode({ type: 'step', id: step.id })
   }
 
-  const removeSelectedStep = () => {
-    if (selectedNode.type !== 'step') return
+  const removeStep = (stepId = selectedNode.id) => {
+    if (!stepId) return
     updateDraft(current => {
-      const removed = current.steps.find(step => step.id === selectedNode.id)
+      const removed = current.steps.find(step => step.id === stepId)
       if (!removed) return current
       return {
         ...current,
         steps: current.steps
-          .filter(step => step.id !== selectedNode.id)
+          .filter(step => step.id !== stepId)
           .map(step => {
-            if (!step.dependencies.includes(selectedNode.id)) return step
+            const cleanedConditions = (step.branchConditions ?? [])
+              .map(condition => ({
+                ...condition,
+                handlerNodeIds: condition.handlerNodeIds.filter(id => id !== stepId),
+              }))
+              .filter(condition => condition.handlerNodeIds.length > 0)
+            if (!step.dependencies.includes(stepId)) {
+              return { ...step, branchConditions: cleanedConditions }
+            }
             const dependencies = Array.from(
               new Set([
-                ...step.dependencies.filter(dependencyId => dependencyId !== selectedNode.id),
+                ...step.dependencies.filter(dependencyId => dependencyId !== stepId),
                 ...removed.dependencies,
               ])
             )
             return {
               ...step,
               dependencies,
+              branchConditions: cleanedConditions,
               dependencyContext: Object.fromEntries(
                 dependencies.map(dependencyId => [
                   dependencyId,
@@ -616,11 +700,15 @@ export function AutomationRulesView({
           editorSection={editorSection}
           selectedNode={selectedNode}
           panelTab={panelTab}
+          canManage={canManage}
           canRun={canManage && Boolean(onRunRule)}
           readOnly={!canManage}
           running={runningIds.has(draft.id)}
           onRun={() => runRule(draft)}
           projectTags={projectTags}
+          eventSourceCatalog={eventSourceCatalog}
+          projectIncomingHookApi={projectIncomingHookApi}
+          projectId={projectId}
           executionCatalog={executionCatalog}
           onBack={leaveEditor}
           onEditorSectionChange={changeEditorSection}
@@ -630,8 +718,11 @@ export function AutomationRulesView({
           onRetrySave={retryAutoSave}
           onReviewLegacy={() => flushAutoSave({ retryFailed: true, reviewLegacy: true })}
           onAddStep={addStep}
-          onRemoveStep={removeSelectedStep}
+          onRemoveStep={removeStep}
           onOpenPluginMenu={preparePluginMenu}
+          onTriggerCollectionModeChange={() =>
+            void ensureTriggerPollingSubscription(draftRef.current.trigger)
+          }
         />
       </div>
     )

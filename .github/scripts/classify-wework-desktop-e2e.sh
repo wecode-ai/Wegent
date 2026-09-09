@@ -10,6 +10,7 @@ core_segments=(
   external-content-import
   automation-lifecycle
   project-automation
+  project-event-sources
   project-assignment-notification
   offline-local-project-space
   cloud-context-resilience
@@ -137,7 +138,7 @@ core_shards=(
   project-automation
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
@@ -455,6 +456,10 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/project-event-sources.scenario.mjs)
+      select_target "core:project-event-sources"
       return
       ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)

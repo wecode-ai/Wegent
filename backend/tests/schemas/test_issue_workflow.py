@@ -270,6 +270,99 @@ def test_workflow_node_preserves_unconfigured_robot_execution() -> None:
     assert workflow.node_needs_execution_config(workflow.nodes[0])
 
 
+def test_composer_robot_stage_requires_bound_workspace() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "execution_config": {
+                "execution_device_id": "local-device",
+                "model": "model-1",
+                "workspace_binding": {"type": "standalone"},
+            },
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "开发",
+                    "depends_on": [],
+                    "execution_mode": "robot",
+                    "workspace_policy": "composer",
+                    "automation_rule_id": None,
+                }
+            ],
+        }
+    )
+
+    workflow = instantiate_workflow(definition)
+
+    assert workflow.node_needs_execution_config(workflow.nodes[0])
+
+
+def test_composer_robot_stage_is_ready_when_bound_to_a_workspace() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "execution_config": {
+                "execution_device_id": "local-device",
+                "model": "model-1",
+                "workspace_binding": {
+                    "type": "backend_project",
+                    "projectId": 7,
+                },
+            },
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "开发",
+                    "depends_on": [],
+                    "execution_mode": "robot",
+                    "workspace_policy": "composer",
+                    "automation_rule_id": None,
+                }
+            ],
+        }
+    )
+
+    workflow = instantiate_workflow(definition)
+
+    assert not workflow.node_needs_execution_config(workflow.nodes[0])
+
+
+def test_standalone_workspace_is_complete_for_unrestricted_or_inherited_stages() -> (
+    None
+):
+    for workspace_policy in ("none", "inherit"):
+        definition = ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "stage_mode": "dag",
+                "advancement_policy": "manual",
+                "execution_config": {
+                    "execution_device_id": "local-device",
+                    "model": "model-1",
+                    "workspace_binding": {"type": "standalone"},
+                },
+                "nodes": [
+                    {
+                        "id": "develop",
+                        "name": "开发",
+                        "depends_on": [],
+                        "execution_mode": "robot",
+                        "workspace_policy": workspace_policy,
+                        "automation_rule_id": None,
+                    }
+                ],
+            }
+        )
+
+        workflow = instantiate_workflow(definition)
+
+        assert not workflow.node_needs_execution_config(workflow.nodes[0])
+
+
 def test_workflow_node_infers_robot_execution_for_legacy_automation_rule() -> None:
     definition = ProjectWorkflowDefinition.model_validate(
         {

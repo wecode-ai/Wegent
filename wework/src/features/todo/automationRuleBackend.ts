@@ -1,8 +1,14 @@
+export {
+  automationInputFromUi,
+  legacyWorkflowFromAutomationRule,
+} from './automationRuleSerialization'
+import { parseCron } from './automationSchedule'
 import type {
-  ProjectAutomationInput,
+  ProjectAutomationEventType,
   ProjectAutomationRule,
   ProjectAutomationRun,
 } from '@/api/projectAutomations'
+import type { ProjectEventCollectionMode, ProjectEventSourceType } from '@/api/projectIncomingHooks'
 import type {
   CloudProject,
   ProjectWorkflowDefinition,
@@ -30,7 +36,7 @@ export interface AutomationUiStep {
   id: string
   name: string
   prompt: string
-  kind: 'task' | 'dynamic'
+  kind: 'task' | 'dynamic' | 'loop' | 'branch'
   dependencies: string[]
   dependencyContext: Record<string, WorkflowContextSource[]>
   x: number
@@ -52,6 +58,24 @@ export interface AutomationUiStep {
   executionConfig: WorkflowExecutionConfig | null
   executionConfigOverride: boolean
   approvalPolicy?: 'required' | 'automatic'
+  nodeType?: 'task' | 'event' | 'loop' | 'loopStart' | 'branch' | 'loopEnd'
+  role?: 'start' | null
+  loopId?: string | null
+  bodyNodeIds?: string[]
+  loopConfig?: {
+    maxAttempts: number
+    timeoutSeconds: number | null
+  } | null
+  branchConditions?: Array<{
+    sourceType: BranchSourceType
+    eventType: string
+    handlerNodeIds: string[]
+  }>
+  eventWait?: {
+    collectionMode: Extract<ProjectEventCollectionMode, 'webhook' | 'poll'>
+    subscriptionId: string | null
+    pollIntervalSeconds: number | null
+  } | null
   subgraph: AutomationUiGraph | null
 }
 
@@ -61,10 +85,18 @@ export interface AutomationUiGraph {
 
 export interface AutomationUiTrigger {
   type: 'event' | 'schedule' | 'workflow'
-  source: 'issue'
+  source: ProjectEventSourceType
+  collectionMode?: ProjectEventCollectionMode
   startMode: 'immediate' | 'status'
-  event: 'created' | 'status_changed'
+  event:
+    | 'created'
+    | 'status_changed'
+    | Exclude<ProjectAutomationEventType, 'task.created' | 'task.status_changed'>
   tags: string[]
+  subscriptionId?: string | null
+  pollIntervalSeconds?: number
+  targetBranches?: string[]
+  repositories?: string[]
   schedule: {
     frequency: 'hourly' | 'daily' | 'weekdays' | 'weekly'
     weekday: string
@@ -90,6 +122,8 @@ export interface AutomationUiRule {
   trigger: AutomationUiTrigger
   steps: AutomationUiStep[]
   legacyDefinition: ProjectWorkflowDefinition | null
+  runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
+  runtimeUserId?: number | null
 }
 
 export interface AutomationUiRun {
@@ -134,16 +168,6 @@ interface StoredAutomationFlowV1 {
   steps: unknown[]
 }
 
-interface StoredAutomationFlowV2 {
-  version: 3
-  advancement: 'sequential' | 'ai'
-  coordinator: unknown
-  description: string
-  graph: {
-    nodes: unknown[]
-  }
-}
-
 interface NormalizedAutomationFlowV2 {
   version: 2
   description: string
@@ -177,6 +201,20 @@ function formatAutomationTimestamp(value: string): string {
   }).format(new Date(value))
 }
 
+function deliverableValueType(value: string) {
+  if (
+    value === 'text' ||
+    value === 'file' ||
+    value === 'code_snapshot' ||
+    value === 'git_branch' ||
+    value === 'pull_request' ||
+    value === 'url'
+  ) {
+    return value
+  }
+  return 'text' as const
+}
+
 function normalizeDeliverables(value: unknown): AutomationUiDeliverable[] {
   return recordArray(value).map((item, index) => ({
     id: typeof item.id === 'string' ? item.id : `deliverable-${index + 1}`,
@@ -208,7 +246,20 @@ function normalizeStoredStep(
 ): AutomationUiStep {
   const item = isRecord(value) ? value : {}
   const id = typeof item.id === 'string' ? item.id : `step-${index + 1}`
-  const kind = item.kind === 'dynamic' ? 'dynamic' : 'task'
+  const kind =
+    item.kind === 'dynamic' || item.kind === 'loop' || item.kind === 'branch' ? item.kind : 'task'
+  const nodeType =
+    item.nodeType === 'event' ||
+    item.nodeType === 'loop' ||
+    item.nodeType === 'loopStart' ||
+    item.nodeType === 'branch' ||
+    item.nodeType === 'loopEnd'
+      ? item.nodeType
+      : kind === 'loop'
+        ? 'loop'
+        : kind === 'branch'
+          ? 'branch'
+          : 'task'
   const executionMode = item.executionMode === 'manual' ? 'manual' : 'automatic'
   const executionEnvironment = item.executionEnvironment === 'cloud' ? 'cloud' : 'local'
   const legacyStages = recordArray(item.dagStages)
@@ -292,33 +343,84 @@ function normalizeStoredStep(
       : null,
     executionConfigOverride: item.executionConfigOverride === true,
     approvalPolicy: item.approvalPolicy === 'automatic' ? 'automatic' : 'required',
+    nodeType,
+    role: item.role === 'start' ? 'start' : null,
+    loopId: typeof item.loopId === 'string' ? item.loopId : null,
+    bodyNodeIds: stringArray(item.bodyNodeIds),
+    loopConfig:
+      isRecord(item.loopConfig) &&
+      (typeof item.loopConfig.maxAttempts === 'number' ||
+        item.loopConfig.timeoutSeconds === null ||
+        typeof item.loopConfig.timeoutSeconds === 'number')
+        ? {
+            maxAttempts:
+              typeof item.loopConfig.maxAttempts === 'number'
+                ? Math.max(0, item.loopConfig.maxAttempts)
+                : 5,
+            timeoutSeconds:
+              typeof item.loopConfig.timeoutSeconds === 'number'
+                ? Math.max(1, item.loopConfig.timeoutSeconds)
+                : null,
+          }
+        : null,
+    branchConditions: recordArray(item.branchConditions).map(condition => ({
+      sourceType:
+        normalizeBranchSourceType(condition.sourceType ?? condition.source_type) || 'github',
+      eventType: typeof condition.eventType === 'string' ? condition.eventType : '',
+      handlerNodeIds: stringArray(condition.handlerNodeIds),
+    })),
+    eventWait: (() => {
+      const stored = isRecord(item.eventWait) ? item.eventWait : null
+      const legacyCondition = recordArray(item.branchConditions)[0]
+      const collectionMode = normalizeBranchCollectionMode(
+        stored?.collectionMode ?? stored?.collection_mode ?? legacyCondition?.collectionMode
+      )
+      return nodeType === 'branch'
+        ? {
+            collectionMode: collectionMode || 'poll',
+            subscriptionId:
+              typeof stored?.subscriptionId === 'string'
+                ? stored.subscriptionId
+                : typeof stored?.subscription_id === 'string'
+                  ? stored.subscription_id
+                  : null,
+            pollIntervalSeconds:
+              typeof stored?.pollIntervalSeconds === 'number'
+                ? Math.max(60, stored.pollIntervalSeconds)
+                : 300,
+          }
+        : null
+    })(),
     subgraph: null,
   }
-  step.subgraph =
-    kind === 'dynamic'
-      ? {
-          nodes: subgraphNodes.map((node, childIndex) => {
-            const stage = normalizeStoredStep(node, childIndex)
-            return {
-              ...stage,
-              environment: '',
-              executionEnvironment: 'local',
-              executionDeviceId: null,
-              runtimeProfileId: null,
-              model: '',
-              modelType: null,
-              modelOptions: {},
-              plugins: [],
-              projectPlugins: [],
-              workspacePolicy: 'none',
-              executionConfig: null,
-              executionConfigOverride: false,
-              approvalPolicy: undefined,
-              subgraph: null,
-            }
-          }),
+  if (kind === 'dynamic') {
+    step.subgraph = {
+      nodes: subgraphNodes.map((node, childIndex) => {
+        const stage = normalizeStoredStep(node, childIndex)
+        return {
+          ...stage,
+          environment: '',
+          executionEnvironment: 'local',
+          executionDeviceId: null,
+          runtimeProfileId: null,
+          model: '',
+          modelType: null,
+          modelOptions: {},
+          plugins: [],
+          projectPlugins: [],
+          workspacePolicy: 'none',
+          executionConfig: null,
+          executionConfigOverride: false,
+          approvalPolicy: undefined,
+          subgraph: null,
         }
-      : null
+      }),
+    }
+  } else if (kind === 'loop') {
+    step.subgraph = {
+      nodes: subgraphNodes.map((node, childIndex) => normalizeStoredStep(node, childIndex)),
+    }
+  }
   return step
 }
 
@@ -364,54 +466,8 @@ function storedFlow(rule: ProjectAutomationRule): NormalizedAutomationFlowV2 | n
   }
 }
 
-function parseCron(expression: string | null) {
-  const parts = (expression ?? '0 3 * * *').trim().split(/\s+/)
-  const minute = Number(parts[0] ?? 0)
-  const hour = Number(parts[1] ?? 3)
-  const dayOfWeek = parts[4] ?? '*'
-  const time = `${String(Number.isFinite(hour) ? hour : 3).padStart(2, '0')}:${String(
-    Number.isFinite(minute) ? minute : 0
-  ).padStart(2, '0')}`
-  if (parts[1] === '*' && parts.slice(2).every(part => part === '*')) {
-    return {
-      frequency: 'hourly' as const,
-      weekday: 'monday',
-      time: `00:${String(minute).padStart(2, '0')}`,
-    }
-  }
-  if (dayOfWeek === '1-5') {
-    return { frequency: 'weekdays' as const, weekday: 'monday', time }
-  }
-  if (/^[0-6]$/.test(dayOfWeek)) {
-    const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-    return { frequency: 'weekly' as const, weekday: weekdays[Number(dayOfWeek)], time }
-  }
-  return { frequency: 'daily' as const, weekday: 'monday', time }
-}
-
-function buildCron(trigger: AutomationUiTrigger): string {
-  const [hourText, minuteText] = trigger.schedule.time.split(':')
-  const hour = Number(hourText)
-  const minute = Number(minuteText)
-  if (trigger.schedule.frequency === 'hourly') return `${minute} * * * *`
-  const prefix = `${Number.isFinite(minute) ? minute : 0} ${Number.isFinite(hour) ? hour : 3}`
-  if (trigger.schedule.frequency === 'weekdays') return `${prefix} * * 1-5`
-  if (trigger.schedule.frequency === 'weekly') {
-    const weekday = {
-      sunday: 0,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
-    }[trigger.schedule.weekday]
-    return `${prefix} * * ${weekday ?? 1}`
-  }
-  return `${prefix} * * *`
-}
-
 function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
+  const agentId = rule.roleSource === 'generic' ? null : rule.agentId
   return {
     id: `step-${rule.id}`,
     name: rule.agentName || '执行任务',
@@ -437,13 +493,73 @@ function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
     modelOptions: {},
     plugins: ['Wework 项目空间'],
     projectPlugins: [],
-    workspacePolicy: 'composer',
+    workspacePolicy: 'none',
     required: true,
     automationRuleId: rule.triggerType === 'workflow' ? rule.id : null,
-    executionConfig: null,
+    executionConfig: agentId
+      ? {
+          agent_id: agentId,
+          runtime_profile_id: rule.runtimeProfileId ?? null,
+          execution_device_id: rule.executionDeviceId,
+          model: rule.model,
+          model_type: null,
+          model_options: {},
+          workspace_binding: {
+            type: 'standalone',
+          },
+        }
+      : null,
     executionConfigOverride: false,
     subgraph: rule.assignmentMode === 'ai_managed' ? { nodes: [] } : null,
   }
+}
+
+const TRIGGER_SOURCE_TYPES = new Set<ProjectEventSourceType>([
+  'github',
+  'gitlab',
+  'wework',
+  'generic',
+])
+
+type BranchCollectionMode = Extract<ProjectEventCollectionMode, 'webhook' | 'poll'>
+type BranchSourceType = Extract<ProjectEventSourceType, 'github' | 'gitlab'>
+
+const BRANCH_COLLECTION_MODES = new Set<BranchCollectionMode>(['webhook', 'poll'])
+const BRANCH_SOURCE_TYPES = new Set<BranchSourceType>(['github', 'gitlab'])
+
+function normalizeBranchSourceType(value: unknown): BranchSourceType | '' {
+  return typeof value === 'string' && BRANCH_SOURCE_TYPES.has(value as BranchSourceType)
+    ? (value as BranchSourceType)
+    : ''
+}
+
+function normalizeBranchCollectionMode(value: unknown): BranchCollectionMode | '' {
+  return typeof value === 'string' && BRANCH_COLLECTION_MODES.has(value as BranchCollectionMode)
+    ? (value as BranchCollectionMode)
+    : ''
+}
+
+function normalizeTriggerSource(rule: ProjectAutomationRule): ProjectEventSourceType {
+  const stored = rule.eventConfig.source_type ?? rule.eventConfig.sourceType
+  if (typeof stored === 'string' && TRIGGER_SOURCE_TYPES.has(stored as ProjectEventSourceType)) {
+    return stored as ProjectEventSourceType
+  }
+  if (rule.eventType === 'task.created' || rule.eventType === 'task.status_changed') {
+    return 'wework'
+  }
+  const subscriptionId =
+    typeof rule.eventConfig.subscription_id === 'string'
+      ? rule.eventConfig.subscription_id
+      : typeof rule.eventConfig.subscriptionId === 'string'
+        ? rule.eventConfig.subscriptionId
+        : null
+  return subscriptionId ? 'generic' : 'wework'
+}
+
+function normalizeCollectionMode(rule: ProjectAutomationRule): ProjectEventCollectionMode {
+  const stored = rule.eventConfig.collection_mode ?? rule.eventConfig.collectionMode
+  if (stored === 'webhook' || stored === 'poll' || stored === 'hybrid') return stored
+  return 'webhook'
 }
 
 export function automationRuleFromBackend(rule: ProjectAutomationRule): AutomationUiRule {
@@ -474,6 +590,17 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     storedNodes.length === 1 && storedNodes[0]?.kind === 'dynamic' ? storedNodes[0] : null
   const schedule = parseCron(rule.cronExpression)
   const startMode = rule.eventType === 'task.status_changed' ? 'status' : 'immediate'
+  const subscriptionId =
+    typeof rule.eventConfig.subscription_id === 'string'
+      ? rule.eventConfig.subscription_id
+      : typeof rule.eventConfig.subscriptionId === 'string'
+        ? rule.eventConfig.subscriptionId
+        : null
+  const externalEvent =
+    rule.eventType && rule.eventType !== 'task.created' && rule.eventType !== 'task.status_changed'
+      ? rule.eventType
+      : null
+  const source = normalizeTriggerSource(rule)
   return {
     advancement:
       flow?.advancement ?? (generatedCoordinator || oldCoordinator ? 'ai' : 'sequential'),
@@ -491,12 +618,22 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     lastRunStatus: rule.lastRunStatus,
     trigger: {
       type: rule.triggerType,
-      source: 'issue',
+      source,
+      collectionMode: normalizeCollectionMode(rule),
       startMode,
-      event: startMode === 'status' ? 'status_changed' : 'created',
+      event: externalEvent ?? (startMode === 'status' ? 'status_changed' : 'created'),
       tags: Array.isArray(rule.eventConfig.tags)
         ? rule.eventConfig.tags.filter((value): value is string => typeof value === 'string')
         : [],
+      subscriptionId,
+      pollIntervalSeconds:
+        typeof rule.eventConfig.poll_interval_seconds === 'number'
+          ? Math.max(60, rule.eventConfig.poll_interval_seconds)
+          : 300,
+      targetBranches: stringArray(
+        rule.eventConfig.target_branches ?? rule.eventConfig.targetBranches
+      ),
+      repositories: stringArray(rule.eventConfig.repositories),
       schedule: {
         ...schedule,
         timezone: rule.timezone,
@@ -508,6 +645,8 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
         ? (oldCoordinator.subgraph?.nodes ?? [])
         : storedNodes,
     legacyDefinition: definition,
+    runtimeSource: rule.runtimeSource,
+    runtimeUserId: rule.runtimeUserId,
   }
 }
 
@@ -564,7 +703,14 @@ function workflowNodesFromLegacy(
   const nodesById = new Map(definition.nodes.map(node => [node.id, node]))
   const depthMemo = new Map<string, number>()
   const rowsByDepth = new Map<number, number>()
-  return definition.nodes.map(node => {
+  const bodyByLoop = new Map<string, WorkflowNodeDefinition[]>()
+  for (const node of definition.nodes) {
+    if (!node.loop_id) continue
+    const body = bodyByLoop.get(node.loop_id) ?? []
+    body.push(node)
+    bodyByLoop.set(node.loop_id, body)
+  }
+  const toStep = (node: WorkflowNodeDefinition, rowOverride?: number): AutomationUiStep => {
     const referencedRule = node.automation_rule_id
       ? backendRules.find(rule => rule.id === node.automation_rule_id)
       : null
@@ -577,11 +723,48 @@ function workflowNodesFromLegacy(
       id: node.id,
       name: node.name,
       prompt: node.prompt || referencedRule?.prompt || '',
-      kind: 'task',
-      dependencies: [...node.depends_on],
+      kind: node.node_type === 'loop' ? 'loop' : node.node_type === 'branch' ? 'branch' : 'task',
+      nodeType:
+        node.node_type === 'event'
+          ? 'event'
+          : node.node_type === 'loop'
+            ? 'loop'
+            : node.node_type === 'loop_start'
+              ? 'loopStart'
+              : node.node_type === 'branch'
+                ? 'branch'
+                : node.node_type === 'loop_end'
+                  ? 'loopEnd'
+                  : 'task',
+      role: node.role === 'start' ? 'start' : null,
+      loopId: node.loop_id ?? null,
+      bodyNodeIds: [...(node.body_node_ids ?? [])],
+      loopConfig: node.loop_config
+        ? {
+            maxAttempts: node.loop_config.max_attempts ?? 5,
+            timeoutSeconds: node.loop_config.timeout_seconds ?? null,
+          }
+        : null,
+      branchConditions: (node.branch_conditions ?? []).map(condition => ({
+        sourceType: normalizeBranchSourceType(condition.source_type) || 'github',
+        eventType: condition.event_type,
+        handlerNodeIds: [...(condition.handler_node_ids ?? [])],
+      })),
+      eventWait:
+        node.node_type === 'branch'
+          ? {
+              collectionMode:
+                normalizeBranchCollectionMode(node.event_wait?.collection_mode) || 'poll',
+              subscriptionId: node.event_wait?.subscription_id ?? null,
+              pollIntervalSeconds:
+                node.event_wait?.poll_interval_seconds ??
+                (node.event_wait?.collection_mode === 'webhook' ? null : 300),
+            }
+          : null,
+      dependencies: [...node.depends_on].filter(dependencyId => dependencyId !== 'start'),
       dependencyContext: { ...(node.dependency_context ?? {}) },
-      x: 440 + depth * 420,
-      y: 150 + row * 150,
+      x: 440 + (rowOverride ?? depth) * 420,
+      y: 150 + (rowOverride ?? row) * 150,
       deliverables: (node.required_deliverables ?? []).map(requirement => ({
         id: requirement.id,
         name: requirement.name,
@@ -617,7 +800,21 @@ function workflowNodesFromLegacy(
       executionConfigOverride: node.execution_config_override ?? false,
       subgraph: null,
     }
-  })
+  }
+  const steps: AutomationUiStep[] = []
+  for (const node of definition.nodes) {
+    if (node.node_type === 'event' || node.loop_id) continue
+    if (node.node_type === 'loop') {
+      const bodyNodes = bodyByLoop.get(node.id) ?? []
+      steps.push({
+        ...toStep(node),
+        subgraph: { nodes: bodyNodes.map((bodyNode, index) => toStep(bodyNode, index)) },
+      })
+      continue
+    }
+    steps.push(toStep(node))
+  }
+  return steps
 }
 
 export function automationRuleFromLegacyWorkflow(
@@ -702,7 +899,7 @@ export function automationRuleFromLegacyWorkflow(
     lastRunStatus: null,
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'status',
       event: 'status_changed',
       tags: [],
@@ -715,232 +912,6 @@ export function automationRuleFromLegacyWorkflow(
     },
     steps: workflowNodes,
     legacyDefinition: definition,
-  }
-}
-
-function deliverableValueType(value: string) {
-  if (
-    value === 'text' ||
-    value === 'file' ||
-    value === 'code_snapshot' ||
-    value === 'git_branch' ||
-    value === 'pull_request' ||
-    value === 'url'
-  ) {
-    return value
-  }
-  return 'text' as const
-}
-
-function executionConfigFromUiNode(node: AutomationUiStep): WorkflowExecutionConfig | null {
-  if (node.executionMode === 'manual') return node.executionConfig
-  const preserved = node.executionConfig ?? {
-    agent_id: null,
-    runtime_profile_id: null,
-    execution_device_id: null,
-    model: null,
-    model_type: null,
-    model_options: {},
-    workspace_binding: null,
-  }
-  return {
-    ...preserved,
-    runtime_profile_id: node.runtimeProfileId,
-    execution_device_id: node.executionDeviceId,
-    model: node.model || null,
-    model_type: node.modelType,
-    model_options: { ...node.modelOptions },
-    workspace_binding:
-      node.workspacePolicy === 'composer'
-        ? (preserved.workspace_binding ?? {
-            type: 'standalone',
-          })
-        : {
-            type: 'standalone',
-          },
-    project_plugins: node.projectPlugins.flatMap(plugin => {
-      const id = typeof plugin.id === 'string' ? plugin.id : ''
-      const pluginName = typeof plugin.pluginName === 'string' ? plugin.pluginName : ''
-      const marketplaceId = typeof plugin.marketplaceId === 'string' ? plugin.marketplaceId : ''
-      const displayName = typeof plugin.displayName === 'string' ? plugin.displayName : ''
-      return id && pluginName && marketplaceId && displayName
-        ? [{ id, pluginName, marketplaceId, displayName }]
-        : []
-    }),
-  }
-}
-
-function workflowNodeFromUi(
-  node: AutomationUiStep,
-  includeExecutionConfig = true
-): WorkflowNodeDefinition {
-  return {
-    id: node.id,
-    name: node.name,
-    prompt: node.prompt,
-    execution_mode: node.executionMode === 'automatic' ? 'robot' : 'human',
-    assignee_user_id: node.assigneeUserId ?? null,
-    depends_on: [...node.dependencies],
-    dependency_context: Object.fromEntries(
-      node.dependencies.map(dependencyId => [
-        dependencyId,
-        node.dependencyContext[dependencyId] ?? ['final_result', 'deliveries'],
-      ])
-    ),
-    required: node.required,
-    required_deliverables: node.deliverables.map(deliverable => ({
-      id: deliverable.id,
-      name: deliverable.name,
-      description: deliverable.description,
-      value_type: deliverable.valueType,
-      file_constraints:
-        deliverable.valueType === 'file'
-          ? (deliverable.fileConstraints ?? {
-              accepted_types: [],
-              min_files: 1,
-              max_files: 1,
-            })
-          : null,
-    })),
-    workspace_policy: includeExecutionConfig ? node.workspacePolicy : 'none',
-    automation_rule_id: node.automationRuleId,
-    execution_config: includeExecutionConfig ? executionConfigFromUiNode(node) : null,
-    execution_config_override: includeExecutionConfig && node.executionConfigOverride,
-  }
-}
-
-export function legacyWorkflowFromAutomationRule(
-  rule: AutomationUiRule
-): ProjectWorkflowDefinition {
-  const coordinator = rule.advancement === 'ai' ? rule.coordinator : null
-  const previous = rule.legacyDefinition
-  if (coordinator) {
-    return {
-      version: Math.max(1, previous?.version ?? 1),
-      stage_mode: rule.steps.length ? 'dag' : 'none',
-      advancement_policy: 'ai',
-      coordinator_prompt: coordinator.prompt,
-      approval_policy: 'automatic',
-      ai_automation_rule_id: coordinator.automationRuleId,
-      execution_config: executionConfigFromUiNode(coordinator),
-      nodes: rule.steps.map(node => workflowNodeFromUi(node)),
-    }
-  }
-  return {
-    version: Math.max(1, previous?.version ?? 1),
-    stage_mode: rule.steps.length ? 'dag' : 'none',
-    advancement_policy: 'manual',
-    coordinator_prompt: previous?.coordinator_prompt ?? '',
-    approval_policy: previous?.approval_policy ?? 'required',
-    ai_automation_rule_id: null,
-    execution_config: previous?.execution_config ?? null,
-    nodes: rule.steps.map(node => workflowNodeFromUi(node)),
-  }
-}
-
-function storedStepFromUi(node: AutomationUiStep): Record<string, unknown> {
-  return {
-    ...node,
-    dependencies: [...(node.dependencies ?? [])],
-    dependencyContext: Object.fromEntries(
-      Object.entries(node.dependencyContext ?? {}).map(([dependencyId, sources]) => [
-        dependencyId,
-        [...sources],
-      ])
-    ),
-    deliverables: (node.deliverables ?? []).map(deliverable => ({ ...deliverable })),
-    plugins: [...(node.plugins ?? [])],
-    projectPlugins: (node.projectPlugins ?? []).map(plugin => ({ ...plugin })),
-    modelOptions: { ...(node.modelOptions ?? {}) },
-    subgraph: null,
-  }
-}
-
-function flowPrompt(rule: AutomationUiRule): string {
-  const describeNodes = (nodes: AutomationUiStep[]): string[] =>
-    nodes.map((step, index) => {
-      const deliverables = step.deliverables.length
-        ? `\n交付物：${step.deliverables.map(item => item.name).join('、')}`
-        : ''
-      const dependencies = (step.dependencies ?? []).length
-        ? `\n前置节点：${step.dependencies.join('、')}`
-        : ''
-      return `${index + 1}. ${step.name}\n${step.prompt}${deliverables}${dependencies}`
-    })
-  const steps = describeNodes(rule.steps)
-  const description = rule.description.trim()
-  return [
-    ...(description ? [`自动化目标：${description}`] : []),
-    rule.advancement === 'ai'
-      ? '以下节点代表可交办工作的角色，连线是协作经验。按工单要求选择角色，允许跳过和退回，以满足要求为完成标准。'
-      : '严格按以下顺序交办工作，当前角色完成后再启动下一角色：',
-    ...steps,
-  ].join('\n\n')
-}
-
-export function automationInputFromUi(
-  rule: AutomationUiRule,
-  currentUserId: string | number
-): ProjectAutomationInput {
-  const runtimeUserId = Number(currentUserId)
-  if (!Number.isInteger(runtimeUserId) || runtimeUserId <= 0) {
-    throw new Error('当前用户缺少可用的 Runtime 身份，无法保存自动化')
-  }
-  if (rule.steps.some(node => node.kind !== 'task')) {
-    throw new Error('请删除旧的嵌套 AI 节点，并在自动化层设置推进方式与协调者，再配置执行角色')
-  }
-  const eventTrigger = rule.trigger.type === 'event'
-  const isAiDynamicWorkflow = rule.advancement === 'ai'
-  if (isAiDynamicWorkflow && !rule.coordinator) throw new Error('AI 推进需要配置协调者')
-  if (
-    !isAiDynamicWorkflow &&
-    rule.steps.some(
-      (node, index) =>
-        node.dependencies.length !== (index === 0 ? 0 : 1) ||
-        (index > 0 && node.dependencies[0] !== rule.steps[index - 1]?.id)
-    )
-  )
-    throw new Error('流程推进必须按串行顺序交办，请重新排列角色')
-  const description = rule.description.trim()
-  return {
-    name: rule.name.trim(),
-    prompt: flowPrompt(rule),
-    triggerType: rule.trigger.type,
-    eventType: eventTrigger
-      ? rule.trigger.startMode === 'status'
-        ? 'task.status_changed'
-        : 'task.created'
-      : null,
-    eventConfig: {
-      tags: rule.trigger.tags,
-      ...(rule.trigger.startMode === 'status' ? { transition: 'entered_processing' } : {}),
-      runtime_workflow_definition: legacyWorkflowFromAutomationRule(rule),
-      [FLOW_KEY]: {
-        version: 3,
-        advancement: rule.advancement,
-        coordinator: rule.coordinator
-          ? storedStepFromUi({ ...rule.coordinator, kind: 'task', subgraph: null })
-          : null,
-        description,
-        graph: {
-          nodes: rule.steps.map(storedStepFromUi),
-        },
-      } satisfies StoredAutomationFlowV2,
-    },
-    cronExpression: rule.trigger.type === 'schedule' ? buildCron(rule.trigger) : null,
-    timezone: rule.trigger.schedule.timezone,
-    enabled: rule.enabled,
-    assignmentMode: isAiDynamicWorkflow ? 'ai_managed' : 'manual',
-    managerType: isAiDynamicWorkflow ? 'custom' : null,
-    agentId: null,
-    wegentTeamId: null,
-    model: null,
-    executionEnvironment: null,
-    executionDeviceId: null,
-    roleSource: 'generic',
-    runtimeSource: 'runtime_user',
-    runtimeProfileId: null,
-    runtimeUserId,
   }
 }
 

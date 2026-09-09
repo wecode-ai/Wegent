@@ -446,3 +446,150 @@ def test_runtime_task_credential_can_read_only_current_execution(
         ).status_code
         == 403
     )
+
+
+@pytest.mark.asyncio
+async def test_subscription_intake_routes_once_to_board_router(
+    test_db, test_user, event_board
+):
+    import json
+
+    from app.models.delivery import ProjectIncomingEvent
+    from app.schemas.project_incoming_hook import ProjectIncomingHookCreate
+    from app.services.project_incoming_hooks import (
+        project_incoming_hook_service as hooks,
+    )
+
+    hook = hooks.create(
+        test_db,
+        event_board.id,
+        test_user.id,
+        ProjectIncomingHookCreate(
+            name="Board inbox",
+            source_type="generic",
+            collection_mode="webhook",
+            resource={
+                "resource_type": "endpoint",
+                "url": "https://events.example/task",
+            },
+        ),
+    )
+    payload = json.dumps(
+        {
+            "title": "Review invoice",
+            "description": "Check disputed line",
+            "url": "https://events.example/task",
+        }
+    ).encode()
+    headers = {"idempotency-key": "same-review"}
+    receipt = await hooks.receive(
+        test_db, hook.public_id, payload, "application/json", headers
+    )
+    await hooks.process_event(test_db, receipt["event_id"])
+    event = test_db.get(ProjectIncomingEvent, receipt["event_id"])
+    assert event.status == "queued"
+    assert event.title == "Review invoice"
+    assert (
+        event.metadata_json["reference"]["external_id"] == "https://events.example/task"
+    )
+    execution_id = event.metadata_json["execution_id"]
+    duplicate = await hooks.receive(
+        test_db, hook.public_id, payload, "application/json", headers
+    )
+    assert duplicate["status"] == "duplicate"
+    assert duplicate["event_id"] == event.id
+    assert await hooks.process_event(test_db, event.id) == 0
+    assert event.metadata_json["execution_id"] == execution_id
+
+
+@pytest.mark.asyncio
+async def test_claimed_subscription_event_does_not_also_start_router(
+    test_db, test_user, event_board, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from app.models.delivery import ProjectIncomingEvent
+    from app.schemas.project_incoming_hook import ProjectIncomingHookCreate
+    from app.services import project_incoming_hooks
+    from app.services.project_automations import project_automation_processor
+
+    hooks = project_incoming_hooks.project_incoming_hook_service
+    hook = hooks.create(
+        test_db,
+        event_board.id,
+        test_user.id,
+        ProjectIncomingHookCreate(
+            name="Repository",
+            source_type="github",
+            collection_mode="webhook",
+            resource={
+                "resource_type": "repository",
+                "url": "https://github.com/acme/app",
+            },
+        ),
+    )
+    normalized = SimpleNamespace(
+        source_type="github",
+        event_type="change_request.review_submitted",
+        subject_id="review-1",
+        subject_type="change_request",
+        payload={},
+        resource=hook.metadata_json["resource"],
+        subject={"id": "review-1"},
+    )
+    monkeypatch.setattr(
+        project_incoming_hooks, "normalize_webhook_events", lambda *_: [normalized]
+    )
+    monkeypatch.setattr(
+        project_incoming_hooks, "normalized_event_identity", lambda *_: "review-1"
+    )
+    dispatch = AsyncMock(return_value=(True, []))
+    monkeypatch.setattr(project_automation_processor, "dispatch_event", dispatch)
+    receipt = await hooks.receive(
+        test_db, hook.public_id, b'{"action":"submitted"}', "application/json", {}
+    )
+    await hooks.process_event(test_db, receipt["event_id"])
+    event = test_db.get(ProjectIncomingEvent, receipt["event_id"])
+    assert event.status == "processed"
+    assert "execution_id" not in event.metadata_json
+    assert service.list(test_db, event_board.id, test_user.id) == []
+    dispatch.assert_awaited_once()
+
+
+def test_related_subscription_keeps_human_assignment_unchanged(
+    test_db, test_user, event_board
+):
+    from app.models.delivery import ProjectIncomingEvent
+
+    reference = {"provider": "generic", "external_id": "https://events.example/task"}
+    workflow = {
+        "orchestration_status": "waiting_human",
+        "assignment": {
+            "id": "human-assignment",
+            "status": "waiting_human",
+            "assignee_user_id": test_user.id,
+        },
+    }
+    issue = LoopItem(
+        cloud_project_id=event_board.id,
+        title="Human decision",
+        status="in_progress",
+        created_by_user_id=test_user.id,
+        metadata_json={"workflow": workflow, "external_references": [reference]},
+    )
+    event = ProjectIncomingEvent(
+        cloud_project_id=event_board.id,
+        title="Review",
+        status="processing",
+        source="generic",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "payload": {"title": "New review", "url": reference["external_id"]}
+        },
+    )
+    test_db.add_all([issue, event])
+    test_db.commit()
+    assert service.receive_subscription_event(test_db, event, only_related=True)
+    assert service.related_issue(test_db, event).id == issue.id
+    assert issue.metadata_json["workflow"] == workflow
+    assert event.status == "queued"

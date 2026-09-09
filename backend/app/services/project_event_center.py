@@ -150,7 +150,7 @@ class ProjectEventCenterService:
             .limit(100)
             .all()
         )
-        return [self.view(event) for event in events]
+        return [self.view(event) for event in events if "history" in metadata(event)]
 
     @staticmethod
     def view(event: ProjectIncomingEvent) -> dict:
@@ -245,6 +245,54 @@ class ProjectEventCenterService:
         db.commit()
         db.refresh(event)
         return event, True
+
+    def receive_subscription_event(
+        self, db: Session, event: ProjectIncomingEvent, *, only_related: bool = False
+    ) -> bool:
+        """Transfer unclaimed subscription input to a configured board router."""
+        project = db.get(CloudProject, event.cloud_project_id)
+        if not metadata(project).get("event_center"):
+            return False
+        from app.services.project_event_context import normalize_incoming_payload
+
+        values = metadata(event)
+        decision = normalize_incoming_payload(
+            values.get("payload") or {}, values.get("headers") or {}
+        )
+        candidate = decision.candidate
+        reference_id = (
+            (candidate.source_url or candidate.external_id) if candidate else None
+        )
+        reference = (
+            {
+                "provider": decision.provider,
+                "external_id": reference_id,
+                "url": candidate.source_url,
+            }
+            if reference_id
+            else None
+        )
+        if (
+            only_related
+            and self.related_issue(
+                db,
+                ProjectIncomingEvent(
+                    cloud_project_id=event.cloud_project_id,
+                    metadata_json={"reference": reference},
+                ),
+            )
+            is None
+        ):
+            return False
+        if candidate:
+            event.title = candidate.title or event.title
+            event.description = candidate.description or event.description
+        values["reference"] = reference
+        event.metadata_json = {**values, "history": []}
+        note(event, "event", event.description or event.title)
+        self.enqueue(db, event)
+        db.commit()
+        return True
 
     def enqueue(self, db: Session, event: ProjectIncomingEvent) -> None:
         from app.services.loop_item_executions.service import (

@@ -75,8 +75,41 @@ class IssueWorkflowDecisionService:
                 status.HTTP_409_CONFLICT,
                 "Automated workflow stages do not accept human decisions",
             )
+        if node.get("node_type") == "loop":
+            if values.action != "force_advance":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Loop containers only accept force advance",
+                )
+            if node.get("status") in {"completed", "forced_completed"}:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Workflow loop is already completed",
+                )
+            from app.services.workflow_loop_runtime import _complete_loop
 
-        self._validate_decision(db, node, values)
+            _complete_loop(node, nodes, exit_reason="forced")
+            node["decision_history"] = [
+                *list(node.get("decision_history") or []),
+                {
+                    "action": "force_advance",
+                    "actor_user_id": user_id,
+                    "reason": values.reason,
+                    "decided_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ]
+            apply_workflow_nodes(
+                db,
+                item,
+                workflow=workflow,
+                nodes=nodes,
+                actor_user_id=user_id,
+            )
+            db.commit()
+            db.refresh(item)
+            return item
+
+        self._validate_decision(db, node, values, loop_item_id=item_id)
         node["status"] = {
             "approve": "completed",
             "reject": "changes_requested",
@@ -108,6 +141,7 @@ class IssueWorkflowDecisionService:
         db: Session,
         node: dict,
         values: WorkflowNodeDecisionRequest,
+        loop_item_id: str | None = None,
     ) -> None:
         node_status = node.get("status")
         if values.action == "approve":
@@ -116,7 +150,7 @@ class IssueWorkflowDecisionService:
                     status.HTTP_409_CONFLICT,
                     "Workflow node is not awaiting approval",
                 )
-            if missing_requirement_ids(db, node):
+            if missing_requirement_ids(db, node, loop_item_id=loop_item_id):
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
                     "Required workflow deliverables are missing",

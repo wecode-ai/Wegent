@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { CloudProject } from '@/api/deliveries'
+import type { CloudProject, WorkflowExecutionConfig } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import {
   automationInputFromUi,
@@ -22,8 +22,6 @@ function backendRule(overrides: Partial<ProjectAutomationRule> = {}): ProjectAut
       transition: 'entered_processing',
       tags: ['自动开发'],
     },
-    webhookEventId: null,
-    webhookSecret: null,
     cronExpression: null,
     timezone: 'Asia/Shanghai',
     assignmentMode: 'manual',
@@ -65,7 +63,7 @@ function uiRule(): AutomationUiRule {
     lastRunStatus: null,
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'status',
       event: 'status_changed',
       tags: ['自动开发'],
@@ -156,6 +154,61 @@ describe('automationRuleBackend', () => {
     expect(mapped.trigger.event).toBe('status_changed')
   })
 
+  test('round trips external subscription event configuration', () => {
+    const mapped = automationRuleFromBackend(
+      backendRule({
+        eventType: 'change_request.checks_failed',
+        eventConfig: {
+          source_type: 'github',
+          collection_mode: 'poll',
+          poll_interval_seconds: 420,
+          subscription_id: 'subscription-1',
+          execution_target: 'continue_binding',
+          target_branches: ['main', 'release'],
+          repositories: ['acme/app'],
+        },
+      })
+    )
+
+    expect(mapped.trigger).toMatchObject({
+      type: 'event',
+      source: 'github',
+      collectionMode: 'poll',
+      event: 'change_request.checks_failed',
+      subscriptionId: 'subscription-1',
+      pollIntervalSeconds: 420,
+      targetBranches: ['main', 'release'],
+      repositories: ['acme/app'],
+    })
+
+    const input = automationInputFromUi(mapped, 7)
+    expect(input.eventType).toBe('change_request.checks_failed')
+    expect(input.eventConfig).toMatchObject({
+      source_type: 'github',
+      collection_mode: 'poll',
+      poll_interval_seconds: 420,
+      subscription_id: 'subscription-1',
+      execution_target: 'create_issue',
+      target_branches: ['main', 'release'],
+      repositories: ['acme/app'],
+    })
+  })
+
+  test('defaults legacy external triggers to webhook collection', () => {
+    const mapped = automationRuleFromBackend(
+      backendRule({
+        eventType: 'change_request.checks_failed',
+        eventConfig: {
+          source_type: 'gitlab',
+          subscription_id: 'subscription-1',
+          execution_target: 'continue_binding',
+        },
+      })
+    )
+
+    expect(mapped.trigger.collectionMode).toBe('webhook')
+  })
+
   test('formats automation timestamps in Asia/Shanghai', () => {
     const mapped = automationRuleFromBackend(backendRule({ updatedAt: '2026-08-26T09:18:00Z' }))
 
@@ -183,10 +236,88 @@ describe('automationRuleBackend', () => {
       plugins: ['Wework 项目空间'],
     })
     const runtimeWorkflow = input.eventConfig.runtime_workflow_definition as {
-      nodes: Array<{ execution_config: { workspace_binding: { type: string } } }>
+      nodes: Array<{ execution_config: { workspace_binding: unknown } }>
     }
-    expect(runtimeWorkflow.nodes[0].execution_config.workspace_binding).toEqual({
-      type: 'standalone',
+    expect(runtimeWorkflow.nodes[1].execution_config.workspace_binding).toBeNull()
+  })
+
+  test('preserves loop body execution configuration after a save round trip', () => {
+    const rule = uiRule()
+    rule.steps = [
+      {
+        ...rule.steps[0],
+        id: 'loop-1',
+        name: '修复循环',
+        kind: 'loop',
+        nodeType: 'loop',
+        executionMode: 'manual',
+        environment: '',
+        executionDeviceId: null,
+        model: '',
+        modelType: null,
+        modelOptions: {},
+        plugins: [],
+        projectPlugins: [],
+        workspacePolicy: 'none',
+        bodyNodeIds: ['loop-start-1', 'loop-task-1'],
+        loopConfig: { maxAttempts: 5, timeoutSeconds: null },
+        subgraph: {
+          nodes: [
+            {
+              ...rule.steps[0],
+              id: 'loop-start-1',
+              name: '循环开始',
+              prompt: '',
+              nodeType: 'loopStart',
+              loopId: 'loop-1',
+              executionMode: 'manual',
+              environment: '',
+              executionDeviceId: null,
+              model: '',
+              modelType: null,
+              modelOptions: {},
+              plugins: [],
+              projectPlugins: [],
+              workspacePolicy: 'none',
+              subgraph: null,
+            },
+            {
+              ...rule.steps[0],
+              id: 'loop-task-1',
+              name: '循环内修复',
+              nodeType: 'task',
+              loopId: 'loop-1',
+              environment: '云设备',
+              executionEnvironment: 'cloud',
+              executionDeviceId: 'cloud-device-1',
+              runtimeProfileId: 'profile-cloud',
+              model: 'cloud-model',
+              modelType: 'user',
+              modelOptions: { reasoning: 'high' },
+              subgraph: null,
+            },
+          ],
+        },
+      },
+    ]
+
+    const input = automationInputFromUi(rule, 7)
+    const mapped = automationRuleFromBackend(
+      backendRule({
+        prompt: input.prompt,
+        eventConfig: input.eventConfig,
+      })
+    )
+    const loopBody = mapped.steps[0]?.subgraph?.nodes.find(node => node.id === 'loop-task-1')
+
+    expect(loopBody).toMatchObject({
+      environment: '云设备',
+      executionEnvironment: 'cloud',
+      executionDeviceId: 'cloud-device-1',
+      runtimeProfileId: 'profile-cloud',
+      model: 'cloud-model',
+      modelType: 'user',
+      modelOptions: { reasoning: 'high' },
     })
   })
 
@@ -208,6 +339,51 @@ describe('automationRuleBackend', () => {
     expect(input.triggerType).toBe('schedule')
     expect(input.eventType).toBeNull()
     expect(input.cronExpression).toBe('30 9 * * 1-5')
+  })
+
+  test('preserves a legacy manual agent when editing and saving its schedule', () => {
+    const mapped = automationRuleFromBackend(
+      backendRule({
+        triggerType: 'schedule',
+        eventType: null,
+        cronExpression: '0 3 * * *',
+        agentId: 'agent-1',
+        roleSource: 'agent',
+        model: 'codex-runtime',
+        executionEnvironment: 'local',
+        executionDeviceId: 'device-1',
+        runtimeSource: 'runtime_user',
+        runtimeUserId: 7,
+      })
+    )
+    mapped.trigger.schedule = {
+      ...mapped.trigger.schedule,
+      frequency: 'hourly',
+      time: '00:15',
+    }
+
+    const input = automationInputFromUi(mapped, 7)
+    const workflow = input.eventConfig.runtime_workflow_definition as {
+      nodes: Array<{ execution_config: WorkflowExecutionConfig | null }>
+    }
+
+    expect(input).toMatchObject({
+      cronExpression: '15 * * * *',
+      assignmentMode: 'manual',
+      agentId: 'agent-1',
+      roleSource: 'agent',
+      runtimeSource: 'agent_default',
+      runtimeProfileId: null,
+      model: null,
+      executionEnvironment: null,
+      executionDeviceId: null,
+    })
+    expect(workflow.nodes[1]?.execution_config).toMatchObject({
+      agent_id: 'agent-1',
+      execution_device_id: 'device-1',
+      model: 'codex-runtime',
+      workspace_binding: { type: 'standalone' },
+    })
   })
 
   test('uses a standalone conversation when scheduled automation has no project workspace', () => {
@@ -237,7 +413,7 @@ describe('automationRuleBackend', () => {
       nodes: Array<{ execution_config: { workspace_binding: { type: string } } }>
     }
 
-    expect(runtimeWorkflow.nodes[0].execution_config.workspace_binding).toEqual({
+    expect(runtimeWorkflow.nodes[1].execution_config.workspace_binding).toEqual({
       type: 'standalone',
     })
   })
@@ -368,7 +544,236 @@ describe('automationRuleBackend', () => {
       automationRuleId: 'workflow-rule-1',
       executionConfigOverride: true,
     })
-    expect(legacyWorkflowFromAutomationRule(mapped!)).toMatchObject(project.workflow_definition)
+    const regenerated = legacyWorkflowFromAutomationRule(mapped!)
+    expect(regenerated.nodes[0]).toMatchObject({
+      id: 'start',
+      node_type: 'event',
+      role: 'start',
+      depends_on: [],
+    })
+    expect(regenerated.nodes[1]).toMatchObject({
+      id: 'analysis',
+      depends_on: ['start'],
+      automation_rule_id: 'workflow-rule-1',
+      execution_config_override: true,
+    })
+    const scheduleWorkflow = legacyWorkflowFromAutomationRule(
+      automationRuleFromBackend(
+        backendRule({
+          triggerType: 'schedule',
+          eventType: null,
+          cronExpression: '59 * * * *',
+          agentId: 'agent-1',
+          roleSource: 'agent',
+        })
+      )
+    )
+    expect(scheduleWorkflow.nodes[1]).toMatchObject({
+      execution_mode: 'robot',
+      automation_rule_id: null,
+    })
+  })
+
+  test('flattens a loop into a loop node, body nodes, and branch conditions', () => {
+    const rule = uiRule()
+    const base = {
+      ...rule.steps[0],
+      dependencies: [],
+      dependencyContext: {},
+      deliverables: [],
+      plugins: [],
+      projectPlugins: [],
+      modelOptions: {},
+      subgraph: null,
+    }
+    rule.steps = [
+      {
+        ...base,
+        id: 'loop1',
+        name: '修复循环',
+        kind: 'loop',
+        nodeType: 'loop',
+        bodyNodeIds: ['ls', 'br', 'fix1', 'le'],
+        loopConfig: {
+          maxAttempts: 3,
+          timeoutSeconds: 3600,
+        },
+        executionMode: 'manual',
+        subgraph: {
+          nodes: [
+            {
+              ...base,
+              id: 'ls',
+              name: '循环开始',
+              nodeType: 'loopStart',
+              x: 0,
+              y: 0,
+            },
+            {
+              ...base,
+              id: 'br',
+              name: '分支',
+              nodeType: 'branch',
+              executionMode: 'manual',
+              x: 260,
+              y: 0,
+              dependencies: ['ls'],
+              eventWait: {
+                collectionMode: 'poll',
+                pollIntervalSeconds: 180,
+              },
+              branchConditions: [
+                {
+                  sourceType: 'gitlab',
+                  eventType: 'change_request.checks_failed',
+                  handlerNodeIds: ['fix1'],
+                },
+                {
+                  eventType: 'change_request.merged',
+                  handlerNodeIds: ['le'],
+                },
+              ],
+            },
+            {
+              ...base,
+              id: 'fix1',
+              name: '修复',
+              nodeType: 'task',
+              executionMode: 'automatic',
+              x: 520,
+              y: 0,
+              dependencies: ['br'],
+            },
+            {
+              ...base,
+              id: 'le',
+              name: '循环结束',
+              nodeType: 'loopEnd',
+              executionMode: 'manual',
+              x: 520,
+              y: 120,
+              dependencies: ['br'],
+            },
+          ],
+        },
+      },
+    ]
+
+    const definition = legacyWorkflowFromAutomationRule(rule)
+    expect(definition.nodes[0]).toMatchObject({
+      id: 'start',
+      node_type: 'event',
+      role: 'start',
+    })
+    const loop = definition.nodes.find(node => node.node_type === 'loop')
+    expect(loop).toMatchObject({
+      node_type: 'loop',
+      depends_on: ['start'],
+      loop_config: {
+        max_attempts: 3,
+        timeout_seconds: 3600,
+      },
+    })
+    const bodyIds = new Set(loop?.body_node_ids ?? [])
+    expect(bodyIds).toEqual(new Set(['ls', 'br', 'fix1', 'le']))
+    const branch = definition.nodes.find(node => node.node_type === 'branch')
+    expect(branch?.branch_conditions).toEqual([
+      {
+        source_type: 'gitlab',
+        event_type: 'change_request.checks_failed',
+        handler_node_ids: ['fix1'],
+      },
+      {
+        event_type: 'change_request.merged',
+        handler_node_ids: ['le'],
+      },
+    ])
+    expect(branch?.event_wait).toEqual({
+      subject_source: 'upstream_pull_request',
+      collection_mode: 'poll',
+      poll_interval_seconds: 180,
+    })
+    expect(branch?.branch_conditions[0].source_type).toBe('gitlab')
+    const fix = definition.nodes.find(node => node.id === 'fix1')
+    expect(fix).toMatchObject({ loop_id: 'loop1', depends_on: ['br'], execution_mode: 'robot' })
+    const start = definition.nodes.find(node => node.id === 'ls')
+    expect(start).toMatchObject({ node_type: 'loop_start', loop_id: 'loop1', depends_on: [] })
+  })
+
+  test('flattens a branchless sequential loop without requiring a branch', () => {
+    const rule = uiRule()
+    const base = {
+      ...rule.steps[0],
+      dependencies: [],
+      dependencyContext: {},
+      deliverables: [],
+      plugins: [],
+      projectPlugins: [],
+      modelOptions: {},
+      subgraph: null,
+    }
+    rule.steps = [
+      {
+        ...base,
+        id: 'loop1',
+        name: '顺序循环',
+        kind: 'loop',
+        nodeType: 'loop',
+        bodyNodeIds: ['ls', 't1', 't2'],
+        loopConfig: {
+          maxAttempts: 5,
+          timeoutSeconds: null,
+        },
+        executionMode: 'manual',
+        subgraph: {
+          nodes: [
+            {
+              ...base,
+              id: 'ls',
+              name: '循环开始',
+              nodeType: 'loopStart',
+              x: 0,
+              y: 0,
+            },
+            {
+              ...base,
+              id: 't1',
+              name: '步骤一',
+              nodeType: 'task',
+              executionMode: 'automatic',
+              x: 260,
+              y: 0,
+              dependencies: ['ls'],
+            },
+            {
+              ...base,
+              id: 't2',
+              name: '步骤二',
+              nodeType: 'task',
+              executionMode: 'automatic',
+              x: 260,
+              y: 120,
+              dependencies: ['t1'],
+            },
+          ],
+        },
+      },
+    ]
+
+    const definition = legacyWorkflowFromAutomationRule(rule)
+    const loop = definition.nodes.find(node => node.node_type === 'loop')
+    expect(loop).toMatchObject({
+      node_type: 'loop',
+      depends_on: ['start'],
+      body_node_ids: ['ls', 't1', 't2'],
+      loop_config: { max_attempts: 5, timeout_seconds: null },
+    })
+    // A branch exists only when the user adds one; a sequential loop needs none.
+    expect(definition.nodes.some(node => node.node_type === 'branch')).toBe(false)
+    const t1 = definition.nodes.find(node => node.id === 't1')
+    expect(t1).toMatchObject({ node_type: 'task', loop_id: 'loop1', depends_on: ['ls'] })
+    const t2 = definition.nodes.find(node => node.id === 't2')
+    expect(t2).toMatchObject({ node_type: 'task', loop_id: 'loop1', depends_on: ['t1'] })
   })
 })
 

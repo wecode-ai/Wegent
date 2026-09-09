@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, aliased
 
-from app.core.project_automation_secrets import encrypt_webhook_secret
 from app.db.timezone import database_datetime_timezone
 from app.models.delivery import (
     CloudProject,
@@ -21,6 +19,7 @@ from app.models.delivery import (
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectIncomingHook,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
     loop_unset_datetime_for_connection,
@@ -60,6 +59,7 @@ from app.services.project_automation_execution import (
     project_automation_execution,
 )
 from app.services.project_chat.service import bot_config
+from app.services.project_event_sources import EXECUTION_TARGETS, event_source
 from app.services.share import team_share_service
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 from shared.telemetry.decorators import trace_async
@@ -77,6 +77,10 @@ def _canonical_event_config(
         config["transition"] = "entered_processing"
     else:
         config.pop("transition", None)
+    if event_type in {"task.created", "task.status_changed"}:
+        config["execution_target"] = "existing_issue"
+    elif event_type and not config.get("execution_target"):
+        config["execution_target"] = "create_issue"
     return config
 
 
@@ -104,7 +108,7 @@ class ProjectAutomationService:
         values: ProjectAutomationCreate,
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        row, webhook_secret = self._create_rule(
+        row = self._create_rule(
             db,
             project_id=project_id,
             user_id=user_id,
@@ -112,7 +116,7 @@ class ProjectAutomationService:
         )
         db.commit()
         db.refresh(row)
-        return self._rule_view(db, row, webhook_secret=webhook_secret)
+        return self._rule_view(db, row)
 
     def migrate_workflow(
         self,
@@ -153,7 +157,7 @@ class ProjectAutomationService:
                 mode="json"
             ),
         }
-        row, webhook_secret = self._create_rule(
+        row = self._create_rule(
             db,
             project_id=project_id,
             user_id=user_id,
@@ -176,11 +180,7 @@ class ProjectAutomationService:
         db.refresh(row)
         db.refresh(project)
         return {
-            "automation": self._rule_view(
-                db,
-                row,
-                webhook_secret=webhook_secret,
-            ),
+            "automation": self._rule_view(db, row),
             "project_version": project.version,
             "workflow_automation_id": str(row.id),
         }
@@ -192,7 +192,7 @@ class ProjectAutomationService:
         project_id: str,
         user_id: int,
         values: ProjectAutomationCreate,
-    ) -> tuple[ProjectAutomationRule, str | None]:
+    ) -> ProjectAutomationRule:
         configured_mode = values.assignment_mode
         configured_manager = values.manager_type
         role_source = values.role_source
@@ -223,14 +223,22 @@ class ProjectAutomationService:
             runtime_user_id=values.runtime_user_id,
         )
         validate_trigger(values.trigger_type, values.event_type, values.cron_expression)
+        event_config = _canonical_event_config(
+            values.event_type if values.trigger_type == "event" else None,
+            values.event_config,
+        )
+        self._validate_event_config(
+            db,
+            project_id=project_id,
+            trigger_type=values.trigger_type,
+            event_type=values.event_type,
+            event_config=event_config,
+        )
         now = utcnow()
         next_run_at = (
             _next_run(str(values.cron_expression), values.timezone, now)
             if values.trigger_type == "schedule"
             else None
-        )
-        webhook_secret = (
-            secrets.token_urlsafe(32) if values.trigger_type == "event" else None
         )
         row = ProjectAutomationRule(
             cloud_project_id=project_id,
@@ -262,11 +270,7 @@ class ProjectAutomationService:
                     "event_type": (
                         values.event_type if values.trigger_type == "event" else None
                     ),
-                    "event_config": _canonical_event_config(
-                        values.event_type if values.trigger_type == "event" else None,
-                        values.event_config,
-                    ),
-                    "webhook_secret_encrypted": None,
+                    "event_config": event_config,
                     "cron_expression": (
                         values.cron_expression
                         if values.trigger_type == "schedule"
@@ -286,15 +290,7 @@ class ProjectAutomationService:
         self._validate_workflow_definition(
             _metadata(row).get("event_config"),
         )
-        if webhook_secret:
-            row_metadata = _metadata(row)
-            row_metadata["webhook_secret_encrypted"] = encrypt_webhook_secret(
-                webhook_secret,
-                project_id=project_id,
-                automation_id=str(row.id),
-            )
-            row.metadata_json = row_metadata
-        return row, webhook_secret
+        return row
 
     @staticmethod
     def _bind_self_managed_workflow(
@@ -338,7 +334,9 @@ class ProjectAutomationService:
             from app.schemas.issue_workflow import ProjectWorkflowDefinition
 
             definition = ProjectWorkflowDefinition.model_validate(raw_definition)
-            if definition.advancement_policy == "manual":
+            if definition.advancement_policy == "manual" and not any(
+                node.node_type in {"loop", "branch"} for node in definition.nodes
+            ):
                 for index, node in enumerate(definition.nodes):
                     expected = [definition.nodes[index - 1].id] if index else []
                     if node.depends_on != expected:
@@ -346,10 +344,69 @@ class ProjectAutomationService:
                             "Workflow advancement requires an explicit serial role order"
                         )
         except ValueError as exc:
+            errors = exc.errors() if hasattr(exc, "errors") else []
+            error_detail = errors[0].get("msg", str(exc)) if errors else str(exc)
+            error_detail = str(error_detail).removeprefix("Value error, ").strip()
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                f"Invalid automation workflow definition: {exc}",
+                f"自动化流程配置无效：{error_detail}",
             ) from exc
+
+    @staticmethod
+    def _validate_event_config(
+        db: Session,
+        *,
+        project_id: str,
+        trigger_type: str,
+        event_type: str | None,
+        event_config: dict,
+    ) -> None:
+        if trigger_type != "event":
+            return
+        target = str(event_config.get("execution_target") or "")
+        if target not in EXECUTION_TARGETS:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Event automation requires a supported execution_target",
+            )
+        if event_type in {"task.created", "task.status_changed"}:
+            if target != "existing_issue":
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "Wework task events run on the existing Issue",
+                )
+            return
+        subscription_id = str(event_config.get("subscription_id") or "")
+        if not subscription_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "External event automation requires subscription_id",
+            )
+        subscription = db.get(ProjectIncomingHook, subscription_id)
+        if (
+            subscription is None
+            or str(subscription.cloud_project_id) != str(project_id)
+            or not loop_datetime_value_is_unset(subscription.deleted_at)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Event subscription is unavailable",
+            )
+        subscription_metadata = _metadata(subscription)
+        source_type = str(
+            subscription_metadata.get("source_type") or subscription.source or ""
+        )
+        definition = event_source(source_type)
+        if event_type not in definition.event_types:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"{source_type} does not support {event_type}",
+            )
+        if target not in definition.execution_targets:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"{source_type} does not support execution target {target}",
+            )
 
     def update(
         self,
@@ -469,6 +526,13 @@ class ProjectAutomationService:
                 else rule_metadata.get("event_config", {})
             ),
         )
+        self._validate_event_config(
+            db,
+            project_id=project_id,
+            trigger_type=trigger_type,
+            event_type=str(event_type) if event_type else None,
+            event_config=event_config,
+        )
         rule_metadata.update(
             {
                 "trigger_type": trigger_type,
@@ -508,34 +572,6 @@ class ProjectAutomationService:
         db.commit()
         db.refresh(row)
         return self._rule_view(db, row)
-
-    def rotate_webhook_secret(
-        self,
-        db: Session,
-        project_id: str,
-        automation_id: str,
-        user_id: int,
-    ) -> dict:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        row = self._rule(db, project_id, automation_id, for_update=True)
-        rule_metadata = _metadata(row)
-        if rule_metadata.get("trigger_type") != "event":
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Only event automations have webhook secrets",
-            )
-        webhook_secret = secrets.token_urlsafe(32)
-        rule_metadata["webhook_secret_encrypted"] = encrypt_webhook_secret(
-            webhook_secret,
-            project_id=project_id,
-            automation_id=str(row.id),
-        )
-        row.metadata_json = rule_metadata
-        row.updated_by_user_id = user_id
-        row.version += 1
-        db.commit()
-        db.refresh(row)
-        return self._rule_view(db, row, webhook_secret=webhook_secret)
 
     def delete(
         self, db: Session, project_id: str, automation_id: str, user_id: int
@@ -669,7 +705,7 @@ class ProjectAutomationService:
         workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
         node_snapshot = WorkflowNodeInstance.model_validate(node)
         execution_config = workflow_snapshot.execution_config_for(node_snapshot)
-        if execution_config is None or not execution_config.is_complete():
+        if workflow_snapshot.node_needs_execution_config(node_snapshot):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Workflow execution configuration is incomplete",
@@ -834,15 +870,15 @@ class ProjectAutomationService:
         workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
         node_snapshot = WorkflowNodeInstance.model_validate(node)
         execution_config = workflow_snapshot.execution_config_for(node_snapshot)
-        if execution_config is None or not execution_config.is_complete():
+        if workflow_snapshot.node_needs_execution_config(node_snapshot):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Workflow execution configuration is incomplete",
             )
-        if execution_config.agent_id:
+        if not execution_config.agent_id and not execution_config.execution_device_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Robot preset workflow execution requires an automation rule",
+                "Workflow node execution requires a Runtime target",
             )
 
         scheduled_for = utcnow()
@@ -1412,8 +1448,6 @@ class ProjectAutomationService:
     def _rule_view(
         db: Session,
         row: ProjectAutomationRule,
-        *,
-        webhook_secret: str | None = None,
     ) -> dict:
         rule_metadata = _metadata(row)
         configured_mode = assignment_mode(rule_metadata)
@@ -1479,10 +1513,6 @@ class ProjectAutomationService:
             "event_config": rule_metadata.get("event_config") or {},
             "assignment_mode": configured_mode,
             "manager_type": configured_manager,
-            "webhook_event_id": (
-                row.id if rule_metadata.get("trigger_type") == "event" else None
-            ),
-            "webhook_secret": webhook_secret,
             "cron_expression": rule_metadata.get("cron_expression"),
             "timezone": str(rule_metadata.get("timezone") or "Asia/Shanghai"),
             "agent_id": row.assignee_agent_id or None,
@@ -1611,9 +1641,11 @@ class ProjectAutomationService:
         trigger: str,
         scheduled_for: datetime,
         *,
+        public_id: str | None = None,
         commit: bool = True,
     ) -> ProjectAutomationRun:
         row = ProjectAutomationRun(
+            public_id=public_id,
             cloud_project_id=rule.cloud_project_id,
             parent_id=rule.id,
             assignee_agent_id=rule.assignee_agent_id,

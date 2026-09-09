@@ -11,6 +11,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-automation',
   'project-automation-workflow',
   'event-center',
+  'project-event-sources',
   'project-assignment-notification',
   'offline-local-project-space',
   'cloud-context-resilience',

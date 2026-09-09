@@ -598,9 +598,7 @@ def test_device_command_only_passes_supported_login_flags(
     invocations = args_log.read_text(encoding="utf-8").splitlines()
     login_invocations = [line for line in invocations if "--hostname" in line]
     assert len(login_invocations) == 1
-    assert (
-        "--insecure-storage" in login_invocations[0]
-    ) is supports_insecure_storage
+    assert ("--insecure-storage" in login_invocations[0]) is supports_insecure_storage
     assert ("--git-protocol" in login_invocations[0]) is supports_git_protocol
     config_set_invocations = [
         line for line in invocations if line.startswith("config set git_protocol")

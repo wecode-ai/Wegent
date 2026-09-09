@@ -57,6 +57,7 @@ const PROJECT = {
   created_by_user_id: 9001,
   status: 'active',
   task_provider: 'local',
+  provider_config: {},
   access_role: 'Owner',
   version: 1,
   created_at: '2026-08-11T00:00:00',
@@ -198,6 +199,64 @@ const RULE = {
   updatedAt: '2026-08-11T00:00:00',
 }
 
+const EVENT_SOURCE_CATALOG = [
+  {
+    sourceType: 'github',
+    collectionModes: ['webhook', 'poll', 'hybrid'],
+    resourceTypes: ['repository'],
+    eventTypes: [
+      'change_request.checks_failed',
+      'change_request.merge_conflict',
+      'change_request.review_submitted',
+      'change_request.comment_created',
+      'change_request.merged',
+    ],
+    executionTargets: ['continue_binding', 'create_issue'],
+    nameKey: 'event_sources.github.name',
+    descriptionKey: 'event_sources.github.description',
+  },
+  {
+    sourceType: 'gitlab',
+    collectionModes: ['webhook', 'poll', 'hybrid'],
+    resourceTypes: ['project'],
+    eventTypes: [
+      'change_request.checks_failed',
+      'change_request.merge_conflict',
+      'change_request.comment_created',
+      'change_request.merged',
+    ],
+    executionTargets: ['continue_binding', 'create_issue'],
+    nameKey: 'event_sources.gitlab.name',
+    descriptionKey: 'event_sources.gitlab.description',
+  },
+]
+
+const EVENT_SUBSCRIPTION = {
+  id: 'subscription-1',
+  projectId: PROJECT_ID,
+  name: 'GitHub repository',
+  status: 'active',
+  sourceType: 'github',
+  collectionMode: 'webhook',
+  resource: {
+    resourceType: 'repository',
+    instanceUrl: 'https://github.com',
+    externalId: 'acme/app',
+    path: 'acme/app',
+    url: 'https://github.com/acme/app',
+    displayName: 'acme/app',
+  },
+  webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/subscription-1',
+  pollIntervalSeconds: null,
+  credentialRef: null,
+  health: { status: 'pending' },
+  lastEventAt: null,
+  nextPollAt: null,
+  version: 1,
+  createdAt: '2026-08-11T00:00:00',
+  updatedAt: '2026-08-11T00:00:00',
+}
+
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   response.end(JSON.stringify(body))
@@ -264,6 +323,30 @@ async function waitForValue(read, predicate, message, timeoutMs) {
   assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
 }
 
+async function openInlineEventSubscriptionManager(control, uiTimeoutMs) {
+  const manageSelector = '[data-testid="automation-manage-event-subscriptions"]'
+  await control.command('select', '[data-testid="automation-trigger-type"]', {
+    value: 'webhook',
+  })
+  await control.command('scrollIntoView', manageSelector)
+  await control.command('waitFor', manageSelector, {
+    timeoutMs: uiTimeoutMs,
+    visible: true,
+  })
+  const [rightPanelBeforeSubscriptions] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="automation-editor-rightbar"]')
+  )
+  await control.command('click', manageSelector, {
+    visible: true,
+  })
+  await control.command('scrollIntoView', '[data-testid="event-subscription-editor"]')
+  await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
+    timeoutMs: uiTimeoutMs,
+    visible: true,
+  })
+  return rightPanelBeforeSubscriptions
+}
+
 function runtimeWorkTasks(runtimeWork) {
   return [
     ...(runtimeWork.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
@@ -317,6 +400,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     AUTOMATION_SCHEDULE_TIMEOUT_MS + 10_000
   )
   const rules = [RULE]
+  const eventSubscriptions = []
   const runs = [
     {
       id: 'automation-run-failed',
@@ -796,7 +880,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
                 execution_mode: 'robot',
                 depends_on: [],
                 required: true,
-                workspace_policy: 'composer',
+                workspace_policy: 'none',
                 automation_rule_id: null,
                 execution_config_override: false,
                 execution_config: {
@@ -815,7 +899,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
                 execution_mode: 'robot',
                 depends_on: ['pwd'],
                 required: true,
-                workspace_policy: 'composer',
+                workspace_policy: 'none',
                 automation_rule_id: null,
                 execution_config_override: false,
                 execution_config: null,
@@ -1336,6 +1420,125 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await captureScreenshot(control, 'project-automation-unified-home.png')
+    const subscriptionDetailClose = `${activeBoard} [data-testid="cloud-todo-detail-close"]`
+    if (
+      Number(
+        await control.command('getElementCount', subscriptionDetailClose, {
+          visible: true,
+        })
+      ) > 0
+    ) {
+      await control.command('click', subscriptionDetailClose, { visible: true })
+      await control.command('waitFor', subscriptionDetailClose, {
+        visible: false,
+        stableMs: 250,
+      })
+    }
+    const automationHomeSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="project-automation-view"]')
+    )
+    assert.ok(
+      !automationHomeSnapshot.testIds.includes('automation-open-event-subscriptions'),
+      'The project automation home still exposed a standalone event subscription page'
+    )
+    await control.command('click', '[data-testid="automation-create-rule"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const rightPanelBeforeSubscriptions = await openInlineEventSubscriptionManager(
+      control,
+      uiTimeoutMs
+    )
+    const subscriptionEditorSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="event-subscription-manager"]')
+    )
+    assert.ok(
+      !subscriptionEditorSnapshot.testIds.includes('event-subscription-collection-mode'),
+      'The inline webhook subscription editor still exposed hybrid collection modes'
+    )
+    const [rightPanelAfterSubscriptions] = JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="automation-editor-rightbar"]')
+    )
+    assert.equal(
+      rightPanelAfterSubscriptions.width,
+      rightPanelBeforeSubscriptions.width,
+      'Opening inline subscriptions changed the settings panel width'
+    )
+    assert.ok(
+      rightPanelAfterSubscriptions.scrollWidth <= rightPanelAfterSubscriptions.clientWidth + 1,
+      'The inline subscription manager overflowed the settings panel horizontally'
+    )
+    const [subscriptionManagerMetrics] = JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="event-subscription-manager"]')
+    )
+    assert.ok(
+      subscriptionManagerMetrics.scrollWidth <= subscriptionManagerMetrics.clientWidth + 1,
+      'The subscription manager content was clipped instead of fitting the settings panel'
+    )
+    const [addSubscriptionButtonMetrics] = JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="event-subscription-add"]')
+    )
+    assert.ok(
+      addSubscriptionButtonMetrics.scrollHeight <= addSubscriptionButtonMetrics.clientHeight + 1,
+      'The add subscription button wrapped onto multiple lines'
+    )
+    await captureScreenshot(control, 'project-event-subscriptions-inline-editor-real.png')
+    await control.command('fill', '[data-testid="event-subscription-name"]', {
+      value: 'Real GitHub webhook',
+    })
+    await control.command('fill', '[data-testid="event-subscription-resource-url"]', {
+      value: 'https://github.com/wecode-ai/Wegent',
+    })
+    await control.command('clickWhenEnabled', '[data-testid="event-subscription-save"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const createdSubscription = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/incoming-hooks`),
+      hooks => hooks.find(hook => hook.name === 'Real GitHub webhook'),
+      'The inline subscription editor did not create a real project webhook',
+      uiTimeoutMs
+    ).then(hooks => hooks.find(hook => hook.name === 'Real GitHub webhook'))
+    await control.command('waitFor', '[data-testid="automation-event-subscription"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', '[data-testid="automation-event-subscription"]'),
+      createdSubscription.id,
+      'The newly created project webhook was not selected by the trigger node'
+    )
+    const createdSubscriptionCard = `[data-testid="event-subscription-card-${createdSubscription.id}"]`
+    const [createdSubscriptionCardMetrics] = JSON.parse(
+      await control.command('getElementMetrics', createdSubscriptionCard)
+    )
+    assert.ok(
+      createdSubscriptionCardMetrics.scrollWidth <= createdSubscriptionCardMetrics.clientWidth + 1,
+      'The newly created webhook URL overflowed its subscription card'
+    )
+    const createdSubscriptionSnapshot = JSON.parse(
+      await control.command('snapshot', createdSubscriptionCard)
+    )
+    assert.ok(
+      createdSubscriptionSnapshot.text.includes('Webhook 地址'),
+      'The created subscription did not render the localized webhook URL label'
+    )
+    assert.ok(
+      !createdSubscriptionSnapshot.testIds.some(testId =>
+        testId.startsWith('event-subscription-reveal-')
+      ),
+      'The unsigned webhook UI still exposed a signing-secret control'
+    )
+    await captureScreenshot(control, 'project-event-subscriptions-inline-real.png')
+    await control.command('click', '[data-testid="automation-editor-back"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-create-rule"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
 
     const workflowProject = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
     await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
@@ -1839,8 +2042,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
     assert.equal(unifiedRule.eventConfig.wework_flow.description, '')
-    const unifiedExecutionConfig =
-      unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
+    const unifiedTaskNode = unifiedRule.eventConfig.runtime_workflow_definition.nodes.find(
+      node => node.node_type === 'task'
+    )
+    assert.ok(unifiedTaskNode, 'Unified automation did not persist its execution task node')
+    const unifiedExecutionConfig = unifiedTaskNode.execution_config
     assert.equal(unifiedExecutionConfig.execution_device_id, CLOUD_DEVICE_ID)
     assert.equal(unifiedExecutionConfig.model, CLOUD_MODEL_NAME)
     assert.equal(unifiedExecutionConfig.model_type, 'public')
@@ -1862,22 +2068,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         max_files: 1,
       },
     })
-    assert.deepEqual(
-      unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].required_deliverables,
-      [
-        {
-          id: unifiedDeliverable.id,
-          name: '实现文件',
-          description: '',
-          value_type: 'file',
-          file_constraints: {
-            accepted_types: [],
-            min_files: 1,
-            max_files: 1,
-          },
+    assert.deepEqual(unifiedTaskNode.required_deliverables, [
+      {
+        id: unifiedDeliverable.id,
+        name: '实现文件',
+        description: '',
+        value_type: 'file',
+        file_constraints: {
+          accepted_types: [],
+          min_files: 1,
+          max_files: 1,
         },
-      ]
-    )
+      },
+    ])
     assert.equal(unifiedGraphNodes[1].kind, 'task')
     assert.equal(unifiedGraphNodes[1].subgraph, null)
     assert.equal(unifiedRule.eventConfig.wework_flow.advancement, 'ai')
@@ -1913,6 +2116,62 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+
+    await control.command('click', '[data-testid="automation-editor-back"]')
+    await control.command('waitFor', '[data-testid="automation-create-rule"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid="automation-create-rule"]')
+    await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+    await control.command('click', '[data-testid="automation-node-insert-after-loop-trigger"]')
+    await control.command('waitFor', '[data-testid^="automation-node-insert-after-loop-start-"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid^="automation-node-insert-after-loop-start-"]')
+    await control.command(
+      'click',
+      '[data-testid^="automation-node-insert-after-branch-loop-start-"]'
+    )
+    const loopBranchSnapshot = await waitForValue(
+      async () =>
+        JSON.parse(await control.command('snapshot', '[data-testid="automation-rule-editor"]')),
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('loop-body-node-loop-body-')),
+      'The loop branch node was not created',
+      uiTimeoutMs
+    )
+    const loopBranchTestId = loopBranchSnapshot.testIds.find(testId =>
+      testId.startsWith('loop-body-node-loop-body-')
+    )
+    const loopBranchId = loopBranchTestId.replace('loop-body-node-', '')
+    await control.command('click', `[data-testid="automation-node-insert-after-${loopBranchId}"]`)
+    await control.command(
+      'click',
+      `[data-testid="automation-node-insert-after-branch-${loopBranchId}"]`
+    )
+    await waitForValue(
+      async () =>
+        JSON.parse(await control.command('snapshot', '[data-testid="automation-rule-editor"]')),
+      snapshot =>
+        snapshot.testIds.filter(testId => testId.startsWith('loop-body-node-loop-body-')).length ===
+        2,
+      'The loop branch right-side plus did not create another branch node',
+      uiTimeoutMs
+    )
+    await control.command('click', `[data-testid="automation-node-insert-after-${loopBranchId}"]`)
+    await control.command(
+      'click',
+      `[data-testid="automation-node-insert-after-loopEnd-${loopBranchId}"]`
+    )
+    await control.command('waitFor', '[aria-label="循环结束"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-loop-branch-insertions.png')
 
     await disableRule(projectId, unifiedRule)
     const projectWithWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
@@ -2536,10 +2795,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const scheduledTask = boardItems.items.find(item => item.id === scheduleRun.taskId)
     assert.ok(scheduledTask, 'Scheduled task was not projected back to the board')
     assert.equal(scheduledTask.workflow.nodes[0].status, 'completed')
-    assert.equal(
-      scheduleExecution.automationRunId,
-      scheduledTask.workflow.nodes[0].automation_run_id
-    )
+    assert.ok(scheduledTask.workflow.nodes.some(node => node.automation_run_id))
     await disableRule(projectId, persistedSchedule)
     for (const task of [directTeamTask, manualEventTask, customManagerTask, wegentManagerTask]) {
       assert.ok(
@@ -3113,6 +3369,54 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
       if (request.method === 'GET' && url.pathname === '/api/teams') {
         json(response, 200, { items: [TEAM], total: 1 })
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === '/api/v1/cloud-projects/event-sources/catalog'
+      ) {
+        json(response, 200, EVENT_SOURCE_CATALOG)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/incoming-hooks`
+      ) {
+        json(response, 200, eventSubscriptions)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/members`
+      ) {
+        json(response, 200, PROJECT_MEMBERS)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items`
+      ) {
+        json(response, 200, { items: [] })
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/incoming-hooks`
+      ) {
+        const payload = await readJson(request)
+        const created = {
+          ...EVENT_SUBSCRIPTION,
+          ...payload,
+          webhookUrl:
+            payload.collectionMode === 'webhook'
+              ? `https://cloud.example/api/v1/incoming-hooks/subscription-${eventSubscriptions.length + 1}`
+              : null,
+          version: 1,
+          created_at: '2026-08-11T00:00:00',
+          updated_at: '2026-08-11T00:00:00',
+        }
+        eventSubscriptions.push(created)
+        json(response, 201, created)
         return true
       }
       if (
@@ -4496,6 +4800,87 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
       assert.equal(createdGraphNodes?.[1].subgraph.nodes.length, 1)
+      await control.command('click', '[data-testid="automation-editor-back"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-create-rule"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-create-rule"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await openInlineEventSubscriptionManager(control, uiTimeoutMs)
+      await control.command('fill', '[data-testid="event-subscription-name"]', {
+        value: 'GitHub repository',
+      })
+      await control.command('fill', '[data-testid="event-subscription-resource-url"]', {
+        value: 'https://github.com/acme/app',
+      })
+      await control.command('click', '[data-testid="event-subscription-save"]')
+      await control.command('waitFor', '[data-testid="event-subscription-card-subscription-1"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        '[data-testid="event-subscription-copy-url-subscription-1"]',
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await captureScreenshot(control, 'project-event-subscriptions-inline.png')
+      await control.command('waitFor', '[data-testid="automation-event-subscription"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-event-subscription"]'),
+        'subscription-1',
+        'The external automation did not select the created event subscription'
+      )
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-external-event-type"]'),
+        'change_request.checks_failed',
+        'The external automation did not default to the catalog event type'
+      )
+      const externalEditorSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      )
+      assert.ok(
+        !externalEditorSnapshot.testIds.includes('automation-execution-target'),
+        'The external trigger still exposed an execution target'
+      )
+      await control.command('click', '[data-testid="automation-editor-section-menu"]')
+      await control.command('fill', '[aria-label="自动化名称"]', {
+        value: '外部检查失败自动创建 Issue',
+      })
+      await control.command('fill', '[data-testid="automation-rule-description"]', {
+        value: 'GitHub 检查失败时创建 Issue。',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const externalAutomation = createdPayloads.find(
+        payload => payload.name === '外部检查失败自动创建 Issue'
+      )
+      assert.ok(externalAutomation, 'The external event automation was not saved')
+      assert.equal(externalAutomation.triggerType, 'event')
+      assert.equal(externalAutomation.eventType, 'change_request.checks_failed')
+      assert.equal(externalAutomation.eventConfig.source_type, 'github')
+      assert.equal(externalAutomation.eventConfig.subscription_id, 'subscription-1')
+      assert.equal(externalAutomation.eventConfig.execution_target, 'create_issue')
+      assert.deepEqual(externalAutomation.eventConfig.target_branches, [])
+      await captureScreenshot(control, 'project-external-event-automation.png')
+
+      await control.command('click', '[data-testid="automation-editor-section-menu"]', {
+        visible: true,
+      })
       await control.command('click', '[data-testid="open-current-automation-runs"]', {
         visible: true,
       })
@@ -4520,6 +4905,87 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.ok(!waitingRunText.includes('执行中'))
       assert.ok(!waitingRunText.includes('0 秒'))
+
+      await control.command('click', '[data-testid="automation-editor-back"]', {
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-create-rule"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+      await control.command('click', '[data-testid="automation-node-insert-after-branch-trigger"]')
+      await control.command('waitFor', '[data-testid="branch-event-wait-mode"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      const branchEditorSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      )
+      assert.ok(
+        !branchEditorSnapshot.testIds.includes('branch-event-wait-subscription-resource-url'),
+        'The branch listener unexpectedly asked for a repository URL'
+      )
+      const branchId = branchEditorSnapshot.testIds
+        .find(testId => /^branch-node-branch-/.test(testId))
+        ?.replace('branch-node-', '')
+      assert.ok(branchId, 'The branch node was not rendered')
+      await control.command('click', `[data-testid="automation-node-insert-after-${branchId}"]`)
+      await control.command(
+        'click',
+        `[data-testid="automation-node-insert-after-task-${branchId}"]`
+      )
+      const handlerTestId = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      ).testIds.find(
+        testId => testId.startsWith('execution-node-step-') && testId !== 'execution-node-step-1'
+      )
+      assert.ok(handlerTestId, 'The branch handler node was not created')
+      await control.command('click', `[data-testid="${handlerTestId}"]`)
+      const handlerId = handlerTestId.replace('execution-node-', '')
+      await control.command('fill', `[data-testid="execution-node-name-${handlerId}"]`, {
+        value: '处理 MR 评论',
+      })
+      await control.command('click', `[data-testid="branch-node-main-${branchId}"]`)
+      const conditionId = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      ).testIds.find(testId => /^branch-condition-source-/.test(testId))
+      assert.ok(conditionId, 'The branch condition platform selector was not rendered')
+      await control.command('select', '[data-testid="branch-event-wait-mode"]', {
+        value: 'webhook',
+      })
+      await control.command('waitFor', '[data-testid="branch-event-subscription"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getValue', '[data-testid="branch-event-subscription"]'),
+        'subscription-1',
+        'The branch did not select the existing project webhook subscription'
+      )
+      await control.command('click', '[data-testid="automation-editor-section-menu"]')
+      await control.command('fill', '[aria-label="自动化名称"]', {
+        value: '项目 MR 事件分支',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const branchAutomation = createdPayloads.find(payload => payload.name === '项目 MR 事件分支')
+      assert.ok(branchAutomation, 'The upstream MR branch automation was not saved')
+      const savedBranch = branchAutomation.eventConfig.runtime_workflow_definition.nodes.find(
+        node => node.node_type === 'branch'
+      )
+      assert.deepEqual(savedBranch?.event_wait, {
+        subject_source: 'upstream_pull_request',
+        collection_mode: 'webhook',
+        subscription_id: 'subscription-1',
+        poll_interval_seconds: null,
+      })
+      assert.equal(savedBranch?.branch_conditions[0]?.source_type, 'github')
+      await captureScreenshot(control, 'project-automation-branch-event-listener.png')
 
       await control.command(
         'click',

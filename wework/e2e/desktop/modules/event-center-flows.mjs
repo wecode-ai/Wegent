@@ -388,9 +388,14 @@ export async function verifyEventCenter({
   }
   const hook = await request(`${base}/incoming-hooks`, {
     method: 'POST',
-    body: JSON.stringify({ name: '验收外部事件' }),
+    body: JSON.stringify({
+      name: '验收外部事件',
+      sourceType: 'generic',
+      collectionMode: 'webhook',
+      resource: { resourceType: 'endpoint', url: reference.url },
+    }),
   })
-  const hookPath = new URL(hook.webhook_url).pathname
+  const hookPath = new URL(hook.webhookUrl).pathname
   const deliveryId = randomUUID()
   const payload = {
     title: '有新的核对意见',
@@ -406,13 +411,13 @@ export async function verifyEventCenter({
   const receipt = await send()
   const duplicate = await send()
   assert.equal(duplicate.status, 'duplicate')
-  assert.equal(duplicate.event_id, receipt.event_id)
+  assert.equal(duplicate.eventId, receipt.eventId)
   await waitForValue(
     () => request(`${base}/events`),
     events =>
       events.some(
         event =>
-          event.id === receipt.event_id && event.status === 'routed' && event.issue_id === issueId
+          event.id === receipt.eventId && event.status === 'routed' && event.issue_id === issueId
       ),
     'Existing artifact did not route back to the same Issue',
     timeoutMs
@@ -424,10 +429,10 @@ export async function verifyEventCenter({
     visible: true,
   })
   await control.command('click', '[data-testid="cloud-project-events-view"]', { visible: true })
-  await control.command('waitFor', `[data-testid="event-center-event-${receipt.event_id}"]`, {
+  await control.command('waitFor', `[data-testid="event-center-event-${receipt.eventId}"]`, {
     visible: true,
   })
-  await control.command('click', `[data-testid="event-center-event-${receipt.event_id}"]`, {
+  await control.command('click', `[data-testid="event-center-event-${receipt.eventId}"]`, {
     visible: true,
   })
   await control.command('waitFor', '[data-testid="event-center-open-issue"]', { visible: true })
@@ -457,6 +462,7 @@ export async function verifyEventCenter({
     timeoutMs
   )
   assert.equal(completed.workflow.assignment_version, eventVersion + 1)
+  assert.equal(completed.workflow.nodes[0].status, 'completed')
   await control.command('waitFor', '[data-testid="issue-assignment-completion"]', {
     text: '已满足工单要求',
     visible: true,

@@ -221,7 +221,9 @@ class IssueWorkflowStartService:
         started = 0
         for index, node in enumerate(workflow.nodes):
             expected = [workflow.nodes[index - 1].id] if index else []
-            if node.depends_on != expected:
+            if node.depends_on != expected and not any(
+                stage.node_type in {"loop", "branch"} for stage in workflow.nodes
+            ):
                 raise ValueError(
                     "Choose an explicit sequential role order before starting"
                 )
@@ -229,16 +231,19 @@ class IssueWorkflowStartService:
             if stage_ids is not None and node.id not in stage_ids:
                 continue
             execution_config = workflow.execution_config_for(node)
+            needs_config = workflow.node_needs_execution_config(node)
             logger.info(
                 "[issue-workflow-start] node item=%s node=%s status=%s mode=%s "
-                "rule=%s config_complete=%s agent=%s device=%s model=%s "
-                "workspace=%s",
+                "rule=%s config_complete=%s needs_config=%s policy=%s "
+                "agent=%s device=%s model=%s workspace=%s",
                 item.id,
                 node.id,
                 node.status,
                 node.execution_mode,
                 node.automation_rule_id,
                 bool(execution_config and execution_config.is_complete()),
+                needs_config,
+                node.workspace_policy,
                 bool(execution_config and execution_config.agent_id),
                 bool(execution_config and execution_config.execution_device_id),
                 bool(execution_config and execution_config.model),
@@ -305,7 +310,7 @@ class IssueWorkflowStartService:
                     db.commit()
                     return started + 1
                 return started
-            if execution_config is None or not execution_config.is_complete():
+            if needs_config:
                 logger.info(
                     "[issue-workflow-start] node skipped item=%s node=%s "
                     "reason=incomplete_execution_config",

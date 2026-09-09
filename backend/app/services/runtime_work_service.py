@@ -369,10 +369,13 @@ async def list_runtime_work(
     *,
     db: Session,
     user_id: int,
+    device_id: str | None = None,
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
     devices = await device_service.get_all_devices(db, user_id)
+    if device_id is not None:
+        devices = [device for device in devices if device.get("device_id") == device_id]
     devices_by_id = {str(device.get("device_id")): device for device in devices}
     runtime_workspaces = await _list_online_runtime_workspaces(
         user_id=user_id,
@@ -1055,6 +1058,7 @@ async def cancel_runtime_task(
     db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
+    runtime_turn_id: Optional[str] = None,
 ) -> RuntimeTaskCancelResponse:
     """Cancel a running LocalTask through the owning local executor."""
 
@@ -1063,6 +1067,17 @@ async def cancel_runtime_task(
         user_id=user_id,
         address=address,
         method="runtime.tasks.cancel",
+        payload_patch=(
+            {
+                "subtask_id": (
+                    int(runtime_turn_id)
+                    if runtime_turn_id.isdigit()
+                    else runtime_turn_id
+                )
+            }
+            if runtime_turn_id is not None
+            else None
+        ),
     )
     return _runtime_cancel_response(result, normalized_address)
 
