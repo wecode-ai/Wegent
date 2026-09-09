@@ -278,6 +278,8 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('desktop-component-release.mjs release-assets version')
     expect(workflow).toContain('desktop-component-release.mjs release-assets shared')
     expect(workflow).toContain('Reusing immutable component asset')
+    expect(workflow).toContain('collect-harness-runtime-release-assets.mjs')
+    expect(workflow).toContain('Reusing immutable Harness Runtime asset')
     expect(workflow).toContain('components-${channel}-linux-x64.json')
     expect(
       readFileSync(
