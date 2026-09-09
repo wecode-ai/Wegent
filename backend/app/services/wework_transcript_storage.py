@@ -4,9 +4,7 @@
 
 """Private object storage for archived Wework transcripts."""
 
-import io
-from datetime import timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from minio import Minio
 from urllib3 import PoolManager, Timeout
@@ -20,7 +18,7 @@ class WeworkTranscriptStorageError(RuntimeError):
 
 class WeworkTranscriptStorage:
     def __init__(self) -> None:
-        self._client: Optional[Minio] = None
+        self._client: Minio | None = None
 
     @property
     def bucket(self) -> str:
@@ -57,34 +55,6 @@ class WeworkTranscriptStorage:
             self._client = client
         return self._client
 
-    def put(self, object_key: str, content: bytes) -> None:
-        try:
-            self.client.put_object(
-                self.bucket,
-                object_key,
-                io.BytesIO(content),
-                len(content),
-                content_type="application/zstd",
-            )
-        except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to store archived Wework transcript"
-            ) from exc
-
-    def get(self, object_key: str) -> bytes:
-        response = None
-        try:
-            response = self.client.get_object(self.bucket, object_key)
-            return response.read()
-        except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to read archived Wework transcript"
-            ) from exc
-        finally:
-            if response is not None:
-                response.close()
-                response.release_conn()
-
     def download_url(self, object_key: str) -> str:
         try:
             return self.client.presigned_get_object(
@@ -97,6 +67,38 @@ class WeworkTranscriptStorage:
         except Exception as exc:
             raise WeworkTranscriptStorageError(
                 "Failed to create archived transcript download URL"
+            ) from exc
+
+    def upload_url(self, object_key: str) -> tuple[str, datetime]:
+        try:
+            expires = settings.WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS
+            return (
+                self.client.presigned_put_object(
+                    self.bucket,
+                    object_key,
+                    expires=timedelta(seconds=expires),
+                ),
+                datetime.now(UTC) + timedelta(seconds=expires),
+            )
+        except Exception as exc:
+            raise WeworkTranscriptStorageError(
+                "Failed to create transcript segment upload URL"
+            ) from exc
+
+    def size(self, object_key: str) -> int:
+        try:
+            return self.client.stat_object(self.bucket, object_key).size
+        except Exception as exc:
+            raise WeworkTranscriptStorageError(
+                "Failed to verify uploaded transcript segment"
+            ) from exc
+
+    def delete(self, object_key: str) -> None:
+        try:
+            self.client.remove_object(self.bucket, object_key)
+        except Exception as exc:
+            raise WeworkTranscriptStorageError(
+                "Failed to delete obsolete transcript segment"
             ) from exc
 
 

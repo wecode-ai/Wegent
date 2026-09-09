@@ -81,7 +81,6 @@ from app.models.wework_notification import WeworkNotification
 from app.models.wework_transcript import (
     WeworkTranscript,
     WeworkTranscriptArchive,
-    WeworkTranscriptTurn,
 )
 from app.models.wiki import WikiContent, WikiGeneration, WikiProject
 from app.models.work_queue import (
@@ -113,7 +112,6 @@ __all__ = [
     "User",
     "WeworkTranscript",
     "WeworkTranscriptArchive",
-    "WeworkTranscriptTurn",
     "Kind",
     "IMPrivateSession",
     "IMSessionMode",

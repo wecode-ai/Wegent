@@ -961,6 +961,16 @@ export function WorkbenchProvider({
     services: resolvedServices,
   })
 
+  useEffect(
+    () =>
+      resolvedServices.chatStream.subscribe({
+        onRuntimeWorkChanged: () => {
+          void refreshWorkLists()
+        },
+      }),
+    [refreshWorkLists, resolvedServices.chatStream]
+  )
+
   const localRuntimeStateDeviceId = useMemo(
     () => getLocalRuntimeStateDeviceId(state.devices),
     [state.devices]

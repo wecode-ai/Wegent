@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashSet;
+use std::path::Path;
 
 use futures_util::{stream, TryStreamExt};
 use serde_json::{json, Value};
@@ -36,6 +37,7 @@ pub(crate) struct CodexTranscriptRequest<'a> {
     pub limit: usize,
     pub direction: CodexTranscriptDirection,
     pub full_content: bool,
+    pub prefer_rollout_history: bool,
 }
 
 pub(crate) struct CodexTranscriptPage {
@@ -60,6 +62,11 @@ pub(crate) async fn load_codex_transcript(
         .ok_or_else(|| "thread/read returned a response without thread".to_owned())?;
     if !thread.is_object() {
         return Err("thread/read returned a non-object thread".to_owned());
+    }
+    if request.prefer_rollout_history {
+        if let Some(page) = load_rollout_transcript_page(&thread, &request).await? {
+            return Ok(page);
+        }
     }
     let paginated_history = thread_uses_paginated_history(&thread);
     let mut cursor = request.cursor.map(ToOwned::to_owned);
@@ -127,6 +134,151 @@ pub(crate) async fn load_codex_transcript(
         }
         cursor = Some(next_cursor);
     }
+}
+
+const ROLLOUT_CURSOR_PREFIX: &str = "wework-rollout:";
+
+async fn load_rollout_transcript_page(
+    metadata: &Value,
+    request: &CodexTranscriptRequest<'_>,
+) -> Result<Option<CodexTranscriptPage>, String> {
+    if request
+        .cursor
+        .is_some_and(|cursor| !cursor.starts_with(ROLLOUT_CURSOR_PREFIX))
+    {
+        return Ok(None);
+    }
+    let Some(path) = string_field(metadata, "path") else {
+        return Ok(None);
+    };
+    let text = match tokio::fs::read_to_string(Path::new(&path)).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to read canonical Codex rollout {}: {error}",
+                Path::new(&path).display()
+            ));
+        }
+    };
+    let mut turns = rollout_turns(&text)?;
+    if request.full_content {
+        if turns.len() > CODEX_FULL_TRANSCRIPT_MAX_TURNS {
+            turns.drain(..turns.len() - CODEX_FULL_TRANSCRIPT_MAX_TURNS);
+        }
+        let mut thread = metadata.clone();
+        thread["turns"] = Value::Array(turns);
+        return Ok(Some(CodexTranscriptPage {
+            thread,
+            before_cursor: None,
+            after_cursor: None,
+        }));
+    }
+
+    let turn_count = turns.len();
+    let cursor = request
+        .cursor
+        .map(parse_rollout_cursor)
+        .transpose()?
+        .unwrap_or(match request.direction {
+            CodexTranscriptDirection::Ascending => 0,
+            CodexTranscriptDirection::Descending => turn_count,
+        })
+        .min(turn_count);
+    let (start, end) = match request.direction {
+        CodexTranscriptDirection::Ascending => {
+            (cursor, cursor.saturating_add(request.limit).min(turn_count))
+        }
+        CodexTranscriptDirection::Descending => (cursor.saturating_sub(request.limit), cursor),
+    };
+    let page_turns = turns.drain(start..end).collect();
+    let before_cursor = (start > 0).then(|| rollout_cursor(start));
+    let after_cursor = (end < turn_count).then(|| rollout_cursor(end));
+    let mut thread = metadata.clone();
+    thread["turns"] = Value::Array(page_turns);
+    Ok(Some(CodexTranscriptPage {
+        thread,
+        before_cursor,
+        after_cursor,
+    }))
+}
+
+fn rollout_turns(text: &str) -> Result<Vec<Value>, String> {
+    let mut turns = Vec::<Value>::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let value: Value = serde_json::from_str(line)
+            .map_err(|error| format!("canonical Codex rollout is invalid JSONL: {error}"))?;
+        if string_field(&value, "type").as_deref() != Some("event_msg") {
+            continue;
+        }
+        let Some(payload) = value.get("payload") else {
+            continue;
+        };
+        let event_type = string_field(payload, "type").unwrap_or_default();
+        let Some(turn_id) =
+            string_field(payload, "turn_id").or_else(|| string_field(payload, "turnId"))
+        else {
+            continue;
+        };
+        let turn_index = turns
+            .iter()
+            .position(|turn| string_field(turn, "id").as_deref() == Some(turn_id.as_str()))
+            .unwrap_or_else(|| {
+                turns.push(json!({
+                    "id": turn_id,
+                    "items": [],
+                    "itemsView": "full",
+                    "status": "inProgress",
+                }));
+                turns.len() - 1
+            });
+        let turn = &mut turns[turn_index];
+        match event_type.as_str() {
+            "task_started" | "turn_started" => {
+                if let Some(started_at) = payload.get("started_at").and_then(Value::as_i64) {
+                    turn["startedAt"] = json!(started_at.saturating_mul(1_000));
+                }
+            }
+            "item_completed" => {
+                if let Some(item) = payload.get("item").cloned() {
+                    turn["items"]
+                        .as_array_mut()
+                        .expect("rollout turn items must be an array")
+                        .push(item);
+                }
+            }
+            "task_complete" | "turn_complete" => {
+                turn["status"] = Value::String("completed".to_owned());
+                if let Some(completed_at) = payload.get("completed_at").and_then(Value::as_i64) {
+                    turn["completedAt"] = json!(completed_at.saturating_mul(1_000));
+                }
+                if let Some(duration_ms) = payload.get("duration_ms").and_then(Value::as_i64) {
+                    turn["durationMs"] = json!(duration_ms);
+                }
+            }
+            "turn_aborted" => {
+                turn["status"] = Value::String("interrupted".to_owned());
+            }
+            _ => {}
+        }
+    }
+    turns.retain(|turn| {
+        turn.get("items")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    });
+    Ok(turns)
+}
+
+fn parse_rollout_cursor(cursor: &str) -> Result<usize, String> {
+    cursor
+        .strip_prefix(ROLLOUT_CURSOR_PREFIX)
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| "invalid canonical rollout cursor".to_owned())
+}
+
+fn rollout_cursor(index: usize) -> String {
+    format!("{ROLLOUT_CURSOR_PREFIX}{index}")
 }
 
 async fn load_turn_page(
@@ -242,7 +394,7 @@ async fn load_turn_items(
 mod tests {
     use serde_json::json;
 
-    use super::{thread_uses_paginated_history, turn_items_view};
+    use super::{rollout_turns, thread_uses_paginated_history, turn_items_view};
 
     #[test]
     fn detects_paginated_thread_history() {
@@ -263,5 +415,58 @@ mod tests {
     fn requests_items_only_for_paginated_thread_history() {
         assert_eq!(turn_items_view(true), "notLoaded");
         assert_eq!(turn_items_view(false), "full");
+    }
+
+    #[test]
+    fn rebuilds_paginated_turns_from_canonical_rollout_events() {
+        let text = [
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_started",
+                    "turn_id": "turn-1",
+                    "started_at": 10,
+                }
+            }),
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "turn_id": "turn-1",
+                    "item": {"id": "user-1", "type": "UserMessage", "content": []},
+                }
+            }),
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "turn_id": "turn-1",
+                    "item": {"id": "agent-1", "type": "AgentMessage", "content": []},
+                }
+            }),
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "turn_id": "turn-1",
+                    "completed_at": 12,
+                    "duration_ms": 2_000,
+                }
+            }),
+        ]
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        let turns = rollout_turns(&text).expect("rollout should rebuild");
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["id"], "turn-1");
+        assert_eq!(turns[0]["status"], "completed");
+        assert_eq!(turns[0]["startedAt"], 10_000);
+        assert_eq!(turns[0]["completedAt"], 12_000);
+        assert_eq!(turns[0]["durationMs"], 2_000);
+        assert_eq!(turns[0]["items"].as_array().map(Vec::len), Some(2));
     }
 }

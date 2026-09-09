@@ -7,7 +7,6 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
     Column,
     DateTime,
@@ -191,77 +190,8 @@ class WeworkTranscript(Base):
     )
 
 
-class WeworkTranscriptTurn(Base):
-    """One finalized hot transcript increment."""
-
-    __tablename__ = "wework_transcript_turns"
-
-    id = Column(
-        big_integer_id_type(),
-        primary_key=True,
-        autoincrement=True,
-        comment="Wework transcript turn primary key",
-    )
-    transcript_db_id = Column(
-        big_integer_id_type(),
-        nullable=False,
-        default=0,
-        server_default="0",
-        comment="Owning transcript ID; logical reference without database foreign key",
-    )
-    sequence = Column(
-        BigInteger,
-        nullable=False,
-        default=0,
-        server_default="0",
-        comment="Monotonic turn sequence within the transcript",
-    )
-    turn_id = Column(
-        String(100),
-        nullable=False,
-        default="",
-        server_default="",
-        comment="Device-independent finalized turn identity",
-    )
-    payload = Column(
-        JSON,
-        nullable=False,
-        comment="Finalized transcript turn payload",
-    )
-    created_at = Column(
-        _DATETIME,
-        nullable=False,
-        default=utcnow,
-        server_default=_AuditTimestampDefault(),
-        comment="Creation time",
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "transcript_db_id",
-            "sequence",
-            name="uniq_wework_transcript_turn_sequence",
-        ),
-        UniqueConstraint(
-            "transcript_db_id",
-            "turn_id",
-            name="uniq_wework_transcript_turn_identity",
-        ),
-        Index(
-            "idx_wework_transcript_turn_range",
-            "transcript_db_id",
-            "sequence",
-        ),
-        {
-            "comment": "Hot finalized turns awaiting transcript archival",
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-        },
-    )
-
-
 class WeworkTranscriptArchive(Base):
-    """One immutable cold transcript segment in object storage."""
+    """One immutable native transcript segment in object storage."""
 
     __tablename__ = "wework_transcript_archives"
 
@@ -283,14 +213,14 @@ class WeworkTranscriptArchive(Base):
         nullable=False,
         default=0,
         server_default="0",
-        comment="First turn sequence contained in the archive",
+        comment="First included sequence; 0 identifies a full snapshot",
     )
     to_sequence = Column(
         BigInteger,
         nullable=False,
         default=0,
         server_default="0",
-        comment="Last turn sequence contained in the archive",
+        comment="Sequence materialized by this immutable segment",
     )
     storage_key = Column(
         String(500),
@@ -314,11 +244,11 @@ class WeworkTranscriptArchive(Base):
         comment="Compressed archive size in bytes",
     )
     format = Column(
-        String(32),
+        String(64),
         nullable=False,
-        default="jsonl.zst",
-        server_default="jsonl.zst",
-        comment="Archive serialization and compression format",
+        default="codex-rollout-delta.v1.tgz.aes256gcm",
+        server_default="codex-rollout-delta.v1.tgz.aes256gcm",
+        comment="Native segment kind, serialization, and compression format",
     )
     created_at = Column(
         _DATETIME,
@@ -331,9 +261,8 @@ class WeworkTranscriptArchive(Base):
     __table_args__ = (
         UniqueConstraint(
             "transcript_db_id",
-            "from_sequence",
             "to_sequence",
-            name="uniq_wework_transcript_archive_range",
+            name="uniq_wework_transcript_archive_sequence",
         ),
         Index(
             "idx_wework_transcript_archive_range",
@@ -341,7 +270,7 @@ class WeworkTranscriptArchive(Base):
             "from_sequence",
         ),
         {
-            "comment": "Immutable archived Wework transcript segments",
+            "comment": "Immutable native Wework transcript segments",
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
         },

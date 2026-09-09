@@ -731,6 +731,10 @@ wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
+  "backend/app/services/wework_transcript_service.py" \
+  "executor/src/runtime_work/codex_transcript_page.rs" \
+  "executor/src/runtime_work/native_transcript.rs" \
+  "executor/src/runtime_work/handler/transcript_sync.rs" \
   "wework/dsh/transcript-sync/index.js" \
   "wework/e2e/desktop/scenarios/transcript-sync.scenario.mjs"
 

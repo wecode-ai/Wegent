@@ -4,101 +4,128 @@ sidebar_position: 36
 
 # Wework 会话与配置云同步
 
-Wework 使用内置 Core DSH 插件 `@wegent/dsh-transcript-sync` 同步已完成的会话
-turn 和可跨设备复用的偏好。同步层只负责可靠传输和存储，不分析会话语义；后续分析能力
-直接消费 Backend 中的同一份数据。
+Wework 的 Core DSH 插件 `@wegent/dsh-transcript-sync` 同步原生 Codex
+rollout、任务工作区和可移植偏好。同步层不再把会话压缩成用户/助手文本，也不再通过
+`thread/inject_items` 重建历史。
 
-## 数据边界
+## 存储边界
 
-同步对象分为三类：
+Backend 只使用两张表：
 
-- 已完成的用户消息、模型回复、思考摘要、用量和完成状态，按 turn 增量同步。
-- 活跃会话的标题、当前序号、归档位置和单写租约等元数据。
-- 主题、语言、上下文阈值、监督设置和快捷短语等可移植偏好。
+| 表                           | 用途                                                          |
+| ---------------------------- | ------------------------------------------------------------- |
+| `wework_transcripts`         | transcript 身份、分支关系、全局 sequence、状态和单写租约      |
+| `wework_transcript_archives` | 不可变原生 segment 的 sequence、对象 key、SHA-256、大小和格式 |
 
-云端连接、访问令牌、本机 Harness、附件本地路径、工作区绝对路径和系统凭据不会作为
-可移植偏好上传。同步 transcript 也不等于复制 Git 工作区或模型提供方的原生 session
-文件；需要在另一台设备继续执行时，执行层仍需准备可用工作区。下载的 finalized turn
-会由 Executor 注入该任务绑定的原生 Codex thread，后续模型请求直接使用这条原生会话
-历史，不再维护一份旁路 transcript 正文。
+正文先在 Executor 中使用 AES-256-GCM 加密，再直接上传到私有
+`wework-transcripts` 对象存储。MySQL 不保存消息、
+reasoning、工具调用、usage、rollout JSONL 或工作区文件，因此 transcript 大小不受
+MySQL JSON/VARCHAR 字段容量限制。
 
-## 热表与冷文件
+Backend 基于服务端 `SECRET_KEY`、用户 ID 和 transcript ID 派生稳定的每会话密钥，通过已认证的
+`GET /{id}/encryption-key` 接口短暂下发。密钥不写入同步状态、outbox 或对象存储。
+每个 segment 的 nonce 由密钥、AAD 和明文摘要确定性派生；AAD 绑定 transcript ID、
+sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-256 对账；不同内容不会
+复用 nonce。
 
-Backend 使用三张表：
+每个云端 sequence 恰好对应一个对象：
 
-| 表                           | 用途                                                           |
-| ---------------------------- | -------------------------------------------------------------- |
-| `wework_transcripts`         | 每个用户、每个稳定 transcript 的元数据、当前 sequence 和写租约 |
-| `wework_transcript_turns`    | 活跃会话尚未归档的 finalized turn                              |
-| `wework_transcript_archives` | 不可变归档段的序号范围、对象 key、SHA-256 和大小               |
+- 第 1 个 sequence、每第 10 个 sequence 和冲突分支的第 1 个 sequence 是完整加密快照
+  `codex-rollout-snapshot.v1.tgz.aes256gcm`。
+- 其他 sequence 是加密增量 `codex-rollout-delta.v1.tgz.aes256gcm`。
+- 每个 segment 同时携带工作区覆盖层，避免只恢复会话却丢失最近文件。
+- 工作区打包会排除 `.git`、`node_modules`、构建产物和常见缓存目录，避免重复上传
+  仓库对象库或无关的大体积派生文件。
+- outbox 只保存任务、session、turn、sequence 和分支路由，不复制正文。
+- 新完整快照提交后，服务端保留“上一个完整快照 + 其后的全部 segment”，删除更旧的
+  OSS 对象和元数据。快照间隔为 10 时，每个持续活跃的 transcript 通常保留 11 个、
+  峰值不超过约 20 个对象，不会随对话轮数无限增长。
 
-客户端不会按 token 或流式 chunk 写数据库。一个 turn 完成后才写入一条增量记录，并通过
-`baseSequence`、连续 `sequence` 和稳定 `turnId` 保证幂等。
+两台电脑可以同时保持 Wework 打开。客户端每 5 秒拉取一次云端进度，写入时才申请短租约，
+上传完成立即释放；没有新 turn 的公司电脑不会长期占锁。正在运行的本地任务不会被云端恢复
+覆盖。两台电脑若同时完成同一 sequence，先提交者进入主线，后提交者按确定性 ID 建立分支，
+两边内容都保留。
 
-本地 turn 序号只描述单台设备上的执行顺序，云端 `sequence` 则是 transcript 的全局
-顺序。turn 完成时，客户端根据本地已知的云端 head 持久化 `baseSequence`。如果上传时
-head 已变化，客户端先拉取冲突位置：相同 `turnId` 表示前一次提交已成功，只需完成幂等
-确认；不同 turn 表示两台设备基于同一旧上下文并行执行，不能安全线性合并，此时自动创建
-新 transcript 分支。分支只记录 `parentTranscriptId`、`forkedAtSequence` 和分叉后的
-turn，不复制父会话正文。
+旧 beta 版本写入的 `wework_transcript_turns` 文本数据不参与恢复。迁移会删除该表。
 
-归档时，Backend 先把热 turn 编码为 JSON Lines，再压缩为 `jsonl.zst` 并写入私有对象
-存储。只有对象上传成功后才删除对应热表记录。归档文件的对象 key 使用 transcript ID
-摘要，不暴露原始标识；下载恢复时会重新校验 SHA-256。归档后的新 turn 继续写热表，
-形成“冷历史 + 热尾”。
+## 状态转换
 
-## 单写与离线恢复
+```mermaid
+stateDiagram-v2
+    [*] --> LocalReady
+    LocalReady --> LeaseHeld: 在线时获取租约
+    LocalReady --> OfflinePending: Backend 不可达
+    OfflinePending --> LeaseHeld: 网络恢复
+    LeaseHeld --> SegmentBuilt: 生成并加密快照或 rollout 增量
+    SegmentBuilt --> ObjectUploaded: PUT 预签名对象地址
+    ObjectUploaded --> MetadataCommitted: 提交 SHA-256、大小和 sequence
+    MetadataCommitted --> LocalReady: 记录 rollout offset、清理 outbox、释放租约
 
-写入前，客户端必须获取带 fencing token 的短租约。另一个客户端持有有效租约时，
-Backend 拒绝写入；过期或被替换的 token 也不能提交 turn。插件在一次 finalized turn
-提交完成后立即释放租约，不需要为每个 turn 重新上传整个 transcript 文件。
+    LeaseHeld --> Reconcile: 云端 head != baseSequence
+    Reconcile --> LocalReady: 同 sequence 对象哈希一致
+    Reconcile --> BranchSnapshot: 同 sequence 对象不存在或哈希不同
+    BranchSnapshot --> LeaseHeld: 创建确定性 fork transcript
 
-插件先把待上传 turn 的定位信息原子写入 `DSH_HOME` 下的 SQLite outbox，再尝试访问
-Backend。outbox 只保存 `sessionId`、本地/云端序号、稳定 `turnId`、目标 transcript 和
-Executor turn 标识和分支路由，不重复保存消息正文；上传时通过
-`runtime.tasks.transcript` 直接从 Executor 的权威会话存储分页读取对应 turn。同步插件
-不会再持久化一份 DSH Session 正文。下载时，已有原生 thread 的任务先恢复 thread 再
-注入增量；冷设备上的任务如果尚未创建 thread，Executor 会先创建并绑定原生 Codex
-thread，再按云端 sequence 注入。只有成功注入后才推进本地 `importedThrough` 游标，
-因此重启和响应丢失不会让模型历史重复或越序。启动时尚未连接云端也不会丢数据；连接
-建立后，轮询会自动补传 outbox，并拉取其他设备写入的热 turn。连续失败采用最长 60 秒
-的指数退避，单次 Backend 请求最长 30 秒，不阻塞本地任务执行。首次恢复已归档会话时，
-插件先读取归档段，再追加归档之后的热尾。
+    [*] --> RestoreRequired: 本机没有该 transcript 或本机落后
+    RestoreRequired --> Downloading: 选择最近快照和连续增量
+    Downloading --> Staging: 下载并校验 SHA-256
+    Staging --> Bound: 恢复工作区、rollout、thread 元数据和动态工具
+    Staging --> RestoreRequired: 任一校验失败，删除 staging
+    Bound --> LocalReady
+```
 
-如果两台设备从同一个云端 head 并行产生不同 turn，冲突 turn 自动进入独立 transcript
-分支。主线设备不会把该分支注入自己的原生 thread；设备绑定到分支后，模型请求只携带
-父级分叉点之前的历史和该分支自己的后续 turn。
+冲突时不合并两个 rollout 文件。云端主线保持不变，本机冲突链切换到由
+`clientId + transcriptId + turnId` 确定的分支，并以完整快照作为分支 sequence 1。
 
-每个 Wework 安装都是平等的同步客户端。云端 Executor 只是任务的执行位置，不作为一个
-额外同步设备参与租约竞争。
+## 双设备验证
+
+GitHub CI 的 `transcript-sync` desktop checkpoint 启动真实 Electron、Executor 和
+Codex，并在同一个测试中顺序模拟设备 A、设备 B。两个设备使用不同的 `HOME`、
+`WEGENT_EXECUTOR_HOME`、`WEGENT_CODEX_HOME`、`CODEX_SQLITE_HOME`、
+Electron user data、应用配置目录和 device identity；切换到设备 B 时不会删除或复用
+设备 A 的状态。
+
+该 checkpoint 必须验证设备 A 上传加密快照和增量，设备 B 从空状态恢复工作区与完整
+历史，并继续对话、上传下一个 sequence。共享同一本地状态的重启测试不能替代该验证。
+两台物理电脑的测试保留为发布验收，用于覆盖真实网络、休眠和操作系统差异，但不作为
+GitHub CI 的执行前提。
+
+## 恢复顺序
+
+1. 从 `wework_transcript_archives` 选择不晚于当前 head 的最近完整快照。
+2. 下载快照及后续连续增量并逐个校验密文 SHA-256、格式和 sequence。
+3. 使用当前用户密钥验证 GCM tag 并解密，再校验 identity，在 staging 目录恢复工作区，并拼接、解析 rollout JSONL。
+4. 重写目标设备的工作区路径；thread ID 冲突时生成新 ID。
+5. 在事务中恢复 Codex `threads` 和 `thread_dynamic_tools` 状态。
+6. 全部成功后绑定本地任务；失败时删除 staging、rollout 和工作区，不留下半恢复状态。
 
 ## API
 
-认证 API 前缀为 `/api/wework-transcripts`：
+认证前缀为 `/api/wework-transcripts`：
 
 | 方法与路径                                | 用途                                   |
 | ----------------------------------------- | -------------------------------------- |
-| `GET /`                                   | 列出当前用户的 transcript 和归档元数据 |
+| `GET /`                                   | 列出 transcript 和原生 segment 元数据  |
+| `GET /{id}`                               | 读取一个 transcript                    |
+| `GET /{id}/encryption-key`                | 获取当前用户的 transcript 加解密密钥   |
 | `POST /{id}/lease`                        | 创建 transcript 或获取写租约           |
 | `PUT /{id}/lease/{token}`                 | 续租                                   |
 | `POST /{id}/lease/release`                | 释放租约                               |
-| `POST /{id}/turns`                        | 追加连续 finalized turn                |
-| `GET /{id}/turns`                         | 按 sequence 拉取热尾                   |
-| `POST /{id}/archive`                      | 把当前热 turn 转为不可变冷归档         |
-| `GET /{id}/archives/{archiveId}/turns`    | 校验并分页读取归档 turn                |
-| `GET /{id}/archives/{archiveId}/download` | 获取短期签名下载地址                   |
+| `POST /{id}/segments/prepare`             | 校验 sequence 并生成预签名 PUT 地址    |
+| `POST /{id}/segments`                     | 校验已上传对象大小并提交不可变对象索引 |
+| `POST /{id}/archive`                      | 标记 transcript 为 archived            |
+| `GET /{id}/archives/{archiveId}/download` | 生成短期签名下载地址                   |
 
-可移植偏好复用 `/api/v1/dsh-plugin-storage`，存储单元为
-`@wegent/dsh-transcript-sync` 的 `portable_preferences`。
+对象 key 使用 transcript ID 的 SHA-256 摘要，不暴露原始 transcript 标识。
 
 ## 部署配置
 
-归档复用 Backend 的 `ATTACHMENT_S3_*` MinIO/S3 连接配置，并增加：
+对象存储复用 `ATTACHMENT_S3_*` 连接配置：
 
 | 环境变量                                        | 默认值               | 说明                        |
 | ----------------------------------------------- | -------------------- | --------------------------- |
-| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | 私有 transcript 归档 bucket |
-| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | 签名下载地址有效期          |
+| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | 私有原生会话 segment bucket |
+| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | 上传/下载签名地址有效期     |
 
-部署前必须执行 Alembic migration。对象存储不可用时，归档 API 返回失败并保留热表数据；
-普通活跃 turn 同步不依赖归档成功。
+部署前执行 Alembic migration。对象存储不可用时，segment 不会提交到 MySQL，outbox
+继续保留定位信息，本地任务仍可离线执行。

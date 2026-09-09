@@ -20,11 +20,11 @@ export class TranscriptSource {
     return () => this.listeners.delete(listener)
   }
 
-  read(turn) {
+  read(turn, options = {}) {
     if (typeof this.readTurn !== 'function') {
       throw new Error('Transcript source does not support persisted turn reads')
     }
-    return this.readTurn(structuredClone(turn))
+    return this.readTurn(structuredClone(turn), structuredClone(options))
   }
 
   notify(listener, turn) {

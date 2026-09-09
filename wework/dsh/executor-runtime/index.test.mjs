@@ -1,109 +1,46 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createTranscriptTarget, readExecutorTurn } from './index.js'
+import { createTranscriptTarget, exportExecutorTranscript } from './index.js'
 
-const locator = {
-  transcriptId: 'task-1',
-  taskId: 'task-1',
-  title: 'Task',
-  sequence: 1,
-  turnId: 'turn-1',
-  sessionId: 'session-1',
-  executorTurnId: 'executor-turn-1',
-}
+const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
 
-test('reads a finalized turn directly from the Executor transcript', async () => {
-  const requests = []
+test('exports a native segment without materializing transcript text', async () => {
   const client = {
     async request(method, params) {
-      assert.equal(method, 'runtime.tasks.transcript')
-      requests.push(params)
-      if (!params.beforeCursor) {
-        return {
-          turns: [{ id: 'newer-turn', status: 'done', items: [] }],
-          hasMoreBefore: true,
-          beforeCursor: 'older-page',
-        }
-      }
+      assert.equal(method, 'runtime.tasks.transcript.export')
+      assert.deepEqual(params, {
+        transcriptId: 'transcript-1',
+        taskId: 'task-1',
+        baseSequence: 4,
+        sequence: 5,
+        snapshot: false,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      })
       return {
-        turns: [
-          {
-            id: 'executor-turn-1',
-            status: 'done',
-            items: [
-              {
-                id: 'user-item',
-                type: 'user_message',
-                message: {
-                  id: 'user-1',
-                  content: 'Continue on another device',
-                },
-              },
-              {
-                id: 'reasoning-1',
-                type: 'reasoning',
-                summary: ['Inspect', ' evidence'],
-              },
-              {
-                id: 'assistant-1',
-                type: 'assistant_text',
-                content: 'Done',
-              },
-            ],
-          },
-        ],
+        path: '/tmp/segment.tgz.aes256gcm',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 100,
+        format: 'codex-rollout-delta.v1.tgz.aes256gcm',
+        rolloutEnd: 2048,
       }
     },
   }
-
-  const turn = await readExecutorTurn(client, locator)
-
-  assert.deepEqual(requests, [
-    { taskId: 'task-1', limit: 100 },
-    { taskId: 'task-1', limit: 100, beforeCursor: 'older-page' },
-  ])
-  assert.deepEqual(turn.payload, {
-    userMessages: [{ id: 'user-1', text: 'Continue on another device' }],
-    assistantMessage: 'Done',
-    reasoning: 'Inspect evidence',
-    completion: { kind: 'completed' },
-  })
+  const result = await exportExecutorTranscript(
+    client,
+    { transcriptId: 'transcript-1', taskId: 'task-1' },
+    {
+      baseSequence: 4,
+      sequence: 5,
+      snapshot: false,
+      encryptionKey: TEST_ENCRYPTION_KEY,
+    }
+  )
+  assert.equal(result.path, '/tmp/segment.tgz.aes256gcm')
+  assert.equal(Object.hasOwn(result, 'payload'), false)
 })
 
-test('resolves a legacy sequence locator only after collecting all transcript pages', async () => {
-  const client = {
-    async request(_method, params) {
-      if (!params.beforeCursor) {
-        return {
-          turns: [{ id: 'executor-turn-3', status: 'done', items: [] }],
-          hasMoreBefore: true,
-          beforeCursor: 'older-page',
-        }
-      }
-      return {
-        turns: [
-          { id: 'executor-turn-1', status: 'done', items: [] },
-          {
-            id: 'executor-turn-2',
-            status: 'done',
-            items: [{ type: 'assistant_text', content: 'Second turn' }],
-          },
-        ],
-      }
-    },
-  }
-
-  const turn = await readExecutorTurn(client, {
-    ...locator,
-    sequence: 2,
-    executorTurnId: undefined,
-  })
-
-  assert.equal(turn.payload.assistantMessage, 'Second turn')
-})
-
-test('routes downloaded and acknowledged turns into the Executor native transcript APIs', async () => {
+test('routes restore and acknowledgement through native transcript RPCs', async () => {
   const requests = []
   const client = {
     async request(method, params) {
@@ -112,33 +49,45 @@ test('routes downloaded and acknowledged turns into the Executor native transcri
     },
   }
   const target = createTranscriptTarget(client)
-  const transcript = { transcriptId: 'shared-transcript', taskId: 'local-task' }
-  const turns = [{ turnId: 'turn-2', sequence: 2, payload: { assistantMessage: 'Done' } }]
-
+  const transcript = { transcriptId: 'shared', taskId: 'local-task' }
+  const segments = [
+    {
+      path: '/tmp/1.tgz.aes256gcm',
+      sha256: 'b'.repeat(64),
+      sequence: 1,
+      format: 'codex-rollout-snapshot.v1.tgz.aes256gcm',
+    },
+  ]
   await target.status(transcript)
-  await target.import(transcript, turns)
+  await target.restore(transcript, segments, { encryptionKey: TEST_ENCRYPTION_KEY })
   await target.acknowledge({
     ...transcript,
-    cloudSequence: 3,
-    parentTranscriptId: 'mainline',
+    cloudSequence: 2,
+    rolloutEnd: 4096,
+    parentTranscriptId: 'main',
   })
-
   assert.deepEqual(requests, [
     {
       method: 'runtime.tasks.transcript.sync_status',
-      params: { transcriptId: 'shared-transcript', taskId: 'local-task' },
+      params: { transcriptId: 'shared', taskId: 'local-task' },
     },
     {
-      method: 'runtime.tasks.transcript.import',
-      params: { transcriptId: 'shared-transcript', taskId: 'local-task', turns },
+      method: 'runtime.tasks.transcript.restore',
+      params: {
+        transcriptId: 'shared',
+        taskId: 'local-task',
+        segments,
+        encryptionKey: TEST_ENCRYPTION_KEY,
+      },
     },
     {
       method: 'runtime.tasks.transcript.acknowledge',
       params: {
-        transcriptId: 'shared-transcript',
+        transcriptId: 'shared',
         taskId: 'local-task',
-        sequence: 3,
-        parentTranscriptId: 'mainline',
+        sequence: 2,
+        rolloutEnd: 4096,
+        parentTranscriptId: 'main',
       },
     },
   ])

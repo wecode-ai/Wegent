@@ -2,254 +2,187 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import hashlib
+from datetime import UTC, datetime, timedelta
 
-import zstandard
-
-from app.models.wework_transcript import (
-    WeworkTranscript,
-    WeworkTranscriptArchive,
-    WeworkTranscriptTurn,
-)
+from app.models.wework_transcript import WeworkTranscript, WeworkTranscriptArchive
 
 
 def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _lease(test_client, test_token, transcript_id="transcript-1", client_id="client-a"):
+def _lease(test_client, token, transcript_id="transcript-1", client_id="client-a"):
     response = test_client.post(
         f"/api/wework-transcripts/{transcript_id}/lease",
-        headers=_headers(test_token),
+        headers=_headers(token),
         json={"clientId": client_id, "ttlSeconds": 60, "title": "Synced chat"},
     )
     assert response.status_code == 200
     return response.json()
 
 
-def test_appends_and_pulls_finalized_transcript_turns(
-    test_client,
-    test_token,
+def _segment(lease, **overrides):
+    return {
+        "clientId": "client-a",
+        "baseSequence": 0,
+        "fencingToken": lease["fencingToken"],
+        "title": "Synced chat",
+        "sequence": 1,
+        "sha256": "a" * 64,
+        "sizeBytes": 4096,
+        "format": "codex-rollout-snapshot.v1.tgz.aes256gcm",
+        **overrides,
+    }
+
+
+def test_commits_only_native_object_metadata(
+    test_client, test_token, test_db, monkeypatch
 ):
+    from app.services import wework_transcript_service
+
     lease = _lease(test_client, test_token)
-
-    response = test_client.post(
-        "/api/wework-transcripts/transcript-1/turns",
+    encryption = test_client.get(
+        "/api/wework-transcripts/transcript-1/encryption-key",
         headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "baseSequence": 0,
-            "fencingToken": lease["fencingToken"],
-            "turns": [
-                {
-                    "turnId": "turn-1",
-                    "sequence": 1,
-                    "payload": {
-                        "userMessage": "hello",
-                        "assistantMessage": "hi",
-                    },
-                },
-                {
-                    "turnId": "turn-2",
-                    "sequence": 2,
-                    "payload": {
-                        "userMessage": "continue",
-                        "assistantMessage": "done",
-                    },
-                },
-            ],
-        },
     )
+    assert encryption.status_code == 200
+    assert encryption.json()["version"] == 1
+    assert encryption.json()["algorithm"] == "aes-256-gcm"
+    assert len(encryption.json()["key"]) == 44
+    storage = wework_transcript_service.wework_transcript_storage
+    monkeypatch.setattr(
+        storage,
+        "upload_url",
+        lambda key: (
+            f"https://storage.example/{key}",
+            datetime.now(UTC) + timedelta(minutes=5),
+        ),
+    )
+    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    request = _segment(lease)
+    prepare = test_client.post(
+        "/api/wework-transcripts/transcript-1/segments/prepare",
+        headers=_headers(test_token),
+        json=request,
+    )
+    assert prepare.status_code == 200
+    assert prepare.json()["uploadUrl"].startswith("https://storage.example/")
 
-    assert response.status_code == 200
-    assert response.json() == {"currentSequence": 2, "appended": 2}
-
+    commit = test_client.post(
+        "/api/wework-transcripts/transcript-1/segments",
+        headers=_headers(test_token),
+        json=request,
+    )
+    assert commit.status_code == 200
+    assert commit.json() == {"currentSequence": 1, "appended": 1}
     retry = test_client.post(
-        "/api/wework-transcripts/transcript-1/turns",
+        "/api/wework-transcripts/transcript-1/segments",
         headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "baseSequence": 0,
-            "fencingToken": lease["fencingToken"],
-            "turns": [
-                {
-                    "turnId": "turn-1",
-                    "sequence": 1,
-                    "payload": {
-                        "userMessage": "hello",
-                        "assistantMessage": "hi",
-                    },
-                },
-                {
-                    "turnId": "turn-2",
-                    "sequence": 2,
-                    "payload": {
-                        "userMessage": "continue",
-                        "assistantMessage": "done",
-                    },
-                },
-            ],
-        },
+        json=request,
     )
-    assert retry.status_code == 200
-    assert retry.json() == {"currentSequence": 2, "appended": 0}
+    assert retry.json() == {"currentSequence": 1, "appended": 0}
 
-    response = test_client.get(
-        "/api/wework-transcripts/transcript-1/turns?after=1",
+    transcript = test_db.query(WeworkTranscript).one()
+    archive = test_db.query(WeworkTranscriptArchive).one()
+    assert transcript.current_sequence == 1
+    assert transcript.archived_through_sequence == 1
+    assert archive.from_sequence == 0
+    assert archive.size_bytes == 4096
+    assert archive.storage_key.endswith(f"1-snapshot-{'a' * 64}.tgz.aes256gcm")
+
+
+def test_encryption_keys_are_scoped_to_each_transcript(test_client, test_token):
+    _lease(test_client, test_token, transcript_id="transcript-1")
+    _lease(test_client, test_token, transcript_id="transcript-2")
+
+    first = test_client.get(
+        "/api/wework-transcripts/transcript-1/encryption-key",
+        headers=_headers(test_token),
+    )
+    second = test_client.get(
+        "/api/wework-transcripts/transcript-2/encryption-key",
         headers=_headers(test_token),
     )
 
-    assert response.status_code == 200
-    assert response.json()["currentSequence"] == 2
-    assert [turn["turnId"] for turn in response.json()["turns"]] == ["turn-2"]
-
-    transcript = test_client.get(
-        "/api/wework-transcripts/transcript-1",
-        headers=_headers(test_token),
-    )
-    assert transcript.status_code == 200
-    assert transcript.json()["parentTranscriptId"] is None
-    assert transcript.json()["forkedAtSequence"] is None
-    assert transcript.json()["archivedAt"] is None
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["key"] != second.json()["key"]
 
 
-def test_rejects_stale_sequence_and_stale_writer(
-    test_client,
-    test_token,
+def test_prunes_segments_older_than_previous_snapshot(
+    test_client, test_token, test_db, monkeypatch
 ):
+    from app.services import wework_transcript_service
+
     lease = _lease(test_client, test_token)
+    storage = wework_transcript_service.wework_transcript_storage
+    deleted_keys: list[str] = []
+    monkeypatch.setattr(storage, "size", lambda _key: 4096)
+    monkeypatch.setattr(storage, "delete", deleted_keys.append)
+
+    for sequence in range(1, 21):
+        is_snapshot = sequence in {1, 10, 20}
+        request = _segment(
+            lease,
+            baseSequence=sequence - 1,
+            sequence=sequence,
+            sha256=f"{sequence:064x}",
+            format=(
+                "codex-rollout-snapshot.v1.tgz.aes256gcm"
+                if is_snapshot
+                else "codex-rollout-delta.v1.tgz.aes256gcm"
+            ),
+        )
+        response = test_client.post(
+            "/api/wework-transcripts/transcript-1/segments",
+            headers=_headers(test_token),
+            json=request,
+        )
+        assert response.status_code == 200
+
+    retained_sequences = [
+        row.to_sequence
+        for row in test_db.query(WeworkTranscriptArchive)
+        .order_by(WeworkTranscriptArchive.to_sequence)
+        .all()
+    ]
+    assert retained_sequences == list(range(10, 21))
+    assert len(deleted_keys) == 9
+    assert all(f"/{sequence}-" in key for sequence, key in enumerate(deleted_keys, 1))
+
+
+def test_rejects_stale_sequence_before_upload(test_client, test_token, monkeypatch):
+    from app.services import wework_transcript_service
+
+    lease = _lease(test_client, test_token)
+    monkeypatch.setattr(
+        wework_transcript_service.wework_transcript_storage,
+        "size",
+        lambda _key: 4096,
+    )
     first = test_client.post(
-        "/api/wework-transcripts/transcript-1/turns",
+        "/api/wework-transcripts/transcript-1/segments",
         headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "baseSequence": 0,
-            "fencingToken": lease["fencingToken"],
-            "turns": [{"turnId": "turn-1", "sequence": 1, "payload": {}}],
-        },
+        json=_segment(lease),
     )
     assert first.status_code == 200
-
-    stale_sequence = test_client.post(
-        "/api/wework-transcripts/transcript-1/turns",
+    stale = test_client.post(
+        "/api/wework-transcripts/transcript-1/segments/prepare",
         headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "baseSequence": 0,
-            "fencingToken": lease["fencingToken"],
-            "turns": [{"turnId": "turn-2", "sequence": 1, "payload": {}}],
-        },
+        json=_segment(
+            lease,
+            sha256="b" * 64,
+            format="codex-rollout-delta.v1.tgz.aes256gcm",
+        ),
     )
-    assert stale_sequence.status_code == 409
-    assert stale_sequence.json()["detail"]["code"] == "sequence_conflict"
-
-    other_writer = test_client.post(
-        "/api/wework-transcripts/transcript-1/lease",
-        headers=_headers(test_token),
-        json={"clientId": "client-b", "ttlSeconds": 60},
-    )
-    assert other_writer.status_code == 409
-    assert other_writer.json()["detail"]["code"] == "lease_held"
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "sequence_conflict"
 
 
-def test_creates_a_linked_branch_without_copying_parent_turns(
-    test_client,
-    test_token,
-    test_db,
-):
-    parent_lease = _lease(test_client, test_token)
-    parent_append = test_client.post(
-        "/api/wework-transcripts/transcript-1/turns",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "baseSequence": 0,
-            "fencingToken": parent_lease["fencingToken"],
-            "turns": [{"turnId": "parent-turn", "sequence": 1, "payload": {}}],
-        },
-    )
-    assert parent_append.status_code == 200
-
-    branch_lease = test_client.post(
-        "/api/wework-transcripts/fork-device-b/lease",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-b",
-            "ttlSeconds": 60,
-            "title": "Synced chat",
-            "parentTranscriptId": "transcript-1",
-            "forkedAtSequence": 1,
-        },
-    )
-    assert branch_lease.status_code == 200
-    assert branch_lease.json()["currentSequence"] == 0
-
-    branch_append = test_client.post(
-        "/api/wework-transcripts/fork-device-b/turns",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-b",
-            "baseSequence": 0,
-            "fencingToken": branch_lease.json()["fencingToken"],
-            "turns": [{"turnId": "branch-turn", "sequence": 1, "payload": {}}],
-        },
-    )
-    assert branch_append.status_code == 200
-
-    listing = test_client.get(
-        "/api/wework-transcripts",
-        headers=_headers(test_token),
-    )
-    branch = next(
-        item
-        for item in listing.json()["items"]
-        if item["transcriptId"] == "fork-device-b"
-    )
-    assert branch["parentTranscriptId"] == "transcript-1"
-    assert branch["forkedAtSequence"] == 1
-    assert test_db.query(WeworkTranscriptTurn).count() == 2
-    assert (
-        test_db.query(WeworkTranscriptTurn)
-        .join(
-            WeworkTranscript,
-            WeworkTranscript.id == WeworkTranscriptTurn.transcript_db_id,
-        )
-        .filter(WeworkTranscript.transcript_id == "fork-device-b")
-        .one()
-        .turn_id
-        == "branch-turn"
-    )
-
-
-def test_rejects_an_invalid_or_redefined_branch_identity(
-    test_client,
-    test_token,
+def test_creates_branch_without_copying_parent_objects(
+    test_client, test_token, test_db
 ):
     _lease(test_client, test_token)
-    missing_fork_point = test_client.post(
-        "/api/wework-transcripts/fork-device-b/lease",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-b",
-            "ttlSeconds": 60,
-            "parentTranscriptId": "transcript-1",
-        },
-    )
-    assert missing_fork_point.status_code == 422
-
-    missing_parent = test_client.post(
-        "/api/wework-transcripts/missing-parent-branch/lease",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-b",
-            "ttlSeconds": 60,
-            "parentTranscriptId": "does-not-exist",
-            "forkedAtSequence": 0,
-        },
-    )
-    assert missing_parent.status_code == 404
-    assert missing_parent.json()["detail"]["code"] == "transcript_not_found"
-
     branch = test_client.post(
         "/api/wework-transcripts/fork-device-b/lease",
         headers=_headers(test_token),
@@ -261,151 +194,44 @@ def test_rejects_an_invalid_or_redefined_branch_identity(
         },
     )
     assert branch.status_code == 200
-    redefined = test_client.post(
-        "/api/wework-transcripts/fork-device-b/lease",
+    listing = test_client.get(
+        "/api/wework-transcripts",
         headers=_headers(test_token),
-        json={
-            "clientId": "client-b",
-            "ttlSeconds": 60,
-        },
     )
-    assert redefined.status_code == 409
-    assert redefined.json()["detail"]["code"] == "fork_identity_conflict"
+    item = next(
+        row for row in listing.json()["items"] if row["transcriptId"] == "fork-device-b"
+    )
+    assert item["parentTranscriptId"] == "transcript-1"
+    assert item["forkedAtSequence"] == 0
+    assert test_db.query(WeworkTranscriptArchive).count() == 0
 
 
-def test_archives_hot_turns_only_after_object_storage_succeeds(
-    test_client,
-    test_token,
-    test_db,
-    monkeypatch,
+def test_download_uses_presigned_object_url(
+    test_client, test_token, test_db, monkeypatch
 ):
-    from app.services import wework_transcript_service
-
-    lease = _lease(test_client, test_token)
-    append = test_client.post(
-        "/api/wework-transcripts/transcript-1/turns",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "baseSequence": 0,
-            "fencingToken": lease["fencingToken"],
-            "turns": [
-                {
-                    "turnId": "turn-1",
-                    "sequence": 1,
-                    "payload": {"assistantMessage": "persist me"},
-                }
-            ],
-        },
-    )
-    assert append.status_code == 200
-
-    stored: dict[str, bytes] = {}
-
-    def put(key: str, content: bytes) -> None:
-        stored[key] = content
-
-    monkeypatch.setattr(wework_transcript_service.wework_transcript_storage, "put", put)
-    response = test_client.post(
-        "/api/wework-transcripts/transcript-1/archive",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "fencingToken": lease["fencingToken"],
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["state"] == "archived"
-    assert payload["archivedThroughSequence"] == 1
-    assert len(payload["archives"]) == 1
-    archive = payload["archives"][0]
-    assert archive["downloadUrl"] is None
-    content = next(iter(stored.values()))
-    assert hashlib.sha256(content).hexdigest() == archive["sha256"]
-    decoded = zstandard.ZstdDecompressor().decompress(content).decode()
-    assert '"turnId":"turn-1"' in decoded
-    assert '"persist me"' in decoded
-
-    transcript = test_db.query(WeworkTranscript).one()
-    assert transcript.writer_client_id == ""
-    assert payload["writerClientId"] is None
-    assert payload["writerLeaseExpiresAt"] is None
-    assert test_db.query(WeworkTranscriptTurn).count() == 0
-    assert test_db.query(WeworkTranscriptArchive).count() == 1
-
     from app.api.endpoints import wework_transcripts
 
+    _lease(test_client, test_token)
+    transcript = test_db.query(WeworkTranscript).one()
+    archive = WeworkTranscriptArchive(
+        transcript_db_id=transcript.id,
+        from_sequence=0,
+        to_sequence=1,
+        storage_key="users/1/transcripts/key/1-snapshot.tgz.aes256gcm",
+        sha256="c" * 64,
+        size_bytes=10,
+        format="codex-rollout-snapshot.v1.tgz.aes256gcm",
+    )
+    test_db.add(archive)
+    test_db.commit()
     monkeypatch.setattr(
         wework_transcripts.wework_transcript_storage,
         "download_url",
         lambda key: f"https://storage.example/{key}",
     )
-    monkeypatch.setattr(
-        wework_transcript_service.wework_transcript_storage,
-        "get",
-        lambda key: stored[key],
-    )
-    download = test_client.get(
-        f"/api/wework-transcripts/transcript-1/archives/{archive['id']}/download",
+    response = test_client.get(
+        f"/api/wework-transcripts/transcript-1/archives/{archive.id}/download",
         headers=_headers(test_token),
     )
-    assert download.status_code == 200
-    assert download.json()["downloadUrl"].startswith("https://storage.example/")
-
-    archived_turns = test_client.get(
-        f"/api/wework-transcripts/transcript-1/archives/{archive['id']}/turns",
-        headers=_headers(test_token),
-    )
-    assert archived_turns.status_code == 200
-    assert archived_turns.json()["turns"][0]["turnId"] == "turn-1"
-    assert (
-        archived_turns.json()["turns"][0]["payload"]["assistantMessage"] == "persist me"
-    )
-
-
-def test_does_not_delete_hot_turns_when_archive_upload_fails(
-    test_client,
-    test_token,
-    test_db,
-    monkeypatch,
-):
-    from app.services import wework_transcript_service
-    from app.services.wework_transcript_storage import WeworkTranscriptStorageError
-
-    lease = _lease(test_client, test_token)
-    append = test_client.post(
-        "/api/wework-transcripts/transcript-1/turns",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "baseSequence": 0,
-            "fencingToken": lease["fencingToken"],
-            "turns": [{"turnId": "turn-1", "sequence": 1, "payload": {}}],
-        },
-    )
-    assert append.status_code == 200
-
-    def fail(_key: str, _content: bytes) -> None:
-        raise WeworkTranscriptStorageError("storage unavailable")
-
-    monkeypatch.setattr(
-        wework_transcript_service.wework_transcript_storage,
-        "put",
-        fail,
-    )
-
-    response = test_client.post(
-        "/api/wework-transcripts/transcript-1/archive",
-        headers=_headers(test_token),
-        json={
-            "clientId": "client-a",
-            "fencingToken": lease["fencingToken"],
-        },
-    )
-
-    assert response.status_code == 503
-    test_db.rollback()
-    assert test_db.query(WeworkTranscriptTurn).count() == 1
-    assert test_db.query(WeworkTranscriptArchive).count() == 0
+    assert response.status_code == 200
+    assert response.json()["downloadUrl"].startswith("https://storage.example/")

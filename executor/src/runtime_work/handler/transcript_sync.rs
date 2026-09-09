@@ -3,25 +3,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::runtime_work::native_transcript::{
+    export_segment, restore_segments, ExportRequest, RestoreSegment,
+};
 
 const CLOUD_TRANSCRIPT_HANDLE_KEY: &str = "cloudTranscript";
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn transcript_sync_status(&self, payload: Value) -> Result<Value, AppIpcError> {
         let transcript_id = required_transcript_id(&payload)?;
-        let local_task_id = local_transcript_task_id(&payload, &transcript_id);
-        let Some(link) = self.local_task_link(&local_task_id) else {
-            return Ok(sync_status(
-                &local_task_id,
+        let task_id = local_task_id(&payload, &transcript_id);
+        let Some(link) = self.local_task_link(&task_id) else {
+            return Ok(status(
+                &task_id,
                 &transcript_id,
-                false,
+                true,
                 0,
-                "task_missing",
+                "restore_required",
             ));
         };
         if !is_codex_runtime(&link.runtime) {
-            return Ok(sync_status(
-                &local_task_id,
+            return Ok(status(
+                &task_id,
                 &transcript_id,
                 false,
                 imported_through(&link),
@@ -29,8 +32,8 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         if !transcript_matches(&link, &transcript_id) {
-            return Ok(sync_status(
-                &local_task_id,
+            return Ok(status(
+                &task_id,
                 &transcript_id,
                 false,
                 imported_through(&link),
@@ -38,25 +41,25 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         if link.thread_id.is_none() {
-            return Ok(sync_status(
-                &local_task_id,
+            return Ok(status(
+                &task_id,
                 &transcript_id,
                 true,
-                imported_through(&link),
-                "thread_pending",
+                0,
+                "restore_required",
             ));
         }
-        if self.is_busy_local_task(&local_task_id) {
-            return Ok(sync_status(
-                &local_task_id,
+        if self.is_busy_local_task(&task_id) {
+            return Ok(status(
+                &task_id,
                 &transcript_id,
                 false,
                 imported_through(&link),
                 "task_running",
             ));
         }
-        Ok(sync_status(
-            &local_task_id,
+        Ok(status(
+            &task_id,
             &transcript_id,
             true,
             imported_through(&link),
@@ -64,133 +67,183 @@ impl RuntimeWorkRpcHandler {
         ))
     }
 
-    pub(super) async fn import_transcript_turns(
+    pub(super) async fn export_transcript_segment(
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
         let transcript_id = required_transcript_id(&payload)?;
-        let local_task_id = local_transcript_task_id(&payload, &transcript_id);
-        let status = self.transcript_sync_status(json!({
-            "transcriptId": transcript_id,
-            "taskId": local_task_id,
-        }))?;
-        if status.get("available").and_then(Value::as_bool) != Some(true) {
-            return Ok(status);
-        }
-        let mut link = self
-            .local_task_link(&local_task_id)
+        let task_id = local_task_id(&payload, &transcript_id);
+        let link = self
+            .local_task_link(&task_id)
             .ok_or_else(|| AppIpcError::new("task_missing", "runtime task is unavailable"))?;
-        let current = imported_through(&link);
-        let turns = payload
-            .get("turns")
-            .and_then(Value::as_array)
-            .ok_or_else(|| AppIpcError::new("bad_request", "turns is required"))?;
-        if turns.is_empty() {
-            return Ok(sync_status(
-                &local_task_id,
-                &transcript_id,
-                true,
-                current,
-                "ready",
+        if !is_codex_runtime(&link.runtime) {
+            return Err(AppIpcError::new(
+                "unsupported_runtime",
+                "native transcript synchronization requires Codex",
             ));
         }
-        let mut expected = current + 1;
-        let mut last_sequence = current;
-        let mut items = Vec::new();
-        for turn in turns {
-            let sequence = turn
-                .get("sequence")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| AppIpcError::new("bad_request", "turn sequence is required"))?;
-            if sequence <= current {
-                continue;
-            }
-            if sequence != expected {
-                return Err(AppIpcError::new(
-                    "sequence_conflict",
-                    format!("transcript import expected sequence {expected}, received {sequence}"),
+        if self.is_busy_local_task(&task_id) {
+            return Err(AppIpcError::new(
+                "task_running",
+                "cannot snapshot a running Codex task",
+            ));
+        }
+        let thread_id = link
+            .thread_id
+            .clone()
+            .ok_or_else(|| AppIpcError::new("thread_missing", "Codex thread is unavailable"))?;
+        let sequence = required_u64(&payload, "sequence")?;
+        let base_sequence = alias_u64(&payload, "baseSequence", "base_sequence")?;
+        let snapshot = payload
+            .get("snapshot")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let encryption_key = string_field(&payload, "encryptionKey")
+            .or_else(|| string_field(&payload, "encryption_key"))
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", "transcript encryptionKey is required")
+            })?;
+        let request = ExportRequest {
+            transcript_id,
+            task_id,
+            title: link.title.clone(),
+            workspace_path: Path::new(&link.workspace_path).to_path_buf(),
+            thread_id,
+            sequence,
+            base_sequence,
+            rollout_start: if snapshot {
+                0
+            } else {
+                synchronized_rollout_bytes(&link)
+            },
+            snapshot,
+            encryption_key,
+        };
+        let exported = tokio::task::spawn_blocking(move || export_segment(request))
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "transcript_export_failed",
+                    format!("native transcript export worker failed: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new("transcript_export_failed", error))?;
+        Ok(json!({
+            "success": true,
+            "path": exported.path,
+            "sha256": exported.sha256,
+            "sizeBytes": exported.size_bytes,
+            "format": exported.format,
+            "rolloutEnd": exported.rollout_end,
+        }))
+    }
+
+    pub(super) async fn restore_transcript_segments(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let transcript_id = required_transcript_id(&payload)?;
+        let task_id = local_task_id(&payload, &transcript_id);
+        let segments = serde_json::from_value::<Vec<RestoreSegment>>(
+            payload
+                .get("segments")
+                .cloned()
+                .ok_or_else(|| AppIpcError::new("bad_request", "segments is required"))?,
+        )
+        .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+        let encryption_key = string_field(&payload, "encryptionKey")
+            .or_else(|| string_field(&payload, "encryption_key"))
+            .ok_or_else(|| {
+                AppIpcError::new("bad_request", "transcript encryptionKey is required")
+            })?;
+        if let Some(link) = self.local_task_link(&task_id) {
+            let requested = segments
+                .iter()
+                .map(|segment| segment.sequence)
+                .max()
+                .unwrap_or_default();
+            if link.thread_id.is_some()
+                && transcript_matches(&link, &transcript_id)
+                && imported_through(&link) >= requested
+            {
+                return Ok(status(
+                    &task_id,
+                    &transcript_id,
+                    transcript_matches(&link, &transcript_id),
+                    imported_through(&link),
+                    "already_bound",
                 ));
             }
-            items.extend(response_items_from_cloud_turn(turn));
-            expected += 1;
-            last_sequence = sequence;
+            if self.is_busy_local_task(&task_id) {
+                return Ok(status(
+                    &task_id,
+                    &transcript_id,
+                    false,
+                    imported_through(&link),
+                    "task_running",
+                ));
+            }
         }
-        if last_sequence == current {
-            return Ok(sync_status(
-                &local_task_id,
-                &transcript_id,
-                true,
-                current,
-                "ready",
-            ));
-        }
-        let resumed_thread_id = if let Some(thread_id) = link.thread_id.clone() {
-            self.resume_codex_thread_for_action(&link, &thread_id)
-                .await
-                .map_err(|error| AppIpcError::new("thread_resume_failed", error))?
-        } else {
-            let request = runtime_event_request_from_link(&link);
-            let thread_id = start_codex_app_server_thread(&self.codex_app_server, &request)
-                .await
-                .map_err(|error| AppIpcError::new("thread_start_failed", error))?;
-            self.record_local_task_thread(&local_task_id, &thread_id);
-            self.register_codex_thread_workspace_root(&thread_id, &request);
-            link.thread_id = Some(thread_id.clone());
-            thread_id
-        };
-        if !items.is_empty() {
-            self.call_codex_thread_method(
-                "thread/inject_items",
-                json!({
-                    "threadId": resumed_thread_id,
-                    "items": items,
-                }),
+        let restore_transcript_id = transcript_id.clone();
+        let restored = tokio::task::spawn_blocking(move || {
+            restore_segments(&restore_transcript_id, &segments, &encryption_key)
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "transcript_restore_failed",
+                format!("native transcript restore worker failed: {error}"),
             )
-            .await
-            .map_err(|error| AppIpcError::new("transcript_import_failed", error))?;
-        }
-        set_cloud_transcript(&mut link, &transcript_id, last_sequence);
-        link.updated_at = now_ms();
-        self.upsert_local_task(link);
-        Ok(sync_status(
-            &local_task_id,
+        })?
+        .map_err(|error| AppIpcError::new("transcript_restore_failed", error))?;
+        let mut link = RuntimeTaskLink::new_pending(
+            restored.task_id.clone(),
+            restored.workspace_path.to_string_lossy().into_owned(),
+            restored.title,
+        );
+        link.thread_id = Some(restored.thread_id.clone());
+        set_cloud_transcript(
+            &mut link,
             &transcript_id,
-            true,
-            last_sequence,
-            "ready",
-        ))
+            restored.sequence,
+            restored.rollout_end,
+        );
+        self.upsert_local_task(link);
+        emit_runtime_work_changed(&self.event_tx, &self.device_id, &restored.task_id);
+        Ok(json!({
+            "success": true,
+            "available": true,
+            "taskId": restored.task_id,
+            "transcriptId": transcript_id,
+            "threadId": restored.thread_id,
+            "workspacePath": restored.workspace_path,
+            "importedThrough": restored.sequence,
+            "reason": "restored",
+        }))
     }
 
     pub(super) fn acknowledge_transcript_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
         let transcript_id = required_transcript_id(&payload)?;
-        let local_task_id = local_transcript_task_id(&payload, &transcript_id);
-        let sequence = payload
-            .get("sequence")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| AppIpcError::new("bad_request", "sequence is required"))?;
-        let parent_transcript_id = string_field(&payload, "parentTranscriptId")
+        let task_id = local_task_id(&payload, &transcript_id);
+        let sequence = required_u64(&payload, "sequence")?;
+        let rollout_end = alias_u64(&payload, "rolloutEnd", "rollout_end")?;
+        let parent_id = string_field(&payload, "parentTranscriptId")
             .or_else(|| string_field(&payload, "parent_transcript_id"));
-        let updated = self.store.update_task(&local_task_id, |link| {
+        let updated = self.store.update_task(&task_id, |link| {
             let current_id = cloud_transcript_id(link);
-            let may_rebind = current_id.as_deref() == Some(transcript_id.as_str())
+            if current_id.as_deref() == Some(transcript_id.as_str())
                 || current_id.is_none()
-                || parent_transcript_id.as_deref() == current_id.as_deref();
-            if may_rebind {
-                set_cloud_transcript(link, &transcript_id, sequence);
+                || parent_id.as_deref() == current_id.as_deref()
+            {
+                set_cloud_transcript(link, &transcript_id, sequence, rollout_end);
                 link.updated_at = now_ms();
             }
         });
         let Some(link) = updated else {
-            return Ok(sync_status(
-                &local_task_id,
-                &transcript_id,
-                false,
-                0,
-                "task_missing",
-            ));
+            return Ok(status(&task_id, &transcript_id, false, 0, "task_missing"));
         };
-        Ok(sync_status(
-            &local_task_id,
+        Ok(status(
+            &task_id,
             &transcript_id,
             transcript_matches(&link, &transcript_id),
             imported_through(&link),
@@ -205,23 +258,34 @@ fn required_transcript_id(payload: &Value) -> Result<String, AppIpcError> {
         .ok_or_else(|| AppIpcError::new("bad_request", "transcriptId is required"))
 }
 
-fn local_transcript_task_id(payload: &Value, transcript_id: &str) -> String {
+fn required_u64(payload: &Value, key: &str) -> Result<u64, AppIpcError> {
+    payload
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))
+}
+
+fn alias_u64(payload: &Value, key: &str, alias: &str) -> Result<u64, AppIpcError> {
+    required_u64(payload, key).or_else(|_| required_u64(payload, alias))
+}
+
+fn local_task_id(payload: &Value, transcript_id: &str) -> String {
     runtime_task_id(payload).unwrap_or_else(|| transcript_id.to_owned())
 }
 
-fn sync_status(
-    local_task_id: &str,
+fn status(
+    task_id: &str,
     transcript_id: &str,
     available: bool,
-    imported_through: u64,
+    sequence: u64,
     reason: &str,
 ) -> Value {
     json!({
         "success": true,
         "available": available,
-        "taskId": local_task_id,
+        "taskId": task_id,
         "transcriptId": transcript_id,
-        "importedThrough": imported_through,
+        "importedThrough": sequence,
         "reason": reason,
     })
 }
@@ -246,88 +310,26 @@ fn imported_through(link: &RuntimeTaskLink) -> u64 {
         .unwrap_or(0)
 }
 
-fn set_cloud_transcript(link: &mut RuntimeTaskLink, transcript_id: &str, sequence: u64) {
+fn synchronized_rollout_bytes(link: &RuntimeTaskLink) -> u64 {
+    link.runtime_handle
+        .get(CLOUD_TRANSCRIPT_HANDLE_KEY)
+        .and_then(|value| value.get("rolloutBytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn set_cloud_transcript(
+    link: &mut RuntimeTaskLink,
+    transcript_id: &str,
+    sequence: u64,
+    rollout_bytes: u64,
+) {
     if !link.runtime_handle.is_object() {
         link.runtime_handle = json!({});
     }
     link.runtime_handle[CLOUD_TRANSCRIPT_HANDLE_KEY] = json!({
         "transcriptId": transcript_id,
         "importedThrough": sequence,
+        "rolloutBytes": rollout_bytes,
     });
-}
-
-fn response_items_from_cloud_turn(turn: &Value) -> Vec<Value> {
-    let Some(payload) = turn.get("payload") else {
-        return Vec::new();
-    };
-    let mut items = payload
-        .get("userMessages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|message| string_field(message, "text"))
-        .map(|text| {
-            json!({
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": text}],
-            })
-        })
-        .collect::<Vec<_>>();
-    if let Some(text) = string_field(payload, "assistantMessage") {
-        items.push(json!({
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": text}],
-        }));
-    }
-    items
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cloud_turns_become_native_responses_api_history() {
-        let items = response_items_from_cloud_turn(&json!({
-            "sequence": 2,
-            "payload": {
-                "userMessages": [{"id": "user-2", "text": "Continue on B"}],
-                "assistantMessage": "B completed",
-                "reasoning": "private reasoning is not portable"
-            }
-        }));
-
-        assert_eq!(
-            items,
-            vec![
-                json!({
-                    "type": "message",
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": "Continue on B"}],
-                }),
-                json!({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "B completed"}],
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn branch_binding_replaces_mainline_cursor_without_copying_body() {
-        let mut link = RuntimeTaskLink::new_pending(
-            "task-1".to_owned(),
-            "/workspace".to_owned(),
-            "Task".to_owned(),
-        );
-        set_cloud_transcript(&mut link, "task-1", 4);
-        set_cloud_transcript(&mut link, "fork-1", 2);
-
-        assert_eq!(cloud_transcript_id(&link).as_deref(), Some("fork-1"));
-        assert_eq!(imported_through(&link), 2);
-        assert!(link.runtime_handle.get("messages").is_none());
-    }
 }
