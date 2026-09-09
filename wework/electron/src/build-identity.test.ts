@@ -109,12 +109,42 @@ test.each([
   )
 })
 
-test('packages only product locales and skips individual static plugin signing', () => {
+test('packages only product locales', () => {
   expect(builderConfig.extraMetadata.name).toBe(DEFAULT_IDENTITY.packageName)
   expect(builderConfig.mac.electronLanguages).toEqual(['en', 'zh_CN'])
-  expect(builderConfig.mac.signIgnore).toEqual(['/Contents/Resources/wework-core-plugins/'])
   expect(builderConfig.win.electronLanguages).toEqual(['en-US', 'zh-CN'])
   expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
+})
+
+test.each([
+  ['', ['/Contents/Resources/wework-core-plugins/']],
+  [
+    'Developer ID Application: Test Identity',
+    [
+      '/Contents/Resources/harness-runtime/',
+      '/Contents/Resources/bin/',
+      '/Contents/Resources/codex/',
+      '/Contents/Resources/wework-core-plugins/',
+      '/Contents/Resources/wework-app-static/',
+      '/Contents/Resources/bundled-plugins/',
+    ],
+  ],
+])('selects component signing exclusions for identity %j', (identity, expected) => {
+  const signIgnore = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        '-e',
+        'process.stdout.write(JSON.stringify(require(process.argv[1]).mac.signIgnore))',
+        builderConfigPath,
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, APPLE_SIGNING_IDENTITY: identity },
+      }
+    )
+  )
+  expect(signIgnore).toEqual(expected)
 })
 
 test('builds a slim Host update without managed components', () => {

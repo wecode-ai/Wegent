@@ -2811,9 +2811,9 @@ fn is_automation_manager_tool(name: &str) -> bool {
 
 fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> Vec<Value> {
     let mut result = tools();
-    if project_id
-        .is_none_or(|id| is_locally_routed_project(runtime, id, "register_external_reference"))
-    {
+    if project_id.map_or(true, |id| {
+        is_locally_routed_project(runtime, id, "register_external_reference")
+    }) {
         return result;
     }
     result.push(tool("register_external_reference", "After creating an external artifact, register its provider and stable external_id with this Issue so later webhook events return to it. Prefer the canonical artifact URL as external_id", json!({
