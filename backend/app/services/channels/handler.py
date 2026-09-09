@@ -640,6 +640,30 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         return None, None
 
+    async def _is_claude_compatible_override(
+        self, db: Session, user: User, model_name: str
+    ) -> Optional[bool]:
+        """Check whether an override model can run on the Claude Code executor.
+
+        Returns True/False when the model is resolvable; returns None when the
+        model is not found (e.g. custom configs) so unverifiable models are not
+        blocked.
+        """
+        from app.services.model_aggregation_service import model_aggregation_service
+
+        all_models = model_aggregation_service.list_available_models(
+            db=db,
+            current_user=user,
+            shell_type=None,
+            include_config=False,
+            scope="personal",
+            model_category_type="llm",
+        )
+        for model in all_models:
+            if model_name in {model.get("name"), model.get("displayName")}:
+                return is_claude_provider(model.get("provider"))
+        return None
+
     async def _get_device_mode_model_override(
         self, db: Session, user: User
     ) -> tuple[Optional[str], Optional[str]]:
@@ -3298,6 +3322,21 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         override_model_name, override_model_type = await self._get_user_model_override(
             user.id
         )
+
+        # Cloud executor runs Claude Code, which only accepts Claude models.
+        # Reject an incompatible override up front; otherwise the task fails deep
+        # inside the executor with a card that shows no content.
+        if override_model_name:
+            compatible = await self._is_claude_compatible_override(
+                db, user, override_model_name
+            )
+            if compatible is False:
+                return (
+                    f"⚠️ 当前模型 **{override_model_name}** 不支持云端执行模式\n\n"
+                    "云端执行基于 Claude Code，仅支持 Claude 模型。\n"
+                    "请使用 `/models` 切换到 Claude 模型，"
+                    "或使用 `/use chat` 切回对话模式"
+                )
 
         params = TaskCreationParams(
             message=display_text,
