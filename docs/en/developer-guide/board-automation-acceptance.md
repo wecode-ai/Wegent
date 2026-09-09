@@ -59,3 +59,21 @@ Verified on 2026-09-09 against the uncommitted workspace, without production dep
 - Service/API, UI, and Rust MCP tests cover retained failures, retry identity, stale execution rejection, permissions, and template isolation. Every failure UI combination was not manually inspected. Deterministic model responses validate the real tool chain and state transitions, not arbitrary model decision quality.
 
 The existing CI `project-automation` entry expands into `project-automation-workflow` and `event-center`, each with independent minimal fixtures. The event-center checkpoint also runs alone. The runner and CI coverage validation share the composite checkpoint definitions.
+
+### Assignment callback regression plan (2026-09-09)
+
+Observed execution 507 on `PRJ9755FA-2` sent Responses-shaped input to an Anthropic model after defaulting missing protocol metadata. The worker failed; its result transaction then violated the deployed `uq_project_chat_client_message` index because audit messages shared an empty client ID.
+
+A successful decision now acknowledges `coordinator_handoff.end_turn`. Coordination ends that turn and resumes from a persisted success, failure, or human-result callback, with the assignment identity, execution status, and result explicitly included in the next turn. Audit messages have independent identities and repeated results remain idempotent. Runtime compilation obtains provider protocol from the same Model CRD used by the gateway, rather than caller metadata.
+
+Verification plan: C01 simulates the deployed unique index and repeats a failure callback; C02 covers Anthropic/OpenAI selection with absent or stale caller metadata; C03 extends the CI `event-center` checkpoint to fail the first worker, reassign through callback, then complete; C04 repeats that journey through a separate isolated `scripts/ai-verify.mjs` Electron session with screenshots and process cleanup. The Chinese section contains the callback sequence diagram.
+
+Implementation boundary: `end_turn` is a tool receipt and coordinator prompt contract, not forced Runtime termination. Persisted result callbacks trigger the next coordinator turn through existing launch, deduplication, and recovery mechanisms. No tables were added.
+
+### Assignment callback verification results
+
+- 149 backend protocol, assignment, Runtime, and automation tests passed. Another assignment, activity projection, and workflow-start group passed 117 tests; assignment tests overlap between groups. All 27 Rust MCP tests passed.
+- Read-only compilation of deployed execution 507's original Runtime request resolved `anthropic-messages`. The deployed database and `Test-Wegent` services were not changed or restarted.
+- After correcting the first-assignment failure injection fixture, the CI `event-center` checkpoint exited 0 in five minutes. Evidence: `wework/test-results/desktop-e2e/2026-09-09T07-04-04-198Z-50119/`.
+- The concurrent independent Electron run verified persisted failure, callback reassignment, and completion; screenshots are in `wework/test-results/desktop-e2e/2026-09-09T07-04-01-423Z-48950/`. Its final external-event list assertion failed because the UI remained on Issue details, so the helper exited 1. The verification now explicitly returns to the board's event center before inspecting that event; this earlier helper run is not reported as a full pass.
+- After correcting the navigation steps, both complete journeys passed. CI checkpoint evidence: `wework/test-results/desktop-e2e/2026-09-09T07-10-21-984Z-71857/`. Independent real Electron evidence: `wework/test-results/desktop-e2e/2026-09-09T07-10-20-161Z-71655/`. Both cover failure activity, result callbacks, successful reassignment, Issue completion, subsequent events returning to the same Issue, and delivery deduplication. Screenshot 03 confirms the visible event list points to the original Issue.

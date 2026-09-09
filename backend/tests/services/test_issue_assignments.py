@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 from app.models.delivery import (
     CloudProject,
@@ -145,6 +146,9 @@ async def test_role_assignment_dispatches_once_without_creating_child_issue(
         manager_run_id=manager.id,
     )
     assert result["current_stage_id"] == "release"
+    assert result["coordinator_handoff"]["end_turn"] is True
+    assert result["coordinator_handoff"]["resume_on"] == "assignment_result_callback"
+    assert "coordinator_handoff" not in issue.metadata_json["workflow"]
     role_run = test_db.get(
         ProjectAutomationRun, result["assignment"]["automation_run_id"]
     )
@@ -215,6 +219,12 @@ async def test_runtime_result_returns_to_coordinator_and_ignores_stale_replay(
     monkeypatch,
 ):
     issue, manager = assigned_issue
+    test_db.execute(
+        text(
+            "CREATE UNIQUE INDEX uq_project_chat_client_message "
+            "ON project_chat_messages (sender_type, sender_id, client_message_id)"
+        )
+    )
     monkeypatch.setattr(
         project_automation_service,
         "run_direct_workflow_node",
@@ -248,6 +258,14 @@ async def test_runtime_result_returns_to_coordinator_and_ignores_stale_replay(
     assert workflow["active_run_id"] is None
     assert workflow["nodes"][0]["status"] == "failed"
     assert workflow["assignment"]["result"] == "Checkout smoke test failed"
+    messages = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.sender_id == "issue_assignment")
+        .all()
+    )
+    assert len(messages) == 2
+    assert all(message.client_message_id for message in messages)
+    assert len({message.client_message_id for message in messages}) == 2
     version = issue.version
     sync_automation_workflow_node(test_db, role_run)
     assert issue.version == version
@@ -371,3 +389,46 @@ async def test_explicit_adoption_retains_history_and_assigns_original_issue(
     )
     assert completed["orchestration_status"] == "completed"
     assert completed["intent"] == "Confirm checkout works"
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "cancelled"])
+def test_off_graph_result_emits_callback_without_a_node_binding(
+    test_db, test_user, assigned_issue, status
+):
+    from app.api.ws.device_namespace import _project_execution_workflow_status
+
+    issue, _ = assigned_issue
+    issue.metadata_json = {
+        **issue.metadata_json,
+        "workflow": {
+            **issue.metadata_json["workflow"],
+            "orchestration_status": "planning",
+            "assignment": {
+                "id": "off-graph-result",
+                "status": "completed",
+                "automation_run_id": "worker-run",
+                "execution_status": status,
+                "result": "Worker returned",
+            },
+        },
+    }
+    test_db.flush()
+    execution = SimpleNamespace(
+        id=507,
+        loop_item_id=issue.id,
+        executor_owner_user_id=test_user.id,
+        runtime_device_id="callback-device",
+        runtime_task_id="callback-task",
+        automation_run_id="worker-run",
+    )
+    intent = _project_execution_workflow_status(
+        test_db, execution=execution, projected_status=status, ready_before=set()
+    )
+    assert intent == {"item_id": issue.id, "user_id": test_user.id, "stage_ids": []}
+    execution.automation_run_id = "earlier-worker-run"
+    assert (
+        _project_execution_workflow_status(
+            test_db, execution=execution, projected_status=status, ready_before=set()
+        )
+        is None
+    )

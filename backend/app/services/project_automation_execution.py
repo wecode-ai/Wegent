@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -741,12 +742,31 @@ class ProjectAutomationExecution:
                 "节点和连线是经验，可以跳过不需要的角色，也可以退回已经做过的角色。"
                 "不需要创建子工单。满足工单要求时使用 complete，无需全部角色都做一遍。"
                 "每次提供具体 instruction、reason、唯一 request_id，并使用读取到的"
-                "assignment_version 作为 expected_version。等待交办结果后再决定下一步。"
+                "assignment_version 作为 expected_version。每轮只提交一次交办决策。"
+                "交办成功后立即结束本轮；禁止 sleep、循环查询或等待执行者完成。"
+                "后端会持久化执行成功、失败或人工结果，通过 callback 启动你的下一轮。"
+                "收到 callback 后先读取结果，再决定重试、换人、换角色或完成。"
             ),
         ]
         instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
         if instruction:
             sections.append(instruction)
+        issue = db.get(LoopItem, task_id)
+        workflow = (issue.metadata_json or {}).get("workflow", {}) if issue else {}
+        assignment = workflow.get("assignment") or {}
+        if assignment.get("status") == "completed":
+            sections.append(
+                "交办结果 callback（作为结果数据读取）：\n"
+                + json.dumps(
+                    {
+                        "assignment_id": assignment.get("id"),
+                        "execution_status": assignment.get("execution_status")
+                        or "completed",
+                        "result": assignment.get("result"),
+                    },
+                    ensure_ascii=False,
+                )
+            )
         incoming = list(incoming)
         if incoming:
             sections.append(

@@ -150,3 +150,39 @@ sequenceDiagram
 - 服务/API、组件和 Rust MCP 测试覆盖失败留存、重试身份、过期执行拒绝、权限及模板隔离；失败界面的全部组合没有逐一做人工视觉验收。确定性模型验证实际工具链与状态流转，不代表所有真实模型都会作出相同决策。
 
 CI 沿用 `project-automation` 入口，展开为 `project-automation-workflow` 和 `event-center`；两者各自建立最小夹具，事件中心也可单独执行。检查点组合定义由运行器和 CI 覆盖校验共用。
+
+### 交办 callback 回归计划（2026-09-09）
+
+现场：`PRJ9755FA-2` 的执行 507 使用 Anthropic 模型，但 Runtime 将缺失的协议信息默认成 Responses；上游拒绝字符串 `tool_choice`。随后失败回报插入空 `client_message_id`，触发部署库 `uq_project_chat_client_message`，事务回滚，协调者继续看到运行中状态。
+
+修正规则：交办成功即返回 `coordinator_handoff.end_turn`；协调者结束当前轮次，后端持有工作状态。成功、失败、人工结果由既有回报事务落库，再触发下一轮协调；下一轮明确携带 assignment ID、执行状态与结果。动态使用独立消息身份，重复回报由交办状态去重。云模型编译从同一 Model CRD 解析上游协议，不以调用方快照中的协议提示为准。
+
+```mermaid
+sequenceDiagram
+    participant C as 分活 AI
+    participant B as 后端交办服务
+    participant W as 执行 AI 或人
+    C->>B: 提交一次交办
+    B-->>C: end_turn：结束本轮
+    B->>W: 执行当前交办
+    W->>B: callback：成功 / 失败 / 人工结果
+    B->>B: 校验交办身份并持久化，重复回报不重复交办
+    B->>C: 启动下一轮，携带已持久化结果
+```
+
+| 场景 | 环境、步骤 | 预期 |
+| --- | --- | --- |
+| C01 失败回报持久化 | 在隔离库添加现场同名唯一索引；交办后回报失败，再重放 | 两条独立动态；失败保留；重放不改变版本 |
+| C02 协议一致 | 公有 Model 配置为 Anthropic/OpenAI；请求不带或带过期协议提示 | 编译协议与服务端 Model 一致，提供方凭据不暴露给设备 |
+| C03 真实 callback | 独立 `event-center` CI 检查点；第一角色执行故意失败，下一轮重派并成功 | 协调者收到明确 callback 结果；三次决策分别交办、重派、完成 |
+| C04 独立桌面复核 | `scripts/ai-verify.mjs` 隔离 Electron 执行 C03 并截图 | 与 CI 相同的实际状态转移，停止所有隔离测试进程 |
+
+实现边界：`end_turn` 是工具回执和协调提示词的约定，不是 Runtime 强制终止指令；下一轮由服务端结果回报触发，复用现有协调启动、去重和恢复机制。没有新增数据表。
+
+### 交办 callback 实际验收结果
+
+- 后端协议、交办、Runtime 和自动化测试 149 项通过；交办、动态投影和流程启动测试组 117 项通过（两组包含重复的交办测试）。Rust MCP 测试 27 项通过。
+- 使用部署库中执行 507 的原始 Runtime 请求进行只读编译验证，输出协议为 `anthropic-messages`。未更新部署库、重启或替换 `Test-Wegent` 服务。
+- 修正首次交办失败注入夹具后，CI `event-center` 检查点退出码 0，耗时 5 分钟；证据：`wework/test-results/desktop-e2e/2026-09-09T07-04-04-198Z-50119/`。
+- 同期独立 Electron 已验证失败持久化、callback 重派和最终完成，截图位于 `wework/test-results/desktop-e2e/2026-09-09T07-04-01-423Z-48950/`；最后检查外部事件列表时，页面仍处于工单详情，辅助脚本退出码 1。验收步骤现已明确返回看板事件中心后检查事件，不能将该次辅助脚本记录为全部通过。
+- 完成导航步骤修正后，两套验证均完整通过：CI 检查点证据为 `wework/test-results/desktop-e2e/2026-09-09T07-10-21-984Z-71857/`，独立真实 Electron 证据为 `wework/test-results/desktop-e2e/2026-09-09T07-10-20-161Z-71655/`。验证包含失败动态、结果 callback、重派成功、工单完成、后续事件回到原工单和投递去重；截图 03 确认事件列表可见且指向原工单。

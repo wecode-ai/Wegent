@@ -728,7 +728,9 @@ def _project_execution_workflow_status(
         .first()
     )
     if binding is None or not binding.workflow_node_id:
-        return None
+        from app.services.issue_assignments import assignment_callback_intent
+
+        return assignment_callback_intent(db, execution, projected_status)
 
     from app.models.delivery import LoopItem
 

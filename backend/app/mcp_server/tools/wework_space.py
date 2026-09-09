@@ -565,7 +565,7 @@ async def decide_issue_assignment(
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Assign the current Issue to a role or person, execute, or complete it."""
+    """Assign once, then end this turn. A result callback resumes coordination."""
     with SessionLocal() as db:
         _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)

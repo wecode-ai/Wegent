@@ -485,7 +485,6 @@ def _build_cloud_gateway_model_config(
     *,
     model_name: str,
     creator: Any,
-    upstream_api_format: Optional[str] = None,
     model_type: Optional[str] = None,
     namespace: Optional[str] = None,
     resource_user_id: Optional[int] = None,
@@ -564,13 +563,27 @@ def _build_cloud_gateway_model_config(
         expires_delta=30,
     )
     model_spec = kind.json.get("spec") if isinstance(kind.json, dict) else None
+    from app.services.chat.config.model_resolver import extract_and_process_model_config
+    from app.services.llm_proxy_service import _resolve_upstream_target
+
+    provider_config = extract_and_process_model_config(
+        model_spec=model_spec or {},
+        user_id=creator.id,
+        user_name=creator.user_name or "",
+    )
+    upstream_path, _ = _resolve_upstream_target(model_name, provider_config)
+    upstream_api_format = {
+        "/v1/messages": "anthropic-messages",
+        "/chat/completions": "openai-chat-completions",
+        "/responses": "openai-responses",
+    }[upstream_path]
     catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
     config = {
         "model": "openai",
         "model_id": model_name,
         "api_format": "responses",
         "protocol": "openai-responses",
-        "upstream_api_format": upstream_api_format or "openai-responses",
+        "upstream_api_format": upstream_api_format,
         "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
         "api_key": token,
         "default_headers": {
@@ -605,7 +618,6 @@ def build_wework_runtime_model_config(
         db,
         model_name=model_name,
         creator=creator,
-        upstream_api_format=resolved.get("upstream_api_format"),
     )
     if gateway_config is None:
         return resolved

@@ -4,6 +4,7 @@ import {
   assistantMessage,
   responseCreated,
   responseCompleted,
+  responseFailed,
   requestContainsToolOutput,
   mcpToolRequestEvents,
   selectMcpTool,
@@ -107,6 +108,11 @@ export async function eventCenterModelResponse(payload, responseId, request) {
     const issueId = serialized.match(/task_id: ([A-Za-z0-9_-]+)/)?.[1]
     const issue = await request(`/api/v1/loop-items/${issueId}`)
     if (requestContainsToolOutput(payload, 'event-flow-decide')) {
+      assert.ok(
+        serialized.includes('assignment_result_callback') ||
+          serialized.includes('The Issue is complete. End this turn.'),
+        'Coordinator decision did not acknowledge the callback handoff'
+      )
       return [
         responseCreated(responseId),
         assistantMessage('已提交工单分派。'),
@@ -116,7 +122,12 @@ export async function eventCenterModelResponse(payload, responseId, request) {
     const version = issue.workflow.assignment_version ?? 0
     const roleCompleted =
       issue.workflow.assignment?.node_id === 'role_1' &&
-      issue.workflow.assignment.status === 'completed'
+      issue.workflow.assignment.status === 'completed' &&
+      issue.workflow.assignment.execution_status === 'succeeded'
+    if (issue.workflow.assignment?.execution_status === 'failed') {
+      assert.ok(serialized.includes('交办结果 callback'), 'Failure did not resume through callback')
+      assert.ok(serialized.includes('CALLBACK_WORKER_FAILED'), 'Failure callback lost the error')
+    }
     return requestTool(
       payload,
       responseId,
@@ -128,13 +139,23 @@ export async function eventCenterModelResponse(payload, responseId, request) {
           action: roleCompleted ? 'complete' : 'assign_role',
           ...(roleCompleted ? {} : { node_id: 'role_1' }),
           instruction: 'Verify the requested acceptance result',
-          reason: 'Advance according to the goal and latest result',
+          reason:
+            issue.workflow.assignment?.execution_status === 'failed'
+              ? 'CALLBACK_REASSIGNMENT'
+              : 'CALLBACK_INITIAL_ASSIGNMENT',
         },
       },
       'event-flow-decide'
     )
   }
   if (serialized.includes('Read the Issue and verify its requested result.')) {
+    const issueId = serialized.match(/task_id: ([A-Za-z0-9_-]+)/)?.[1]
+    const issue = await request(`/api/v1/loop-items/${issueId}`)
+    if (issue.workflow.assignment?.decision.reason === 'CALLBACK_INITIAL_ASSIGNMENT') {
+      const failure = responseFailed(responseId, 'CALLBACK_WORKER_FAILED')
+      failure.response.error.code = 'invalid_request_error'
+      return [responseCreated(responseId), failure]
+    }
     if (requestContainsToolOutput(payload, 'event-role-reference')) {
       return [
         responseCreated(responseId),
@@ -213,10 +234,24 @@ export async function verifyEventCenter({
   )
   const issueId = routed[0].issue_id
   // Each Runtime turn has its own queue claim window: coordinator, role, then coordinator.
-  await waitForValue(
+  const initialAssignment = await waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
     issue => Boolean(issue.workflow.assignment),
     'Generated coordinator did not assign work',
+    timeoutMs
+  )
+  const initialVersion = initialAssignment.workflow.assignment_version
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    issue => issue.workflow.assignment?.execution_status === 'failed',
+    'Worker failure did not persist for the coordinator callback',
+    timeoutMs
+  )
+  await captureScreenshot(control, 'event-center-callback-worker-failed.png')
+  await waitForValue(
+    () => request(`/api/v1/loop-items/${issueId}`),
+    issue => issue.workflow.assignment_version === initialVersion + 1,
+    'Failure callback did not start a new coordinator turn and reassign work',
     timeoutMs
   )
   await waitForValue(
@@ -236,6 +271,7 @@ export async function verifyEventCenter({
   const generatedIssue = await request(`/api/v1/loop-items/${issueId}`)
   assert.equal(generatedIssue.workflow.ai_automation_rule_id, null)
   assert.equal(generatedIssue.workflow.nodes[0].name, '结果核对')
+  assert.equal(generatedIssue.workflow.assignment_version, initialVersion + 2)
   await captureScreenshot(control, 'event-center-02-created-flow.png')
   const reference = {
     provider: 'generic',
@@ -275,6 +311,11 @@ export async function verifyEventCenter({
   )
   items = await request(`${base}/loop-items`)
   assert.equal(items.items.length, 1, 'Related review created a duplicate Issue')
+  await control.command('navigate', 'body', { value: '/todo' })
+  await control.command('click', `[data-testid="cloud-sidebar-project-${project.id}"]`, {
+    visible: true,
+  })
+  await control.command('click', '[data-testid="cloud-project-events-view"]', { visible: true })
   await control.command('waitFor', `[data-testid="event-center-event-${receipt.event_id}"]`, {
     visible: true,
   })

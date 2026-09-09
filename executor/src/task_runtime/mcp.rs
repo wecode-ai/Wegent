@@ -2376,7 +2376,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "decide_issue_assignment",
-            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when the Issue requirements are met. Roles can be skipped or revisited.",
+            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when requirements are met. Submit one decision and end this turn immediately. Do not sleep or poll: the backend resumes coordination through a result callback. Roles can be skipped or revisited.",
             json!({
                 "type": "object",
                 "properties": {
