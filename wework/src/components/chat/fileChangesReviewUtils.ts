@@ -1,4 +1,4 @@
-import type { DiffLineEventBaseProps, SelectedLineRange } from '@pierre/diffs'
+import type { DiffLineAnnotation, DiffLineEventBaseProps, SelectedLineRange } from '@pierre/diffs'
 import type { GitPatchAction } from '@/api/environment'
 
 export interface DiffCommentSelection {
@@ -13,7 +13,7 @@ export interface DiffCommentSelection {
 export type FileChangesReviewMode = 'branch' | 'unstaged' | 'staged' | 'commit' | 'previous-turn'
 
 export function getReviewActions(reviewMode?: FileChangesReviewMode): GitPatchAction[] {
-  if (reviewMode === 'unstaged') return ['stage', 'revert']
+  if (reviewMode === 'unstaged') return ['revert', 'stage']
   if (reviewMode === 'staged') return ['unstage']
   return []
 }
@@ -60,6 +60,38 @@ export function getOpenSourceLine(
   line: Pick<DiffLineEventBaseProps, 'annotationSide' | 'lineNumber'>
 ): number | null {
   return line.annotationSide === 'additions' ? line.lineNumber : null
+}
+
+export function getHunkActionAnchor(
+  patch: string
+): Pick<DiffLineAnnotation, 'side' | 'lineNumber'> | null {
+  let deletionLine = 0
+  let additionLine = 0
+  let inHunk = false
+  let anchor: Pick<DiffLineAnnotation, 'side' | 'lineNumber'> | null = null
+
+  for (const line of patch.split('\n')) {
+    const header = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+    if (header) {
+      deletionLine = Number(header[1])
+      additionLine = Number(header[2])
+      inHunk = true
+      continue
+    }
+    if (!inHunk || line.startsWith('\\ No newline')) continue
+    if (line.startsWith('+')) {
+      anchor = { side: 'additions', lineNumber: additionLine }
+      additionLine += 1
+    } else if (line.startsWith('-')) {
+      anchor = { side: 'deletions', lineNumber: deletionLine }
+      deletionLine += 1
+    } else {
+      additionLine += 1
+      deletionLine += 1
+    }
+  }
+
+  return anchor
 }
 
 export function ensureTrailingNewline(value: string) {

@@ -349,6 +349,27 @@ describe('FileChangesReviewPanel', () => {
       />
     )
 
+    const fileActions = screen.getAllByTestId('file-changes-review-file-actions')[0]
+    const hunkActions = screen.getAllByTestId('file-changes-review-hunk-actions')[0]
+    expect(fileActions).toHaveClass('opacity-0')
+    expect(hunkActions).toHaveClass('absolute', 'rounded-full', 'opacity-0')
+    expect(
+      Array.from(fileActions.querySelectorAll('button')).map(button =>
+        button.getAttribute('data-testid')
+      )
+    ).toEqual(['file-changes-review-revert-file-button', 'file-changes-review-stage-file-button'])
+    expect(
+      Array.from(hunkActions.querySelectorAll('button')).map(button =>
+        button.getAttribute('data-testid')
+      )
+    ).toEqual(['file-changes-review-revert-hunk-button', 'file-changes-review-stage-hunk-button'])
+    expect(screen.getAllByTestId('file-changes-review-stage-file-button')[0]).not.toHaveTextContent(
+      /Stage file|暂存文件/
+    )
+    expect(screen.getAllByTestId('file-changes-review-stage-hunk-button')[0]).toHaveAccessibleName(
+      /Stage$|暂存$/
+    )
+
     await userEvent.click(screen.getAllByTestId('file-changes-review-stage-file-button')[0])
     expect(onApplyPatch).toHaveBeenCalledWith(
       'stage',

@@ -29,9 +29,10 @@ import {
   ensureTrailingNewline,
   fileNameFromPath,
   getDiffSelection,
-  getOpenSourceLine,
   getFirstChangedLine,
+  getHunkActionAnchor,
   getHunkPatches,
+  getOpenSourceLine,
   getReviewActions,
   type DiffCommentSelection,
   type FileChangesReviewMode,
@@ -691,9 +692,9 @@ function FileDiffSection({
     <article
       data-testid="file-changes-review-file-diff-section"
       data-review-path={section.path}
-      className="border-b border-border bg-background last:border-b-0"
+      className="group/file-diff overflow-clip border-b border-border bg-background last:border-b-0"
     >
-      <div className="sticky top-0 z-10 flex h-8 items-center gap-1 border-b border-border bg-background px-2 text-xs font-medium text-text-primary">
+      <div className="group/diff-header sticky top-0 z-10 flex h-8 items-center gap-1 border-b border-border bg-background px-2 text-xs font-medium text-text-primary">
         <button
           type="button"
           data-testid="file-changes-review-file-diff-toggle"
@@ -723,16 +724,23 @@ function FileDiffSection({
         </button>
         <span className="shrink-0 font-normal text-green-600">+{stats.additions}</span>
         <span className="shrink-0 font-normal text-red-600">-{stats.deletions}</span>
-        {fileActions.map(action => (
-          <ReviewPatchActionButton
-            key={action}
-            action={action}
-            scope="file"
-            disabled={Boolean(pendingAction)}
-            pending={pendingAction === `file:${index}:${action}`}
-            onClick={() => onApplyPatch(action, filePatch, `file:${index}:${action}`)}
-          />
-        ))}
+        {fileActions.length > 0 ? (
+          <div
+            data-testid="file-changes-review-file-actions"
+            className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/diff-header:opacity-100 group-has-[:focus-visible]/diff-header:opacity-100 focus-within:opacity-100"
+          >
+            {fileActions.map(action => (
+              <ReviewPatchActionButton
+                key={action}
+                action={action}
+                scope="file"
+                disabled={Boolean(pendingAction)}
+                pending={pendingAction === `file:${index}:${action}`}
+                onClick={() => onApplyPatch(action, filePatch, `file:${index}:${action}`)}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
       {!collapsed ? (
         <div
@@ -743,32 +751,39 @@ function FileDiffSection({
           {patchChunks.flatMap((patch, patchIndex) =>
             getHunkPatches(patch).map((hunkPatch, hunkIndex) => {
               const selectionKey = `${index}:${patchIndex}:${hunkIndex}`
+              const hunkActionAnchor = getHunkActionAnchor(hunkPatch)
               return (
                 <div
                   key={`${wrapLines}:${diffStyle}:${hunksCollapsed}:${selectionKey}:${hunkPatch}`}
+                  className="relative"
                 >
-                  {fileActions.length > 0 ? (
-                    <div
-                      data-testid="file-changes-review-hunk-actions"
-                      className="flex min-h-8 items-center justify-end gap-1 border-b border-border bg-muted/40 px-2"
-                    >
-                      {fileActions.map(action => (
-                        <ReviewPatchActionButton
-                          key={action}
-                          action={action}
-                          scope="hunk"
-                          disabled={Boolean(pendingAction)}
-                          pending={pendingAction === `hunk:${selectionKey}:${action}`}
-                          onClick={() =>
-                            onApplyPatch(action, hunkPatch, `hunk:${selectionKey}:${action}`)
-                          }
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-                  <PatchDiff
+                  <PatchDiff<{ kind: 'hunk-actions' }>
                     patch={hunkPatch}
                     disableWorkerPool
+                    lineAnnotations={
+                      fileActions.length > 0 && hunkActionAnchor
+                        ? [{ ...hunkActionAnchor, metadata: { kind: 'hunk-actions' } }]
+                        : []
+                    }
+                    renderAnnotation={() => (
+                      <div
+                        data-testid="file-changes-review-hunk-actions"
+                        className="pointer-events-none absolute -top-8 right-0.5 z-20 flex items-center gap-1 rounded-full bg-surface/90 p-0.5 opacity-0 shadow-sm ring-1 ring-border/60 transition-opacity group-hover/file-diff:pointer-events-auto group-hover/file-diff:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+                      >
+                        {fileActions.map(action => (
+                          <ReviewPatchActionButton
+                            key={action}
+                            action={action}
+                            scope="hunk"
+                            disabled={Boolean(pendingAction)}
+                            pending={pendingAction === `hunk:${selectionKey}:${action}`}
+                            onClick={() =>
+                              onApplyPatch(action, hunkPatch, `hunk:${selectionKey}:${action}`)
+                            }
+                          />
+                        ))}
+                      </div>
+                    )}
                     selectedLines={
                       commentSelection?.key === selectionKey ? commentSelection.range : null
                     }

@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import { getDiffSelection, getHunkPatches, getOpenSourceLine } from './fileChangesReviewUtils'
+import {
+  getDiffSelection,
+  getHunkActionAnchor,
+  getHunkPatches,
+  getOpenSourceLine,
+} from './fileChangesReviewUtils'
 
 const patch = [
   'diff --git a/src/example.ts b/src/example.ts',
@@ -42,5 +47,27 @@ describe('fileChangesReviewInteractions', () => {
   test('opens only addition-side line numbers in the current source file', () => {
     expect(getOpenSourceLine({ annotationSide: 'additions', lineNumber: 12 })).toBe(12)
     expect(getOpenSourceLine({ annotationSide: 'deletions', lineNumber: 8 })).toBeNull()
+  })
+
+  test('anchors hunk actions to the final changed line like ChatGPT', () => {
+    expect(getHunkActionAnchor(getHunkPatches(patch)[0])).toEqual({
+      side: 'additions',
+      lineNumber: 1,
+    })
+    expect(
+      getHunkActionAnchor(
+        [
+          'diff --git a/src/example.ts b/src/example.ts',
+          '--- a/src/example.ts',
+          '+++ b/src/example.ts',
+          '@@ -7,2 +7,0 @@',
+          '-removed one',
+          '-removed two',
+        ].join('\n')
+      )
+    ).toEqual({
+      side: 'deletions',
+      lineNumber: 8,
+    })
   })
 })

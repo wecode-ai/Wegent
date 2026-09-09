@@ -194,11 +194,11 @@
       "show_split": "切换到分栏视图",
       "show_unified": "切换到统一视图",
       "stage_file": "暂存文件",
-      "stage_hunk": "暂存区块",
+      "stage_hunk": "暂存",
       "unstage_file": "取消暂存文件",
-      "unstage_hunk": "取消暂存区块",
+      "unstage_hunk": "取消暂存",
       "revert_file": "撤销文件",
-      "revert_hunk": "撤销区块"
+      "revert_hunk": "撤销"
     },
     "review_failed": "加载文件变更失败",
     "revert_failed": "撤销文件变更失败",

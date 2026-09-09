@@ -1,4 +1,4 @@
-import { Check, MessageSquare, Undo2 } from 'lucide-react'
+import { Check, Loader2, MessageSquare, Minus, Undo2 } from 'lucide-react'
 import type { GitPatchAction } from '@/api/environment'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DiffCommentSelection } from './fileChangesReviewUtils'
@@ -18,7 +18,7 @@ export function ReviewPatchActionButton({
 }) {
   const { t } = useTranslation('chat')
   const label = t(`file_changes.actions.${action}_${scope}`)
-  const Icon = action === 'revert' ? Undo2 : Check
+  const Icon = action === 'revert' ? Undo2 : action === 'unstage' ? Minus : Check
 
   return (
     <button
@@ -28,10 +28,13 @@ export function ReviewPatchActionButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="flex h-7 shrink-0 items-center gap-1 rounded px-1.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-45"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 disabled:opacity-45"
     >
-      <Icon className="h-3.5 w-3.5" />
-      <span className="hidden xl:inline">{pending ? t('file_changes.applying') : label}</span>
+      {pending ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Icon className="h-3.5 w-3.5" />
+      )}
     </button>
   )
 }

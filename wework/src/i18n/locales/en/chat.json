@@ -197,11 +197,11 @@
       "show_split": "Switch to split view",
       "show_unified": "Switch to unified view",
       "stage_file": "Stage file",
-      "stage_hunk": "Stage hunk",
+      "stage_hunk": "Stage",
       "unstage_file": "Unstage file",
-      "unstage_hunk": "Unstage hunk",
+      "unstage_hunk": "Unstage",
       "revert_file": "Revert file",
-      "revert_hunk": "Revert hunk"
+      "revert_hunk": "Revert"
     },
     "review_failed": "Failed to load file changes",
     "revert_failed": "Failed to revert file changes",
