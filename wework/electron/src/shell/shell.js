@@ -3,7 +3,6 @@ const details = document.querySelector('#details')
 const reloadButton = document.querySelector('#reload-dsh')
 const overlay = document.querySelector('#runtime-overlay')
 const runtimeCard = document.querySelector('.runtime-card')
-const splash = document.querySelector('#splash-root')
 
 async function refreshState() {
   try {
@@ -11,7 +10,6 @@ async function refreshState() {
     overlay.dataset.phase = state.phase
     const failed = state.phase === 'failed'
     runtimeCard.hidden = !failed
-    splash.hidden = failed
     status.textContent = state.ready
       ? '运行时已就绪'
       : state.phase === 'failed'
@@ -25,7 +23,6 @@ async function refreshState() {
   } catch (error) {
     overlay.dataset.phase = 'failed'
     runtimeCard.hidden = false
-    splash.hidden = true
     status.textContent = `无法读取运行时状态：${error instanceof Error ? error.message : String(error)}`
     details.hidden = false
     details.textContent = error instanceof Error ? error.stack || error.message : String(error)

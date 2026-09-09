@@ -63,3 +63,42 @@ class WikiContentWriteRequest(BaseModel):
     # that no longer exists, and an incremental version starts as a copy of the
     # published one, so not writing a page cannot mean removing it.
     removed_paths: List[str] = Field(default_factory=list)
+
+
+class WikiGenerationReviewRequest(BaseModel):
+    """A verdict submitted by the native Reviewer during a Code Wiki rebuild."""
+
+    generation_id: int
+    phase: Literal["plan", "plan_amendment", "qa", "recheck"]
+    status: Literal["passed", "changes_requested"]
+    paths: List[str] = Field(min_length=1)
+    focus_paths: List[str] = Field(default_factory=list)
+    summary: str = Field(min_length=1, max_length=8000)
+    findings: Optional[str] = Field(default=None, max_length=12000)
+
+
+class WikiWritingPackage(BaseModel):
+    """One non-overlapping group of pages assigned to a Section Writer."""
+
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+    paths: List[str] = Field(min_length=1)
+
+
+class WikiWritingPlan(BaseModel):
+    """Structured page ownership attached to a full-rebuild Plan handoff."""
+
+    mode: Literal["coordinator", "scoped"]
+    language: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    coordinator_paths: List[str] = Field(default_factory=list)
+    work_packages: List[WikiWritingPackage] = Field(default_factory=list)
+
+
+class WikiGenerationReviewOpenRequest(BaseModel):
+    """A durable handoff opened by the Writer before Reviewer delegation."""
+
+    generation_id: int
+    phase: Literal["plan", "plan_amendment", "qa", "recheck"]
+    paths: List[str] = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=2000)
+    handoff: str = Field(min_length=1, max_length=30000)
+    writing_plan: Optional[WikiWritingPlan] = None

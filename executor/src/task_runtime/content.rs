@@ -13,7 +13,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::{
-    store::{now, numeric_id},
+    store::{now, numeric_id, refresh_runtime_projection_additional_context},
     BinaryInput, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
     LocalTaskStore, ProjectFile, TaskAttachment, TaskRuntimeError,
 };
@@ -469,6 +469,9 @@ impl LocalTaskStore {
                 timestamp,
             ],
         )?;
+        if persisted_task {
+            refresh_runtime_projection_additional_context(&connection, item_id)?;
+        }
         drop(connection);
         self.get_task_attachment(&id)
     }
@@ -500,11 +503,23 @@ impl LocalTaskStore {
     pub fn delete_task_attachment(&self, attachment_id: &str) -> Result<(), TaskRuntimeError> {
         let path = self.task_attachment_path(attachment_id)?;
         let connection = self.connection()?;
+        let item_id = connection
+            .query_row(
+                "SELECT loop_item_id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'attachment'",
+                [attachment_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
         connection.execute(
             "UPDATE loop_items SET deleted_at = ?1, updated_at = ?1
              WHERE id = ?2 AND resource_type = 'attachment'",
             params![now(), attachment_id],
         )?;
+        if let Some(item_id) = item_id {
+            refresh_runtime_projection_additional_context(&connection, &item_id)?;
+        }
         let _ = fs::remove_file(path);
         Ok(())
     }
@@ -693,6 +708,9 @@ impl LocalTaskStore {
                 timestamp,
             ],
         )?;
+        if persisted_task {
+            refresh_runtime_projection_additional_context(&connection, item_id)?;
+        }
         drop(connection);
         self.get_delivery(item_id, &id)
     }
@@ -858,12 +876,24 @@ impl LocalTaskStore {
 
     pub fn discard_delivery(&self, delivery_id: &str) -> Result<(), TaskRuntimeError> {
         let connection = self.connection()?;
+        let item_id = connection
+            .query_row(
+                "SELECT loop_item_id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'delivery'",
+                [delivery_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
         connection.execute(
             "UPDATE loop_items SET deleted_at = ?1, updated_at = ?1
              WHERE (id = ?2 AND resource_type = 'delivery')
                 OR (delivery_id = ?2 AND resource_type = 'delivery_asset')",
             params![now(), delivery_id],
         )?;
+        if let Some(item_id) = item_id {
+            refresh_runtime_projection_additional_context(&connection, &item_id)?;
+        }
         let _ = fs::remove_dir_all(self.binary_root()?.join("deliveries").join(delivery_id));
         Ok(())
     }

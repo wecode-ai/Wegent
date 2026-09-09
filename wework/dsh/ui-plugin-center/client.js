@@ -49,18 +49,18 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'wework'],
       apply(ctx) {
         ctx.slots.inject('wework.action', () =>
-          ctx.wework.ui.register(ctx, 'wework.action', {
+          ctx.wework.contributions.register(ctx, 'wework.action', {
             id: 'plugin-center.open',
             path: '/plugins',
           })
         )
         ctx.slots.inject('wework.route', function* () {
           for (const route of routes) {
-            yield ctx.wework.ui.register(ctx, 'wework.route', route)
+            yield ctx.wework.contributions.register(ctx, 'wework.route', route)
           }
         })
         ctx.slots.inject('wework.sidebar.navigation', () =>
-          ctx.wework.ui.register(ctx, 'wework.sidebar.navigation', navigation)
+          ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', navigation)
         )
       },
     }

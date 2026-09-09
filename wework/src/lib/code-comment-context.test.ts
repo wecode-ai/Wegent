@@ -130,10 +130,33 @@ describe('appendCodeCommentContexts', () => {
         filePath: 'browser:https://example.test/',
         fileName: 'example.test',
         lines: null,
-        selectedText: expect.stringContaining('"type":"browser_annotation"'),
+        selectedText: expect.stringContaining('"type": "browser_annotation"'),
         userComment: '这个侧边栏太抢眼',
       },
     ])
+  })
+
+  test('removes local browser screenshots before sending annotation context', () => {
+    const screenshotDataUrl = `data:image/png;base64,${'a'.repeat(100_000)}`
+    const output = appendCodeCommentContexts('', [
+      {
+        ...browserComment,
+        selectedText: JSON.stringify({
+          type: 'browser_annotation',
+          url: 'https://example.test/',
+          target: { tagName: 'button', text: 'Submit' },
+          screenshotDataUrl,
+        }),
+      },
+    ])
+    const payload = parseContextPayload(output) as Array<{ selectedText: string }>
+
+    expect(output).not.toContain(screenshotDataUrl)
+    expect(JSON.parse(payload[0].selectedText)).toEqual({
+      type: 'browser_annotation',
+      url: 'https://example.test/',
+      target: { tagName: 'button', text: 'Submit' },
+    })
   })
 
   test('serializes selected text and comments without extra context delimiters', () => {

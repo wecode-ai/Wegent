@@ -1,6 +1,8 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import {
   installCoreDshPlugin,
   readCoreDshPlugins,
@@ -11,6 +13,10 @@ import {
   updateCoreDshPlugin,
 } from '@/features/dsh-plugins/coreDshPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  MODE_MANAGED_GIT_PLUGIN,
+  MODE_MANAGED_HOME_PLUGINS,
+} from '@/features/workbench-mode/workbenchMode'
 
 type Operation =
   | 'install'
@@ -20,7 +26,11 @@ type Operation =
   | `update:${string}`
   | null
 
-export function CoreDshPluginManagementSection() {
+export function CoreDshPluginManagementSection({
+  onCreatePlugin,
+}: {
+  onCreatePlugin?: () => Promise<void>
+}) {
   const { t } = useTranslation('common')
   const [plugins, setPlugins] = useState<CoreDshPlugin[]>([])
   const [spec, setSpec] = useState('')
@@ -84,16 +94,27 @@ export function CoreDshPluginManagementSection() {
   return (
     <>
       <section data-testid="core-dsh-plugin-management">
-        <header className="mb-5">
-          <h2 className="heading-section text-text-primary">
-            {t('workbench.core_dsh_plugins_title', 'Wework 插件')}
-          </h2>
-          <p className="mt-1 text-sm leading-5 text-text-secondary">
-            {t(
-              'workbench.core_dsh_plugins_description',
-              '管理直接扩展 Wework 桌面能力的插件。修改会在重启 Wework 插件运行时后生效。'
-            )}
-          </p>
+        <header className="mb-5 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="heading-section text-text-primary">
+              {t('workbench.core_dsh_plugins_title', 'Wework 插件')}
+            </h2>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t(
+                'workbench.core_dsh_plugins_description',
+                '管理直接扩展 Wework 桌面能力的插件。修改会在重启 Wework 插件运行时后生效。'
+              )}
+            </p>
+          </div>
+          {onCreatePlugin ? (
+            <DshSlotSurface
+              className="shrink-0"
+              entryId="wework-plugin-developer.create"
+              props={{ onCreate: onCreatePlugin, t }}
+              slot={WEWORK_DSH_SLOTS.pluginsAction}
+              testId="core-dsh-plugin-page-actions"
+            />
+          ) : null}
         </header>
 
         <form
@@ -269,6 +290,8 @@ function PluginRow({
     operation === `update:${plugin.name}` ||
     operation === `uninstall:${plugin.name}`
   const source = plugin.repository || plugin.homepage || plugin.requestedSpec
+  const modeManaged =
+    plugin.name === MODE_MANAGED_GIT_PLUGIN || MODE_MANAGED_HOME_PLUGINS.has(plugin.name)
 
   return (
     <article
@@ -296,8 +319,13 @@ function PluginRow({
           {plugin.version ? ` · ${plugin.version}` : ''}
           {source ? ` · ${source}` : ''}
         </p>
+        {modeManaged ? (
+          <p className="mt-1 text-xs text-text-secondary">
+            {t('workbench.core_dsh_plugins_managed_by_mode', '由“设置 → 通用 → 模式”管理')}
+          </p>
+        ) : null}
       </div>
-      {!plugin.immutable ? (
+      {!plugin.immutable && !modeManaged ? (
         <div className="flex items-center gap-2">
           <button
             type="button"

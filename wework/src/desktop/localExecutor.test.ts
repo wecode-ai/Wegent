@@ -13,7 +13,9 @@ import {
   ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId,
   getLocalExecutorStatus,
+  readLocalExecutorLog,
   requestLocalExecutor,
   resetLocalExecutorStateForTests,
   subscribeLocalExecutorEvents,
@@ -79,6 +81,7 @@ describe('localExecutor', () => {
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
     expect(requestDshExecutorMock).not.toHaveBeenCalled()
     expect(getInitializedBundledPluginMarketplace()).toBeNull()
+    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
   })
 
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {
@@ -152,15 +155,25 @@ describe('localExecutor', () => {
         return { ready: true, started: true, initializeElapsedMs: 37 }
       }
       if (method === 'executor.plugins.initialize_bundled_marketplace') return marketplace
+      if (method === 'runtime.codex.plugin.reconcile_bundled_marketplace') {
+        return { marketplaceName: marketplace.id, action: 'added' }
+      }
       if (method !== 'codex.app_server_request') return {}
       const request = params as { method?: string }
-      if (request.method === 'marketplace/add') return { marketplaceName: marketplace.id }
       if (request.method === 'config/read') return { config: { plugins: {} } }
       if (request.method === 'plugin/install') return {}
       throw new Error(`Unexpected request: ${request.method}`)
     })
 
     await ensureBundledPluginInstalled('smart-app-builder')
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith(
+      'runtime.codex.plugin.reconcile_bundled_marketplace',
+      {
+        marketplaceId: marketplace.id,
+        source: marketplace.path,
+      }
+    )
 
     expect(requestDshExecutorMock).toHaveBeenCalledWith('codex.app_server_request', {
       method: 'plugin/install',
@@ -190,12 +203,30 @@ describe('localExecutor', () => {
     expect(requestDshExecutorMock).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('reports the configured backend connection from DSH', async () => {
+    requestDshExecutorMock.mockResolvedValue({
+      configured: true,
+      connected: true,
+      backend_url: 'https://api.example.com',
+      socket_url: 'wss://socket.example.com',
+    })
+
+    await expect(readLocalExecutorLog()).resolves.toMatchObject({
+      backendUrl: 'https://api.example.com',
+      socketUrl: 'wss://socket.example.com',
+      hasBackendAuthToken: true,
+    })
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith('executor.backend.status', {})
+  })
+
   test('configures and clears the backend connection through DSH', async () => {
     await connectLocalExecutorToBackend({
       backendUrl: 'https://api.example.com',
       socketBaseUrl: 'wss://api.example.com',
       authToken: 'token',
       runtimeAuthToken: 'runtime-token',
+      deviceType: 'remote',
     })
     resetLocalExecutorStateForTests()
     mockStartup()
@@ -206,6 +237,7 @@ describe('localExecutor', () => {
       socket_url: 'wss://api.example.com',
       auth_token: 'token',
       runtime_auth_token: 'runtime-token',
+      device_type: 'remote',
     })
     expect(requestDshExecutorMock).toHaveBeenCalledWith('executor.backend.configure', {})
   })

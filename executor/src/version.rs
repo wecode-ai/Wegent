@@ -2,6 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+// Cargo tracks option_env! values in build fingerprints. Development launchers
+// set this per worktree so a shared target directory cannot reuse another
+// worktree's executor binary.
+const _DEV_BUILD_ID: Option<&str> = option_env!("WEGENT_EXECUTOR_DEV_BUILD_ID");
+
 pub fn get_version() -> String {
     std::env::var("WEGENT_EXECUTOR_VERSION")
         .ok()

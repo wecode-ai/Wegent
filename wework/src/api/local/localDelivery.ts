@@ -653,7 +653,11 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     content_revision: 1,
-    is_unread: false,
+    has_additional_context:
+      typeof record.metadata.has_additional_context === 'boolean'
+        ? record.metadata.has_additional_context
+        : true,
+    is_unread: record.metadata.is_unread === true,
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -851,6 +855,29 @@ export function createLocalDeliveryApi(
       }
       return { items }
     },
+    async listLoopItemsPage(
+      projectId: CloudProjectId,
+      options: {
+        status: CloudLoopItem['status']
+        parentId: string | null
+        cursor?: string | null
+        limit?: number
+      }
+    ) {
+      const response = await api.listLoopItems(projectId)
+      const offset = Number(options.cursor ?? 0)
+      const limit = options.limit ?? 10
+      const matching = response.items.filter(
+        item => item.status === options.status && item.parent_id === options.parentId
+      )
+      const items = matching.slice(offset, offset + limit)
+      const nextOffset = offset + items.length
+      return {
+        items,
+        task_bindings: [],
+        next_cursor: nextOffset < matching.length ? String(nextOffset) : null,
+      }
+    },
     async getBoardSnapshot(projectId: CloudProjectId): Promise<ProjectBoardSnapshot> {
       const records = await request<LocalLoopItemRecord[]>('todos.list', {
         project_id: projectId,
@@ -968,7 +995,12 @@ export function createLocalDeliveryApi(
       return localTask(record)
     },
     async markLoopItemRead(itemId: string) {
-      return api.getLoopItem(itemId)
+      const projectId = await resolveProjectId(itemId)
+      const record = await request<LocalLoopItemRecord>('todos.mark_read', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      return localTask(record)
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {
@@ -1119,16 +1151,6 @@ export function createLocalDeliveryApi(
         },
       })
     },
-    async bindProjectTask(
-      projectId: CloudProjectId,
-      task: RuntimeTaskAddress,
-      taskTitle?: string | null
-    ) {
-      await request('projects.bind_task', {
-        project_id: projectId,
-        task: { ...task, ...(taskTitle ? { taskTitle } : {}) },
-      })
-    },
     async trackProjectTask(
       projectId: CloudProjectId,
       task: RuntimeTaskAddress,
@@ -1146,7 +1168,7 @@ export function createLocalDeliveryApi(
               task_id: task.taskId,
             }
           )
-          if (existing.loop_item_id) {
+          if (existing.loop_item_id && String(existing.cloud_project_id) === String(projectId)) {
             return { item: await api.getLoopItem(existing.loop_item_id) }
           }
         } catch {

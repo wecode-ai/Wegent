@@ -1,0 +1,3 @@
+- insert:
+    - id: endpoint-watch-demo
+      name: '@wegent/dsh-endpoint-watch-demo'

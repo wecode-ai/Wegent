@@ -130,6 +130,7 @@ impl ClaudeStdoutJsonBuffer {
             Ok(mut value) => {
                 omit_inline_image_data(&mut value);
                 let normalized_size = if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                    omit_redundant_task_transcripts(&mut value);
                     serde_json::to_vec(&value)
                         .map(|serialized| serialized.len())
                         .unwrap_or(self.buffer.len())
@@ -174,6 +175,55 @@ pub fn compact_claude_stdout_line<'a>(
             message: format!("failed to serialize normalized Claude stdout JSON: {error}"),
             preview: preview_stdout_line(line),
         })
+}
+
+fn omit_redundant_task_transcripts(value: &mut Value) {
+    let has_tool_result = value["message"]["content"]
+        .as_array()
+        .is_some_and(|blocks| {
+            blocks.iter().any(|block| {
+                block["type"] == "tool_result"
+                    && block["tool_use_id"]
+                        .as_str()
+                        .is_some_and(|id| !id.is_empty())
+                    && match &block["content"] {
+                        Value::String(text) => !text.is_empty(),
+                        Value::Array(content) => !content.is_empty(),
+                        _ => false,
+                    }
+            })
+        });
+    if value["type"] != "user" || !has_tool_result {
+        return;
+    }
+
+    for key in ["toolUseResult", "tool_use_result"] {
+        let Some(task) = value
+            .get_mut(key)
+            .and_then(|result| result.get_mut("task"))
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        if task.get("task_type").and_then(Value::as_str) != Some("local_agent")
+            || task.get("isRawTranscript").and_then(Value::as_bool) != Some(true)
+        {
+            continue;
+        }
+        let duplicates = match (
+            task.get("output").and_then(Value::as_str),
+            task.get("result").and_then(Value::as_str),
+        ) {
+            (Some(output), Some(result)) => output == result,
+            _ => false,
+        };
+        if duplicates {
+            // Keep the canonical tool_result (including its output-file reference).
+            // These raw transcript copies are metadata, not Claude's conversation.
+            task.remove("output");
+            task.remove("result");
+        }
+    }
 }
 
 fn omit_inline_image_data(value: &mut Value) -> bool {
@@ -434,14 +484,9 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
         return None;
     }
 
-    let message = value
-        .get("result")
-        .or_else(|| value.get("message"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Claude execution failed")
-        .to_owned();
+    let message = extract_result_error_message(value)
+        .map(str::to_owned)
+        .unwrap_or_else(|| "Claude execution failed".to_owned());
 
     if is_interruption_message(&message)
         || value
@@ -453,6 +498,36 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
     } else {
         Some(ExecutionOutcome::Failed { message })
     }
+}
+
+/// Extract the best available error message from a Claude `result` event.
+///
+/// Claude may report failures in `result`, `message`, or the `errors` array. This
+/// function prefers non-empty `result`, then `message`, then the first non-empty
+/// string in `errors`.
+fn extract_result_error_message(value: &Value) -> Option<&str> {
+    let result = value
+        .get("result")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let errors = value.get("errors").and_then(Value::as_array);
+
+    result.or(message).or_else(|| {
+        errors.and_then(|errors| {
+            errors.iter().find_map(|error| {
+                error
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+        })
+    })
 }
 
 fn claude_task_started_tool_use_id(value: &Value) -> Option<String> {

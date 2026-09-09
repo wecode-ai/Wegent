@@ -14,6 +14,14 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+ATOMIC_POP_SCRIPT = """
+local value = redis.call('GET', KEYS[1])
+if value then
+    redis.call('DEL', KEYS[1])
+end
+return value
+"""
+
 
 class RedisCache:
     """Redis-based cache manager for GitHub repositories"""
@@ -200,6 +208,24 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Error deleting cache key {key}: {str(e)}")
             return False
+
+    async def pop(self, key: str) -> Optional[Any]:
+        """Atomically return and delete one cache value."""
+        try:
+            client = await self._get_client()
+            try:
+                data = await client.eval(ATOMIC_POP_SCRIPT, 1, key)
+                if data is None:
+                    return None
+                try:
+                    return orjson.loads(data)
+                except Exception:
+                    return data
+            finally:
+                await client.aclose()
+        except Exception as e:
+            logger.error(f"Error popping cache key {key}: {str(e)}")
+            return None
 
     async def cleanup_expired(self):
         """No-op: Redis handles expiration via TTL."""

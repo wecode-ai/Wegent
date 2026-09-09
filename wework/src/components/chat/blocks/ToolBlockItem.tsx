@@ -1,6 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
+import {
+  ChevronDown,
+  Clock3,
+  Copy,
+  CopyCheck,
+  FileDiff,
+  Image as ImageIcon,
+  Search,
+  Wrench,
+} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { terminalOutputToText } from '@/lib/terminal-text'
@@ -10,12 +19,10 @@ import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { ActivityShimmerText } from '../ActivityShimmerText'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
-import {
-  localPathFromMarkdownImageSrc,
-  resolveDirectMarkdownImageSrc,
-} from '../assistantMarkdownLinks'
+import { localMarkdownImagePath, resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import {
   getToolActivityFilePaths,
@@ -30,6 +37,7 @@ import {
   isFileCreateToolName,
   isFileEditToolName,
   isGuidanceToolName,
+  isImageGenerationToolName,
   isImageViewToolName,
   isFileReadToolName,
   isNodeReplToolName,
@@ -154,9 +162,9 @@ export function ToolBlockItem({
         data-testid="runtime-reconnecting-status"
         role="status"
       >
-        <span className="tool-activity-shimmer">
+        <ActivityShimmerText variant="tool">
           {t('tool_activity.reconnecting', '连接中断，正在重连…')}
-        </span>
+        </ActivityShimmerText>
       </div>
     )
   }
@@ -175,6 +183,9 @@ export function ToolBlockItem({
     searchError: t('tool_activity.search_error'),
     imageView: filename => t('tool_activity.image_view', { filename }),
     imageViewFallback: t('tool_activity.image_view_fallback'),
+    imageGenerationRunning: t('tool_activity.image_generation_running'),
+    imageGenerationDone: t('tool_activity.image_generation_done'),
+    imageGenerationError: t('tool_activity.image_generation_error'),
     javascriptRunning: t('tool_activity.javascript_running'),
     javascriptDone: t('tool_activity.javascript_done'),
     javascriptError: t('tool_activity.javascript_error'),
@@ -183,9 +194,13 @@ export function ToolBlockItem({
   const labelContent = (
     <>
       {icon}
-      <span className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}>
-        {label}
-      </span>
+      {isRunning || shimmer ? (
+        <ActivityShimmerText variant="tool" className="min-w-0 truncate">
+          {label}
+        </ActivityShimmerText>
+      ) : (
+        <span className="min-w-0 truncate">{label}</span>
+      )}
       {isRunning && <span className="animate-pulse text-xs will-change-opacity">...</span>}
     </>
   )
@@ -325,11 +340,13 @@ function ProcessFileChangesBlockItem({
                 className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-                <span
-                  className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}
-                >
-                  {fileChangeRowLabel(file, t, isRunning)}
-                </span>
+                {isRunning || shimmer ? (
+                  <ActivityShimmerText variant="tool" className="min-w-0 truncate">
+                    {fileChangeRowLabel(file, t, isRunning)}
+                  </ActivityShimmerText>
+                ) : (
+                  <span className="min-w-0 truncate">{fileChangeRowLabel(file, t, isRunning)}</span>
+                )}
                 {!file.binary ? (
                   <FileChangeLineStats file={file} isRunning={isRunning} streamId={block.id} />
                 ) : null}
@@ -948,8 +965,9 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-chat text-text-primary"
       data-processing-block-id={block.id}
+      data-message-selectable-text
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
       aria-label={isRunning ? t('process_text.running') : undefined}
@@ -981,6 +999,9 @@ type GenericToolLabels = {
   searchError: string
   imageView: (filename: string) => string
   imageViewFallback: string
+  imageGenerationRunning: string
+  imageGenerationDone: string
+  imageGenerationError: string
   javascriptRunning: string
   javascriptDone: string
   javascriptError: string
@@ -1050,6 +1071,18 @@ function getBlockLabel(
     return {
       icon: <FileIcon />,
       label: path ? genericLabels.imageView(basename(path)) : genericLabels.imageViewFallback,
+    }
+  }
+  if (isImageGenerationToolName(name)) {
+    const label =
+      block.status === 'error'
+        ? genericLabels.imageGenerationError
+        : block.status === 'done'
+          ? genericLabels.imageGenerationDone
+          : genericLabels.imageGenerationRunning
+    return {
+      icon: <ImageIcon className="h-4 w-4" strokeWidth={1.7} />,
+      label,
     }
   }
   if (isGuidanceToolName(name)) {
@@ -1251,7 +1284,7 @@ function renderBlockDetail(
 
 function hasBlockDetail(block: ToolBlock): boolean {
   const name = block.toolName.toLowerCase()
-  if (isGuidanceToolName(name)) return false
+  if (isGuidanceToolName(name) || isImageGenerationToolName(name)) return false
   if (
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
@@ -1367,8 +1400,7 @@ function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
 function useResolvedImageViewSource(source?: string): string | null {
   const electronLocalPath = useMemo(() => {
     if (!source || !isElectronRuntime()) return null
-    const path = localPathFromMarkdownImageSrc(source)
-    return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) ? path : null
+    return localMarkdownImagePath(source)
   }, [source])
   const [electronImage, setElectronImage] = useState<{
     path: string

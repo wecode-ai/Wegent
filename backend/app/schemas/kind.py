@@ -338,6 +338,11 @@ class ModelSpec(BaseModel):
         description="Whether this model is available in the wework desktop client. "
         "Only models with this field set to True are returned to wework.",
     )
+    isVisible: bool = Field(
+        True,
+        description="Whether this public model is visible in user model selectors. "
+        "Hidden models remain available to existing bindings.",
+    )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared multimodal capabilities (supportsImage / supportsVideo). "
@@ -1068,6 +1073,10 @@ class KnowledgeBaseSpec(BaseModel):
         default="read",
         description="Minimum capability required for direct knowledge base access",
     )
+    allowDocumentDownload: Optional[bool] = Field(
+        default=None,
+        description="Whether readers may download original knowledge documents",
+    )
     kbType: Optional[str] = Field(
         "notebook",
         description=(
@@ -1098,6 +1107,13 @@ class KnowledgeBaseSpec(BaseModel):
             "started. A hidden task stays openable by id, and the wiki's own run "
             "history links to it, so nothing becomes unreachable."
         ),
+    )
+    generationStrategy: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description="Default orchestration strategy for this code wiki",
     )
     publishedGenerationId: int = Field(
         0,

@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudLoopItemExecution, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { runtimeProfileIsRunnable, type RuntimeProfile } from '@/api/runtimeProfiles'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -205,9 +206,11 @@ function QueueStateChip({ state }: { state?: string | null }) {
         current.className
       )}
     >
-      <Icon
-        className={cn('h-3 w-3', (state === 'running' || state === 'cancelling') && 'animate-spin')}
-      />
+      {state === 'running' || state === 'cancelling' ? (
+        <CompositedSpinner icon={Icon} className="h-3 w-3" />
+      ) : (
+        <Icon className="h-3 w-3" />
+      )}
       {state ? queueStateLabel(state, t) : ''}
     </span>
   )
@@ -520,7 +523,7 @@ export function ProjectQueueView({
       {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       {loading ? (
         <div className="flex h-40 items-center justify-center text-sm text-text-muted">
-          <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+          <CompositedSpinner className="mr-2 h-4 w-4" />
           {t('workbench.project_chat_loading')}
         </div>
       ) : (

@@ -9,6 +9,9 @@ import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
+// Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
+process.noAsar = true
+
 const { resolveBuildIdentity } = identityModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(electronRoot, 'release')
@@ -79,6 +82,7 @@ try {
     electronVersion: '43.4.1',
     electronZipDir,
     appBundleId: identity.identifier,
+    protocols: [{ name: 'Wework', schemes: ['wework'] }],
     appVersion: sourcePackage.version,
     buildVersion: sourcePackage.version,
     executableName: identity.executableName,
@@ -92,6 +96,7 @@ try {
       join(electronRoot, 'resources', 'bin'),
       join(electronRoot, 'resources', 'codex'),
       join(electronRoot, 'resources', 'wework-core-plugins'),
+      join(electronRoot, 'resources', 'wework-app-static'),
       join(electronRoot, 'resources', 'components.json'),
       join(electronRoot, 'resources', 'bundled-plugins'),
       join(sharedResourcesRoot, 'licenses'),

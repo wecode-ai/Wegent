@@ -32,7 +32,7 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
-async function verifyShortConversationLayout({ composerSelector, control }) {
+async function verifyShortConversationLayout({ composerSelector, control, restartDesktopApp }) {
   const taskRowsBeforeConversation = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -74,6 +74,12 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`)
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Clicking the conversation surface did not restore keyboard focus to the composer'
+  )
 
   const scroller = await getSingleElementMetrics(
     control,
@@ -239,7 +245,63 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     'The late background transcript leaked into the restored conversation'
   )
   control.setScenario('fresh_chat')
+  await restartDesktopApp()
+  await control.command('focusMainWindow', 'body')
+  await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Opening an existing conversation after app startup did not focus the composer'
+  )
+  await control.command(
+    'hover',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="message-hover-region"]`
+  )
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="copy-message-button"]`
+  )
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    FRESH_CHAT_COMPLETION_TEXT,
+    'The assistant-message copy action did not populate the desktop clipboard'
+  )
+  await control.command('press', 'body', {
+    key: process.platform === 'darwin' ? 'Meta+v' : 'Control+v',
+  })
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Pasting after copying a message did not transfer keyboard focus to the composer'
+  )
   return shortConversationTaskRowTestId
+}
+
+async function waitForComposerFocus(control, timeoutMs, failureMessage) {
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < timeoutMs) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+    control.command('getComposerFocusSnapshot', 'body'),
+    control.command('getWorkbenchDebugSnapshot', 'body'),
+    control.command('getComposerDiagnosticsSnapshot', 'body'),
+  ])
+  throw new Error(
+    `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+      `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
+  )
 }
 
 async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {
@@ -528,11 +590,11 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   let metrics
   while (Date.now() - startedAt < timeoutMs) {
     metrics = await getSingleElementMetrics(control, selector, description)
-    if (metrics.scrollTop <= 2) return metrics
+    if (distanceFromTop(metrics) <= 2) return metrics
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
   throw new Error(
-    `${description} remained ${metrics.scrollTop}px from the top after ${timeoutMs}ms`
+    `${description} remained ${distanceFromTop(metrics)}px from the top after ${timeoutMs}ms`
   )
 }
 
@@ -676,7 +738,17 @@ async function verifyViewImageProcessingBlock(control) {
 }
 
 function distanceFromBottom(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, -metrics.scrollTop)
+  }
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+function distanceFromTop(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
+  }
+  return Math.max(0, metrics.scrollTop)
 }
 
 async function openBottomWorkspaceTerminal(control, description) {
@@ -1003,8 +1075,10 @@ export {
   waitForElementWidth,
   waitForElementTop,
   waitForProcessingBlock,
+  waitForComposerFocus,
   verifyViewImageProcessingBlock,
   distanceFromBottom,
+  distanceFromTop,
   openBottomWorkspaceTerminal,
   closeBottomWorkspacePanel,
   processGroup,

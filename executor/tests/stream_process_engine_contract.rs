@@ -381,7 +381,7 @@ async fn stream_process_engine_emits_claude_subagent_lifecycle() {
         event.event_type == "response.block.updated"
             && event.data["block_id"] == "Agent_0"
             && event.data["updates"]["output"] == "Detailed child result"
-            && event.data["updates"].get("status").is_none()
+            && event.data["updates"]["status"] == "completed"
     }));
     assert_eq!(
         outcome,
@@ -493,6 +493,40 @@ async fn stream_process_engine_keeps_stderr_for_process_failures() {
         outcome,
         ExecutionOutcome::Failed {
             message: "process-failed".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
+async fn stream_process_engine_recovers_stale_session_with_fresh_run() {
+    let task_id = format!("stale-session-{}", std::process::id());
+    let script = r#"
+if printf '%s' "$0" | grep -q -- '--resume'; then
+  printf '%s\n' '{"type":"result","is_error":true,"errors":["No conversation found with session ID: stale"],"subtype":"error_during_execution"}' >&2
+  exit 1
+else
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"recovered"}]}}' '{"type":"result","is_error":false,"session_id":"new-session","subtype":"success","stop_reason":"end_turn"}'
+  exit 0
+fi
+"#;
+    let spec = CommandSpec::new("sh")
+        .arg("-c")
+        .arg(script)
+        .arg("--resume")
+        .arg("stale-session");
+    let engine = StreamProcessEngine::new(spec, TEST_PROCESS_TIMEOUT_SECONDS);
+    let request = ExecutionRequest {
+        task_id: task_id.clone(),
+        subtask_id: task_id,
+        ..Default::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "recovered".to_owned()
         }
     );
 }

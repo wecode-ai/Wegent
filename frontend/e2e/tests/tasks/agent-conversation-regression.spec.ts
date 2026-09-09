@@ -5,12 +5,13 @@
  * backend execution routing. CI uses:
  * - mock-model-server for Chat Shell and ClaudeCode model requests
  * - real executor-manager plus a real ClaudeCode executor image for ClaudeCode HTTP tasks
- * - real local executor in local mode for device WebSocket tasks
+ * - real local executor registered as a Wework app device for device WebSocket tasks
  */
 
 import { APIRequestContext, Page, expect, test } from '@playwright/test'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
+import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -80,6 +81,8 @@ test.describe('Agent conversation regression', () => {
   let manualPipelineTeam: CreatedPipelineTeam
   let automaticPipelineTeam: CreatedPipelineTeam
   const createdTaskIds = new Set<number>()
+  const createdProjectIds = new Set<number>()
+  const createdGitAccountIds = new Set<string>()
   const streamRuleMatchTexts = new Set<string>()
 
   test.beforeAll(async ({ request }) => {
@@ -97,10 +100,14 @@ test.describe('Agent conversation regression', () => {
     await cleanupStreamRules(request)
     await clearMockModelRequests(request)
     await cleanupCreatedTasks(request)
+    await cleanupCreatedProjects(request)
+    await cleanupCreatedGitAccounts(request)
   })
 
   test.afterAll(async ({ request }) => {
     await cleanupCreatedTasks(request)
+    await cleanupCreatedProjects(request)
+    await cleanupCreatedGitAccounts(request)
     await cleanupTestResources(request)
   })
 
@@ -416,17 +423,58 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
 
-  test('device mode ClaudeCode supports dialogue and follow-up', async ({ page, request }) => {
+  test('Wework app device supports ClaudeCode dialogue and follow-up', async ({
+    page,
+    request,
+  }) => {
     const contextToken = makeContextToken('device')
     const firstPrompt = `Remember this device context token: ${contextToken}`
     const followUpPrompt = 'What context token did I provide in the previous device turn?'
 
-    await waitForLocalDeviceOnline(request)
-    await openTaskPage(page, `/devices/chat?deviceId=${DEVICE_ID}`, deviceTeam.id, 'task')
+    await waitForWeworkDeviceOnline(request)
+    const deviceResponse = await request.get(`${API_BASE_URL}/api/devices`, {
+      headers: authHeaders(),
+    })
+    expect(deviceResponse.status()).toBe(200)
+    const deviceBody = await deviceResponse.json()
+    const targetId = deviceBody.items.find(
+      (device: { device_id: string }) => device.device_id === DEVICE_ID
+    )?.execution_target_id
+    expect(targetId).toMatch(/^app-record-\d+$/)
+    await configureTaskPagePreferences(page, deviceTeam.id, 'task')
+    const [loadedDevices] = await Promise.all([
+      page.waitForResponse(
+        response =>
+          new URL(response.url()).pathname === '/api/devices' &&
+          response.request().method() === 'GET'
+      ),
+      page.goto('/devices', { waitUntil: 'domcontentloaded' }),
+    ])
+    expect(loadedDevices.status()).toBe(200)
+    await expect(page.getByTestId('device-section-local')).toContainText('E2E ClaudeCode Device')
+    const startChatButton = page.getByTestId(`start-device-chat-${DEVICE_ID}`)
+    await expect(startChatButton).toBeEnabled()
+    await startChatButton.click()
+    await expect(page).toHaveURL(url => {
+      return url.pathname === '/devices/chat' && url.searchParams.get('deviceId') === targetId
+    })
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+    const deviceSelector = page.getByTestId('device-chat-target-select')
+    await expect(deviceSelector).toHaveValue(targetId)
+    await expect(page.getByTestId(`device-chat-option-${targetId}`)).toContainText(
+      'E2E ClaudeCode Device'
+    )
+    await selectModel(page, DEVICE_CLAUDE_MODEL_NAME)
 
     await sendMessage(page, firstPrompt)
     const taskId = await waitForTaskId(page)
     createdTaskIds.add(taskId)
+    await expect(page).toHaveURL(url => {
+      return url.pathname === '/devices/chat' && url.searchParams.get('taskId') === String(taskId)
+    })
+    await expect(deviceSelector).toHaveValue(targetId)
+    await expect(deviceSelector).toBeDisabled()
     await expect(page.getByTestId('messages-container')).toContainText(
       `Mock model remembered ${contextToken}`,
       { timeout: RESPONSE_TIMEOUT_MS }
@@ -448,6 +496,91 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('device Git project runs without server AES keys on the executor', async ({ request }) => {
+    const gitFixture = await createGitHttpFixture()
+    const gitAccountId = `${TEST_PREFIX}-device-git-account`
+    const projectName = `${TEST_PREFIX}-device-git-project`
+    const contextToken = makeContextToken('device_git')
+    const prompt = `Remember this device Git context token: ${contextToken}`
+
+    try {
+      await waitForWeworkDeviceOnline(request)
+
+      const gitAccountResponse = await request.put(`${API_BASE_URL}/api/users/me`, {
+        headers: authHeaders(),
+        data: {
+          git_info: [
+            {
+              id: gitAccountId,
+              git_domain: gitFixture.domain,
+              git_token: 'device-git-e2e-token',
+              type: 'gitea',
+            },
+          ],
+        },
+      })
+      expect(gitAccountResponse.status()).toBe(200)
+      createdGitAccountIds.add(gitAccountId)
+
+      const projectResponse = await request.post(`${API_BASE_URL}/api/projects`, {
+        headers: authHeaders(),
+        data: {
+          name: projectName,
+          description: 'E2E project for device-local Git credential transport',
+          client_origin: 'frontend',
+          config: {
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId: DEVICE_ID,
+            },
+            workspace: {
+              source: 'git',
+              checkoutPath: projectName,
+            },
+            git: {
+              url: gitFixture.url,
+              repo: 'repository',
+              domain: gitFixture.domain,
+              branch: 'main',
+            },
+          },
+        },
+      })
+      expect(projectResponse.status()).toBe(201)
+      const project = (await projectResponse.json()) as { id?: number }
+      expect(project.id).toBeTruthy()
+      createdProjectIds.add(project.id!)
+
+      const taskResponse = await request.post(`${API_BASE_URL}/api/device-chat/tasks`, {
+        headers: authHeaders(),
+        data: {
+          teamId: deviceTeam.id,
+          message: prompt,
+          deviceId: DEVICE_ID,
+          projectId: project.id,
+          taskType: 'task',
+          clientOrigin: 'frontend',
+        },
+      })
+      expect(taskResponse.status()).toBe(200)
+      const task = (await taskResponse.json()) as { taskId?: number }
+      expect(task.taskId).toBeTruthy()
+      createdTaskIds.add(task.taskId!)
+
+      await waitForBackendTerminal(request, task.taskId!)
+      const modelRequest = await waitForCapturedModelRequest(
+        request,
+        capture =>
+          isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt),
+        `device Git model request containing ${contextToken}`
+      )
+      expect(extractText(modelRequest.body)).toContain(contextToken)
+    } finally {
+      await gitFixture.close()
+    }
   })
 
   test('manual pipeline next step sends handoff user message and next bot prompt to the second model', async ({
@@ -955,6 +1088,29 @@ test.describe('Agent conversation regression', () => {
     )
   }
 
+  async function cleanupCreatedProjects(request: APIRequestContext): Promise<void> {
+    const projectIds = [...createdProjectIds]
+    createdProjectIds.clear()
+    for (const projectId of projectIds) {
+      const response = await request.delete(`${API_BASE_URL}/api/projects/${projectId}`, {
+        headers: authHeaders(),
+      })
+      expect(response.status()).toBe(204)
+    }
+  }
+
+  async function cleanupCreatedGitAccounts(request: APIRequestContext): Promise<void> {
+    const accountIds = [...createdGitAccountIds]
+    createdGitAccountIds.clear()
+    for (const accountId of accountIds) {
+      const response = await request.delete(
+        `${API_BASE_URL}/api/users/me/git-token/e2e?git_info_id=${encodeURIComponent(accountId)}`,
+        { headers: authHeaders() }
+      )
+      expect(response.status()).toBe(200)
+    }
+  }
+
   async function configureStreamRule(
     request: APIRequestContext,
     matchText: string,
@@ -1082,6 +1238,19 @@ test.describe('Agent conversation regression', () => {
     teamId: number,
     mode: 'chat' | 'code' | 'task'
   ): Promise<void> {
+    await configureTaskPagePreferences(page, teamId, mode)
+
+    const separator = path.includes('?') ? '&' : '?'
+    await page.goto(`${path}${separator}teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+  }
+
+  async function configureTaskPagePreferences(
+    page: Page,
+    teamId: number,
+    mode: 'chat' | 'code' | 'task'
+  ): Promise<void> {
     await page.addInitScript(
       ({ selectedTeamId, selectedMode }) => {
         localStorage.setItem('user_onboarding_completed', 'true')
@@ -1096,11 +1265,21 @@ test.describe('Agent conversation regression', () => {
       },
       { selectedTeamId: teamId, selectedMode: mode }
     )
+  }
 
-    const separator = path.includes('?') ? '&' : '?'
-    await page.goto(`${path}${separator}teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
-    await dismissOnboardingTour(page)
-    await ensureMessageInputReady(page)
+  async function selectModel(page: Page, modelName: string): Promise<void> {
+    const modelSelector = page.getByTestId('model-selector')
+    await expect(modelSelector).toBeEnabled()
+    await modelSelector.click()
+
+    const modelSearch = page.getByTestId('model-cascade-search-input')
+    await modelSearch.fill(modelName)
+    const modelOption = page.getByTestId(`model-option-${modelName}`)
+    await expect(modelOption).toBeVisible()
+    await modelOption.click()
+
+    await expect(modelSelector).toHaveAttribute('aria-expanded', 'false')
+    await expect(modelSelector).toContainText(modelName)
   }
 
   async function sendMessage(page: Page, message: string): Promise<void> {
@@ -1214,7 +1393,7 @@ test.describe('Agent conversation regression', () => {
     throw new Error(`Timed out waiting for ${label}`)
   }
 
-  async function waitForLocalDeviceOnline(request: APIRequestContext): Promise<void> {
+  async function waitForWeworkDeviceOnline(request: APIRequestContext): Promise<void> {
     await expect
       .poll(
         async () => {
@@ -1225,17 +1404,24 @@ test.describe('Agent conversation regression', () => {
             return `HTTP_${response.status()}`
           }
           const body = (await response.json()) as {
-            items?: Array<{ device_id: string; status: string; bind_shell?: string }>
+            items?: Array<{
+              device_id: string
+              status: string
+              bind_shell?: string
+              device_type?: string
+            }>
           }
           const device = body.items?.find(item => item.device_id === DEVICE_ID)
-          return device ? `${device.status}:${device.bind_shell || ''}` : 'missing'
+          return device
+            ? `${device.status}:${device.bind_shell || ''}:${device.device_type || ''}`
+            : 'missing'
         },
         {
-          message: 'Local ClaudeCode executor device should be online',
+          message: 'Wework app device should be online',
           timeout: 30_000,
         }
       )
-      .toBe('online:claudecode')
+      .toBe('online:claudecode:app')
   }
 
   async function expectServiceHealthy(

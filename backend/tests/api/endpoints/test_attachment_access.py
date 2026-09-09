@@ -39,12 +39,20 @@ def test_signed_public_download_does_not_require_login(
     test_client: TestClient,
     test_db,
     test_user,
+    monkeypatch,
 ):
     context, _ = context_service.upload_attachment(
         db=test_db,
         user_id=test_user.id,
         filename="reference.mp4",
         binary_data=b"video-content",
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_load_stored_attachment_binary_data",
+        lambda attachment_id: (
+            b"video-content" if attachment_id == context.id else None
+        ),
     )
     download_url = build_public_attachment_download_url(
         context.id,

@@ -7,6 +7,7 @@ import React, {
   useState,
   useEffect,
   useMemo,
+  useRef,
   useImperativeHandle,
   forwardRef,
 } from 'react'
@@ -64,6 +65,7 @@ import {
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
+import { resolveSelectedModel } from './team-edit/model-select-utils'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -252,13 +254,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   }, [allowGenerationPrimaryModel, modelCategoryType, models])
   const selectedModelObject = useMemo(
     () =>
-      primaryModels.find(
-        model =>
-          model.name === selectedModel &&
-          model.type === selectedModelType &&
-          (model.namespace || 'default') === (selectedModelNamespace || 'default')
-      ) ?? null,
-    [primaryModels, selectedModel, selectedModelNamespace, selectedModelType]
+      resolveSelectedModel(
+        primaryModels,
+        selectedModel,
+        selectedModelType,
+        selectedModelNamespace,
+        modelCategoryType
+      ),
+    [modelCategoryType, primaryModels, selectedModel, selectedModelNamespace, selectedModelType]
   )
   const secondaryModels = useMemo(
     () => models.filter(model => model.modelCategoryType === 'llm'),
@@ -266,12 +269,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   )
   const selectedSecondaryModelObject = useMemo(
     () =>
-      secondaryModels.find(
-        model =>
-          model.name === selectedSecondaryModel &&
-          model.type === selectedSecondaryModelType &&
-          (model.namespace || 'default') === (selectedSecondaryModelNamespace || 'default')
-      ) ?? null,
+      resolveSelectedModel(
+        secondaryModels,
+        selectedSecondaryModel,
+        selectedSecondaryModelType,
+        selectedSecondaryModelNamespace,
+        'llm'
+      ),
     [
       secondaryModels,
       selectedSecondaryModel,
@@ -525,20 +529,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         if (hasConfig && agentMatches && isPredefined) {
           const savedModelName = getModelFromConfig(baseBot.agent_config)
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config)
-          // Only set the model if it exists in the loaded models list
-          // Match by both name and type if type is specified
+          const savedModelNamespace = getModelNamespaceFromConfig(baseBot.agent_config)
           const foundModel = primaryModelData.find((m: UnifiedModel) => {
-            if (savedModelType) {
-              return m.name === savedModelName && m.type === savedModelType
-            }
-            return m.name === savedModelName
+            const typeMatches = !savedModelType || m.type === savedModelType
+            const namespaceMatches =
+              (m.namespace || 'default') === (savedModelNamespace || 'default')
+            return m.name === savedModelName && typeMatches && namespaceMatches
           })
-          if (savedModelName && foundModel) {
+          if (savedModelName) {
             setSelectedModel(savedModelName)
-            setSelectedModelType(foundModel.type)
-            setSelectedModelNamespace(foundModel.namespace || 'default')
+            setSelectedModelType(foundModel?.type ?? savedModelType)
+            setSelectedModelNamespace(foundModel?.namespace || savedModelNamespace || 'default')
           } else {
-            // Model not found in list, clear selection
             setSelectedModel('')
             setSelectedModelType(undefined)
             setSelectedModelNamespace(undefined)
@@ -551,14 +553,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             model.name === baseBot?.secondary_model_name &&
             (model.namespace || 'default') === (baseBot?.secondary_model_namespace || 'default')
         )
-        if (secondaryModel) {
-          setSelectedSecondaryModel(secondaryModel.name)
-          setSelectedSecondaryModelType(secondaryModel.type)
-          setSelectedSecondaryModelNamespace(secondaryModel.namespace || 'default')
-        } else if (baseBot?.secondary_model_name) {
-          setSelectedSecondaryModel('')
-          setSelectedSecondaryModelType(undefined)
-          setSelectedSecondaryModelNamespace(undefined)
+        if (baseBot?.secondary_model_name) {
+          setSelectedSecondaryModel(baseBot.secondary_model_name)
+          setSelectedSecondaryModelType(secondaryModel?.type)
+          setSelectedSecondaryModelNamespace(
+            secondaryModel?.namespace || baseBot.secondary_model_namespace || 'default'
+          )
         }
         // Note: Don't clear selectedModel here if agent changed,
         // as it's already cleared in the agent select onChange handler
@@ -593,25 +593,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     allowGenerationPrimaryModel,
   ])
 
+  // Key of the bot/shell combination whose MCP config was last normalized. Used
+  // to skip re-normalization on shell refreshes while still re-processing when
+  // the edited bot (or clone source) changes.
+  const normalizedMcpKeyRef = useRef('')
+
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
     setPrompt(baseBot?.system_prompt || '')
+    normalizedMcpKeyRef.current = ''
 
-    // Apply type normalization when loading MCP config
     if (baseBot?.mcp_servers) {
-      const shellName = baseBot.shell_name || baseBot.shell_type || ''
-      const shell = shells.find(s => s.name === shellName)
-      const agentType = shell?.shellType
-
-      if (agentType && isMcpCapableShellType(agentType)) {
-        const adaptedConfig = adaptMcpConfigForShell(baseBot.mcp_servers, agentType)
-        setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
-      } else {
-        setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
-      }
+      setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
     } else {
       setMcpConfig('')
     }
@@ -631,7 +627,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } else {
       setAgentConfig('')
     }
-  }, [editingBotId, baseBot, shells])
+  }, [editingBotId, baseBot])
+
+  // Normalize the MCP config once the bot's shell type is known. Deliberately
+  // skips later shell refreshes (e.g. publish-scope switches) so they do not
+  // discard a create draft or unsaved edits of an existing bot.
+  useEffect(() => {
+    if (!baseBot?.mcp_servers) return
+
+    const shellName = baseBot.shell_name || baseBot.shell_type || ''
+    const shell = shells.find(s => s.name === shellName)
+    const agentType = shell?.shellType
+    if (!agentType || !isMcpCapableShellType(agentType)) return
+
+    const key = `${editingBotId}:${shellName}:${agentType}`
+    if (normalizedMcpKeyRef.current === key) return
+
+    normalizedMcpKeyRef.current = key
+    setMcpConfig(JSON.stringify(adaptMcpConfigForShell(baseBot.mcp_servers, agentType), null, 2))
+  }, [baseBot, editingBotId, shells])
 
   // Initialize model-related data after agents and models are loaded
   useEffect(() => {

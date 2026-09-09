@@ -18,6 +18,34 @@ from app.services.model_capabilities import normalize_model_capabilities
 from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 
+def is_public_model_visible(json_data: Optional[Dict[str, Any]]) -> bool:
+    """Return whether a public model should appear in user model selectors."""
+    if not isinstance(json_data, dict):
+        return True
+    spec = json_data.get("spec")
+    if not isinstance(spec, dict):
+        return True
+    value = spec.get("isVisible")
+    return value if isinstance(value, bool) else True
+
+
+def with_public_model_visibility(
+    json_data: Optional[Dict[str, Any]], is_visible: bool
+) -> Dict[str, Any]:
+    """Return a model CRD payload with an explicit selector visibility flag."""
+    updated_json = dict(json_data) if isinstance(json_data, dict) else {}
+    current_spec = updated_json.get("spec")
+    if "spec" in updated_json and not isinstance(current_spec, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Public model JSON spec must be an object",
+        )
+    spec = dict(current_spec) if isinstance(current_spec, dict) else {}
+    spec["isVisible"] = is_visible
+    updated_json["spec"] = spec
+    return updated_json
+
+
 def _split_model_config_protocol(
     config: Dict[str, Any],
 ) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
@@ -349,10 +377,16 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         return {"created": created, "updated": updated, "skipped": skipped}
 
     def get_models(
-        self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User
+        self,
+        db: Session,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        current_user: User,
+        include_hidden: bool = False,
     ) -> List[Dict[str, Any]]:
         """
-        Get active public models from kinds table (paginated)
+        Get active public models from kinds table (paginated).
         """
         public_models = (
             db.query(Kind)
@@ -363,17 +397,51 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                 Kind.is_active == True,  # noqa: E712
             )
             .order_by(Kind.created_at.desc())
-            .offset(skip)
-            .limit(limit)
             .all()
         )
-        return [ModelAdapter.to_model_dict(pm) for pm in public_models]
+        selected_models = (
+            public_models
+            if include_hidden
+            else [
+                model for model in public_models if is_public_model_visible(model.json)
+            ]
+        )
+        return [
+            ModelAdapter.to_model_dict(model)
+            for model in selected_models[skip : skip + limit]
+        ]
+
+    def get_model_by_name(
+        self,
+        db: Session,
+        *,
+        name: str,
+        namespace: str = "default",
+        include_hidden: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Get an active public model directly by its complete resource identity."""
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.namespace == namespace,
+                Kind.name == name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if model is None:
+            return None
+        if not include_hidden and not is_public_model_visible(model.json):
+            return None
+        return ModelAdapter.to_model_dict(model)
 
     def count_active_models(self, db: Session, *, current_user: User) -> int:
         """
-        Count active public models in kinds table
+        Count visible, active public models in kinds table.
         """
-        return (
+        public_models = (
             db.query(Kind)
             .filter(
                 Kind.user_id == 0,
@@ -381,8 +449,9 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                 Kind.namespace == "default",
                 Kind.is_active == True,
             )
-            .count()
+            .all()
         )  # noqa: E712
+        return sum(1 for model in public_models if is_public_model_visible(model.json))
 
     def list_model_names(
         self, db: Session, *, current_user: User, shell_type: str
@@ -476,7 +545,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         )
 
         for m in public_models:
-            if is_model_compatible(m.json):
+            if is_public_model_visible(m.json) and is_model_compatible(m.json):
                 # Only add if not already present (user models take precedence)
                 if m.name not in result_models:
                     display_name = get_model_display_name(m.json)

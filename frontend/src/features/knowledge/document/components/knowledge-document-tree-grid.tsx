@@ -32,7 +32,7 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { downloadAttachment, isImageExtension, isVideoFileName } from '@/apis/attachments'
+import { isImageExtension, isVideoFileName } from '@/apis/attachments'
 import { Badge } from '@/components/ui/badge'
 import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -41,6 +41,7 @@ import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ReanalyzeIconButton } from '@/features/knowledge/multimodal/components/ReanalyzeActions'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { getProcessingErrorMessage } from '../utils/processing-error'
 import type { SortField, SortOrder } from './FolderTree'
@@ -97,6 +98,8 @@ interface KnowledgeDocumentTreeGridProps {
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  /** Whether this knowledge base permits original document downloads. */
+  allowDownload?: boolean
 }
 
 function formatFileSize(bytes: number) {
@@ -198,9 +201,11 @@ export function KnowledgeDocumentTreeGrid({
   includedInFolderScope,
   onSelect,
   ragConfigured = true,
+  allowDownload = true,
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
+  const downloadDocument = useKnowledgeDocumentDownload()
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({})
 
@@ -266,7 +271,7 @@ export function KnowledgeDocumentTreeGrid({
     async (document: KnowledgeDocument) => {
       if (document.source_type !== 'file' || !document.attachment_id) return
       try {
-        await downloadAttachment(document.attachment_id, document.name)
+        await downloadDocument(document)
       } catch {
         toast({
           title: t('document.document.downloadFailed'),
@@ -274,7 +279,7 @@ export function KnowledgeDocumentTreeGrid({
         })
       }
     },
-    [t]
+    [downloadDocument, t]
   )
 
   const columns = useMemo<ColumnDef<KnowledgeResourceRow>[]>(
@@ -356,12 +361,9 @@ export function KnowledgeDocumentTreeGrid({
           const indent = depth * 16
           if (node.kind === 'document') {
             const document = node.document
-            const isTable = document.source_type === 'table'
             const isWeb = document.source_type === 'web'
             const sourceUrl =
-              (isTable || isWeb) &&
-              document.source_config?.url &&
-              typeof document.source_config.url === 'string'
+              isWeb && document.source_config?.url && typeof document.source_config.url === 'string'
                 ? document.source_config.url
                 : null
             const displayName = getDocumentDisplayName(document)
@@ -530,17 +532,6 @@ export function KnowledgeDocumentTreeGrid({
           if (document.source_type === 'external') {
             return <ExternalDocumentBadge />
           }
-          if (document.source_type === 'table') {
-            return (
-              <Badge
-                variant="default"
-                size="sm"
-                className="bg-blue-500/10 text-blue-600 border-blue-500/20"
-              >
-                {t('document.document.type.table')}
-              </Badge>
-            )
-          }
           if (document.source_type === 'web') {
             return (
               <Badge
@@ -569,9 +560,7 @@ export function KnowledgeDocumentTreeGrid({
           const document = node.document
           return (
             <span className="text-xs text-text-muted">
-              {document.source_type === 'table' || document.source_type === 'web'
-                ? '-'
-                : formatFileSize(document.file_size)}
+              {document.source_type === 'web' ? '-' : formatFileSize(document.file_size)}
             </span>
           )
         },
@@ -760,7 +749,6 @@ export function KnowledgeDocumentTreeGrid({
           const document = node.document
           if (!(canManage?.(document) ?? true)) return null
           const isWeb = document.source_type === 'web'
-          const isTable = document.source_type === 'table'
           const isExternal = document.source_type === 'external'
           const isNotIndexed = document.index_status === 'not_indexed'
           const isIndexFailed = document.index_status === 'failed'
@@ -784,7 +772,7 @@ export function KnowledgeDocumentTreeGrid({
                   label: t('document.document.retryImport'),
                 }
               }
-            } else if (ragConfigured && !isTable && (isIndexFailed || isNotIndexed)) {
+            } else if (ragConfigured && (isIndexFailed || isNotIndexed)) {
               retryAction = {
                 testId: `reindex-document-${document.id}`,
                 label: t('document.document.reindex'),
@@ -793,8 +781,8 @@ export function KnowledgeDocumentTreeGrid({
           }
           const normalizedExt = `.${(document.file_extension || '').replace(/^\.+/, '')}`
           const isMultimodalDoc = isVideoFileName(document.name) || isImageExtension(normalizedExt)
-          // Gate on source_type=file + attachment_id like showDownload: a table
-          // or web doc could have a multimodal-looking name (e.g. "demo.mp4")
+          // Gate on source_type=file + attachment_id like showDownload: a web
+          // doc could have a multimodal-looking name (e.g. "demo.mp4")
           // but has no attachment to stage/re-analyze.
           const canReanalyze =
             multimodalFeatureEnabled &&
@@ -803,7 +791,8 @@ export function KnowledgeDocumentTreeGrid({
             !!document.attachment_id &&
             !!onReanalyze &&
             !showIndexingState
-          const showDownload = document.source_type === 'file' && !!document.attachment_id
+          const showDownload =
+            allowDownload && document.source_type === 'file' && !!document.attachment_id
           const moveLabel = t('document.folder.moveDocument')
           const refreshLabel =
             refreshingDocId === document.id
@@ -935,6 +924,7 @@ export function KnowledgeDocumentTreeGrid({
       selectedDocumentIds,
       selectedFolderIds,
       showSelectionColumn,
+      allowDownload,
       t,
       toggleFolder,
     ]

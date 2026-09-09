@@ -117,12 +117,33 @@ describe('mergeMarketplaceCatalog', () => {
   test('preserves an owners local source when the published cloud row wins deduplication', () => {
     const localSource = {
       ...localCatalogPlugin(),
+      version: '0.2.0+codex.20260902140548',
       installed: false,
       installedPluginId: null,
       enabled: false,
     }
 
     const merged = mergeMarketplaceCatalog([cloudPlugin()], [localSource], [])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 4,
+      version: '0.2.0+codex.20260902140548',
+      localPersonalSource: {
+        marketplacePath: '/Users/test/plugins/personal-marketplace.json',
+        pluginName: 'dev-tools',
+      },
+    })
+  })
+
+  test('preserves a legacy public owners local personal source', () => {
+    const legacyPublicOwner = {
+      ...cloudPlugin(),
+      visibility: 'public' as const,
+      sourceProvider: 'user' as const,
+    }
+
+    const merged = mergeMarketplaceCatalog([legacyPublicOwner], [localCatalogPlugin()], [])
 
     expect(merged).toHaveLength(1)
     expect(merged[0]).toMatchObject({
@@ -146,6 +167,36 @@ describe('mergeMarketplaceCatalog', () => {
     const merged = mergeMarketplaceCatalog([cloudPlugin(), duplicateName], [], [])
     expect(merged).toHaveLength(2)
     expect(merged.map(item => item.id).sort()).toEqual([4, 9])
+  })
+
+  test('keeps personal and enterprise identities separate and links local source to personal', () => {
+    const enterprise = {
+      ...cloudPlugin(),
+      id: 10,
+      visibility: 'workspace' as const,
+      latestReleaseId: 15,
+      relatedPersonalPluginId: 4,
+    }
+
+    const merged = mergeMarketplaceCatalog(
+      [enterprise, cloudPlugin()],
+      [localCatalogPlugin()],
+      [localInstalledPlugin()]
+    )
+
+    expect(merged).toHaveLength(2)
+    expect(merged.find(item => item.id === 4)).toMatchObject({
+      visibility: 'personal',
+      localPersonalSource: {
+        marketplacePath: '/Users/test/plugins/personal-marketplace.json',
+        pluginName: 'dev-tools',
+      },
+    })
+    expect(merged.find(item => item.id === 10)).toMatchObject({
+      visibility: 'workspace',
+      relatedPersonalPluginId: 4,
+    })
+    expect(merged.find(item => item.id === 10)?.localPersonalSource).toBeUndefined()
   })
 
   test('keeps local installed actions available while signed out', () => {

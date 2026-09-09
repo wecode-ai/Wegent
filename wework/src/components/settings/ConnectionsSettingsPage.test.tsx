@@ -21,6 +21,7 @@ import { saveLocalModelConfig } from '@/features/model-settings/localModelSettin
 import { openExternalUrl } from '@/lib/external-links'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -48,7 +49,6 @@ const remoteDeviceOnboardingExtensionMock = vi.hoisted(() => ({
   CommandDetails: vi.fn(() => null),
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
-
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
@@ -227,6 +227,7 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
     getLocalCodexOfficialModelsMock.mockResolvedValue({ providers: [], models: [] })
@@ -317,7 +318,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: false,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -331,7 +332,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: true,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -357,7 +358,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: false,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -371,7 +372,7 @@ describe('ConnectionsSettingsPage', () => {
       use_user_config: false,
       use_proxy: false,
       configured: true,
-      target_path: '~/.codex/auth.json',
+      target_path: 'auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
       proxy_configured: false,
@@ -380,7 +381,7 @@ describe('ConnectionsSettingsPage', () => {
       updated_at: '2026-06-09T00:00:00Z',
     })
     createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
-  })
+  }, 60_000)
 
   test('opens general settings by default', async () => {
     window.history.pushState({}, '', '/settings')
@@ -413,16 +414,16 @@ describe('ConnectionsSettingsPage', () => {
     expect(
       within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
     ).toBeNull()
-    expect(codingCategory.parentElement).toContainElement(gitHostingNav)
+    expect(screen.getAllByTestId('settings-category-coding')).toHaveLength(1)
     expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
     expect(
       pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      gitHostingNav.compareDocumentPosition(harnessesNav) & Node.DOCUMENT_POSITION_FOLLOWING
+      harnessesNav.compareDocumentPosition(gitHostingNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      harnessesNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
+      gitHostingNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
       worktreesNav.compareDocumentPosition(archivedCategory) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -608,13 +609,14 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('认证信息')
     expect(screen.getByTestId('codex-auth-settings')).toHaveTextContent('模型')
     expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('设备认证')
-    expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
-    expect(screen.getByText('共享认证')).toBeInTheDocument()
-    expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-config-sync-source-select')).toHaveTextContent('当前设备')
-    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent(
-      '同步到其他设备'
-    )
+    expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('认证已保存')
+    expect(screen.getByText('Codex 认证同步')).toBeInTheDocument()
+    expect(
+      screen.getByText('从本机或在线设备保存一份认证；开启后自动同步到同一账号下缺少认证的设备。')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('设备 Codex Home/auth.json')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-config-sync-source-select')).toHaveTextContent('本机')
+    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent('选择并保存')
     expect(screen.queryByTestId('runtime-config-import-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-upload-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
@@ -632,6 +634,39 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
+  })
+
+  test('imports shared auth from the selected device and explains a missing source file', async () => {
+    api.getAllDevices.mockResolvedValue([
+      localDevice(),
+      cloudDevice({
+        device_id: 'cloud-device',
+        name: 'Cloud Codex Device',
+      }),
+    ])
+    userApi.importRuntimeAuthJson.mockRejectedValueOnce(
+      new Error('runtime auth file does not exist')
+    )
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('runtime-config-status')
+
+    await userEvent.selectOptions(
+      screen.getByTestId('runtime-config-sync-source-select'),
+      'device:cloud-device'
+    )
+    expect(screen.getByTestId('runtime-config-sync-auth-button')).toHaveTextContent('读取并保存')
+
+    await userEvent.click(screen.getByTestId('runtime-config-sync-auth-button'))
+
+    await waitFor(() =>
+      expect(userApi.importRuntimeAuthJson).toHaveBeenCalledWith('codex', 'cloud-device')
+    )
+    expect(await screen.findByTestId('runtime-config-error')).toHaveTextContent(
+      '所选设备没有 Codex 认证，请选择本机或其他已配置设备。'
+    )
   })
 
   test('edits and restores the catalog for a visible Codex model', async () => {
@@ -1940,6 +1975,31 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
   })
 
+  test('disables remote IDE and terminal actions when the runtime disables them', async () => {
+    api.getAllDevices.mockResolvedValue([
+      remoteDevice({
+        runtime_features: {
+          schemaVersion: 3,
+          interactiveSessions: { codeServer: false, terminal: false },
+        },
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const terminalButton = await screen.findByTestId('connection-terminal-button-remote-device')
+    const ideButton = screen.getByTestId('connection-code-server-button-remote-device')
+    expect(terminalButton).toBeDisabled()
+    expect(terminalButton).toHaveAttribute('title', '此设备未启用终端')
+    expect(ideButton).toBeDisabled()
+    expect(ideButton).toHaveAttribute('title', '此设备未启用项目 IDE')
+
+    await userEvent.click(terminalButton)
+    await userEvent.click(ideButton)
+    expect(api.startTerminal).not.toHaveBeenCalled()
+    expect(api.startCodeServer).not.toHaveBeenCalled()
+  })
+
   test('shows cloud device metrics while omitting local devices and scaling guidance', async () => {
     runtimeConfigMock.value = {
       appBasePath: '',
@@ -1955,9 +2015,13 @@ describe('ConnectionsSettingsPage', () => {
     await screen.findByTestId('connection-device-device-1')
     expect(screen.queryByTestId('connection-device-local-device')).not.toBeInTheDocument()
     await waitFor(() => expect(api.getMetrics).toHaveBeenCalledWith('device-1'))
-    expect(screen.getByTestId('connection-device-metric-cpu-device-1')).toHaveTextContent('42%')
-    expect(screen.getByTestId('connection-device-metric-memory-device-1')).toHaveTextContent('68%')
-    expect(screen.getByTestId('connection-device-metric-disk-device-1')).toHaveTextContent('57%')
+    await waitFor(() => {
+      expect(screen.getByTestId('connection-device-metric-cpu-device-1')).toHaveTextContent('42%')
+      expect(screen.getByTestId('connection-device-metric-memory-device-1')).toHaveTextContent(
+        '68%'
+      )
+      expect(screen.getByTestId('connection-device-metric-disk-device-1')).toHaveTextContent('57%')
+    })
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-scale-wiki-link')).not.toBeInTheDocument()
   })

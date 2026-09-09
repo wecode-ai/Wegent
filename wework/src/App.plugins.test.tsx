@@ -17,7 +17,15 @@ import PluginCatalogRoute from '../dsh/ui-plugin-center/src/catalog-route'
 import PluginCreateRoute from '../dsh/ui-plugin-center/src/create-route'
 import PluginManagementRoute from '../dsh/ui-plugin-center/src/management-route'
 import './i18n'
+import { telemetryFeatureForLocation } from './telemetry/routes'
 import App from './App'
+
+const telemetryMocks = vi.hoisted(() => ({ track: vi.fn() }))
+
+vi.mock('@/telemetry/client', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/telemetry/client')>()),
+  track: telemetryMocks.track,
+}))
 
 const TEST_DSH_ROUTES = [
   {
@@ -93,7 +101,6 @@ const TEST_DSH_NAVIGATION = [
   {
     id: 'applications.navigation',
     activeItem: 'sites',
-    experimental: true,
     icon: 'applications',
     label: '应用',
     order: 30,
@@ -136,7 +143,6 @@ const desktopHostMocks = vi.hoisted(() => {
           Object.assign(preferences, params.patch)
           return { ...preferences }
         }
-        if (capability === 'plugins.list') return []
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []
@@ -183,6 +189,7 @@ vi.mock('@/desktop/localExecutor', () => ({
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
+  getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
   requestLocalExecutor: vi.fn(async (capability: string) => {
     if (capability === 'executor.plugins.personal.list') {
       return { marketplacePath: '', plugins: [] }
@@ -1038,6 +1045,7 @@ describe('App plugins route', () => {
       runtimeMode: 'backend',
     }
     desktopHostMocks.invoke.mockClear()
+    telemetryMocks.track.mockReset()
     workbenchValue.state.runtimeWork = null
     workbenchValue.state.currentRuntimeTask = null
     workbenchValue.state.devices = [
@@ -1055,7 +1063,7 @@ describe('App plugins route', () => {
     workbenchValue.state.standaloneDeviceId = 'local-device'
     vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
     vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
-    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue([])
+    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
     localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
     workbenchProviderMocks.autoReady = true
     workbenchProviderMocks.mounts.mockClear()
@@ -1082,7 +1090,105 @@ describe('App plugins route', () => {
     expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
-  test('closes the idle maintenance gate when the active app changes after startup timeout', async () => {
+  test('maps smart app locations to distinct telemetry features', () => {
+    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app')).toBe(
+      'smart_apps_marketplace'
+    )
+    expect(telemetryFeatureForLocation('/sites', '?app_type=smart_app&view=owned')).toBe(
+      'smart_apps_owned'
+    )
+    expect(telemetryFeatureForLocation('/app/harness-research-desk', '')).toBe('smart_app')
+    expect(telemetryFeatureForLocation('/sites', '?app_type=web')).toBe('sites')
+    expect(telemetryFeatureForLocation('/app/native-task', '')).toBe('apps')
+  })
+
+  test('tracks a Smart apps view change when only search changes', async () => {
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    window.history.pushState({}, '', '/sites?app_type=smart_app')
+    renderApp()
+
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
+        domain: 'smart_app',
+        feature: 'smart_apps_marketplace',
+      })
+    )
+
+    await act(async () => {
+      window.history.pushState({}, '', '/sites?app_type=smart_app&view=owned')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenLastCalledWith('feature_opened', {
+        domain: 'smart_app',
+        feature: 'smart_apps_owned',
+      })
+    )
+  })
+
+  test('tracks an installed Smart App open with its domain', async () => {
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    window.history.pushState({}, '', '/app/harness-research-desk')
+    renderApp()
+
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
+        domain: 'smart_app',
+        feature: 'smart_app',
+      })
+    )
+  })
+
+  test('does not track a generic sites page again when only query state changes', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/sites?app_type=web&view=environment-variables&project_id=project-1'
+    )
+    renderApp()
+
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
+        feature: 'sites',
+      })
+    )
+    const openedFeatureCount = telemetryMocks.track.mock.calls.filter(
+      ([event]) => event === 'feature_opened'
+    ).length
+
+    await act(async () => {
+      window.history.pushState({}, '', '/sites?app_type=web')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    expect(
+      telemetryMocks.track.mock.calls.filter(([event]) => event === 'feature_opened')
+    ).toHaveLength(openedFeatureCount)
+  })
+
+  test('does not dispatch application shortcuts from editable targets', async () => {
+    window.history.pushState({}, '', '/')
+    renderApp()
+    await screen.findByTestId('app-shell')
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+
+    expect(
+      fireEvent.keyDown(input, {
+        bubbles: true,
+        cancelable: true,
+        code: 'Comma',
+        key: ',',
+        metaKey: true,
+      })
+    ).toBe(true)
+    expect(window.location.pathname).toBe('/')
+
+    input.remove()
+  })
+
+  test('does not bypass startup readiness after ten seconds or an active app change', async () => {
     vi.useFakeTimers()
     workbenchProviderMocks.autoReady = false
     window.history.pushState({}, '', '/')
@@ -1097,9 +1203,9 @@ describe('App plugins route', () => {
     expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
     await act(async () => {
-      vi.advanceTimersByTime(6000)
+      vi.advanceTimersByTime(10_000)
     })
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(true)
+    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
     await act(async () => {
       window.history.pushState({}, '', '/todo')
@@ -1150,6 +1256,10 @@ describe('App plugins route', () => {
   })
 
   test('loads Sites from the authenticated cloud Backend in local mode', async () => {
+    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+      items: [],
+      deviceId: 'local-device',
+    })
     window.__WEWORK_RUNTIME_CONFIG__ = {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
@@ -1343,6 +1453,70 @@ describe('App plugins route', () => {
         input:
           '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
         pluginName: '快速建站',
+        openInNewChat: true,
+      }
+    )
+  })
+
+  test('opens continue development with the Sites plugin reference before the project reference', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({ items: [installedOnLocalDevice(installedCodexSitesPlugin())] }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: [
+                {
+                  app_type: 'web',
+                  siteid: 'site-1',
+                  project_id: 'prj_01arz3ndektsv4rrffq69g5fav',
+                  name: '产品发布页',
+                  internal_url: 'http://sites.internal/product',
+                  external_url: null,
+                  publish_status: 'unpublished',
+                  thumbnail_url: null,
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites?app_type=web')
+
+    renderApp()
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    await screen.findByText('产品发布页')
+    await userEvent.click(screen.getByTestId('site-continue-development-site-1'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input:
+          '[$快速建站](plugin://wegent-sites@wegent) [产品发布页](wegent-sites-project://prj_01arz3ndektsv4rrffq69g5fav) 请说出你要做的改动',
+        pluginName: '快速建站',
+        app: expect.objectContaining({ pluginKey: 'wegent-sites' }),
         openInNewChat: true,
       }
     )
@@ -1846,6 +2020,101 @@ describe('App plugins route', () => {
     )
     expect(window.location.pathname).toBe('/sites')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test.each(['site', 'miniapp', 'continue'] as const)(
+    'opens %s using local membership while Backend plugin queries fail',
+    async entry => {
+      const installed =
+        entry === 'miniapp' ? installedCodexMiniProgramPlugin() : installedCodexSitesPlugin()
+      localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+        items: [installed],
+        deviceId: 'local-device',
+      })
+      vi.mocked(fetch).mockImplementation(async input => {
+        const url = String(input)
+        if (url.includes('/sites/app-types'))
+          return { ok: true, status: 200, json: async () => applicationTypesResponse() } as Response
+        if (url.includes('/sites?'))
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              items: [
+                {
+                  app_type: 'web',
+                  siteid: 'site-local',
+                  project_id: 'project-local',
+                  name: 'Local site',
+                  internal_url: 'http://sites.internal/local',
+                  publish_status: 'unpublished',
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+          } as Response
+        throw new Error('Backend plugin service unavailable')
+      })
+      window.history.pushState({}, '', '/sites')
+      renderApp()
+      await screen.findByText('Local site')
+      if (entry === 'continue')
+        await userEvent.click(screen.getByTestId('site-continue-development-site-local'))
+      else {
+        await userEvent.click(screen.getByTestId('sites-create-button'))
+        await userEvent.click(
+          screen.getByTestId(
+            entry === 'miniapp'
+              ? 'sites-create-mini-program-menu-item'
+              : 'sites-create-site-menu-item'
+          )
+        )
+      }
+      await waitFor(() => expect(window.location.pathname).toBe('/'))
+      const trial = JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')
+      expect(trial.input).toContain('plugin://' + installed.spec.source.pluginKey + '@wegent')
+      if (entry === 'continue')
+        expect(trial.input).toContain('wegent-sites-project://project-local')
+      expect(
+        vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/plugins/builtin/'))
+      ).toBe(false)
+    }
+  )
+
+  test('shows inspection failure without installing, and permits retry', async () => {
+    localCodexPluginMocks.listInstalledPlugins.mockRejectedValue(
+      new Error('Executor inventory unavailable')
+    )
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/sites/app-types'))
+        return { ok: true, status: 200, json: async () => applicationTypesResponse() } as Response
+      if (url.includes('/sites?'))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      throw new Error('Unexpected request: ' + url)
+    })
+    window.history.pushState({}, '', '/sites')
+    renderApp()
+    await createSiteFromMenu()
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      '无法确认目标设备的插件安装状态'
+    )
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/plugins/builtin/'))
+    ).toBe(false)
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+      items: [installedCodexSitesPlugin()],
+      deviceId: 'local-device',
+    })
+    await createSiteFromMenu()
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
   })
 
   test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {

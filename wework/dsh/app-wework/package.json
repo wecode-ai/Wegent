@@ -6,7 +6,10 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./client": "./client.js",
+    "./client": {
+      "types": "./client.d.ts",
+      "default": "./client.js"
+    },
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -23,12 +26,14 @@
   },
   "files": [
     "client.js",
+    "client.d.ts",
     "cordis.patch.yml",
     "index.js",
     "web"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2"
+    "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2",
+    "@wegent/dsh-electron-host": "0.1.0"
   }
 }

@@ -28,6 +28,12 @@ pnpm --filter wework dev:windows
 `wework/electron` 主进程加载 Wework renderer。Electron 通过子进程 stdin/stdout
 与 Executor sidecar 交换 JSONL，不依赖 Unix Domain Socket 或固定 TCP 端口。
 
+开发模式下，脚本会先构建 renderer 产物（`wework/dsh/app-wework/web`）并启动
+Vite watch 构建，再通过 `WEWORK_APP_WEB_ROOT`/`WEWORK_APP_HOT_RELOAD` 让
+运行的桌面应用直接服务最新构建并在产物变化时自动刷新（与 `dev-mac-app.sh`
+一致）。因此切换分支或修改 renderer 源码后，无需手动同步打包插件产物即可
+生效。
+
 运行时与 Executor 构建缓存默认放在 `%LOCALAPPDATA%\wegent\`（可用
 `WEWORK_DEV_CACHE_ROOT`、`WEGENT_CARGO_TARGET_ROOT` 覆盖），首次准备较慢，
 之后为增量。可用 `-- --executor-isolation` 使用临时 Executor Home，或用
@@ -45,12 +51,8 @@ NSIS 安装器写入
 插件、运行时描述和 sidecar 统一来自 `wework/resources/`，由
 `wework/electron/scripts/prepare-package-assets.mjs` 复制到应用资源目录。
 
-该安装器同时承担旧 Tauri 版本到 Electron 的迁移：它兼容 Tauri updater 传入的
-`/P` 参数，读取旧版 `Software\you\WeWork` 注册表项，并沿用
-`%LOCALAPPDATA%\WeWork` 安装目录。旧版点击“升级”后会先安装 Electron，再按同一
-`WeWork.exe` 路径重启，因此不会产生第二套安装目录，且不会删除用户数据。
-Electron 启动的 Executor 继续直接使用用户目录下原有的 `.wework`，不执行目录
-复制或数据迁移。
+安装器使用 Electron Builder 的标准 NSIS 安装流程，不再处理旧 updater 的 `/P`
+参数或旧安装注册表迁移。
 
 ## 验证
 
@@ -79,7 +81,7 @@ Windows Desktop Core E2E 复用 Linux 的同一份 Core 分片矩阵。完整回
 分片。Windows 路径、盘符、UNC 路径、命名管道和 `.exe` sidecar 行为必须由这个
 Windows job 验证，其他平台的通过结果不能替代它。
 
-正式安装器、代码签名、Electron YAML 更新清单和旧 Tauri JSON/签名桥接清单由
+正式安装器、代码签名和 Electron YAML 更新清单由
 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。
 
 ## 常见问题

@@ -116,7 +116,6 @@ export interface ProjectWorkControls {
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
   worktreeAvailability?: ProjectWorktreeAvailability
-  isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
   onSelectProjectWorkspace?: (projectId: number, deviceWorkspaceId: number | null) => void
@@ -640,6 +639,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   useImperativeHandle(
     ref,
     () => ({
+      get element() {
+        return composerRef.current?.element ?? null
+      },
       focus: () => composerRef.current?.focus(),
       getValue: () => composerRef.current?.getValue() ?? value,
       setValue: (nextValue, selectionOffset) =>

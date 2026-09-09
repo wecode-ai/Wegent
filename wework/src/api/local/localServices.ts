@@ -61,6 +61,7 @@ import type {
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
+  RuntimeTaskMaterializeResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
   RuntimeTaskQueueReorderRequest,
@@ -377,6 +378,9 @@ interface LocalAppServicesDeps {
   readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
   readWorkspaceFileChunk?: typeof readLocalWorkspaceFileChunk
   listWorkspaceEntries?: typeof listLocalWorkspaceEntries
+  materializeRuntimeTask?: (
+    request: RuntimeTaskCreateRequest
+  ) => Promise<RuntimeTaskMaterializeResponse>
 }
 
 interface CatalogReconciliationTracker {
@@ -530,10 +534,24 @@ interface RuntimeWorkIpcOptions {
     sync: () => Promise<void>
   }) => Promise<boolean>
   resolveDeviceName?: (deviceId: string) => string | undefined
+  materializeRuntimeTask?: (
+    request: RuntimeTaskCreateRequest
+  ) => Promise<RuntimeTaskMaterializeResponse>
 }
 
 interface AutomationIpcOptions extends RuntimeWorkIpcOptions {
   prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
+}
+
+function runtimeExecutionUser(
+  options: RuntimeWorkIpcOptions,
+  transportLabel: 'Local' | 'Cloud'
+): User {
+  if (options.user) return options.user
+  if (transportLabel === 'Cloud') {
+    throw new Error('Cloud runtime user identity is required')
+  }
+  return LOCAL_USER
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -1424,7 +1442,9 @@ function buildLocalRuntimeExecutionRequest(
   )
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
-  const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
+  const skillNames = Array.from(
+    new Set([...(input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)])
+  )
   const requiredSkillNames = input.additionalContext?.dingtalkAITableProject ? ['dws'] : []
   const deployedSkillNames = Array.from(new Set([...skillNames, ...requiredSkillNames]))
   const preloadSkills = [...(input.additionalSkills ?? []), ...requiredSkillNames]
@@ -1707,7 +1727,8 @@ async function createLocalRuntimeTaskPayload(
   cloudModelGateway: CloudModelGateway | undefined,
   runtimeProxyUrl: string | undefined,
   user: User,
-  requireLocalCodexCatalog: boolean
+  requireLocalCodexCatalog: boolean,
+  materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = runtimeWorkspace ? executionWithWorkspace(data, runtimeWorkspace) : null
@@ -1718,9 +1739,16 @@ async function createLocalRuntimeTaskPayload(
     ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
   }
   if (execution) normalizedData.execution = execution
+  const materialized = normalizedData.wegentTeamId
+    ? await materializeTeamRuntimeTask(normalizedData, materializeRuntimeTask)
+    : null
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
-  const payload = { ...normalizedData } as Record<string, unknown>
+  const payload = {
+    ...(materialized?.payload ?? normalizedData),
+  } as Record<string, unknown>
+  delete payload.wegentTeamId
+  delete payload.newSession
   const initialSupervisor = normalizedData.initialSupervisor
   if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
     payload.initialSupervisor = {
@@ -1770,56 +1798,73 @@ async function createLocalRuntimeTaskPayload(
 
   return {
     ...payload,
+    ...(materialized?.runtimeHandle ? { runtimeHandle: materialized.runtimeHandle } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
-    executionRequest: buildLocalRuntimeExecutionRequest({
-      taskId: normalizedData.taskId,
-      runtime: normalizedData.runtime,
-      runtimeExecutablePath: normalizedData.runtimeExecutablePath,
-      runtimePermissionMode: normalizedData.runtimePermissionMode,
-      title: runtimeTaskTitle(normalizedData),
-      message: normalizedData.message,
-      bot: normalizedData.bot,
-      turnSeed,
-      modelId: normalizedData.modelId,
-      modelType: normalizedData.modelType,
-      modelOptions: normalizedData.modelOptions,
-      modelConfig: normalizedData.modelConfig,
-      cloudModelGateway,
-      runtimeProxyUrl,
-      additionalSkills: normalizedData.additionalSkills,
-      additionalContext: normalizedData.additionalContext,
-      attachments: normalizedData.attachments,
-      localDeviceId,
-      workspacePath: runtimeWorkspace?.workspacePath,
-      standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
-      runtimeProjectKey: normalizedData.runtimeProjectKey,
-      runtimeProjectName: normalizedData.runtimeProjectName,
-      runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
-      projectInstructions: normalizedData.projectInstructions,
-      projectPlugins: normalizedData.projectPlugins,
-      cloudProjectId: normalizedData.cloudProjectId,
-      origin: normalizedData.origin,
-      workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
-      branch: runtimeWorkspace?.branch,
-      newSession: true,
-      clientUserMessageId: normalizedData.clientUserMessageId,
-      ephemeral: normalizedData.ephemeral,
-      requireLocalCodexCatalog,
-      user,
-    }),
+    executionRequest:
+      materialized?.payload.executionRequest ??
+      buildLocalRuntimeExecutionRequest({
+        taskId: normalizedData.taskId,
+        runtime: normalizedData.runtime,
+        runtimeExecutablePath: normalizedData.runtimeExecutablePath,
+        runtimePermissionMode: normalizedData.runtimePermissionMode,
+        title: runtimeTaskTitle(normalizedData),
+        message: normalizedData.message,
+        bot: normalizedData.bot,
+        turnSeed,
+        modelId: normalizedData.modelId,
+        modelType: normalizedData.modelType,
+        modelOptions: normalizedData.modelOptions,
+        modelConfig: normalizedData.modelConfig,
+        cloudModelGateway,
+        runtimeProxyUrl,
+        additionalSkills: normalizedData.additionalSkills,
+        additionalContext: normalizedData.additionalContext,
+        attachments: normalizedData.attachments,
+        localDeviceId,
+        workspacePath: runtimeWorkspace?.workspacePath,
+        standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
+        runtimeProjectKey: normalizedData.runtimeProjectKey,
+        runtimeProjectName: normalizedData.runtimeProjectName,
+        runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+        projectInstructions: normalizedData.projectInstructions,
+        projectPlugins: normalizedData.projectPlugins,
+        cloudProjectId: normalizedData.cloudProjectId,
+        origin: normalizedData.origin,
+        workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
+        branch: runtimeWorkspace?.branch,
+        newSession: true,
+        clientUserMessageId: normalizedData.clientUserMessageId,
+        ephemeral: normalizedData.ephemeral,
+        requireLocalCodexCatalog,
+        user,
+      }),
   } as unknown as Record<string, unknown>
 }
 
-function createLocalRuntimeSendPayload(
+async function materializeTeamRuntimeTask(
+  request: RuntimeTaskCreateRequest,
+  materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
+): Promise<RuntimeTaskMaterializeResponse> {
+  if (!materializeRuntimeTask) {
+    throw new Error('Wegent Team execution requires a cloud connection')
+  }
+  return materializeRuntimeTask({
+    ...request,
+    schemaVersion: 3,
+  })
+}
+
+async function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
   cloudModelGateway: CloudModelGateway | undefined,
   runtimeProxyUrl: string | undefined,
   user: User,
-  requireLocalCodexCatalog: boolean
-): Record<string, unknown> {
+  requireLocalCodexCatalog: boolean,
+  materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
+): Promise<Record<string, unknown>> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
     ...data,
@@ -1847,7 +1892,38 @@ function createLocalRuntimeSendPayload(
     stringValue(normalizedAddress.runtime) ??
     stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
     'codex'
-
+  const teamBinding = recordValue(recordValue(normalizedAddress.runtimeHandle).wegentTeam)
+  const wegentTeamId =
+    typeof teamBinding.id === 'number' && teamBinding.id > 0 ? teamBinding.id : null
+  const materializedExecutionRequest =
+    wegentTeamId &&
+    !normalizedData.requestUserInputResponse &&
+    !normalizedData.request_user_input_response
+      ? (
+          await materializeTeamRuntimeTask(
+            {
+              schemaVersion: 3,
+              wegentTeamId,
+              newSession: false,
+              deviceId: localDeviceId,
+              workspacePath: workspacePath ?? undefined,
+              taskId,
+              runtime: runtime === 'claude_code' ? 'claude_code' : 'codex',
+              message: normalizedData.message,
+              modelId: normalizedData.modelId,
+              modelType: normalizedData.modelType,
+              modelOptions: normalizedData.modelOptions,
+              attachments: normalizedData.attachments,
+              additionalContext: normalizedData.additionalContext,
+              cloudProjectId: normalizedData.cloudProjectId,
+              origin: normalizedData.origin,
+              clientUserMessageId: normalizedData.clientUserMessageId,
+              ephemeral: normalizedData.ephemeral,
+            },
+            materializeRuntimeTask
+          )
+        ).payload.executionRequest
+      : null
   if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
     const payload = { ...normalizedData } as Record<string, unknown>
     delete payload.modelId
@@ -1901,30 +1977,32 @@ function createLocalRuntimeSendPayload(
         }
       : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
-    executionRequest: buildLocalRuntimeExecutionRequest({
-      taskId,
-      runtime,
-      title: taskId,
-      message: normalizedData.message,
-      turnSeed,
-      modelId: normalizedData.modelId,
-      modelType: normalizedData.modelType,
-      modelOptions: normalizedData.modelOptions,
-      cloudModelGateway,
-      runtimeProxyUrl,
-      attachments: normalizedData.attachments,
-      additionalContext: normalizedData.additionalContext,
-      cloudProjectId: normalizedData.cloudProjectId,
-      origin: normalizedData.origin,
-      localDeviceId,
-      workspacePath,
-      workspaceSource: 'local_path',
-      newSession: false,
-      clientUserMessageId: normalizedData.clientUserMessageId,
-      ephemeral: data.ephemeral,
-      requireLocalCodexCatalog,
-      user,
-    }),
+    executionRequest:
+      materializedExecutionRequest ??
+      buildLocalRuntimeExecutionRequest({
+        taskId,
+        runtime,
+        title: taskId,
+        message: normalizedData.message,
+        turnSeed,
+        modelId: normalizedData.modelId,
+        modelType: normalizedData.modelType,
+        modelOptions: normalizedData.modelOptions,
+        cloudModelGateway,
+        runtimeProxyUrl,
+        attachments: normalizedData.attachments,
+        additionalContext: normalizedData.additionalContext,
+        cloudProjectId: normalizedData.cloudProjectId,
+        origin: normalizedData.origin,
+        localDeviceId,
+        workspacePath,
+        workspaceSource: 'local_path',
+        newSession: false,
+        clientUserMessageId: normalizedData.clientUserMessageId,
+        ephemeral: data.ephemeral,
+        requireLocalCodexCatalog,
+        user,
+      }),
   } as unknown as Record<string, unknown>
 }
 
@@ -2247,7 +2325,7 @@ export function createRuntimeWorkApiFromIpc(
   options: RuntimeWorkIpcOptions = {}
 ) {
   const transportLabel = options.transportLabel ?? 'Local'
-  const user = options.user ?? LOCAL_USER
+  const user = runtimeExecutionUser(options, transportLabel)
   const requireLocalCodexCatalog = options.syncConfiguredModelCatalog !== true
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
@@ -2588,13 +2666,14 @@ export function createRuntimeWorkApiFromIpc(
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      const payload = createLocalRuntimeSendPayload(
+      const payload = await createLocalRuntimeSendPayload(
         data,
         localDeviceId,
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
-        requireLocalCodexCatalog
+        requireLocalCodexCatalog,
+        options.materializeRuntimeTask
       )
       logLocalIssueRuntimeContext('send-payload-built', data, payload)
       if (!payload.executionRequest) {
@@ -2617,13 +2696,14 @@ export function createRuntimeWorkApiFromIpc(
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      const payload = createLocalRuntimeSendPayload(
+      const payload = await createLocalRuntimeSendPayload(
         data,
         localDeviceId,
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
-        requireLocalCodexCatalog
+        requireLocalCodexCatalog,
+        options.materializeRuntimeTask
       )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
@@ -2680,13 +2760,14 @@ export function createRuntimeWorkApiFromIpc(
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      const payload = createLocalRuntimeSendPayload(
+      const payload = await createLocalRuntimeSendPayload(
         data,
         localDeviceId,
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
-        requireLocalCodexCatalog
+        requireLocalCodexCatalog,
+        options.materializeRuntimeTask
       )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
@@ -2971,7 +3052,8 @@ export function createRuntimeWorkApiFromIpc(
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
-        requireLocalCodexCatalog
+        requireLocalCodexCatalog,
+        options.materializeRuntimeTask
       )
       logRuntimeTaskCreateStage('local-payload-built', {
         taskId: resolvedData.taskId ?? null,
@@ -3020,9 +3102,10 @@ export function createRuntimeWorkApiFromIpc(
         stringValue(responseRecord.task_id) ??
         stringValue(executionRequest.task_id) ??
         createRuntimeExecutionIds(resolvedData)[0]
-      const runtimeHandle = recordValue(
-        responseRecord.runtimeHandle ?? responseRecord.runtime_handle
-      )
+      const runtimeHandle = {
+        ...recordValue(payload.runtimeHandle),
+        ...recordValue(responseRecord.runtimeHandle ?? responseRecord.runtime_handle),
+      }
       return {
         ...response,
         accepted: response.accepted ?? true,
@@ -3189,13 +3272,14 @@ export function createAutomationApiFromIpc(
       requireLocalCodexCatalog
     )
     const continuationPayload = continuationRequest
-      ? createLocalRuntimeSendPayload(
+      ? await createLocalRuntimeSendPayload(
           continuationRequest,
           localDeviceId,
           options.cloudModelGateway,
           options.getRuntimeProxyUrl?.(),
           user,
-          requireLocalCodexCatalog
+          requireLocalCodexCatalog,
+          options.materializeRuntimeTask
         )
       : null
     return {
@@ -3492,6 +3576,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       cloudModelGateway: deps.cloudModelGateway,
       getRuntimeProxyUrl: getLocalProxyUrl,
       user: deps.user,
+      materializeRuntimeTask: deps.materializeRuntimeTask,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const automationApi = createAutomationApiFromIpc(
@@ -3690,7 +3775,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     }),
     userApi: {
       updateCurrentUser: async (data: { preferences?: User['preferences'] }) =>
-        saveLocalUserPreferences(data.preferences ?? LOCAL_USER.preferences),
+        saveLocalUserPreferences({
+          ...getLocalUser().preferences,
+          ...(data.preferences ?? {}),
+        }),
       getRuntimeConfig: () => cloudConnectionRequired('getRuntimeConfig'),
       updateRuntimeConfig: () => cloudConnectionRequired('updateRuntimeConfig'),
       getProxyConfig: () => cloudConnectionRequired('getProxyConfig'),

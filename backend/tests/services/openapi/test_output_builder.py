@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import patch
+
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.services.openapi.output_builder import (
     build_response_output,
@@ -434,3 +436,99 @@ def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback
 
     assert pending_user_input is False
     assert payload is None
+
+
+def test_build_response_output_maps_image_block_and_refreshes_download_urls():
+    subtask = _assistant_subtask(
+        subtask_id=111,
+        result={
+            "value": "Image generation completed",
+            "blocks": [
+                {
+                    "id": "image-1",
+                    "type": "image",
+                    "status": "done",
+                    "image_urls": ["/api/attachments/51"],
+                    "image_download_urls": ["expired-url"],
+                    "image_attachment_ids": [51],
+                    "image_count": 1,
+                    "image_size": "1024x1024",
+                }
+            ],
+        },
+    )
+
+    with patch(
+        "app.services.openapi.output_builder.build_image_download_url",
+        return_value="fresh-url",
+    ):
+        output = build_response_output([subtask])
+
+    assert len(output) == 1
+    assert output[0].type == "image_generation_call"
+    assert output[0].status == "completed"
+    assert output[0].image_urls == ["/api/attachments/51"]
+    assert output[0].image_download_urls == ["fresh-url"]
+    assert output[0].image_attachment_ids == [51]
+    assert output[0].metadata["size"] == "1024x1024"
+
+
+def test_build_response_output_maps_video_block_with_temporary_download_url():
+    subtask = _assistant_subtask(
+        subtask_id=112,
+        result={
+            "value": "Video generation completed",
+            "blocks": [
+                {
+                    "id": "video-1",
+                    "type": "video",
+                    "status": "done",
+                    "video_url": "https://cdn.example/video.mp4",
+                    "video_thumbnail": "thumbnail",
+                    "video_duration": 5,
+                    "video_attachment_id": 73,
+                    "video_progress": 100,
+                }
+            ],
+        },
+    )
+
+    with patch(
+        "app.services.openapi.output_builder.build_video_download_url",
+        return_value="fresh-video-url",
+    ):
+        output = build_response_output([subtask])
+
+    assert len(output) == 1
+    assert output[0].type == "wegent_video_generation_call"
+    assert output[0].status == "completed"
+    assert output[0].video_url == "fresh-video-url"
+    assert output[0].video_attachment_id == 73
+    assert output[0].metadata == {
+        "thumbnail": "thumbnail",
+        "duration": 5,
+        "progress": 100,
+        "download_url_expires_in_seconds": 3600,
+    }
+
+
+def test_build_response_output_keeps_video_url_without_attachment():
+    subtask = _assistant_subtask(
+        subtask_id=113,
+        result={
+            "blocks": [
+                {
+                    "id": "video-2",
+                    "type": "video",
+                    "status": "done",
+                    "video_url": "https://cdn.example/video.mp4",
+                }
+            ],
+        },
+    )
+
+    output = build_response_output([subtask])
+
+    assert output[0].video_url == "https://cdn.example/video.mp4"
+    assert output[0].video_attachment_id is None
+    assert "download_url_expires_in_seconds" not in output[0].metadata

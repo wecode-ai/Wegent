@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
 import type { ComponentProps } from 'react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import type { ProjectWithTasks } from '@/types/api'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 
@@ -12,14 +14,6 @@ vi.mock('@/hooks/useTranslation', () => ({
         'workbench.popout_workspace_menu': '工作区设置',
         'workbench.popout_workspace_menu_project': '项目',
         'workbench.popout_workspace_menu_no_project': '无项目',
-        'workbench.popout_workspace_menu_launch_mode': '启动模式',
-        'workbench.popout_workspace_menu_worktree': '新工作树',
-        'workbench.popout_workspace_menu_current_workspace': '当前工作区',
-        'workbench.worktree_unavailable_not_git': '当前工作区不是 Git 仓库。',
-        'workbench.worktree_unavailable_preflight_pending': '正在检查工作树可用性…',
-        'workbench.worktree_unavailable_preflight_failed': '无法确认工作树是否可用。',
-        'workbench.popout_workspace_menu_branch': '分支',
-        'workbench.popout_workspace_menu_no_branch': '无分支',
         'workbench.popout_workspace_menu_permission': '权限',
         'workbench.popout_workspace_menu_full_access': '完全访问',
       })[key] ??
@@ -35,30 +29,22 @@ const projects = [
 
 function renderMenu(overrides: Partial<ComponentProps<typeof PopoutWorkspaceMenu>> = {}) {
   const props: ComponentProps<typeof PopoutWorkspaceMenu> = {
-    branchName: 'main',
     currentProjectId: 1,
-    executionMode: 'git_worktree',
-    isGitProject: true,
     projectName: 'Wegent',
     projects,
-    onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
-    onExecutionModeChange: vi.fn(),
-    onListBranches: vi.fn().mockResolvedValue(['main', 'fix/menu']),
     onSelectProject: vi.fn(),
-    worktreeAvailability: {
-      available: true,
-      reason: 'available',
-      deviceId: 'device-1',
-      sourcePath: '/repo/Wegent',
-    },
     ...overrides,
   }
   render(<PopoutWorkspaceMenu {...props} />)
   return props
 }
 
+afterEach(() => {
+  delete window.__WEWORK_DSH_UI_MODULES__
+})
+
 describe('PopoutWorkspaceMenu', () => {
-  test('shows only the Codex workspace summary rows in a body portal', async () => {
+  test('renders only host-owned rows when no extension is installed', async () => {
     renderMenu()
 
     await userEvent.click(screen.getByTestId('composer-project-menu-button'))
@@ -67,132 +53,49 @@ describe('PopoutWorkspaceMenu', () => {
     expect(menu.parentElement).toBe(document.body)
     expect(menu).toHaveTextContent('项目')
     expect(menu).toHaveTextContent('Wegent')
-    expect(menu).toHaveTextContent('启动模式')
-    expect(menu).toHaveTextContent('工作树')
-    expect(menu).toHaveTextContent('分支')
-    expect(menu).toHaveTextContent('main')
     expect(menu).toHaveTextContent('完全访问')
-    expect(menu).not.toHaveTextContent('环境')
+    expect(screen.queryByTestId('popout-workspace-launch-mode-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('popout-workspace-branch-button')).not.toBeInTheDocument()
   })
 
-  test('switches projects in a compact submenu without opening the legacy project menu', async () => {
+  test('renders every registered workspace-menu section in contribution order', async () => {
+    const entries = [
+      { id: 'first', module: 'plugins/test-workspace-first.js' },
+      { id: 'second', module: 'plugins/test-workspace-second.js' },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === WEWORK_DSH_SLOTS.workspaceMenuSection ? entries : []),
+      subscribe: () => () => {},
+      attach: () => ({ update: () => {}, dispose: () => {} }),
+    }
+    window.__WEWORK_DSH_UI_MODULES__ = {
+      'plugins/test-workspace-first.js': {
+        default: () => <div data-testid="workspace-section-first">first</div>,
+      },
+      'plugins/test-workspace-second.js': {
+        default: () => <div data-testid="workspace-section-second">second</div>,
+      },
+    }
+
+    renderMenu()
+    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
+
+    expect(
+      screen
+        .getByTestId('workspace-section-first')
+        .compareDocumentPosition(screen.getByTestId('workspace-section-second'))
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  test('switches projects in the host-owned project submenu', async () => {
     const props = renderMenu()
 
     await userEvent.click(screen.getByTestId('composer-project-menu-button'))
     await userEvent.click(screen.getByTestId('popout-workspace-project-button'))
-    expect(screen.getByTestId('popout-workspace-project-submenu')).toBeInTheDocument()
-
     await userEvent.click(screen.getByTestId('popout-workspace-project-option-2'))
 
     expect(props.onSelectProject).toHaveBeenCalledWith(2)
     expect(screen.queryByTestId('popout-workspace-menu')).not.toBeInTheDocument()
-  })
-
-  test('changes launch mode from its submenu', async () => {
-    const props = renderMenu({ executionMode: 'current_workspace' })
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-git_worktree'))
-
-    expect(props.onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
-  })
-
-  test('disables worktree mode when the selected project is not a Git project', async () => {
-    renderMenu({
-      executionMode: 'current_workspace',
-      isGitProject: false,
-      worktreeAvailability: {
-        available: false,
-        reason: 'not_git',
-        deviceId: 'device-1',
-        sourcePath: '/repo/Wegent',
-      },
-    })
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
-
-    expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
-    expect(screen.getByTestId('popout-workspace-worktree-unavailable-reason')).toHaveTextContent(
-      '当前工作区不是 Git 仓库'
-    )
-  })
-
-  test('does not infer worktree availability when Runtime availability is missing', async () => {
-    const props = renderMenu({
-      executionMode: 'current_workspace',
-      worktreeAvailability: undefined,
-    })
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
-
-    expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
-    expect(screen.getByTestId('popout-workspace-worktree-unavailable-reason')).toHaveTextContent(
-      '正在检查工作树可用性'
-    )
-    expect(props.onExecutionModeChange).not.toHaveBeenCalled()
-  })
-
-  test('uses a shared availability reason and preserves the selected worktree mode', async () => {
-    const props = renderMenu({
-      worktreeAvailability: {
-        available: false,
-        reason: 'preflight_failed',
-        deviceId: 'device-1',
-        sourcePath: '/repo/Wegent',
-      },
-    })
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    expect(screen.getByTestId('popout-workspace-launch-mode-button')).toHaveTextContent('新工作树')
-    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
-
-    expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
-    expect(screen.getByTestId('popout-workspace-worktree-unavailable-reason')).toHaveTextContent(
-      '无法确认工作树是否可用'
-    )
-    expect(props.onExecutionModeChange).not.toHaveBeenCalled()
-  })
-
-  test('locks both launch mode options for an existing task', async () => {
-    const props = renderMenu({ executionModeLocked: true })
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
-
-    expect(screen.getByTestId('popout-workspace-launch-mode-current_workspace')).toBeDisabled()
-    expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
-    expect(props.onExecutionModeChange).not.toHaveBeenCalled()
-  })
-
-  test('loads, filters, and switches branches from its submenu', async () => {
-    const props = renderMenu()
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-branch-button'))
-    await waitFor(() =>
-      expect(screen.getByTestId('popout-workspace-branch-option-fix/menu')).toBeInTheDocument()
-    )
-
-    await userEvent.type(screen.getByTestId('popout-workspace-branch-search'), 'fix')
-    expect(screen.queryByTestId('popout-workspace-branch-option-main')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('popout-workspace-branch-option-fix/menu'))
-
-    expect(props.onCheckoutBranch).toHaveBeenCalledWith('fix/menu')
-  })
-
-  test('keeps the current branch selectable when loading the branch list fails', async () => {
-    renderMenu({ onListBranches: vi.fn().mockRejectedValue(new Error('offline')) })
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-branch-button'))
-
-    await waitFor(() =>
-      expect(screen.getByTestId('popout-workspace-branch-option-main')).toBeInTheDocument()
-    )
-    expect(screen.queryByText('加载中…')).not.toBeInTheDocument()
   })
 
   test('closes the submenu before closing the menu with Escape', async () => {
@@ -209,26 +112,5 @@ describe('PopoutWorkspaceMenu', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('popout-workspace-menu')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
-  })
-
-  test('handles branch checkout failures without an unhandled rejection', async () => {
-    const error = new Error('checkout failed')
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    renderMenu({ onCheckoutBranch: vi.fn().mockRejectedValue(error) })
-
-    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
-    await userEvent.click(screen.getByTestId('popout-workspace-branch-button'))
-    await waitFor(() =>
-      expect(screen.getByTestId('popout-workspace-branch-option-fix/menu')).toBeInTheDocument()
-    )
-    await userEvent.click(screen.getByTestId('popout-workspace-branch-option-fix/menu'))
-
-    await waitFor(() =>
-      expect(consoleError).toHaveBeenCalledWith(
-        '[Wework] Failed to checkout Popout Window branch',
-        error
-      )
-    )
-    consoleError.mockRestore()
   })
 })

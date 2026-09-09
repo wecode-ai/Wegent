@@ -32,6 +32,13 @@ bundled plugins), Codex/DWS binaries, the Node runtime, and the Harness runtime
 JSONL with the Executor sidecar through child process stdin/stdout, without a
 Unix domain socket or fixed TCP port.
 
+In development the script builds the renderer output
+(`wework/dsh/app-wework/web`), starts a Vite watch build, and serves the
+running desktop app from the latest build through
+`WEWORK_APP_WEB_ROOT`/`WEWORK_APP_HOT_RELOAD` with automatic reload when the
+build changes, matching `dev-mac-app.sh`. Branch switches and renderer edits
+therefore take effect without manually syncing packaged plugin artifacts.
+
 Runtime and Executor build caches default to `%LOCALAPPDATA%\wegent\` (override
 with `WEWORK_DEV_CACHE_ROOT` or `WEGENT_CARGO_TARGET_ROOT`); the first
 preparation is slow and later runs are incremental. Pass
@@ -51,15 +58,8 @@ Icons, plugins, runtime descriptors, and sidecars come from
 `wework/resources/` and are copied into the application by
 `wework/electron/scripts/prepare-package-assets.mjs`.
 
-The installer also migrates legacy Tauri installations to Electron. It accepts
-the `/P` argument passed by the Tauri updater, reads the legacy
-`Software\you\WeWork` registry entry, and keeps the
-`%LOCALAPPDATA%\WeWork` installation directory. After the Update action
-installs Electron, the legacy client relaunches the same `WeWork.exe` path.
-This avoids a second installation directory and preserves user data.
-The Executor started by Electron continues to use the existing `.wework`
-directory under the user's home directly; no directory copy or data migration
-is performed.
+The installer uses Electron Builder's standard NSIS installation flow without
+custom passive-install arguments or installation registry migration.
 
 ## Verification
 
@@ -90,8 +90,8 @@ same selected shards. Windows path, drive-letter, UNC, named-pipe, and `.exe`
 sidecar behavior must be verified by this Windows job and cannot be inferred
 from another platform passing.
 
-`.github/workflows/wework-app.yml` creates the signed installer, Electron YAML
-update manifest, and legacy Tauri JSON/signature bridge on `windows-latest`.
+`.github/workflows/wework-app.yml` creates the signed installer and Electron
+YAML update manifest on `windows-latest`.
 
 ## Troubleshooting
 

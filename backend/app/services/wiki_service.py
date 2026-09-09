@@ -25,6 +25,8 @@ from app.models.wiki import WikiContent, WikiGeneration, WikiGenerationStatus
 from app.schemas.wiki import (
     WikiContentSummary,
     WikiContentWriteRequest,
+    WikiGenerationReviewOpenRequest,
+    WikiGenerationReviewRequest,
     WikiPageRead,
 )
 from app.services.knowledge.code_wiki.page_path import (
@@ -34,6 +36,12 @@ from app.services.knowledge.code_wiki.page_path import (
     normalize_page_path,
 )
 from app.services.knowledge.code_wiki.publisher import PublishResult
+from app.services.knowledge.code_wiki.quality_gate import (
+    open_quality_review,
+    record_quality_review,
+    review_state,
+    writing_progress,
+)
 from app.services.knowledge.code_wiki.runner import finish_run, is_code_wiki_generation
 from app.services.knowledge.code_wiki.version_store import (
     page_path_of,
@@ -46,6 +54,55 @@ logger = logging.getLogger(__name__)
 
 class WikiService:
     """Writes and concludes wiki versions."""
+
+    def open_generation_review(
+        self,
+        wiki_db: Session,
+        payload: WikiGenerationReviewOpenRequest,
+    ) -> dict:
+        """Persist the Writer handoff for one review attempt."""
+        generation = (
+            wiki_db.query(WikiGeneration)
+            .filter(WikiGeneration.id == payload.generation_id)
+            .with_for_update()
+            .first()
+        )
+        if generation is None:
+            raise HTTPException(status_code=404, detail="Generation not found")
+        return open_quality_review(wiki_db, generation=generation, payload=payload)
+
+    def record_generation_review(
+        self,
+        wiki_db: Session,
+        payload: WikiGenerationReviewRequest,
+    ) -> dict:
+        """Store a coordinated full-rebuild review checkpoint."""
+        generation = (
+            wiki_db.query(WikiGeneration)
+            .filter(WikiGeneration.id == payload.generation_id)
+            .with_for_update()
+            .first()
+        )
+        if generation is None:
+            raise HTTPException(status_code=404, detail="Generation not found")
+        return record_quality_review(wiki_db, generation=generation, payload=payload)
+
+    def generation_review_state(
+        self, wiki_db: Session, *, generation_id: int, phase: str
+    ) -> dict:
+        """Read the durable Reviewer state a Writer needs after compaction."""
+        generation = (
+            wiki_db.query(WikiGeneration)
+            .filter(WikiGeneration.id == generation_id)
+            .first()
+        )
+        if generation is None:
+            raise HTTPException(status_code=404, detail="Generation not found")
+        state = review_state(generation, phase=phase)
+        progress = writing_progress(wiki_db, generation)
+        if progress is not None:
+            state["writing"] = progress
+        return state
 
     def save_generation_contents(
         self,

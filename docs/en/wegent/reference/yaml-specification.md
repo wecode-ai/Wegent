@@ -162,6 +162,7 @@ metadata:
   name: ClaudeSonnet4
   namespace: default
 spec:
+  isVisible: true
   modelGroup: "Primary"
   modelSubGroup: "Fast"
   modelConfig:
@@ -178,6 +179,7 @@ spec:
 | ---------------------- | ------ | -------- | -------------------------------------------------- |
 | `metadata.name`        | string | Yes      | Unique identifier for the Model                    |
 | `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
+| `spec.isVisible`       | boolean | No      | Whether a public model appears in regular users' model selectors. Defaults to `true`; `false` preserves existing references and runtime resolution. |
 | `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
 | `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
 | `spec.modelConfig`     | object | Yes      | Model configuration object                         |

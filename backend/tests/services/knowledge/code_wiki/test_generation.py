@@ -27,6 +27,10 @@ from app.services.knowledge.code_wiki.generation import (
     published_commit,
     start_generation,
 )
+from app.services.knowledge.code_wiki.generation_strategy import (
+    COORDINATOR_ADAPTIVE,
+    GENERATION_STRATEGY_EXT_KEY,
+)
 from app.services.knowledge.code_wiki.projection import ProjectionSideEffects
 from app.services.knowledge.code_wiki.publisher import published_generation_id
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
@@ -79,7 +83,9 @@ def knowledge_base(test_db: Session, test_user: User) -> Kind:
     return kind
 
 
-def _write_page(test_db: Session, generation: WikiGeneration, path: str, body: str):
+def _write_page(
+    test_db: Session, generation: WikiGeneration, path: str, body: str
+) -> WikiContent:
     entry = WikiContent(
         generation_id=generation.id,
         type="chapter",
@@ -90,6 +96,7 @@ def _write_page(test_db: Session, generation: WikiGeneration, path: str, body: s
     set_page_path(entry, path)
     test_db.add(entry)
     test_db.flush()
+    return entry
 
 
 def _publish_a_first_wiki(test_db, knowledge_base, test_user, effects, *, pages=3):
@@ -512,6 +519,267 @@ def test_a_running_wiki_is_reported_as_busy(
     assert state.status == "running"
     assert state.generation_id == started.generation.id
     assert not state.is_stale
+
+
+def test_coordinate_progress_is_derived_from_review_evidence(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    _write_page(test_db, generation, "index", "# Wiki")
+
+    def set_review(*, handoffs: list[dict], checkpoints: list[dict]) -> None:
+        generation.ext = {
+            "qualityReview": {
+                "required": True,
+                "handoffs": handoffs,
+                "checkpoints": checkpoints,
+            }
+        }
+        test_db.commit()
+
+    set_review(handoffs=[], checkpoints=[])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("planning", 1)
+    assert progress.pages_written == 1
+
+    planned_paths = ["index", "architecture"]
+    plan_handoff = {"phase": "plan", "attempt": 1, "paths": planned_paths}
+    set_review(handoffs=[plan_handoff], checkpoints=[])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "plan_review"
+    assert progress.pages_total == 2
+
+    plan_changes = {
+        "phase": "plan",
+        "attempt": 1,
+        "status": "changes_requested",
+        "paths": planned_paths,
+    }
+    set_review(handoffs=[plan_handoff], checkpoints=[plan_changes])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "revising_plan"
+
+    plan_passed = {
+        "phase": "plan",
+        "attempt": 1,
+        "status": "passed",
+        "paths": planned_paths,
+    }
+    set_review(handoffs=[plan_handoff], checkpoints=[plan_passed])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("writing", 2)
+
+    qa_handoff = {"phase": "qa", "attempt": 1}
+    set_review(handoffs=[plan_handoff, qa_handoff], checkpoints=[plan_passed])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("qa_review", 3)
+
+    qa_changes = {"phase": "qa", "attempt": 1, "status": "changes_requested"}
+    set_review(
+        handoffs=[plan_handoff, qa_handoff],
+        checkpoints=[plan_passed, qa_changes],
+    )
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "repairing"
+
+    recheck_handoff = {"phase": "recheck", "attempt": 1}
+    set_review(
+        handoffs=[plan_handoff, qa_handoff, recheck_handoff],
+        checkpoints=[plan_passed, qa_changes],
+    )
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("recheck", 4)
+
+    recheck_passed = {"phase": "recheck", "attempt": 1, "status": "passed"}
+    set_review(
+        handoffs=[plan_handoff, qa_handoff, recheck_handoff],
+        checkpoints=[plan_passed, qa_changes, recheck_passed],
+    )
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "publishing"
+
+
+def test_no_review_progress_uses_the_persisted_page_plan(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    generation.ext = {
+        GENERATION_STRATEGY_EXT_KEY: {"id": COORDINATOR_ADAPTIVE, "revision": 1}
+    }
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+    ) == (
+        "planning",
+        1,
+        3,
+    )
+    assert not progress.review_required
+
+    generation.ext = {
+        GENERATION_STRATEGY_EXT_KEY: {"id": COORDINATOR_ADAPTIVE, "revision": 1},
+        "content_write": {
+            # The first item mirrors the historical CSV representation repaired by
+            # the version-order compatibility path.
+            "summary": {"structure_order": ["index,architecture", "operations"]}
+        },
+    }
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+        progress.pages_written,
+        progress.pages_total,
+    ) == ("writing", 2, 3, 0, 3)
+
+    for path in ("index", "architecture", "operations"):
+        _write_page(test_db, generation, path, f"# {path}")
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.pages_written,
+        progress.pages_total,
+    ) == (
+        "publishing",
+        3,
+        3,
+    )
+
+
+def test_plan_only_progress_skips_qa_and_publishes_after_all_pages_are_written(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    planned_paths = ["index", "architecture"]
+    generation.ext = {
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_only",
+            "handoffs": [{"phase": "plan", "attempt": 1, "paths": planned_paths}],
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "attempt": 1,
+                    "status": "passed",
+                    "paths": planned_paths,
+                }
+            ],
+        }
+    }
+    _write_page(test_db, generation, "index", "# Wiki")
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+    ) == (
+        "writing",
+        2,
+        3,
+    )
+
+    unexpected = _write_page(test_db, generation, "draft", "# Draft")
+    test_db.commit()
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "writing"
+
+    test_db.delete(unexpected)
+    _write_page(test_db, generation, "architecture", "# Architecture")
+    test_db.commit()
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+    ) == (
+        "publishing",
+        3,
+        3,
+    )
+
+
+def test_plan_only_progress_uses_the_passed_amendment_page_total(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    generation.ext = {
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_only",
+            "handoffs": [
+                {"phase": "plan", "attempt": 1, "paths": ["index"]},
+                {
+                    "phase": "plan_amendment",
+                    "attempt": 1,
+                    "paths": ["index", "architecture", "operations"],
+                },
+            ],
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "attempt": 1,
+                    "status": "passed",
+                    "paths": ["index"],
+                    "focusPaths": ["index"],
+                },
+                {
+                    "phase": "plan_amendment",
+                    "attempt": 1,
+                    "status": "passed",
+                    "paths": ["index", "architecture", "operations"],
+                },
+            ],
+        }
+    }
+    _write_page(test_db, generation, "index", "# Wiki")
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+
+    assert progress and (progress.stage, progress.pages_total) == ("writing", 3)
 
 
 def test_a_run_whose_worker_went_quiet_is_reported_as_stale(

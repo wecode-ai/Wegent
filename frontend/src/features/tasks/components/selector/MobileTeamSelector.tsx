@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState, useMemo } from 'react'
-import { Check, LayoutGrid, Settings, ChevronDown, Star } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, LayoutGrid, Lock, Settings, Star, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -32,6 +32,9 @@ interface MobileTeamSelectorProps {
   // Optional: hide team icon in trigger button
   hideTriggerIcon?: boolean
   currentMode?: TeamModeFilter
+  triggerVariant?: 'compact' | 'settings-row'
+  onClear?: () => void
+  showClearButton?: boolean
 }
 
 const getTeamDisplayName = (team: Team) => team.displayName?.trim() || team.name
@@ -49,6 +52,9 @@ export default function MobileTeamSelector({
   triggerText,
   hideTriggerIcon = false,
   currentMode = 'chat',
+  triggerVariant = 'compact',
+  onClear,
+  showClearButton = false,
 }: MobileTeamSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -78,39 +84,103 @@ export default function MobileTeamSelector({
   }
 
   const isDisabled = disabled || isLoading || teams.length === 0
-  const selectedTeamDisplayName = selectedTeam ? getTeamDisplayName(selectedTeam) : ''
+  const selectedTeamDisplayName = selectedTeam
+    ? getTeamDisplayName(selectedTeam)
+    : t('common:teams.select_team')
+  const canClearSelection = Boolean(
+    triggerVariant === 'compact' && selectedTeam && showClearButton && onClear
+  )
 
-  if (!selectedTeam || teams.length === 0) return null
+  if (teams.length === 0) return null
 
   return (
     <Drawer open={isOpen} onOpenChange={handleOpenChange}>
-      <DrawerTrigger asChild>
-        <button
-          type="button"
-          disabled={isDisabled}
-          className={cn(
-            'flex w-full items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
-            'border border-border bg-base text-text-primary transition-colors overflow-hidden',
-            isLoading ? 'animate-pulse' : '',
-            'focus:outline-none focus:ring-0',
-            'active:opacity-70',
-            'disabled:cursor-not-allowed disabled:opacity-50',
-            triggerText ? 'gap-1' : 'gap-2'
-          )}
-        >
-          {!hideTriggerIcon && selectedTeam && !triggerText && (
-            <TeamIconDisplay
-              iconId={selectedTeam?.icon}
-              size="xs"
-              className="text-text-muted flex-shrink-0"
-            />
-          )}
-          <span className="flex-1 truncate text-xs min-w-0">
-            {triggerText || selectedTeamDisplayName || t('common:teams.select_team')}
-          </span>
-          {triggerText && <ChevronDown className="w-2.5 h-2.5 text-text-muted flex-shrink-0" />}
-        </button>
-      </DrawerTrigger>
+      <div className="relative flex min-w-0 w-full">
+        <DrawerTrigger asChild>
+          <button
+            type="button"
+            disabled={isDisabled}
+            data-testid="mobile-team-selector-trigger"
+            className={cn(
+              'flex w-full items-center min-w-0 max-w-full text-left transition-colors overflow-hidden',
+              triggerVariant === 'settings-row'
+                ? 'min-h-14 gap-3 px-3 py-2.5 hover:bg-hover active:bg-hover'
+                : 'h-11 rounded-xl border border-border bg-base py-2 pl-3 text-text-primary',
+              triggerVariant === 'compact' && (canClearSelection ? 'pr-11' : 'pr-3'),
+              isLoading ? 'animate-pulse' : '',
+              'focus:outline-none focus:ring-0',
+              'active:opacity-70',
+              'disabled:cursor-not-allowed disabled:opacity-60',
+              triggerVariant === 'compact' && (triggerText ? 'gap-1' : 'gap-2')
+            )}
+          >
+            {triggerVariant === 'settings-row' ? (
+              selectedTeam ? (
+                <TeamIconDisplay
+                  iconId={selectedTeam.icon}
+                  size="sm"
+                  className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-surface text-text-muted"
+                />
+              ) : (
+                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-surface text-text-muted">
+                  <LayoutGrid className="h-5 w-5" aria-hidden="true" />
+                </span>
+              )
+            ) : (
+              !hideTriggerIcon &&
+              selectedTeam &&
+              !triggerText && (
+                <TeamIconDisplay
+                  iconId={selectedTeam?.icon}
+                  size="xs"
+                  className="text-text-muted flex-shrink-0"
+                />
+              )
+            )}
+            {triggerVariant === 'settings-row' ? (
+              <>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-text-primary">
+                    {t('common:teamSelector.agent_label')}
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-text-muted">
+                    {selectedTeamDisplayName}
+                  </span>
+                </span>
+                {isDisabled ? (
+                  <Lock className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                )}
+              </>
+            ) : (
+              <>
+                <span className="flex-1 truncate text-xs min-w-0">
+                  {triggerText || selectedTeamDisplayName || t('common:teams.select_team')}
+                </span>
+                {triggerText && (
+                  <ChevronDown className="w-2.5 h-2.5 text-text-muted flex-shrink-0" />
+                )}
+              </>
+            )}
+          </button>
+        </DrawerTrigger>
+        {canClearSelection && (
+          <button
+            type="button"
+            data-testid="mobile-team-selector-clear"
+            aria-label={t('common:teams.clear_selection')}
+            title={t('common:teams.clear_selection')}
+            onClick={onClear}
+            disabled={isDisabled}
+            className="group absolute right-0 top-0 z-10 flex h-11 w-11 items-center justify-center text-text-muted transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-full transition-colors group-hover:bg-hover group-active:bg-hover">
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          </button>
+        )}
+      </div>
 
       <DrawerContent className="max-h-[85vh] bg-[#f2f2f7] dark:bg-[#1c1c1e]" showHandle={false}>
         {/* iOS-style drag handle */}

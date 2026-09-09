@@ -15,7 +15,12 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import KnowledgeBaseType
-from app.schemas.wiki import WikiContentWriteRequest, WikiPageRead
+from app.schemas.wiki import (
+    WikiContentWriteRequest,
+    WikiGenerationReviewOpenRequest,
+    WikiGenerationReviewRequest,
+    WikiPageRead,
+)
 from app.services.knowledge.code_wiki.generation import FailureCode, failure_code
 from app.services.knowledge.code_wiki.prompts import build_diagram_correction
 from app.services.knowledge.code_wiki.publish_gate import PUBLISH_GATE_EXT_KEY
@@ -152,9 +157,21 @@ def _assert_caller_may_write_generation(
     ):
         return
 
+    generation_status = (
+        generation.status.value
+        if isinstance(generation.status, WikiGenerationStatus)
+        else str(generation.status)
+    )
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
-        detail="Generation is not in a writable state",
+        detail={
+            "code": "generation_not_writable",
+            "message": "Generation is not in a writable state",
+            "generationStatus": generation_status,
+            "failureCode": failure_code(generation) or None,
+            "retryable": False,
+            "nextAction": "start_new_generation",
+        },
     )
 
 
@@ -187,6 +204,42 @@ def save_wiki_generation_contents(
         "reason": outcome.reason,
         "corrections": build_diagram_correction(outcome.verdict.diagram_warnings) or "",
     }
+
+
+@internal_router.post("/generations/review")
+def save_wiki_generation_review(
+    payload: WikiGenerationReviewRequest,
+    caller: User = Depends(_internal_caller),
+    wiki_db: Session = Depends(get_wiki_db),
+):
+    """Record a persisted review verdict for a coordinated Code Wiki rebuild."""
+    _assert_caller_may_write_generation(wiki_db, caller, payload.generation_id)
+    return wiki_service.record_generation_review(wiki_db, payload)
+
+
+@internal_router.post("/generations/review/open")
+def open_wiki_generation_review(
+    payload: WikiGenerationReviewOpenRequest,
+    caller: User = Depends(_internal_caller),
+    wiki_db: Session = Depends(get_wiki_db),
+):
+    """Persist the Writer handoff before starting a Reviewer task."""
+    _assert_caller_may_write_generation(wiki_db, caller, payload.generation_id)
+    return wiki_service.open_generation_review(wiki_db, payload)
+
+
+@internal_router.get("/generations/{generation_id}/review")
+def get_wiki_generation_review(
+    generation_id: int,
+    phase: str = Query(..., pattern="^(plan|plan_amendment|qa|recheck)$"),
+    caller: User = Depends(_internal_caller),
+    wiki_db: Session = Depends(get_wiki_db),
+):
+    """Read a persisted Reviewer verdict or lifecycle state for one phase."""
+    _assert_caller_may_write_generation(wiki_db, caller, generation_id)
+    return wiki_service.generation_review_state(
+        wiki_db, generation_id=generation_id, phase=phase
+    )
 
 
 @internal_router.get("/generations/{generation_id}/pages", response_model=WikiPageRead)

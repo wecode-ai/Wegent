@@ -1,5 +1,6 @@
 import {
   memo,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -59,8 +60,16 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
+import type { Team } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  createFilePreviewTraceId,
+  filePreviewElapsedMs,
+  filePreviewPathMetadata,
+  logFilePreviewDiagnostic,
+  scheduleFilePreviewMainThreadProbe,
+} from '@/lib/file-preview-diagnostics'
 import {
   defaultAppearance,
   getWorkbenchBackground,
@@ -78,6 +87,7 @@ import {
   type RightWorkspacePanelView,
   type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
+import { retainElectronEmbeddedBrowserView } from './workspace-panels/electronEmbeddedBrowserHost'
 import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
@@ -91,8 +101,10 @@ import {
   type RightWorkspaceExtensionTabState,
 } from './workspace-panels/rightWorkspaceDshSidebar'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
+import { TaskBoardAssociationDialog } from '@/features/todo/TaskBoardAssociationDialog'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -101,6 +113,7 @@ import {
 } from '@/api/deliveries'
 import {
   RIGHT_SPLIT_PANEL_MIN_WIDTH,
+  RIGHT_WORKSPACE_COMPACT_PANEL_DEFAULT_WIDTH,
   useResizableRightSplitChat,
 } from './workspace-panels/useResizableWorkspacePanel'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
@@ -117,7 +130,12 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
+import {
+  getDesktopWindowLabel,
+  isDesktopRuntime,
+  isElectronRuntime,
+} from '@/lib/runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getPlatform } from '@/lib/platform'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import {
@@ -143,15 +161,19 @@ import {
   listLocalHarnessModelOptions,
   type LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
-import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import {
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   closeEmbeddedBrowser,
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPopupRequests,
   markEmbeddedBrowserLabelTransferred,
-  relabelEmbeddedBrowser,
+  migrateEmbeddedBrowserLabelSequence,
   setEmbeddedBrowserActiveTab,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
@@ -194,6 +216,7 @@ import {
   findRuntimeTask,
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
+import { consumeWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLaunchRequest'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -219,6 +242,7 @@ import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
+import { WorkbenchTeamSelector } from './WorkbenchTeamSelector'
 import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
@@ -249,7 +273,7 @@ import {
   stopHarnessAppDevelopmentRuntime,
 } from '@/features/harness-apps/harnessAppDevelopmentRuntime'
 import { consumeSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
-import { harnessAppsApi } from '@/api/local/harnessApps'
+import { harnessAppsApi, type HarnessAppVerificationReport } from '@/api/local/harnessApps'
 import { getErrorMessage } from '@/lib/error-message'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
@@ -268,9 +292,47 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
-const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
-const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
+const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'summary',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="textbox"]',
+  '[role="menuitem"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="slider"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="tab"]',
+].join(', ')
+
+function isConversationPasteShortcut(event: KeyboardEvent) {
+  const primaryPressed =
+    getPlatform() === 'mac' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+  return primaryPressed && !event.altKey && event.key.toLowerCase() === 'v'
+}
+
+type SmartAppDevelopmentVerificationStatus =
+  | 'unverified'
+  | 'running'
+  | 'passed'
+  | 'failed'
+  | 'stale'
+
+function smartAppDevelopmentVerificationStatus(
+  report: HarnessAppVerificationReport | null
+): SmartAppDevelopmentVerificationStatus {
+  return report?.status ?? 'unverified'
+}
 
 interface SelectedAssistantPlan {
   blockId: string
@@ -296,6 +358,8 @@ interface WorkbenchPaneWorkspaceState {
     path: string
     isDirectory: boolean
   } | null
+  sourceBrowserLabel?: string
+  transferredFromBlank?: boolean
 }
 
 interface EnvironmentInfoVisibilityState {
@@ -307,19 +371,6 @@ const DEFAULT_ENVIRONMENT_INFO_VISIBILITY: EnvironmentInfoVisibilityState = {
   pinned: true,
   overlayOpen: false,
 }
-
-interface PendingBlankBrowserMigration {
-  sourcePaneKey: string
-  browserLabel: string
-  browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
-  rightPanelOpen: boolean
-  rightPanelExpanded: boolean
-  rightPanelView: RightWorkspacePanelView
-  rightPanelTabs: RightWorkspacePanelTab[]
-  createdAt: number
-}
-
-let latestBlankBrowserMigration: PendingBlankBrowserMigration | null = null
 
 function findSelectedAssistantPlanContent(
   messages: WorkbenchMessage[],
@@ -338,21 +389,6 @@ function findSelectedAssistantPlanContent(
   }
 
   return null
-}
-
-function consumeLatestBlankBrowserMigration(): PendingBlankBrowserMigration | null {
-  if (!latestBlankBrowserMigration) return null
-  if (Date.now() - latestBlankBrowserMigration.createdAt > BLANK_BROWSER_MIGRATION_TTL_MS) {
-    latestBlankBrowserMigration = null
-    return null
-  }
-
-  const migration = latestBlankBrowserMigration
-  latestBlankBrowserMigration = null
-  Object.values(migration.browserStates).forEach(state => {
-    if (state?.label) markEmbeddedBrowserLabelTransferred(state.label)
-  })
-  return migration
 }
 
 function createBottomPanelWorkspaceKey({
@@ -441,9 +477,11 @@ function normalizeRightWorkspaceBrowserState(
     label: state?.label ?? label,
     nativeLabel: state?.nativeLabel ?? null,
     browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+    url: state?.url ?? null,
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
     isLoading: state?.isLoading ?? false,
+    agentActive: false,
     hasActiveDownload: state?.hasActiveDownload ?? false,
     openRequest: state?.openRequest ?? null,
   }
@@ -467,22 +505,19 @@ function browserLabelForRightWorkspaceTab(
 }
 
 function createInitialBrowserWorkspaceState({
-  initialBlankBrowserMigration,
   initialWorkspaceState,
   defaultEmbeddedBrowserLabel,
 }: {
-  initialBlankBrowserMigration: PendingBlankBrowserMigration | null
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   defaultEmbeddedBrowserLabel: string
 }): {
   states: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   maxSequence: number
 } {
-  const restoredStates =
-    initialBlankBrowserMigration?.browserStates ?? initialWorkspaceState?.browserStates ?? {}
-  const restoredTabs = (initialBlankBrowserMigration?.rightPanelTabs ??
-    initialWorkspaceState?.rightPanelTabs ??
-    []) as Array<RightWorkspacePanelTab | 'browser'>
+  const restoredStates = initialWorkspaceState?.browserStates ?? {}
+  const restoredTabs = (initialWorkspaceState?.rightPanelTabs ?? []) as Array<
+    RightWorkspacePanelTab | 'browser'
+  >
   const states: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>> = {}
   let maxSequence = 0
 
@@ -492,7 +527,7 @@ function createInitialBrowserWorkspaceState({
     if (!isRightWorkspaceBrowserTab(tab)) return
     const legacyLabel =
       restoredTab === 'browser'
-        ? (initialBlankBrowserMigration?.browserLabel ?? defaultEmbeddedBrowserLabel)
+        ? (initialWorkspaceState?.sourceBrowserLabel ?? defaultEmbeddedBrowserLabel)
         : browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab)
     states[tab] = normalizeRightWorkspaceBrowserState(
       tab,
@@ -582,6 +617,23 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
+  const [sharedWorkbenchContentWidth, setSharedWorkbenchContentWidth] = useState(0)
+  const sharedWorkbenchContentResizeObserverRef = useRef<ResizeObserver | null>(null)
+  const setSharedWorkbenchContentRef = useCallback((element: HTMLDivElement | null) => {
+    sharedWorkbenchContentResizeObserverRef.current?.disconnect()
+    sharedWorkbenchContentResizeObserverRef.current = null
+    if (!element) return
+
+    const updateWidth = () => {
+      setSharedWorkbenchContentWidth(element.getBoundingClientRect().width)
+    }
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(element)
+    sharedWorkbenchContentResizeObserverRef.current = observer
+  }, [])
   const [internalHarnessSessions, setInternalHarnessSessions] = useState<
     LocalHarnessWorkbenchSession[]
   >([])
@@ -678,6 +730,28 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     },
     []
   )
+  const transferPaneWorkspaceState = useCallback(
+    (sourcePaneKey: string, address: RuntimeTaskAddress) => {
+      const targetPaneKey = getWorkbenchPaneKey({
+        currentRuntimeTask: address,
+        currentProject: null,
+      })
+      if (paneWorkspaceStateRef.current.has(targetPaneKey)) return
+
+      const sourceState = paneWorkspaceStateRef.current.get(sourcePaneKey)
+      if (!sourceState) return
+      Object.values(sourceState.browserStates ?? {}).forEach(state => {
+        if (!state?.label) return
+        retainElectronEmbeddedBrowserView(state.label)
+        markEmbeddedBrowserLabelTransferred(state.label)
+      })
+      paneWorkspaceStateRef.current.set(targetPaneKey, {
+        ...sourceState,
+        transferredFromBlank: sourcePaneKey.startsWith('blank:'),
+      })
+    },
+    []
+  )
   const updateEnvironmentInfoVisibility = useCallback(
     (paneId: string, patch: Partial<EnvironmentInfoVisibilityState>) => {
       setEnvironmentInfoVisibilityByPane(current => ({
@@ -700,9 +774,26 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const resolvePane = useCallback(
     (paneKey: string) => {
       if (paneKey === activePaneKey) return props.activePane
-      return resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey)
+      const resolvedPane = resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey)
+      if (resolvedPane) return resolvedPane
+
+      const activeLayout = props.splitGroups.activeLayout
+      const canShowBlankStartupPane =
+        state.runtimeWork !== null &&
+        props.activePane.currentRuntimeTask === null &&
+        activeLayout.root.type === 'pane' &&
+        activeLayout.root.paneKey === paneKey &&
+        paneKey.startsWith('runtime:') &&
+        !runtimePaneKeySet.has(paneKey)
+      return canShowBlankStartupPane ? props.activePane : null
     },
-    [activePaneKey, props.activePane, state.runtimeWork]
+    [
+      activePaneKey,
+      props.activePane,
+      props.splitGroups.activeLayout,
+      runtimePaneKeySet,
+      state.runtimeWork,
+    ]
   )
   const getPaneTitle = useCallback(
     (pane: WorkbenchPaneIdentity) => {
@@ -736,11 +827,13 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         showComposerProjectMenuAction={props.showComposerProjectMenuAction ?? false}
         workspaceSessionApi={services?.workspaceSessionApi}
         environmentInfoVisibilityByPane={environmentInfoVisibilityByPane}
+        sharedWorkbenchContentWidth={splitMode ? 0 : sharedWorkbenchContentWidth}
         onSidebarCollapsedChange={props.onSidebarCollapsedChange}
         onEnvironmentInfoVisibilityChange={updateEnvironmentInfoVisibility}
         onPaneResourceRetained={setPaneResourceRetained}
         initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
         onWorkspaceStateChange={rememberPaneWorkspaceState}
+        onRuntimeTaskCreated={transferPaneWorkspaceState}
         onLocalHarnessSessionStarted={registerLocalHarnessSession}
         localHarnessSessions={localHarnessSessions}
         activeLocalHarnessSession={
@@ -765,7 +858,10 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       rememberPaneWorkspaceState,
       removeLocalHarnessSession,
       setPaneResourceRetained,
+      sharedWorkbenchContentWidth,
+      splitMode,
       services?.workspaceSessionApi,
+      transferPaneWorkspaceState,
       updateEnvironmentInfoVisibility,
     ]
   )
@@ -805,7 +901,13 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   )
 
   const mainContent = (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">{paneStack}</div>
+    <div
+      ref={setSharedWorkbenchContentRef}
+      data-testid="desktop-workbench-pane-stack-container"
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
+    >
+      {paneStack}
+    </div>
   )
 
   if (!isDesktop) return mainContent
@@ -835,11 +937,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   showComposerProjectMenuAction,
   workspaceSessionApi,
   environmentInfoVisibilityByPane,
+  sharedWorkbenchContentWidth,
   onSidebarCollapsedChange,
   onEnvironmentInfoVisibilityChange,
   onPaneResourceRetained,
   initialWorkspaceState,
   onWorkspaceStateChange,
+  onRuntimeTaskCreated,
   onLocalHarnessSessionStarted,
   localHarnessSessions,
   activeLocalHarnessSession,
@@ -853,6 +957,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   showComposerProjectMenuAction: boolean
   workspaceSessionApi?: WorkspaceSessionApi
   environmentInfoVisibilityByPane: Record<string, EnvironmentInfoVisibilityState>
+  sharedWorkbenchContentWidth: number
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onEnvironmentInfoVisibilityChange: (
     paneId: string,
@@ -861,6 +966,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onPaneResourceRetained: (paneKey: string, owner: string, retained: boolean) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
+  onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void
   onLocalHarnessSessionStarted: (
     session: LocalHarnessWorkbenchSession,
     options?: LocalHarnessSessionRegistrationOptions
@@ -915,19 +1021,41 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )?.project
   const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
   const paneKey = getWorkbenchPaneKey(pane)
+  const paneKeyRef = useRef(paneKey)
   useLayoutEffect(() => {
     paneActiveRef.current = paneActive
-  }, [paneActive])
+    paneKeyRef.current = paneKey
+  }, [paneActive, paneKey])
   const [turnNavigationPortalTarget, setTurnNavigationPortalTarget] =
     useState<HTMLDivElement | null>(null)
-  const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
-    currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
-  )
+  const initialBlankWorkspaceState =
+    currentRuntimeTask && initialWorkspaceState?.transferredFromBlank ? initialWorkspaceState : null
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
+  const startupSurfaceReady =
+    state.runtimeWork !== null && paneActive && paneVisible && workbenchVisible
+  useEffect(() => {
+    if (!startupSurfaceReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    console.info('[startup][renderer]', {
+      step: 'task-list-ready',
+      status: 'completed',
+    })
+    void invokeDesktopHost<void>('renderer.startupReady', { source: 'task-list' })
+      .then(() => {
+        console.info('[startup][renderer]', {
+          step: 'startup-ready-notification',
+          status: 'completed',
+        })
+      })
+      .catch(error => {
+        console.error('[Wework] Failed to reveal the ready workbench', error)
+      })
+  }, [startupSurfaceReady])
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
@@ -936,6 +1064,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const paneInput = paneSession.input
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
+  const [wegentTeams, setWegentTeams] = useState<Team[]>([])
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
+  const [teamsLoading, setTeamsLoading] = useState(false)
   const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
     Partial<Record<LocalHarnessId, string | null>>
   >({})
@@ -968,6 +1099,32 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     message: string
   } | null>(null)
   const centralHarnessRequestIdRef = useRef(0)
+  useEffect(() => {
+    if (!experimentalFeaturesEnabled) return
+
+    let cancelled = false
+    void Promise.resolve().then(async () => {
+      if (cancelled) return
+      setTeamsLoading(true)
+      try {
+        const teams = await services.teamApi.listTeams()
+        if (!cancelled) setWegentTeams(teams.filter(team => team.is_active))
+      } catch (error) {
+        console.warn('[Wework] Failed to load Wegent Teams', error)
+        if (!cancelled) setWegentTeams([])
+      } finally {
+        if (!cancelled) setTeamsLoading(false)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [experimentalFeaturesEnabled, services.teamApi])
+  const selectWegentTeam = useCallback((team: Team | null) => {
+    setCentralHarnessError(null)
+    setSelectedTeam(team)
+  }, [])
   useEffect(() => {
     if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
 
@@ -1018,14 +1175,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : currentRuntimeTask
   const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
+  const runtimeTaskDescription =
+    paneSession.messages.find(message => message.role === 'user')?.content ?? ''
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
   const {
     activeDeliveryItem,
+    associateRuntimeTaskWithExistingItem,
+    associateRuntimeTaskWithNewItem,
     boundCloudItem,
+    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,
+    closeTaskBoardAssociation,
     clearTodoBindingError,
     closeDeliveryDialog,
     cloudActionNotice,
@@ -1040,6 +1203,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     pendingCloudProject,
     prepareSubmission,
     removeCloudProjectContext,
+    taskBoardAssociation,
     todoBindingError,
     visibleCloudMentionCandidates,
   } = useWorkbenchCloudProjectContext({
@@ -1048,6 +1212,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentProjectId: currentProject?.id,
     defaultProjectSpace,
     paneKey,
+    runtimeTaskDescription,
+    runtimeTaskExecutionKnown: paneSession.status.taskExecution.known,
+    runtimeTaskExecutionStatus: paneSession.status.taskExecution.status,
+    runtimeTaskRunning: paneSession.status.taskExecution.running,
     runtimeTaskTitle,
     services,
     userId: state.user?.id,
@@ -1094,19 +1262,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         runtimeExecutablePath?: string
         runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
         modelSelection?: ModelSelectionConfig | null
+        wegentTeamId?: number
       }
     ) => {
+      const sourcePaneKey = paneKeyRef.current
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cloudSubmission = prepareSubmission(description)
+      const cloudSubmission = await prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         additionalContext: cloudSubmission.additionalContext,
         cloudProjectId: cloudSubmission.cloudProjectId,
         origin: cloudSubmission.origin,
         initialSupervisor: supervisorConfig,
-        onRuntimeTaskCreated: cloudSubmission.onRuntimeTaskCreated,
+        onRuntimeTaskCreated: address => {
+          onRuntimeTaskCreated(sourcePaneKey, address)
+          cloudSubmission.onRuntimeTaskCreated(address)
+          requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
+        },
         onRuntimeTaskReady: () => {
           if (supervisorConfig) {
             setPendingSupervisorConfig(null)
@@ -1120,6 +1294,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       pendingSupervisorConfig,
       prepareSubmission,
       sendPaneInput,
+      onRuntimeTaskCreated,
       setPendingSupervisorConfig,
     ]
   )
@@ -1142,6 +1317,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         runtimeExecutablePath?: string
         runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
         modelSelection?: ModelSelectionConfig | null
+        wegentTeamId?: number
       }
     ) => {
       const submitted = (value ?? paneSession.input).trim()
@@ -1273,33 +1449,36 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
   }, [currentRuntimeTask, runtimeWork])
   const initialBrowserWorkspaceState = createInitialBrowserWorkspaceState({
-    initialBlankBrowserMigration,
     initialWorkspaceState,
     defaultEmbeddedBrowserLabel,
   })
-  const [rightPanelOpen, setRightPanelOpen] = useState(
+  const browserTransferSourceLabels = useMemo(
     () =>
-      initialBlankBrowserMigration?.rightPanelOpen ?? initialWorkspaceState?.rightPanelOpen ?? false
+      Object.fromEntries(
+        Object.entries(initialBlankWorkspaceState?.browserStates ?? {})
+          .filter((entry): entry is [RightWorkspaceBrowserTab, RightWorkspaceBrowserState] =>
+            Boolean(entry[1]?.label)
+          )
+          .map(([tab, state]) => [tab, state.label])
+      ) as Partial<Record<RightWorkspaceBrowserTab, string>>,
+    [initialBlankWorkspaceState]
+  )
+  const [rightPanelOpen, setRightPanelOpen] = useState(
+    () => initialWorkspaceState?.rightPanelOpen ?? false
   )
   const [rightPanelExpanded, setRightPanelExpanded] = useState(
-    () =>
-      initialBlankBrowserMigration?.rightPanelExpanded ??
-      initialWorkspaceState?.rightPanelExpanded ??
-      false
+    () => initialWorkspaceState?.rightPanelExpanded ?? false
   )
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(() => {
-    const restoredView =
-      initialBlankBrowserMigration?.rightPanelView ??
-      initialWorkspaceState?.rightPanelView ??
-      'launcher'
+    const restoredView = initialWorkspaceState?.rightPanelView ?? 'launcher'
     return normalizeRightWorkspacePanelView(
       restoredView as RightWorkspacePanelView | 'browser' | 'terminal'
     )
   })
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(() => {
-    const restoredTabs = (initialBlankBrowserMigration?.rightPanelTabs ??
-      initialWorkspaceState?.rightPanelTabs ??
-      []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
+    const restoredTabs = (initialWorkspaceState?.rightPanelTabs ?? []) as Array<
+      RightWorkspacePanelTab | 'browser' | 'terminal'
+    >
     return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
@@ -1340,9 +1519,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         diff: '',
       }
   )
-  const restoredLoadingReviewRef = useRef(
-    initialWorkspaceState?.reviewState.loading ? initialWorkspaceState.reviewState : null
-  )
+  const restoredReviewState = initialWorkspaceState?.reviewState
+  const restoredLoadingReviewRef = useRef(restoredReviewState?.loading ? restoredReviewState : null)
   const [fileWorkspaceDirty, setFileWorkspaceDirty] = useState(false)
   const temporaryChatTabSequence = useRef(0)
   const browserTabSequence = useRef(initialBrowserWorkspaceState.maxSequence)
@@ -1390,9 +1568,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ): RightWorkspaceBrowserState => ({
       label: browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab),
       browserSessionId: getRightWorkspaceBrowserLabelSuffix(tab),
+      url: null,
       title: null,
       faviconUrl: null,
       isLoading: false,
+      agentActive: false,
       hasActiveDownload: false,
       openRequest: null,
       ...overrides,
@@ -1452,6 +1632,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       reviewState,
       selectedFileWorkspaceTargetKey,
       selectedWorkspaceFile,
+      sourceBrowserLabel: defaultEmbeddedBrowserLabel,
     })
   }, [
     onWorkspaceStateChange,
@@ -1464,6 +1645,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelExtensionTabs,
     temporaryChatAddresses,
     browserStates,
+    defaultEmbeddedBrowserLabel,
     reviewState,
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
@@ -1482,7 +1664,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
-  const [workbenchContentWidth, setWorkbenchContentWidth] = useState(0)
+  const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
+  const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
   const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
     workbenchResizeObserverRef.current?.disconnect()
@@ -1491,7 +1674,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!element) return
 
     const updateWorkbenchContentWidth = () => {
-      setWorkbenchContentWidth(element.getBoundingClientRect().width)
+      setMeasuredWorkbenchContentWidth(element.getBoundingClientRect().width)
     }
 
     updateWorkbenchContentWidth()
@@ -1501,6 +1684,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     observer.observe(element)
     workbenchResizeObserverRef.current = observer
   }, [])
+  const workbenchContentWidth =
+    !splitMode && sharedWorkbenchContentWidth > 0
+      ? sharedWorkbenchContentWidth
+      : measuredWorkbenchContentWidth
   const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
   const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
     useState<HTMLElement | null>(null)
@@ -1529,7 +1716,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const workbenchMain = workbenchMainRef.current
       if (!workbenchMain) return
       const width = workbenchMain.getBoundingClientRect().width
-      setWorkbenchContentWidth(width)
+      setMeasuredWorkbenchContentWidth(width)
       if (width <= 0) {
         retryTimeout = window.setTimeout(updateWorkbenchContentWidth, 50)
       }
@@ -1547,10 +1734,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
   }
-  const onlyTemporaryChatOpen =
-    rightPanelTabs.length === 1 &&
-    rightPanelTabs[0].startsWith('chat:') &&
-    rightPanelView === rightPanelTabs[0]
+  const compactRightPanelOpen =
+    (rightPanelTabs.length === 1 &&
+      rightPanelTabs[0].startsWith('chat:') &&
+      rightPanelView === rightPanelTabs[0]) ||
+    isRightWorkspaceExtensionTab(rightPanelView)
   const {
     width: rightSplitChatWidth,
     resizing: rightSplitResizing,
@@ -1558,7 +1746,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useResizableRightSplitChat({
     containerRef: workbenchMainRef,
     onCollapse: closeRightPanel,
-    defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
+    defaultPanelWidth: compactRightPanelOpen
+      ? RIGHT_WORKSPACE_COMPACT_PANEL_DEFAULT_WIDTH
+      : undefined,
   })
   const rightPanelTransitionDisabled = splitMode || rightSplitResizing || rightPanelImmediateLayout
   const chatColumnWidth = rightPanelOpen && !rightPanelExpanded ? rightSplitChatWidth : '100%'
@@ -1572,6 +1762,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoOpen = environmentInfoDocked
     ? environmentInfoPinned
     : environmentInfoOverlayOpen
+  const environmentInfoPanelExpanded = environmentInfoDocked && environmentInfoOpen
   const setEnvironmentInfoOpen = useCallback(
     (open: boolean) => {
       if (environmentInfoDocked) {
@@ -1847,6 +2038,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
       ? newChatRuntime
       : 'codex'
+  const activeTeam =
+    experimentalFeaturesEnabled && activeNewChatRuntime === 'codex' ? selectedTeam : null
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const resolveHarnessPluginRoots = useCallback(async () => {
     const [skillsResult, installedResult] = await Promise.allSettled([
@@ -1903,6 +2096,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setCentralHarnessStarting(false)
       setCentralHarnessError(null)
       setNewChatRuntime('codex')
+      setSelectedTeam(null)
     }
     window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, resetCentralHarness)
     return () => {
@@ -2171,10 +2365,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       runtimeExecutablePath?: string
       runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
       modelSelection?: ModelSelectionConfig | null
+      wegentTeamId?: number
     }
   ) => {
-    if (currentRuntimeTask || activeNewChatRuntime === 'codex') {
+    if (currentRuntimeTask) {
       return submitPaneInput(value, options)
+    }
+    if (activeNewChatRuntime === 'codex') {
+      return submitPaneInput(value, {
+        ...options,
+        ...(activeTeam ? { wegentTeamId: activeTeam.id } : {}),
+      })
     }
     if (activeNewChatRuntime === 'claude_code') {
       return submitPaneInput(value, {
@@ -2359,47 +2560,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   useEffect(() => {
-    const browserTabs = rightPanelTabs.filter(isRightWorkspaceBrowserTab)
-    if (currentRuntimeTask || browserTabs.length === 0) {
-      if (latestBlankBrowserMigration?.sourcePaneKey === paneKey) {
-        latestBlankBrowserMigration = null
-      }
-      return
-    }
-
-    latestBlankBrowserMigration = {
-      sourcePaneKey: paneKey,
-      browserLabel: defaultEmbeddedBrowserLabel,
-      browserStates: Object.fromEntries(
-        browserTabs
-          .map(tab => [tab, browserStates[tab]] as const)
-          .filter(
-            (entry): entry is readonly [RightWorkspaceBrowserTab, RightWorkspaceBrowserState] =>
-              Boolean(entry[1])
-          )
-      ),
-      rightPanelOpen,
-      rightPanelExpanded,
-      rightPanelView,
-      rightPanelTabs,
-      createdAt: Date.now(),
-    }
-  }, [
-    currentRuntimeTask,
-    browserStates,
-    defaultEmbeddedBrowserLabel,
-    paneKey,
-    rightPanelExpanded,
-    rightPanelOpen,
-    rightPanelTabs,
-    rightPanelView,
-  ])
-
-  useEffect(() => {
-    if (!initialBlankBrowserMigration || !currentRuntimeTask) return
+    if (!initialBlankWorkspaceState || !currentRuntimeTask) return
 
     let disposed = false
-    const mappings = Object.entries(initialBlankBrowserMigration.browserStates)
+    const abortController = new AbortController()
+    const mappings = Object.entries(initialBlankWorkspaceState.browserStates ?? {})
       .filter((entry): entry is [RightWorkspaceBrowserTab, RightWorkspaceBrowserState] =>
         Boolean(entry[1]?.label)
       )
@@ -2407,36 +2572,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         tab,
         fromLabel: state.label,
         toLabel: browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab),
+        waitForSource: Boolean(state.nativeLabel || state.openRequest),
       }))
 
-    void mappings
-      .reduce(async (previous, { fromLabel, toLabel }) => {
-        await previous
-        if (fromLabel === toLabel) return
-        await relabelEmbeddedBrowser(fromLabel, toLabel)
-      }, Promise.resolve())
-      .then(() => {
+    void migrateEmbeddedBrowserLabelSequence(mappings, {
+      signal: abortController.signal,
+      onMigrated: ({ tab, toLabel }) => {
         if (disposed) return
         setBrowserStates(current => {
-          let changed = false
-          const next = { ...current }
-          mappings.forEach(({ tab, toLabel }) => {
-            const state = next[tab]
-            if (!state || state.label === toLabel) return
-            next[tab] = { ...state, label: toLabel }
-            changed = true
-          })
-          return changed ? next : current
+          const state = current[tab]
+          if (!state || state.label === toLabel) return current
+          return {
+            ...current,
+            [tab]: { ...state, label: toLabel },
+          }
         })
-      })
-      .catch(error => {
-        console.error('Failed to migrate embedded browser label:', error)
-      })
+      },
+    }).catch(error => {
+      console.error('Failed to migrate embedded browser label:', error)
+    })
 
     return () => {
       disposed = true
+      abortController.abort()
     }
-  }, [currentRuntimeTask, defaultEmbeddedBrowserLabel, initialBlankBrowserMigration])
+  }, [currentRuntimeTask, defaultEmbeddedBrowserLabel, initialBlankWorkspaceState])
 
   const workspacePanelTarget = useMemo<WorkspaceTarget | null>(() => {
     if (!activeLocalHarnessSession) return effectiveWorkspaceTarget
@@ -2758,7 +2918,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const rightWorkspaceExtensionSessionId = currentRuntimeConversationSource
     ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
     : paneKey
-  const rightWorkspaceExtensionCwd = workspacePanelTarget?.path
+  const rightWorkspaceExtensionCwd =
+    workspacePanelTarget?.path ??
+    currentProject?.config?.workspace?.localPath ??
+    currentProject?.config?.path
   const rightWorkspaceExtensionScope = useMemo<WeworkWorkspaceScope>(
     () => ({
       sessionId: rightWorkspaceExtensionSessionId,
@@ -2777,7 +2940,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const tab = {
         id: seed.id ?? descriptor.id,
         type: descriptor.id,
-        title: seed.title ?? titleOfWeworkWorkspaceSidebarTab(descriptor),
+        title: seed.title ?? titleOfWeworkWorkspaceSidebarTab(descriptor, t),
         ...(seed.path || seed.url ? { path: seed.path ?? seed.url } : {}),
         ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
         ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
@@ -2795,7 +2958,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }))
       openRightPanelTab(internalId)
     },
-    [openRightPanelTab]
+    [openRightPanelTab, t]
   )
   const currentWorkItemGuideProject =
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
@@ -2813,6 +2976,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         integrated
         project={boundCloudProject}
         item={boundCloudItem}
+        statusOverride={boundCloudItemStatusOverride}
         api={boundProjectSpaceApi}
         currentTask={currentProjectSpaceRuntimeTask}
         projects={availableWorkItemProjects}
@@ -2958,6 +3122,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           workspaceTabId:
             browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
           status: reload ? 'reloading' : 'starting',
+          verificationStatus: 'unverified',
         },
       })
       try {
@@ -2996,6 +3161,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           })
           return
         }
+        const verificationReport = await harnessAppsApi
+          .inspectVerification(installationId)
+          .catch(error => {
+            console.error('Failed to inspect Smart app verification report:', error)
+            return null
+          })
+        if (smartAppDevelopmentPreviewRequestsRef.current.get(tab) !== requestId) return
         updateBrowserState(tab, {
           openRequest: {
             id: `smart-app-development-preview-${installationId}-${Date.now()}`,
@@ -3013,6 +3185,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             workspaceTabId:
               browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
             status: 'ready',
+            verificationStatus: smartAppDevelopmentVerificationStatus(verificationReport),
+            verificationReport,
           },
         })
       } catch (error) {
@@ -3027,6 +3201,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             workspaceTabId:
               browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
             status: 'error',
+            verificationStatus: 'unverified',
             error: getErrorMessage(
               error,
               t('workbench.smart_app_preview_failed', 'DSH 开发预览启动失败')
@@ -3066,6 +3241,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           workspaceTabId:
             browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
           status: 'reloading',
+          verificationStatus: 'unverified',
         },
       })
       try {
@@ -3082,6 +3258,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             workspaceTabId:
               browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
             status: 'ready',
+            verificationStatus: 'unverified',
           },
         })
         throw error
@@ -3095,6 +3272,48 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       updateBrowserState,
       workspaceTabId,
     ]
+  )
+  const verifySmartAppDevelopmentPreview = useCallback(
+    (tab: RightWorkspaceBrowserTab, installationId: string) => {
+      const preview = browserStatesRef.current[tab]?.developmentPreview
+      if (!preview || preview.status !== 'ready') return
+      updateBrowserState(tab, {
+        developmentPreview: {
+          ...preview,
+          verificationStatus: 'running',
+          verificationError: undefined,
+        },
+      })
+      void harnessAppsApi
+        .verify(installationId)
+        .then(verificationReport => {
+          const current = browserStatesRef.current[tab]?.developmentPreview
+          if (!current || current.installationId !== installationId) return
+          updateBrowserState(tab, {
+            developmentPreview: {
+              ...current,
+              verificationStatus: smartAppDevelopmentVerificationStatus(verificationReport),
+              verificationReport,
+              verificationError: undefined,
+            },
+          })
+        })
+        .catch(error => {
+          const current = browserStatesRef.current[tab]?.developmentPreview
+          if (!current || current.installationId !== installationId) return
+          updateBrowserState(tab, {
+            developmentPreview: {
+              ...current,
+              verificationStatus: 'failed',
+              verificationError: getErrorMessage(
+                error,
+                t('workbench.smart_app_preview_verification_failed')
+              ),
+            },
+          })
+        })
+    },
+    [t, updateBrowserState]
   )
   useEffect(() => {
     const previewRequests = smartAppDevelopmentPreviewRequestsRef.current
@@ -3194,6 +3413,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         displayName: preview.displayName,
         workspaceTabId,
         status: 'starting',
+        verificationStatus: 'unverified',
       },
     })
     void loadSmartAppDevelopmentPreview(tab, preview.installationId, false, preview.displayName)
@@ -3249,6 +3469,55 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (selectedText: string) => openTemporaryChatTab(selectedText),
     [openTemporaryChatTab]
   )
+  const focusComposerFromConversationClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (
+        event.defaultPrevented ||
+        !paneActive ||
+        !paneVisible ||
+        !workbenchVisible ||
+        !(event.target instanceof Element) ||
+        event.target.closest(CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR)
+      ) {
+        return
+      }
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed) return
+      const composer = event.currentTarget.querySelector<HTMLElement>(
+        '[data-testid="chat-message-input"][contenteditable="true"]'
+      )
+      if (!composer) return
+      requestWorkbenchComposerFocus(paneSession.scopeKey)
+    },
+    [paneActive, paneSession.scopeKey, paneVisible, workbenchVisible]
+  )
+  useEffect(() => {
+    if (!hasConversation || !paneActive || !paneVisible || !workbenchVisible) return
+
+    const focusComposerForPasteShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isConversationPasteShortcut(event)) {
+        return
+      }
+      const conversationSurface = conversationSurfaceRef.current
+      if (!conversationSurface) return
+      const activeElement = document.activeElement
+      if (isEditableShortcutTarget(activeElement)) return
+      if (
+        activeElement &&
+        activeElement !== document.body &&
+        activeElement !== document.documentElement &&
+        !conversationSurface.contains(activeElement)
+      ) {
+        return
+      }
+      conversationSurface
+        .querySelector<HTMLElement>('[data-testid="chat-message-input"][contenteditable="true"]')
+        ?.focus({ preventScroll: true })
+    }
+
+    window.addEventListener('keydown', focusComposerForPasteShortcut)
+    return () => window.removeEventListener('keydown', focusComposerForPasteShortcut)
+  }, [hasConversation, paneActive, paneVisible, workbenchVisible])
   const routeEmbeddedBrowserOpenRequest = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const states = browserStatesRef.current
@@ -3507,6 +3776,32 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workbenchVisible,
     ]
   )
+  const workspaceLaunchDeviceId = composerWorkspaceTarget?.deviceId
+  const workspaceLaunchPath = composerWorkspaceTarget?.path
+  useEffect(() => {
+    if (!paneActive || !paneVisible || !workbenchVisible) return
+    if (!workspaceLaunchDeviceId || !workspaceLaunchPath) return
+    const launch = consumeWorkbenchWorkspaceLaunch(workspaceLaunchDeviceId, workspaceLaunchPath)
+    if (!launch) return
+
+    if (launch.initialInput) {
+      setPaneInput(launch.initialInput)
+    }
+    if (launch.rightSidebarTab) {
+      rightWorkspaceDshSidebar.openTab(
+        { type: launch.rightSidebarTab.type },
+        rightWorkspaceExtensionScope
+      )
+    }
+  }, [
+    paneActive,
+    paneVisible,
+    rightWorkspaceExtensionScope,
+    setPaneInput,
+    workbenchVisible,
+    workspaceLaunchDeviceId,
+    workspaceLaunchPath,
+  ])
 
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
@@ -3675,6 +3970,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     async (path: string, options?: WorkspaceFileOpenOptions) => {
       const trimmedPath = decodeMarkdownFilePath(path.trim())
       if (!trimmedPath) return
+      const traceId = createFilePreviewTraceId()
+      const pathMetadata = filePreviewPathMetadata(trimmedPath)
+      logFilePreviewDiagnostic(traceId, 'message_link_click', pathMetadata)
+      scheduleFilePreviewMainThreadProbe(traceId, 'message_link_click')
       const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
       const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
       let localTarget =
@@ -3687,7 +3986,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           : null)
       let isDirectory = options?.isDirectory
       if (localTarget && isDirectory === undefined) {
+        const statStartedAt = performance.now()
+        logFilePreviewDiagnostic(traceId, 'filesystem_stat_start', pathMetadata)
         isDirectory = (await getLocalPathKind(trimmedPath)) === 'directory'
+        logFilePreviewDiagnostic(traceId, 'filesystem_stat_end', {
+          ...pathMetadata,
+          durationMs: filePreviewElapsedMs(statStartedAt),
+          isDirectory,
+        })
+        scheduleFilePreviewMainThreadProbe(traceId, 'filesystem_stat_end')
       }
       if (localTarget && isDirectory) {
         localTarget = {
@@ -3701,9 +4008,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         lineStart: options?.lineStart,
         lineEnd: options?.lineEnd,
         isDirectory,
+        traceId,
         target: localTarget ?? undefined,
       }))
+      logFilePreviewDiagnostic(traceId, 'open_file_request_queued', {
+        ...pathMetadata,
+        hasLocalTarget: Boolean(localTarget),
+        isDirectory: isDirectory ?? null,
+      })
       openRightPanelTab('files')
+      logFilePreviewDiagnostic(traceId, 'right_panel_open_requested')
+      scheduleFilePreviewMainThreadProbe(traceId, 'right_panel_open_requested')
     },
     [devices, effectiveWorkspaceTarget, openRightPanelTab, setOpenFileRequest]
   )
@@ -3971,6 +4286,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
+  const workspaceToolbarExtensions = (
+    <WorkspaceToolbarExtensions
+      currentProject={currentProject}
+      environmentInfo={environmentInfo}
+      workspaceTarget={workspaceTarget}
+    />
+  )
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
@@ -4080,14 +4402,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <X />
       </button>
     ) : undefined
-  const feedbackInChromeTitlebar = isDesktop && getPlatform() === 'mac'
+  const feedbackInChromeTitlebar = isDesktop
   const mainHeaderActions = activeLocalHarnessSession ? (
-    <>{closeHarnessButton}</>
+    <>
+      {workspaceToolbarExtensions}
+      {closeHarnessButton}
+    </>
   ) : (
     <>
       {forkTaskButton}
       {continueInImButton}
       {!feedbackInChromeTitlebar && feedbackButton}
+      {workspaceToolbarExtensions}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
     </>
@@ -4197,11 +4523,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </div>
   ) : undefined
   const paneHeaderActions = activeLocalHarnessSession ? (
-    <>{closeHarnessButton}</>
+    <>
+      {workspaceToolbarExtensions}
+      {closeHarnessButton}
+    </>
   ) : (
     <>
       {forkTaskButton}
       {continueInImButton}
+      {workspaceToolbarExtensions}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
       {panelChromeActions}
@@ -4298,538 +4628,603 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         />
         <div
-          ref={workbenchScrollRef}
-          data-testid="desktop-workbench-content"
-          data-embedded-browser-label={defaultEmbeddedBrowserLabel}
+          data-testid="desktop-workbench-scroll-frame"
           className={cn(
-            'relative grid h-full min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
-            hasConversation
-              ? 'overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
-              : 'overflow-hidden',
-            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
-            showPageTopBar && 'pt-11'
+            'relative flex h-full min-w-0 flex-none',
+            rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
           style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         >
-          {isBootstrapping ? (
-            <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
-          ) : activeLocalHarnessSession ? (
-            <div className="relative flex min-h-0 min-w-0">
-              {activeLocalHarnessSession.active ? (
-                <CentralHarnessTerminal
-                  sessionId={activeLocalHarnessSession.sessionId}
-                  title={activeLocalHarnessSession.title}
-                  cwd={activeLocalHarnessSession.cwd}
-                  active={paneActive && workbenchVisible}
-                  showHeader={false}
-                  onClose={
-                    activeLocalHarnessSession.isPrimary
-                      ? undefined
-                      : () => {
-                          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
-                        }
-                  }
-                  onExit={() => onLocalHarnessSessionExit(activeLocalHarnessSession.sessionId)}
-                />
-              ) : (
-                <div
-                  data-testid="local-harness-session-resuming"
-                  className={cn(
-                    'flex min-h-0 min-w-0 flex-1 items-center justify-center text-sm',
-                    activeHarnessDisplayError ? 'text-destructive' : 'text-text-secondary'
-                  )}
-                >
-                  {activeHarnessDisplayError ? (
-                    activeHarnessDisplayError
+          <div
+            ref={workbenchScrollRef}
+            data-testid="desktop-workbench-content"
+            data-scroll-origin={hasConversation ? 'bottom' : 'top'}
+            data-embedded-browser-label={defaultEmbeddedBrowserLabel}
+            className={cn(
+              'relative flex h-full min-w-0 flex-1',
+              hasConversation
+                ? 'flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
+                : 'overflow-hidden',
+              showPageTopBar && 'pt-11'
+            )}
+          >
+            <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
+              {isBootstrapping ? (
+                <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
+              ) : activeLocalHarnessSession ? (
+                <div className="relative flex min-h-0 min-w-0">
+                  {activeLocalHarnessSession.active ? (
+                    <CentralHarnessTerminal
+                      sessionId={activeLocalHarnessSession.sessionId}
+                      title={activeLocalHarnessSession.title}
+                      cwd={activeLocalHarnessSession.cwd}
+                      active={paneActive && workbenchVisible}
+                      showHeader={false}
+                      onClose={
+                        activeLocalHarnessSession.isPrimary
+                          ? undefined
+                          : () => {
+                              void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+                            }
+                      }
+                      onExit={() => onLocalHarnessSessionExit(activeLocalHarnessSession.sessionId)}
+                    />
                   ) : (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                      {t('workbench.harness_resuming', {
-                        name: localHarnessLabel(activeLocalHarnessSession.harnessId),
-                        defaultValue: `正在恢复 ${localHarnessLabel(activeLocalHarnessSession.harnessId)} 会话…`,
-                      })}
-                    </>
+                    <div
+                      data-testid="local-harness-session-resuming"
+                      className={cn(
+                        'flex min-h-0 min-w-0 flex-1 items-center justify-center text-sm',
+                        activeHarnessDisplayError ? 'text-destructive' : 'text-text-secondary'
+                      )}
+                    >
+                      {activeHarnessDisplayError ? (
+                        activeHarnessDisplayError
+                      ) : (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                          {t('workbench.harness_resuming', {
+                            name: localHarnessLabel(activeLocalHarnessSession.harnessId),
+                            defaultValue: `正在恢复 ${localHarnessLabel(activeLocalHarnessSession.harnessId)} 会话…`,
+                          })}
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
-            </div>
-          ) : hasConversation ? (
-            <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
-              <ScrollableMessageArea
-                messages={paneMessages}
-                loading={paneSession.transcriptLoading}
-                isWaitingForAssistant={
-                  !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
-                }
-                hasMoreBefore={paneSession.transcriptHasMoreBefore}
-                loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
-                turnNavigation={paneSession.turnNavigation}
-                loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
-                autoScrollSuspended={!paneVisible || !workbenchVisible}
-                onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-                onLoadFullTranscript={paneSession.loadFullTranscript}
-                loadingFullTranscript={paneSession.transcriptLoadingFullContent}
-                onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
-                onLoadTranscriptGap={paneSession.loadTranscriptGap}
-                conversationKey={
-                  currentRuntimeTask
-                    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
-                    : null
-                }
-                className="min-h-full"
-                scrollTestId="desktop-chat-scroll"
-                externalScrollRef={workbenchScrollRef}
-                turnNavigationPortalTarget={turnNavigationPortalTarget}
-                scrollerClassName="min-h-full overflow-visible"
-                contentClassName={rightPanelExpanded ? 'invisible' : undefined}
-                messageListClassName={cn(
-                  DESKTOP_MESSAGE_LIST_CLASS,
-                  chatContentResizing && 'transition-none'
-                )}
-                contentFooter={
-                  isCreatingWorktree ? (
-                    <WorktreeCreationStatus className="py-8" />
-                  ) : (
-                    <PluginWorkspaceConversationResult
-                      taskId={currentRuntimeTask?.taskId}
-                      workspacePath={currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath}
-                      messages={paneMessages}
-                      waiting={paneSession.status.isWaitingForAssistantIndicator}
-                      onOpenFile={path => void openWorkspaceFileFromMessage(path)}
-                      onSendAction={(message, additionalContext) =>
-                        paneSession.send(message, { additionalContext })
-                      }
-                    />
-                  )
-                }
-                contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
-                stickyFooterClassName={cn(
-                  DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
-                  hasMainBackground
-                    ? 'from-transparent via-transparent'
-                    : 'from-background via-background',
-                  chatContentResizing && 'transition-none',
-                  rightPanelExpanded && 'z-critical'
-                )}
-                stickyFooter={
-                  temporaryChatExpanded || isCreatingWorktree ? null : (
-                    <>
-                      <div
-                        className={cn(
-                          DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
-                          hasMainBackground
-                            ? 'from-transparent via-transparent'
-                            : 'from-background via-background'
-                        )}
-                        data-testid="desktop-floating-composer-backdrop"
-                      />
-                      <div
-                        className={cn(
-                          DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
-                          chatContentResizing && 'transition-none',
-                          rightPanelExpanded && 'z-critical'
-                        )}
-                        data-testid="desktop-floating-composer-layer"
-                      >
-                        <div
-                          className="pointer-events-auto"
-                          data-testid="desktop-floating-composer-card"
-                        >
-                          {rightPanelExpanded && (
-                            <button
-                              type="button"
-                              data-testid="restore-conversation-from-expanded-workspace-button"
-                              className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
-                              onClick={() => setRightPanelExpanded(false)}
+              ) : hasConversation ? (
+                <div
+                  ref={conversationSurfaceRef}
+                  className="relative flex min-h-full min-w-0 shrink-0 flex-col"
+                  onClick={focusComposerFromConversationClick}
+                >
+                  <ScrollableMessageArea
+                    messages={paneMessages}
+                    loading={paneSession.transcriptLoading}
+                    isWaitingForAssistant={
+                      !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
+                    }
+                    hasMoreBefore={paneSession.transcriptHasMoreBefore}
+                    loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
+                    turnNavigation={paneSession.turnNavigation}
+                    loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
+                    autoScrollSuspended={!paneVisible || !workbenchVisible}
+                    onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
+                    onLoadFullTranscript={paneSession.loadFullTranscript}
+                    loadingFullTranscript={paneSession.transcriptLoadingFullContent}
+                    onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
+                    onLoadTranscriptGap={paneSession.loadTranscriptGap}
+                    conversationKey={
+                      currentRuntimeTask
+                        ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
+                        : null
+                    }
+                    className="min-h-full"
+                    scrollTestId="desktop-chat-scroll"
+                    externalScrollRef={workbenchScrollRef}
+                    turnNavigationPortalTarget={turnNavigationPortalTarget}
+                    scrollerClassName="min-h-full overflow-visible"
+                    contentClassName={rightPanelExpanded ? 'invisible' : undefined}
+                    messageListClassName={cn(
+                      DESKTOP_MESSAGE_LIST_CLASS,
+                      chatContentResizing && 'transition-none'
+                    )}
+                    contentFooter={
+                      isCreatingWorktree ? (
+                        <WorktreeCreationStatus className="py-8" />
+                      ) : (
+                        <PluginWorkspaceConversationResult
+                          taskId={currentRuntimeTask?.taskId}
+                          workspacePath={
+                            currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                          }
+                          messages={paneMessages}
+                          waiting={paneSession.status.isWaitingForAssistantIndicator}
+                          onOpenFile={path => void openWorkspaceFileFromMessage(path)}
+                          onSendAction={(message, additionalContext) =>
+                            paneSession.send(message, { additionalContext })
+                          }
+                        />
+                      )
+                    }
+                    contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
+                    stickyFooterClassName={cn(
+                      DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
+                      hasMainBackground
+                        ? 'from-transparent via-transparent'
+                        : 'from-background via-background',
+                      chatContentResizing && 'transition-none',
+                      rightPanelExpanded && 'z-critical'
+                    )}
+                    stickyFooter={
+                      temporaryChatExpanded || isCreatingWorktree ? null : (
+                        <>
+                          <div
+                            className={cn(
+                              DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
+                              hasMainBackground
+                                ? 'from-transparent via-transparent'
+                                : 'from-background via-background'
+                            )}
+                            data-testid="desktop-floating-composer-backdrop"
+                          />
+                          <div
+                            className={cn(
+                              DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
+                              chatContentResizing && 'transition-none',
+                              rightPanelExpanded && 'z-critical'
+                            )}
+                            data-testid="desktop-floating-composer-layer"
+                          >
+                            <div
+                              className="pointer-events-auto"
+                              data-testid="desktop-floating-composer-card"
                             >
-                              <span>{t('workbench.latest_conversation_turn')}</span>
-                              <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                          )}
-                          {connectorAuthGate.pending ? (
-                            <ConnectorAuthCard
-                              target={connectorAuthGate.pending.target}
-                              title={connectorAuthGate.pending.title}
-                              onSuccess={() => {
-                                void connectorAuthGate.completePending()
-                              }}
-                              onCancel={connectorAuthGate.clearPending}
-                            />
-                          ) : !rightPanelExpanded ? (
-                            <>
-                              {showConversationDeviceBanner ? (
-                                <ConversationDeviceOfflineBanner
-                                  device={activeDevice}
-                                  deviceId={activeDeviceId}
-                                  className="mb-2"
-                                />
-                              ) : (
-                                <DeviceStatusPrompt
-                                  devices={devices}
-                                  upgradingDevices={upgradingDevices}
-                                  onUpgradeDevice={upgradeDevice}
-                                  onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                                  activeDeviceId={activeDeviceId}
-                                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                                  hideAvailableUpdates
-                                  className="mb-2"
-                                />
+                              {rightPanelExpanded && (
+                                <button
+                                  type="button"
+                                  data-testid="restore-conversation-from-expanded-workspace-button"
+                                  className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
+                                  onClick={() => setRightPanelExpanded(false)}
+                                >
+                                  <span>{t('workbench.latest_conversation_turn')}</span>
+                                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                                </button>
                               )}
-                              {pendingRequestUserInput ? (
-                                <RequestUserInputCard
-                                  key={
-                                    requestUserInputPayloadKey(pendingRequestUserInput) ??
-                                    'implementation-plan'
-                                  }
-                                  payload={pendingRequestUserInput}
-                                  onSubmit={response => {
-                                    const isImplementationPlanRequest =
-                                      isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                                    const shouldImplementPlan =
-                                      isImplementationPlanRequest &&
-                                      isImplementationPlanConfirmationResponse(response)
-                                    return paneSession.sendRequestUserInputResponse(response, {
-                                      appendUserMessage: isImplementationPlanRequest,
-                                      forceDefaultCollaborationMode: shouldImplementPlan,
-                                    })
+                              {connectorAuthGate.pending ? (
+                                <ConnectorAuthCard
+                                  target={connectorAuthGate.pending.target}
+                                  title={connectorAuthGate.pending.title}
+                                  onSuccess={() => {
+                                    void connectorAuthGate.completePending()
                                   }}
-                                  onIgnore={() =>
-                                    paneSession.ignoreRequestUserInput(pendingRequestUserInput)
-                                  }
+                                  onCancel={connectorAuthGate.clearPending}
                                 />
-                              ) : (
+                              ) : !rightPanelExpanded ? (
                                 <>
-                                  {supervisor && (
-                                    <SupervisorSuggestionCards
-                                      suggestions={supervisor.suggestions}
-                                      onAccept={suggestion =>
-                                        resolveTaskSupervisorSuggestion(suggestion, 'accepted')
-                                      }
-                                      onDismiss={suggestion =>
-                                        resolveTaskSupervisorSuggestion(suggestion, 'dismissed')
-                                      }
+                                  {showConversationDeviceBanner ? (
+                                    <ConversationDeviceOfflineBanner
+                                      device={activeDevice}
+                                      deviceId={activeDeviceId}
+                                      className="mb-2"
+                                    />
+                                  ) : (
+                                    <DeviceStatusPrompt
+                                      devices={devices}
+                                      upgradingDevices={upgradingDevices}
+                                      onUpgradeDevice={upgradeDevice}
+                                      onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                                      activeDeviceId={activeDeviceId}
+                                      requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                                      hideAvailableUpdates
+                                      className="mb-2"
                                     />
                                   )}
-                                  <BufferedChatInput
-                                    insertion={conversationSelectionInsertion}
-                                    value={paneSession.input}
-                                    onChange={paneSession.setInput}
-                                    onDraftEdit={paneSession.clearError}
-                                    onSubmit={submitPaneInput}
-                                    disabled={composerDisabled || !paneVisible || !workbenchVisible}
-                                    pluginPickerIconOnly={hasConversation}
-                                    submitDisabled={paneSession.status.isSubmitting}
-                                    error={paneSession.error}
-                                    disabledReason={inlineComposerDisabledReason}
-                                    placeholder={t(
-                                      'workbench.follow_up_placeholder',
-                                      '要求后续变更'
-                                    )}
-                                    variant="desktop"
-                                    projectChat={projectChatWithModelSelectorSignal}
-                                    projectWork={branchNameProjectWork}
-                                    showProjectWorkBar={false}
-                                    queuedMessages={paneQueuedMessages}
-                                    guidanceMessages={paneGuidanceMessages}
-                                    codeComments={paneSession.codeCommentContexts}
-                                    cloudMentionCandidates={visibleCloudMentionCandidates}
-                                    cloudProjectCandidates={cloudProjectMentionCandidates}
-                                    cloudSpaceEnabled={
-                                      experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
-                                    }
-                                    onSelectCloudProject={handleSelectCloudProject}
-                                    contextHeader={projectSpaceContext}
-                                    isStreaming={paneIsBusy}
-                                    onPause={pauseCurrentResponse}
-                                    onCompactContext={
-                                      currentRuntimeUsesCodex ||
-                                      currentRuntimeTask?.runtime === 'claude_code'
-                                        ? compactCurrentContext
-                                        : undefined
-                                    }
-                                    goal={paneSession.goal}
-                                    goalContinuing={paneSession.goalContinuing}
-                                    taskPlan={paneSession.taskPlan}
-                                    goalDraftActive={paneSession.goalDraftActive}
-                                    onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
-                                    onConfigureSupervisor={
-                                      supervisorFeatureAvailable ? openSupervisorDialog : undefined
-                                    }
-                                    supervisorEnabled={Boolean(
-                                      supervisor || pendingSupervisorConfig
-                                    )}
-                                    supervisorPending={Boolean(
-                                      !currentRuntimeTask && pendingSupervisorConfig
-                                    )}
-                                    onCancelGoalDraft={paneSession.cancelGoalDraft}
-                                    onEditGoal={paneSession.editCurrentGoal}
-                                    onPauseGoal={pauseCurrentGoal}
-                                    onResumeGoal={resumeCurrentGoal}
-                                    onClearGoal={clearCurrentGoal}
-                                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                                    onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                                    queuePaused={paneSession.queuedMessagesPaused}
-                                    onResumeQueue={paneSession.resumeQueuedMessages}
-                                    onResumeQueueWithInput={
-                                      paneSession.resumeQueuedMessagesWithInput
-                                    }
-                                    onClearQueue={paneSession.clearQueuedMessages}
-                                    onSendQueuedAsGuidance={
-                                      currentRuntimeUsesCodex
-                                        ? paneSession.sendQueuedAsGuidance
-                                        : undefined
-                                    }
-                                    onInterruptAndSendQueuedMessage={
-                                      paneSession.interruptAndSendQueued
-                                    }
-                                    onEditQueuedMessage={paneSession.editQueuedMessage}
-                                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                                    onClearCodeComments={paneSession.clearCodeComments}
-                                    onOpenSkillFile={openLocalSkillFile}
-                                    workspaceTarget={composerWorkspaceTarget}
-                                    workspaceFileApi={workspaceFileApi}
-                                  />
+                                  {pendingRequestUserInput ? (
+                                    <RequestUserInputCard
+                                      key={
+                                        requestUserInputPayloadKey(pendingRequestUserInput) ??
+                                        'implementation-plan'
+                                      }
+                                      payload={pendingRequestUserInput}
+                                      onSubmit={response => {
+                                        const isImplementationPlanRequest =
+                                          isImplementationPlanRequestUserInput(
+                                            pendingRequestUserInput
+                                          )
+                                        const shouldImplementPlan =
+                                          isImplementationPlanRequest &&
+                                          isImplementationPlanConfirmationResponse(response)
+                                        return paneSession.sendRequestUserInputResponse(response, {
+                                          appendUserMessage: isImplementationPlanRequest,
+                                          forceDefaultCollaborationMode: shouldImplementPlan,
+                                        })
+                                      }}
+                                      onIgnore={() =>
+                                        paneSession.ignoreRequestUserInput(pendingRequestUserInput)
+                                      }
+                                    />
+                                  ) : (
+                                    <>
+                                      {supervisor && (
+                                        <SupervisorSuggestionCards
+                                          suggestions={supervisor.suggestions}
+                                          onAccept={suggestion =>
+                                            resolveTaskSupervisorSuggestion(suggestion, 'accepted')
+                                          }
+                                          onDismiss={suggestion =>
+                                            resolveTaskSupervisorSuggestion(suggestion, 'dismissed')
+                                          }
+                                        />
+                                      )}
+                                      <BufferedChatInput
+                                        autoFocus
+                                        insertion={conversationSelectionInsertion}
+                                        value={paneSession.input}
+                                        onChange={paneSession.setInput}
+                                        onDraftEdit={paneSession.clearError}
+                                        onSubmit={submitPaneInput}
+                                        disabled={
+                                          composerDisabled || !paneVisible || !workbenchVisible
+                                        }
+                                        pluginPickerIconOnly={hasConversation}
+                                        submitDisabled={paneSession.status.isSubmitting}
+                                        error={paneSession.error}
+                                        disabledReason={inlineComposerDisabledReason}
+                                        placeholder={t(
+                                          'workbench.follow_up_placeholder',
+                                          '要求后续变更'
+                                        )}
+                                        variant="desktop"
+                                        projectChat={projectChatWithModelSelectorSignal}
+                                        projectWork={branchNameProjectWork}
+                                        showProjectWorkBar={false}
+                                        queuedMessages={paneQueuedMessages}
+                                        guidanceMessages={paneGuidanceMessages}
+                                        codeComments={paneSession.codeCommentContexts}
+                                        cloudMentionCandidates={visibleCloudMentionCandidates}
+                                        cloudProjectCandidates={cloudProjectMentionCandidates}
+                                        cloudSpaceEnabled={
+                                          experimentalFeaturesEnabled &&
+                                          Boolean(services?.deliveryApi)
+                                        }
+                                        onSelectCloudProject={handleSelectCloudProject}
+                                        contextHeader={projectSpaceContext}
+                                        isStreaming={paneIsBusy}
+                                        onPause={pauseCurrentResponse}
+                                        onCompactContext={
+                                          currentRuntimeUsesCodex ||
+                                          currentRuntimeTask?.runtime === 'claude_code'
+                                            ? compactCurrentContext
+                                            : undefined
+                                        }
+                                        goal={paneSession.goal}
+                                        goalContinuing={paneSession.goalContinuing}
+                                        taskPlan={paneSession.taskPlan}
+                                        goalDraftActive={paneSession.goalDraftActive}
+                                        onSetGoal={
+                                          composerSupportsGoal ? setCurrentGoal : undefined
+                                        }
+                                        onConfigureSupervisor={
+                                          supervisorFeatureAvailable
+                                            ? openSupervisorDialog
+                                            : undefined
+                                        }
+                                        supervisorEnabled={Boolean(
+                                          supervisor || pendingSupervisorConfig
+                                        )}
+                                        supervisorPending={Boolean(
+                                          !currentRuntimeTask && pendingSupervisorConfig
+                                        )}
+                                        onCancelGoalDraft={paneSession.cancelGoalDraft}
+                                        onEditGoal={paneSession.editCurrentGoal}
+                                        onPauseGoal={pauseCurrentGoal}
+                                        onResumeGoal={resumeCurrentGoal}
+                                        onClearGoal={clearCurrentGoal}
+                                        onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                                        onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                                        queuePaused={paneSession.queuedMessagesPaused}
+                                        onResumeQueue={paneSession.resumeQueuedMessages}
+                                        onResumeQueueWithInput={
+                                          paneSession.resumeQueuedMessagesWithInput
+                                        }
+                                        onClearQueue={paneSession.clearQueuedMessages}
+                                        onSendQueuedAsGuidance={
+                                          currentRuntimeUsesCodex
+                                            ? paneSession.sendQueuedAsGuidance
+                                            : undefined
+                                        }
+                                        onInterruptAndSendQueuedMessage={
+                                          paneSession.interruptAndSendQueued
+                                        }
+                                        onEditQueuedMessage={paneSession.editQueuedMessage}
+                                        onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                                        onClearCodeComments={paneSession.clearCodeComments}
+                                        onOpenSkillFile={openLocalSkillFile}
+                                        workspaceTarget={composerWorkspaceTarget}
+                                        workspaceFileApi={workspaceFileApi}
+                                      />
+                                    </>
+                                  )}
                                 </>
-                              )}
-                            </>
-                          ) : null}
-                        </div>
-                      </div>
-                    </>
-                  )
-                }
-                scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
-                devices={devices}
-                onRetryFailedMessage={message => {
-                  void paneSession.retryFailedMessage(message)
-                }}
-                onSwitchModelForFailedMessage={message => {
-                  pendingModelRetryRef.current = message
-                  setModelSelectorOpenSignal(signal => signal + 1)
-                }}
-                onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
-                }
-                onRevertFileChanges={(subtaskId, fileChanges) =>
-                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
-                }
-                onOpenFileChangesReview={({
-                  subtaskId,
-                  loadDiff,
-                  reviewTitle,
-                  defaultFileTreeVisible,
-                  focusFilePath,
-                }) => {
-                  previousTurnReviewRef.current = {
-                    loadDiff,
-                    defaultFileTreeVisible,
-                    sourceSubtaskId: subtaskId,
-                  }
-                  setHasPreviousTurnReview(true)
-                  void openReviewFromDiffLoader(loadDiff, {
-                    reviewTitle,
-                    reviewMode: 'previous-turn',
-                    defaultFileTreeVisible,
-                    focusFilePath,
-                    sourceSubtaskId: subtaskId,
-                  })
-                }}
-                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
-                onOpenWorkspaceFile={openWorkspaceFileFromMessage}
-                onOpenLocalSkillFile={openLocalSkillFile}
-                onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
-                onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
-                onOpenAssistantPlan={openAssistantPlan}
-                onEditLastUserMessage={paneSession.editLastUserMessage}
-                canEditLastUserMessage={canEditLastUserMessage}
-                onForkMessage={
-                  currentRuntimeUsesCodex
-                    ? message => {
-                        const workspacePath =
-                          currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
-                        if (!currentRuntimeTask || !message.turnId || !workspacePath) return
-                        return forkCurrentRuntimeTask(
-                          {
-                            deviceId: currentRuntimeTask.deviceId,
-                            workspacePath,
-                          },
-                          { lastTurnId: message.turnId }
-                        )
+                              ) : null}
+                            </div>
+                          </div>
+                        </>
+                      )
+                    }
+                    scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
+                    devices={devices}
+                    onRetryFailedMessage={message => {
+                      void paneSession.retryFailedMessage(message)
+                    }}
+                    onSwitchModelForFailedMessage={message => {
+                      pendingModelRetryRef.current = message
+                      setModelSelectorOpenSignal(signal => signal + 1)
+                    }}
+                    onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                      loadTurnFileChangesDiff(
+                        subtaskId,
+                        paneMessages,
+                        fileChanges,
+                        currentRuntimeTask
+                      )
+                    }
+                    onRevertFileChanges={(subtaskId, fileChanges) =>
+                      revertTurnFileChanges(
+                        subtaskId,
+                        paneMessages,
+                        fileChanges,
+                        currentRuntimeTask
+                      )
+                    }
+                    onOpenFileChangesReview={({
+                      subtaskId,
+                      loadDiff,
+                      reviewTitle,
+                      defaultFileTreeVisible,
+                      focusFilePath,
+                    }) => {
+                      previousTurnReviewRef.current = {
+                        loadDiff,
+                        defaultFileTreeVisible,
+                        sourceSubtaskId: subtaskId,
                       }
-                    : undefined
-                }
-                hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
-                hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
-                onAddSelectionToConversation={addSelectionToConversation}
-                onAskSelectionInSidebar={askSelectionInSidebar}
+                      setHasPreviousTurnReview(true)
+                      void openReviewFromDiffLoader(loadDiff, {
+                        reviewTitle,
+                        reviewMode: 'previous-turn',
+                        defaultFileTreeVisible,
+                        focusFilePath,
+                        sourceSubtaskId: subtaskId,
+                      })
+                    }}
+                    fileChangesDiffPreviewDisabledSubtaskId={
+                      fileChangesDiffPreviewDisabledSubtaskId
+                    }
+                    onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+                    onOpenLocalSkillFile={openLocalSkillFile}
+                    onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+                    onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+                    onOpenAssistantPlan={openAssistantPlan}
+                    onEditLastUserMessage={paneSession.editLastUserMessage}
+                    canEditLastUserMessage={canEditLastUserMessage}
+                    onForkMessage={
+                      currentRuntimeUsesCodex
+                        ? message => {
+                            const workspacePath =
+                              currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                            if (!currentRuntimeTask || !message.turnId || !workspacePath) return
+                            return forkCurrentRuntimeTask(
+                              {
+                                deviceId: currentRuntimeTask.deviceId,
+                                workspacePath,
+                              },
+                              { lastTurnId: message.turnId }
+                            )
+                          }
+                        : undefined
+                    }
+                    hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
+                    hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                    onAddSelectionToConversation={addSelectionToConversation}
+                    onAskSelectionInSidebar={askSelectionInSidebar}
+                  />
+                </div>
+              ) : rightPanelExpanded ? null : (
+                <DesktopEmptyTaskLauncher
+                  projectName={currentProject?.name}
+                  onOpenProjectSelector={anchorElement => {
+                    setProjectMenuAnchorElement(anchorElement)
+                    setProjectMenuOpenSignal(signal => signal + 1)
+                  }}
+                  onSelectSuggestion={selectTaskSuggestion}
+                  composer={
+                    rightPanelExpanded ? null : (
+                      <>
+                        <DeviceStatusPrompt
+                          devices={devices}
+                          upgradingDevices={upgradingDevices}
+                          onUpgradeDevice={upgradeDevice}
+                          onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                          activeDeviceId={activeDeviceId}
+                          requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                          hideAvailableUpdates
+                          className="mb-3"
+                        />
+                        <BufferedChatInput
+                          value={paneSession.input}
+                          onChange={paneSession.setInput}
+                          onDraftEdit={() => {
+                            paneSession.clearError?.()
+                            setCentralHarnessError(null)
+                          }}
+                          onSubmit={submitWorkbenchInput}
+                          disabled={
+                            centralHarnessStarting ||
+                            ((activeNewChatRuntime === 'codex' ||
+                              activeNewChatRuntime === 'claude_code') &&
+                              composerDisabled) ||
+                            !paneVisible ||
+                            !workbenchVisible
+                          }
+                          submitDisabled={
+                            centralHarnessStarting ||
+                            ((activeNewChatRuntime === 'codex' ||
+                              activeNewChatRuntime === 'claude_code') &&
+                              paneSession.status.isSubmitting)
+                          }
+                          error={centralHarnessError ?? paneSession.error}
+                          disabledReason={
+                            activeNewChatRuntime === 'codex' ||
+                            activeNewChatRuntime === 'claude_code'
+                              ? inlineComposerDisabledReason
+                              : undefined
+                          }
+                          placeholder={
+                            showComposerProjectMenuAction
+                              ? 'values' in popoutComposerPlaceholder
+                                ? t(popoutComposerPlaceholder.key, popoutComposerPlaceholder.values)
+                                : t(popoutComposerPlaceholder.key)
+                              : t('workbench.input_placeholder', '随心输入')
+                          }
+                          variant="desktop"
+                          projectChat={projectChatWithModelSelectorSignal}
+                          projectWork={emptyProjectWork}
+                          projectWorkBarMiddleContext={projectSpaceContext}
+                          projectWorkBarTrailingContext={
+                            experimentalFeaturesEnabled ? (
+                              <div className="flex items-center gap-1">
+                                {activeNewChatRuntime === 'codex' && (
+                                  <WorkbenchTeamSelector
+                                    teams={wegentTeams}
+                                    selectedTeamId={activeTeam?.id ?? null}
+                                    loading={teamsLoading}
+                                    onTeamChange={selectWegentTeam}
+                                  />
+                                )}
+                                <WorkbenchHarnessSelector
+                                  runtime={activeNewChatRuntime}
+                                  harnesses={localHarnesses}
+                                  enabledHarnesses={enabledLocalHarnesses.map(
+                                    preference => preference.id
+                                  )}
+                                  loading={localHarnessesLoading}
+                                  detectionFailed={localHarnessDetectionFailed}
+                                  onRuntimeChange={runtime => {
+                                    setCentralHarnessError(null)
+                                    setNewChatRuntime(runtime)
+                                  }}
+                                />
+                              </div>
+                            ) : undefined
+                          }
+                          modelSelectorOverride={
+                            selectedHarnessPreference ? (
+                              <WorkbenchHarnessModelSelector
+                                harnessId={selectedHarnessPreference.id}
+                                models={harnessModelOptions}
+                                selectedModel={selectedHarnessModel}
+                                onModelChange={model => {
+                                  setLocalHarnessModelKeys(current => ({
+                                    ...current,
+                                    [selectedHarnessPreference.id]: model?.key ?? null,
+                                  }))
+                                  const localHarnesses = localHarnessPreferences.map(preference =>
+                                    preference.id === selectedHarnessPreference.id
+                                      ? { ...preference, modelKey: model?.key ?? null }
+                                      : preference
+                                  )
+                                  void updateAppPreferences({ localHarnesses }).catch(error => {
+                                    console.error('Failed to save harness model selection:', error)
+                                    setCentralHarnessError(
+                                      t(
+                                        'workbench.harness_model_save_failed',
+                                        '编码工具模型选择保存失败'
+                                      )
+                                    )
+                                  })
+                                }}
+                              />
+                            ) : undefined
+                          }
+                          showWorkspaceMenu={showComposerProjectMenuAction}
+                          queuedMessages={paneQueuedMessages}
+                          guidanceMessages={paneGuidanceMessages}
+                          codeComments={paneSession.codeCommentContexts}
+                          cloudMentionCandidates={visibleCloudMentionCandidates}
+                          cloudProjectCandidates={cloudProjectMentionCandidates}
+                          cloudSpaceEnabled={
+                            experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
+                          }
+                          onSelectCloudProject={handleSelectCloudProject}
+                          isStreaming={paneIsBusy}
+                          onPause={pauseCurrentResponse}
+                          onCompactContext={
+                            activeNewChatRuntime === 'codex' ||
+                            activeNewChatRuntime === 'claude_code'
+                              ? compactCurrentContext
+                              : undefined
+                          }
+                          goal={paneSession.goal}
+                          goalContinuing={paneSession.goalContinuing}
+                          taskPlan={paneSession.taskPlan}
+                          goalDraftActive={paneSession.goalDraftActive}
+                          onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                          onConfigureSupervisor={
+                            supervisorFeatureAvailable ? openSupervisorDialog : undefined
+                          }
+                          supervisorEnabled={Boolean(supervisor || pendingSupervisorConfig)}
+                          supervisorPending={Boolean(
+                            !currentRuntimeTask && pendingSupervisorConfig
+                          )}
+                          onCancelGoalDraft={paneSession.cancelGoalDraft}
+                          onEditGoal={paneSession.editCurrentGoal}
+                          onPauseGoal={pauseCurrentGoal}
+                          onResumeGoal={resumeCurrentGoal}
+                          onClearGoal={clearCurrentGoal}
+                          onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                          onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                          queuePaused={paneSession.queuedMessagesPaused}
+                          onResumeQueue={paneSession.resumeQueuedMessages}
+                          onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                          onClearQueue={paneSession.clearQueuedMessages}
+                          onSendQueuedAsGuidance={
+                            activeNewChatRuntime === 'codex'
+                              ? paneSession.sendQueuedAsGuidance
+                              : undefined
+                          }
+                          onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
+                          onEditQueuedMessage={paneSession.editQueuedMessage}
+                          onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                          onClearCodeComments={paneSession.clearCodeComments}
+                          onOpenSkillFile={openLocalSkillFile}
+                          workspaceTarget={composerWorkspaceTarget}
+                          workspaceFileApi={workspaceFileApi}
+                        />
+                      </>
+                    )
+                  }
+                />
+              )}
+              <div
+                aria-hidden="true"
+                data-testid="environment-info-panel-spacer"
+                className={cn(
+                  'w-0 shrink-0',
+                  environmentInfoPanelExpanded && 'w-[320px]',
+                  environmentInfoTransitionEnabled
+                    ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                    : 'transition-none'
+                )}
               />
             </div>
-          ) : rightPanelExpanded ? null : (
-            <DesktopEmptyTaskLauncher
-              projectName={currentProject?.name}
-              onOpenProjectSelector={anchorElement => {
-                setProjectMenuAnchorElement(anchorElement)
-                setProjectMenuOpenSignal(signal => signal + 1)
-              }}
-              onSelectSuggestion={selectTaskSuggestion}
-              composer={
-                rightPanelExpanded ? null : (
-                  <>
-                    <DeviceStatusPrompt
-                      devices={devices}
-                      upgradingDevices={upgradingDevices}
-                      onUpgradeDevice={upgradeDevice}
-                      onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                      activeDeviceId={activeDeviceId}
-                      requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                      hideAvailableUpdates
-                      className="mb-3"
-                    />
-                    <BufferedChatInput
-                      value={paneSession.input}
-                      onChange={paneSession.setInput}
-                      onDraftEdit={() => {
-                        paneSession.clearError?.()
-                        setCentralHarnessError(null)
-                      }}
-                      onSubmit={submitWorkbenchInput}
-                      disabled={
-                        centralHarnessStarting ||
-                        ((activeNewChatRuntime === 'codex' ||
-                          activeNewChatRuntime === 'claude_code') &&
-                          composerDisabled) ||
-                        !paneVisible ||
-                        !workbenchVisible
-                      }
-                      submitDisabled={
-                        centralHarnessStarting ||
-                        ((activeNewChatRuntime === 'codex' ||
-                          activeNewChatRuntime === 'claude_code') &&
-                          paneSession.status.isSubmitting)
-                      }
-                      error={centralHarnessError ?? paneSession.error}
-                      disabledReason={
-                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
-                          ? inlineComposerDisabledReason
-                          : undefined
-                      }
-                      placeholder={
-                        showComposerProjectMenuAction
-                          ? 'values' in popoutComposerPlaceholder
-                            ? t(popoutComposerPlaceholder.key, popoutComposerPlaceholder.values)
-                            : t(popoutComposerPlaceholder.key)
-                          : t('workbench.input_placeholder', '随心输入')
-                      }
-                      variant="desktop"
-                      projectChat={projectChatWithModelSelectorSignal}
-                      projectWork={emptyProjectWork}
-                      projectWorkBarMiddleContext={projectSpaceContext}
-                      projectWorkBarTrailingContext={
-                        experimentalFeaturesEnabled ? (
-                          <WorkbenchHarnessSelector
-                            runtime={activeNewChatRuntime}
-                            harnesses={localHarnesses}
-                            enabledHarnesses={enabledLocalHarnesses.map(
-                              preference => preference.id
-                            )}
-                            loading={localHarnessesLoading}
-                            detectionFailed={localHarnessDetectionFailed}
-                            onRuntimeChange={runtime => {
-                              setCentralHarnessError(null)
-                              setNewChatRuntime(runtime)
-                            }}
-                          />
-                        ) : undefined
-                      }
-                      modelSelectorOverride={
-                        selectedHarnessPreference ? (
-                          <WorkbenchHarnessModelSelector
-                            harnessId={selectedHarnessPreference.id}
-                            models={harnessModelOptions}
-                            selectedModel={selectedHarnessModel}
-                            onModelChange={model => {
-                              setLocalHarnessModelKeys(current => ({
-                                ...current,
-                                [selectedHarnessPreference.id]: model?.key ?? null,
-                              }))
-                              const localHarnesses = localHarnessPreferences.map(preference =>
-                                preference.id === selectedHarnessPreference.id
-                                  ? { ...preference, modelKey: model?.key ?? null }
-                                  : preference
-                              )
-                              void updateAppPreferences({ localHarnesses }).catch(error => {
-                                console.error('Failed to save harness model selection:', error)
-                                setCentralHarnessError(
-                                  t(
-                                    'workbench.harness_model_save_failed',
-                                    '编码工具模型选择保存失败'
-                                  )
-                                )
-                              })
-                            }}
-                          />
-                        ) : undefined
-                      }
-                      showWorkspaceMenu={showComposerProjectMenuAction}
-                      queuedMessages={paneQueuedMessages}
-                      guidanceMessages={paneGuidanceMessages}
-                      codeComments={paneSession.codeCommentContexts}
-                      cloudMentionCandidates={visibleCloudMentionCandidates}
-                      cloudProjectCandidates={cloudProjectMentionCandidates}
-                      cloudSpaceEnabled={
-                        experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
-                      }
-                      onSelectCloudProject={handleSelectCloudProject}
-                      isStreaming={paneIsBusy}
-                      onPause={pauseCurrentResponse}
-                      onCompactContext={
-                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
-                          ? compactCurrentContext
-                          : undefined
-                      }
-                      goal={paneSession.goal}
-                      goalContinuing={paneSession.goalContinuing}
-                      taskPlan={paneSession.taskPlan}
-                      goalDraftActive={paneSession.goalDraftActive}
-                      onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
-                      onConfigureSupervisor={
-                        supervisorFeatureAvailable ? openSupervisorDialog : undefined
-                      }
-                      supervisorEnabled={Boolean(supervisor || pendingSupervisorConfig)}
-                      supervisorPending={Boolean(!currentRuntimeTask && pendingSupervisorConfig)}
-                      onCancelGoalDraft={paneSession.cancelGoalDraft}
-                      onEditGoal={paneSession.editCurrentGoal}
-                      onPauseGoal={pauseCurrentGoal}
-                      onResumeGoal={resumeCurrentGoal}
-                      onClearGoal={clearCurrentGoal}
-                      onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                      onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                      queuePaused={paneSession.queuedMessagesPaused}
-                      onResumeQueue={paneSession.resumeQueuedMessages}
-                      onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
-                      onClearQueue={paneSession.clearQueuedMessages}
-                      onSendQueuedAsGuidance={
-                        activeNewChatRuntime === 'codex'
-                          ? paneSession.sendQueuedAsGuidance
-                          : undefined
-                      }
-                      onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
-                      onEditQueuedMessage={paneSession.editQueuedMessage}
-                      onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                      onClearCodeComments={paneSession.clearCodeComments}
-                      onOpenSkillFile={openLocalSkillFile}
-                      workspaceTarget={composerWorkspaceTarget}
-                      workspaceFileApi={workspaceFileApi}
-                    />
-                  </>
-                )
-              }
-            />
-          )}
+          </div>
           <aside
             data-testid="environment-info-panel-container"
             className={cn(
-              'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+              'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
+              environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
+              showPageTopBar && 'pt-11',
               environmentInfoTransitionEnabled
                 ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
                 : 'transition-none'
@@ -4864,7 +5259,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           id="right-workspace-panel-shell"
           data-testid="right-workspace-panel-shell"
           className={cn(
-            'z-popover flex min-w-0 shrink-0 overflow-hidden',
+            'z-popover flex h-full min-h-0 min-w-0 shrink-0 overflow-hidden',
             rightPanelExpanded ? 'absolute inset-y-0 right-0' : 'relative',
             rightPanelExpanded
               ? 'bg-background'
@@ -4933,9 +5328,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 ) : null
               }
               browserStates={browserStates}
+              browserTransferSourceLabels={browserTransferSourceLabels}
               onBrowserStateChange={updateBrowserState}
               onReloadSmartAppDevelopmentPreview={reloadSmartAppDevelopmentPreview}
               onAddSmartAppDevelopmentPlugin={addSmartAppDevelopmentPlugin}
+              onVerifySmartAppDevelopmentPreview={verifySmartAppDevelopmentPreview}
               codeCommentCount={paneSession.codeCommentContexts.length}
               codeCommentContexts={paneSession.codeCommentContexts}
               browserAnnotationCommand={paneSession.browserAnnotationCommand}
@@ -5098,6 +5495,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         />
         <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
         <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />
+        <TaskBoardAssociationDialog
+          key={
+            taskBoardAssociation
+              ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
+              : 'closed'
+          }
+          project={taskBoardAssociation?.project ?? null}
+          currentProject={boundCloudProject}
+          items={taskBoardAssociation?.items ?? []}
+          loading={taskBoardAssociation?.loading ?? false}
+          pending={taskBoardAssociation?.pending ?? false}
+          onClose={closeTaskBoardAssociation}
+          onCreate={associateRuntimeTaskWithNewItem}
+          onSelect={associateRuntimeTaskWithExistingItem}
+        />
         {deliveryDialogOpen &&
           activeDeliveryItem &&
           currentRuntimeTask &&

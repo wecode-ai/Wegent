@@ -1,8 +1,12 @@
 export const CORE_PLUGIN_DIRECTORIES = [
   'app-wework',
+  'browser-runtime',
   'electron-host',
   'executor-runtime',
+  'secure-storage',
   'terminal-runtime',
+  'transcript-sync',
+  'plugin-runtime',
   'ui-core-apps',
   'ui-core-settings',
   'ui-plugin-center',
@@ -10,13 +14,21 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'ui-automations',
   'ui-cloud-work',
   'ui-record-replay',
+  'plugin-developer',
+  'ui-home-focus',
+  'ui-home-developer',
+  'ui-git',
 ]
 
 const CORE_PLUGIN_TARGETS = {
   'app-wework': 'wework-app',
+  'browser-runtime': 'wework-browser-runtime',
   'electron-host': 'wework-electron-host',
   'executor-runtime': 'wework-executor-runtime',
+  'secure-storage': 'wework-secure-storage',
   'terminal-runtime': 'wework-terminal-runtime',
+  'transcript-sync': 'wework-transcript-sync',
+  'plugin-runtime': 'wework-plugin-runtime',
   'ui-core-apps': 'wework-ui-core-apps',
   'ui-core-settings': 'wework-ui-core-settings',
   'ui-plugin-center': 'wework-ui-plugin-center',
@@ -24,6 +36,10 @@ const CORE_PLUGIN_TARGETS = {
   'ui-automations': 'wework-ui-automations',
   'ui-cloud-work': 'wework-ui-cloud-work',
   'ui-record-replay': 'wework-ui-record-replay',
+  'plugin-developer': 'wework-plugin-developer',
+  'ui-home-focus': 'wework-ui-home-focus',
+  'ui-home-developer': 'wework-ui-home-developer',
+  'ui-git': 'wework-ui-git',
 }
 
 export function corePluginTarget(directory) {

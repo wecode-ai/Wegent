@@ -127,3 +127,8 @@ wework/resources/bundled-harness-runtime/
 !wework/resources/bundled-harness-runtime/
 wework/resources/bundled-harness-runtime/*
 !wework/resources/bundled-harness-runtime/.resource-placeholder
+wework/resources/bin/
+wework/resources/codex/
+wework/resources/components.json
+wework/resources/harness-runtime/
+wework/resources/wework-core-plugins/

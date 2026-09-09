@@ -100,6 +100,15 @@ class RuntimeTaskCreateFeatures(BaseModel):
     features: Dict[str, bool] = Field(default_factory=dict)
 
 
+class RuntimeInteractiveSessionFeatures(BaseModel):
+    """Interactive sessions exposed by the connected Runtime."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    code_server: bool = Field(True, alias="codeServer")
+    terminal: bool = True
+
+
 class RuntimeFeatures(BaseModel):
     """Online features implemented by the currently connected Runtime."""
 
@@ -109,6 +118,10 @@ class RuntimeFeatures(BaseModel):
     runtime_task_create: Optional[RuntimeTaskCreateFeatures] = Field(
         default=None,
         alias="runtimeTaskCreate",
+    )
+    interactive_sessions: Optional[RuntimeInteractiveSessionFeatures] = Field(
+        default=None,
+        alias="interactiveSessions",
     )
     worktrees: Optional[RuntimeWorktreeFeatures] = None
 
@@ -128,6 +141,9 @@ class DeviceInfo(BaseModel):
     """Response schema for device information."""
 
     id: int = Field(..., description="Device CRD ID in kinds table")
+    execution_target_id: Optional[str] = Field(
+        None, description="Record-scoped app route; logical device IDs remain unchanged"
+    )
     device_id: str = Field(..., description="Device unique identifier")
     name: str = Field(..., description="Device name")
     status: DeviceStatusEnum = Field(..., description="Device online status")

@@ -1,9 +1,25 @@
 import * as matchers from '@testing-library/jest-dom/matchers'
 import { beforeEach, expect } from 'vitest'
-import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
+import {
+  WEWORK_DSH_SLOTS,
+  type WeworkDshSlotEntry,
+  type WeworkDshSlotName,
+} from '@/features/dsh-runtime/dshUiSlots'
 import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 
 expect.extend(matchers)
+
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+Object.defineProperty(globalThis, 'ResizeObserver', {
+  configurable: true,
+  value: ResizeObserverMock,
+  writable: true,
+})
 
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
@@ -77,7 +93,6 @@ const testSidebarNavigation = [
   {
     id: 'applications.navigation',
     activeItem: 'sites',
-    experimental: true,
     icon: 'applications',
     labelKey: 'workbench.sites',
     label: '应用',
@@ -192,14 +207,6 @@ const testSettings = [
   ],
   ['browser', '/settings/browser', 'app-window', 'settings_nav_browser', '浏览器', 'integrations'],
   [
-    'git-hosting',
-    '/settings/git-hosting',
-    'git-pull-request',
-    'settings_nav_git_hosting',
-    '代码托管',
-    'coding',
-  ],
-  [
     'execution-environments',
     '/settings/execution-environments',
     'cpu',
@@ -208,14 +215,6 @@ const testSettings = [
     'coding',
   ],
   ['harnesses', '/settings/harnesses', 'code-2', 'settings_nav_harnesses', '编码工具', 'coding'],
-  [
-    'worktrees',
-    '/settings/worktrees',
-    'folder-git-2',
-    'settings_nav_worktrees',
-    '工作树',
-    'coding',
-  ],
   ['hooks', '/settings/hooks', 'webhook', 'settings_nav_hooks', 'Hooks', 'coding'],
   [
     'archived-conversations',
@@ -243,14 +242,35 @@ function installDefaultDshUiTestRuntime() {
   const entries = new Map<string, readonly WeworkDshSlotEntry[]>([
     [WEWORK_DSH_SLOTS.action, testActions],
     [WEWORK_DSH_SLOTS.app, testApps],
+    [WEWORK_DSH_SLOTS.pluginsAction, []],
+    [WEWORK_DSH_SLOTS.boardCardStatus, []],
+    [WEWORK_DSH_SLOTS.composerAction, []],
+    [WEWORK_DSH_SLOTS.environmentSection, []],
+    [
+      WEWORK_DSH_SLOTS.home,
+      [
+        {
+          id: 'developer-home',
+          module: 'plugins/wework-ui-home-developer.js',
+        },
+      ],
+    ],
+    [WEWORK_DSH_SLOTS.projectCreateSection, []],
+    [WEWORK_DSH_SLOTS.projectWorkSection, []],
+    [WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy, []],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
+    [WEWORK_DSH_SLOTS.settingsSection, []],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
     [WEWORK_DSH_SLOTS.shellAfter, []],
     [WEWORK_DSH_SLOTS.shellBefore, []],
     [WEWORK_DSH_SLOTS.shellOverlay, []],
+    [WEWORK_DSH_SLOTS.taskStatus, []],
+    [WEWORK_DSH_SLOTS.workspaceMenuSection, []],
+    [WEWORK_DSH_SLOTS.workspaceBottomPanelTab, []],
     [WEWORK_DSH_SLOTS.workspaceSidebarTab, []],
     [WEWORK_DSH_SLOTS.workspaceTab, []],
+    [WEWORK_DSH_SLOTS.workspaceToolbarAction, []],
   ])
   window.__WEWORK_DSH_UI__ = {
     getEntries: slotName => entries.get(slotName) ?? [],
@@ -266,6 +286,7 @@ function installDefaultDshUiTestModules() {
     'plugins/wework-ui-core-settings.js': () =>
       import('../../dsh/ui-core-settings/src/settings-page'),
     'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),
+    'plugins/wework-ui-home-developer.js': () => import('../../dsh/ui-home-developer/src/home'),
     'plugins/wework-ui-plugin-center-catalog.js': {
       default: () => null,
       preload: () => undefined,
@@ -273,9 +294,26 @@ function installDefaultDshUiTestModules() {
   }
 }
 
-export async function preloadDefaultDshUiTestModules() {
+export async function preloadDefaultDshUiTestModules(moduleNames?: readonly string[]) {
   installDefaultDshUiTestModules()
   const modules = window.__WEWORK_DSH_UI_MODULES__ ?? {}
+  await Promise.all((moduleNames ?? Object.keys(modules)).map(module => importDshUiModule(module)))
+}
+
+export async function installDshUiTestContributions(
+  entries: Partial<Record<WeworkDshSlotName, readonly WeworkDshSlotEntry[]>>,
+  modules: Record<string, unknown | (() => Promise<unknown>)>
+) {
+  const runtime = window.__WEWORK_DSH_UI__
+  if (!runtime) throw new Error('The default DSH UI test runtime is not installed')
+  window.__WEWORK_DSH_UI__ = {
+    ...runtime,
+    getEntries: slotName => entries[slotName] ?? runtime.getEntries(slotName),
+  }
+  window.__WEWORK_DSH_UI_MODULES__ = {
+    ...(window.__WEWORK_DSH_UI_MODULES__ ?? {}),
+    ...modules,
+  }
   await Promise.all(Object.keys(modules).map(module => importDshUiModule(module)))
 }
 

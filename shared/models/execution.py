@@ -27,6 +27,7 @@ from .knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 GIT_AUTH_TRANSPORT_NONE = "none"
 GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN = "encrypted_request_token"
 GIT_AUTH_TRANSPORT_LEGACY_USER_SECRET = "legacy_user_secret"
+GIT_AUTH_TRANSPORT_DEVICE_LOCAL = "device_local"
 
 
 class EventType(str, Enum):
@@ -135,7 +136,6 @@ class ExecutionRequest:
     external_knowledge_refs: Optional[list[dict]] = None
     selected_knowledge_prompt: str = ""
     provider_native_knowledge: bool = False
-    table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 

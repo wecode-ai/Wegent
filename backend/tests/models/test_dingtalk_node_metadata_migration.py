@@ -12,6 +12,8 @@ from alembic import command
 from alembic.config import Config
 from app.core.config import settings
 
+TARGET_REVISION = "d6e7f8a9b0c1"
+
 
 def test_upgrade_head_and_rollback_preserve_cached_nodes(tmp_path, monkeypatch) -> None:
     url = f"sqlite:///{tmp_path / 'migration.db'}"
@@ -40,7 +42,7 @@ def test_upgrade_head_and_rollback_preserve_cached_nodes(tmp_path, monkeypatch) 
     # Do not replace the test runner's logging configuration.
     config.config_file_name = None
 
-    command.upgrade(config, "head")
+    command.upgrade(config, TARGET_REVISION)
 
     with engine.connect() as connection:
         assert connection.execute(
@@ -75,5 +77,5 @@ def test_upgrade_head_and_rollback_preserve_cached_nodes(tmp_path, monkeypatch) 
             ).scalar_one()
             == 2
         )
-    command.upgrade(config, "head")
+    command.upgrade(config, TARGET_REVISION)
     engine.dispose()

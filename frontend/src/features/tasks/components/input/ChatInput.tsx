@@ -854,7 +854,7 @@ export default function ChatInput({
                     suppressContentEditableWarning
                   />
                 </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
+                <TooltipContent side="top" className="hidden text-xs md:block">
                   <p>{tooltipText}</p>
                 </TooltipContent>
               </Tooltip>

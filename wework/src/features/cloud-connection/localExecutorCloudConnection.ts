@@ -77,6 +77,7 @@ export async function applyLocalExecutorCloudConnection(
       socketBaseUrl,
       authToken: token,
       runtimeAuthToken: runtimeToken.authToken,
+      deviceType: 'app',
     })
     return {
       connected: true,

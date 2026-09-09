@@ -1,10 +1,13 @@
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { normalizeBrowserUrl } from './browser-url'
 import { isElectronRuntime } from './runtime-environment'
+import type { BrowserAnnotationState } from '@/types/browser-annotation'
 
 type UnlistenFn = () => void
 
 export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
+const EMBEDDED_BROWSER_RELABEL_WAIT_INTERVAL_MS = 50
+const EMBEDDED_BROWSER_RELABEL_WAIT_TIMEOUT_MS = 6_000
 const transferredBrowserLabels = new Set<string>()
 const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpenRequest) => void>()
 let embeddedBrowserOpenRequestSequence = 0
@@ -19,7 +22,9 @@ export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
+export const EMBEDDED_BROWSER_AGENT_CURSOR_EVENT = 'wework:embedded-browser-agent-cursor'
 export const EMBEDDED_BROWSER_POPUP_EVENT = 'wework:embedded-browser-popup'
+export const EMBEDDED_BROWSER_ANNOTATION_STATE_EVENT = 'wework:embedded-browser-annotation-state'
 
 export function browserDiagnosticUrl(value: string): string {
   try {
@@ -48,6 +53,8 @@ export interface EmbeddedBrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
   navigationError?: EmbeddedBrowserNavigationError | null
   invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
 }
@@ -106,6 +113,16 @@ export interface EmbeddedBrowserAgentStateEvent {
   createdAtUnixMs: number
 }
 
+export interface EmbeddedBrowserAgentCursorEvent {
+  label: string
+  visible: boolean
+  x: number
+  y: number
+  animateMovement: boolean
+  moveSequence: number
+  createdAtUnixMs: number
+}
+
 export interface EmbeddedBrowserAgentApproval {
   approvalId: string
   risk: string
@@ -146,6 +163,7 @@ export interface EmbeddedBrowserInvalidTlsCertificateEvent {
 interface ElectronBrowserHostEvent {
   sequence: number
   type:
+    | 'agent-cursor'
     | 'agent-state'
     | 'annotation-request'
     | 'close-request'
@@ -186,6 +204,17 @@ export function listenEmbeddedBrowserAnnotationRequests(
   return listenElectronBrowserEvents('annotation-request', handler)
 }
 
+export function listenEmbeddedBrowserAnnotationState(
+  handler: (state: BrowserAnnotationState) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  const unlisten = subscribeDesktopHostEvents(event => {
+    if (event.type !== 'browser.annotation-state') return
+    handler(event.payload as unknown as BrowserAnnotationState)
+  })
+  return Promise.resolve(unlisten)
+}
+
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
   await invokeDesktopHost<void>('browser.pauseDownload', { id })
 }
@@ -203,6 +232,16 @@ export async function setEmbeddedBrowserAgentControlPaused(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invokeDesktopHost<void>('browser.setAgentControlPaused', { label, paused })
+}
+
+export async function notifyEmbeddedBrowserAgentCursorArrived(
+  label: string,
+  moveSequence: number
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.notifyAgentCursorArrived', {
+    label,
+    moveSequence,
+  })
 }
 
 export async function resolveEmbeddedBrowserAgentApproval(
@@ -283,6 +322,13 @@ export function listenEmbeddedBrowserAgentState(
   return listenElectronBrowserEvents('agent-state', handler)
 }
 
+export function listenEmbeddedBrowserAgentCursor(
+  handler: (event: EmbeddedBrowserAgentCursorEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listenElectronBrowserEvents('agent-cursor', handler)
+}
+
 export function canUseEmbeddedBrowser(): boolean {
   return isElectronRuntime()
 }
@@ -361,6 +407,44 @@ export async function captureEmbeddedBrowserSnapshot(
   return invokeDesktopHost<string>('browser.capture', { label })
 }
 
+export async function startEmbeddedBrowserAnnotation(
+  mode: 'quick' | 'batch',
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL,
+  point?: { x: number; y: number }
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.start', {
+    label,
+    mode,
+    x: point?.x ?? null,
+    y: point?.y ?? null,
+  })
+}
+
+export async function stopEmbeddedBrowserAnnotation(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.stop', { label })
+}
+
+export async function clearEmbeddedBrowserAnnotations(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.clear', { label })
+}
+
+export async function readEmbeddedBrowserAnnotationState(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<BrowserAnnotationState> {
+  return invokeDesktopHost<BrowserAnnotationState>('browser.annotation.state', { label })
+}
+
+export async function setEmbeddedBrowserAnnotationOriginalView(
+  enabled: boolean,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.setOriginalView', { label, enabled })
+}
+
 export async function navigateEmbeddedBrowser(
   url: string,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
@@ -416,6 +500,49 @@ export async function relabelEmbeddedBrowser(
   await invokeDesktopHost<void>('browser.relabel', { fromLabel, toLabel })
 }
 
+export async function migrateEmbeddedBrowserLabel(
+  fromLabel: string,
+  toLabel: string,
+  options: { waitForSource: boolean; signal?: AbortSignal }
+): Promise<void> {
+  const deadline = Date.now() + EMBEDDED_BROWSER_RELABEL_WAIT_TIMEOUT_MS
+  while (!options.signal?.aborted) {
+    try {
+      await relabelEmbeddedBrowser(fromLabel, toLabel)
+      return
+    } catch (error) {
+      if (!isEmbeddedBrowserUnavailableError(error, fromLabel)) throw error
+      if (!options.waitForSource) return
+      if (Date.now() >= deadline) throw error
+      await new Promise(resolve => setTimeout(resolve, EMBEDDED_BROWSER_RELABEL_WAIT_INTERVAL_MS))
+    }
+  }
+}
+
+export async function migrateEmbeddedBrowserLabelSequence<
+  T extends {
+    fromLabel: string
+    toLabel: string
+    waitForSource: boolean
+  },
+>(
+  mappings: readonly T[],
+  options: {
+    onMigrated: (mapping: T) => void
+    signal?: AbortSignal
+  }
+): Promise<void> {
+  for (const mapping of mappings) {
+    if (mapping.fromLabel === mapping.toLabel) continue
+    await migrateEmbeddedBrowserLabel(mapping.fromLabel, mapping.toLabel, {
+      waitForSource: mapping.waitForSource,
+      signal: options.signal,
+    })
+    if (options.signal?.aborted) return
+    options.onMigrated(mapping)
+  }
+}
+
 export async function setEmbeddedBrowserActiveTab(
   baseLabel: string,
   activeTabLabel: string
@@ -440,6 +567,10 @@ export async function closeEmbeddedBrowsers(labels: string[]): Promise<void> {
 
 export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
   return invokeDesktopHost<number>('browser.clearData', { dataKinds: kinds ?? null })
+}
+
+function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
+  return error instanceof Error && error.message === `Embedded browser is unavailable: ${label}`
 }
 
 export function requestEmbeddedBrowserOpen(

@@ -51,6 +51,7 @@ from .emitters import (
     StatusUpdatingEmitter,
     WebSocketResultEmitter,
 )
+from .git_credentials import build_device_git_execution_payload
 from .polling_dispatcher import dispatch_polling
 from .recovery_service import recovery_service
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
@@ -437,6 +438,7 @@ class ResponsesAPIEventParser:
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content=reasoning_content,
+                    data={"thinking_kind": "reasoning_summary"},
                     message_id=message_id,
                 )
             return None
@@ -768,6 +770,10 @@ class ExecutionDispatcher:
         """
         wrapped_emitter = None
         try:
+            if device_id:
+                user_id = request.user.get("id") if request.user else None
+                if not isinstance(user_id, int):
+                    raise ValueError("Device dispatch requires an authenticated user")
             await self._recover_executor_if_needed(request, device_id=device_id)
 
             # Route to execution target
@@ -1647,7 +1653,8 @@ class ExecutionDispatcher:
         )
 
         # Send task to specified room
-        await self._emit_socketio_in_main_loop(sio, target, request.to_dict())
+        payload = build_device_git_execution_payload(request)
+        await self._emit_socketio_in_main_loop(sio, target, payload)
 
         logger.info(
             f"[ExecutionDispatcher] WebSocket dispatch: "

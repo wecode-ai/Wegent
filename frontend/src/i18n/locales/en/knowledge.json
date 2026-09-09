@@ -216,6 +216,9 @@
       "directAccessAllMembersDescription": "Members with read or edit access can see and open this knowledge base.",
       "directAccessEditorsOnly": "Editors only",
       "directAccessEditorsOnlyDescription": "Non-editors cannot see or open this knowledge base, but can still use it through an agent that has it configured.",
+      "allowDocumentDownload": "Allow original document downloads",
+      "allowDocumentDownloadDescription": "When disabled, original files cannot be downloaded. Previews show a visible watermark.",
+      "protectedWatermark": "Protected knowledge base",
       "documentCount": "Documents",
       "empty": "No knowledge bases yet",
       "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",
@@ -285,14 +288,6 @@
       "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
     "document": {
-      "retrievalProfile": {
-        "fallbackReasons": {
-          "retriever_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
-          "embedding_model_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
-          "profile_incomplete": "The configured retrieval default profile is incomplete, so automatic defaults will be used.",
-          "unavailable": "The retrieval default profile is unavailable, so automatic defaults will be used."
-        }
-      },
       "title": "Documents",
       "upload": "Add sources",
       "edit": "Edit Document",
@@ -368,7 +363,6 @@
         "updatedAt": "Updated"
       },
       "type": {
-        "table": "Table",
         "web": "Web Page",
         "external": "External"
       },
@@ -460,6 +454,7 @@
         "metaInfo": "Metadata",
         "content": "Document Content",
         "contentLoadFailed": "Failed to load document content. Please retry.",
+        "protectedViewerUnavailable": "Protected document viewer is unavailable",
         "parsedContent": "Parsed Content",
         "sourceFile": "Original File",
         "truncated": "Content Truncated",
@@ -537,33 +532,10 @@
       "insert": "Insert",
       "clickToRename": "Click to rename",
       "unsupportedFileType": "Multimedia files require multimodal analysis to be enabled for this knowledge base before uploading",
-      "addTable": "Add Data Table",
-      "tableHint": "Enter the table link and name to add it to your knowledge base.",
-      "tableUrlHint": "Please enter a valid table URL. Ensure the link is accessible and you have read permission. Currently supports DingTalk tables.",
-      "tableName": "Document Name",
-      "tableNamePlaceholder": "Enter document name",
-      "tableUrl": "Table Link",
-      "tableUrlPlaceholder": "Paste table link",
-      "tableUrlRequired": "Please enter the table link",
-      "tableNameRequired": "Please enter document name",
-      "tableAddFailed": "Failed to add, please try again",
       "adding": "Adding...",
       "confirmAdd": "Confirm Add",
       "validation": {
-        "validating": "Validating URL...",
-        "success": "URL validation passed",
-        "invalidUrlFormat": "Please enter a valid URL format",
-        "unsupportedProvider": "Unsupported link source. Currently only DingTalk tables are supported",
-        "parseFailed": "Unable to parse the link. Please check if the URL format is correct",
-        "missingDingtalkId": "You do not have a DingTalk ID configured. Please log in using DingTalk to access table documents",
-        "tableAccessFailed": "Unable to access the table. Please check if you have access permissions",
-        "tableAccessFailedLinkedTable": "The table might be a linked table. Please use the original table link",
-        "unknownError": "Validation failed. Please check if the URL is correct",
-        "networkError": "Network error. Please try again later",
-        "pleaseFixUrl": "Please fix the URL before submitting",
-        "provider": {
-          "dingtalk": "DingTalk Table"
-        }
+        "invalidUrlFormat": "Please enter a valid URL format"
       },
       "documentCount": "Document Count",
       "web": {
@@ -976,26 +948,6 @@
   "regenerate": "Regenerate",
   "view_detail": "View Details",
   "coming_soon": "Coming Soon",
-  "dingtalkTable": {
-    "title": "DingTalk Tables",
-    "empty": "No DingTalk tables",
-    "emptyHint": "Add DingTalk tables in your knowledge base to see them here",
-    "error": {
-      "noAssistant": "AI Assistant agent not found. Please ensure a team named 'AI助理' is configured in the system",
-      "loadFailed": "Failed to load DingTalk tables"
-    },
-    "analyzing": "Analyzing DingTalk table data..."
-  },
-  "table": {
-    "title": "Data Tables",
-    "empty": "No data tables",
-    "emptyHint": "Add data tables in your knowledge base to see them here",
-    "error": {
-      "noAssistant": "AI Assistant agent not found. Please ensure a team named 'AI助理' is configured in the system",
-      "loadFailed": "Failed to load data tables"
-    },
-    "analyzing": "Analyzing data table..."
-  },
   "artifact": {
     "tab": "Tools",
     "title": "Tools",
@@ -1206,6 +1158,34 @@
       "modelRequired": "Select the model to generate with",
       "created": "Code Wiki created. Content is generating."
     },
+    "strategy": {
+      "label": "Generation strategy",
+      "createDescription": "Choose how this wiki is generated in the future, or use the system default.",
+      "settingsDescription": "Applies to future generations. Existing versions are unchanged.",
+      "loading": "Loading available strategies…",
+      "loadFailed": "Could not load strategies. Try again later.",
+      "noneAvailable": "No generation strategies are available",
+      "selectRequired": "Select an available generation strategy",
+      "systemRecommended": "System default: {{strategy}}",
+      "systemRecommendedDescription": "The system uses {{strategy}} by default. You can override it in Advanced settings.",
+      "legacyTitle": "Legacy compatibility mode",
+      "legacyDescription": "Keeps the generation behaviour used before strategy selection was added.",
+      "unavailable": "This strategy is unavailable in the system configuration",
+      "options": {
+        "coordinator_adaptive": {
+          "title": "Adaptive collaboration",
+          "description": "One AI owns the whole wiki and delegates only complex areas for deeper work."
+        },
+        "coordinator_reviewed": {
+          "title": "Reviewed generation",
+          "description": "The documentation plan is checked before writing. It is usually steadier, but slower."
+        },
+        "coordinator_solo": {
+          "title": "Single-agent generation",
+          "description": "One AI researches and writes the whole wiki. Good for smaller projects and comparisons."
+        }
+      }
+    },
     "reader": {
       "regenerate": "Regenerate",
       "regenerating": "Generating…",
@@ -1224,10 +1204,46 @@
       "generateFirst": "Generate",
       "regenerateConfirmTitle": "Regenerate this wiki?",
       "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
+      "cancelConfirmTitle": "Stop this generation?",
+      "cancelConfirmBody": "The current draft will be discarded. Published pages are unchanged.",
+      "cancelRequested": "Stop request accepted",
       "emptyGenerating": "This wiki is being generated",
       "emptyGeneratingHint": "Reading a whole repository usually takes several minutes. Feel free to come back to it later.",
       "emptyFailed": "The last run did not finish",
       "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
+    },
+    "progress": {
+      "title": "Generating",
+      "step": "Stage {{current}}/{{total}}",
+      "cancel": "Stop generation",
+      "cancelling": "Stopping…",
+      "stepLabel": {
+        "plan": "Plan review",
+        "planPassed_one": "Plan review passed ({{count}} page)",
+        "planPassed_other": "Plan review passed ({{count}} pages)",
+        "planCompleted_one": "Page plan complete ({{count}} page)",
+        "planCompleted_other": "Page plan complete ({{count}} pages)",
+        "writing": "Write pages",
+        "writingActive": "Writing pages ({{current}} / {{total}})",
+        "writingCompleted_one": "Page writing complete ({{count}} page)",
+        "writingCompleted_other": "Page writing complete ({{count}} pages)",
+        "qa": "Final quality review",
+        "qaCompleted": "Final quality review passed",
+        "publish": "Integrate and publish",
+        "publishCompleted": "Published"
+      },
+      "stage": {
+        "generating": "Generating wiki content",
+        "planning": "Analyzing the repository and planning pages",
+        "plan_review": "Reviewing the wiki page plan",
+        "revising_plan": "Revising the plan from review findings",
+        "writing": "Writing wiki pages",
+        "qa_review": "Running content QA",
+        "repairing": "Repairing documentation from QA findings",
+        "recheck": "Rechecking the repairs",
+        "publishing": "Validating and publishing the wiki",
+        "finishing": "Finishing this generation"
+      }
     },
     "workspace": {
       "wiki": "Wiki",
@@ -1253,17 +1269,23 @@
       },
       "commitUnreported": "no commit reported",
       "taskFailed": "The task failed",
+      "strategy": "Strategy: {{strategy}}",
       "republish": "Restore this version",
       "republished": "This version is published again",
       "republishedDescription": "The page content has been refreshed.",
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
       "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
+      "republishConfirmSlow": "Synchronizing pages and clearing old indexes can take a little while. Retrieval indexes for new content continue updating in the background.",
+      "republishSyncingTitle": "Restoring and synchronizing this version",
+      "republishSyncingBody": "Writing pages, clearing replaced content, and refreshing the reader. Keep this window open.",
+      "republishSyncing": "Synchronizing…",
       "viewFailure": "View full error",
       "failureDetailsTitle": "Generation error",
       "failureDetailsDescription": "Full error message from this generation run."
     },
     "failure": {
+      "cancelled_by_user": "Generation was stopped",
       "task_ended_without_report": "The task ended without reporting a result",
       "task_not_created": "The generation task could not be created",
       "worker_abandoned": "The worker stopped reporting and the run was reclaimed",

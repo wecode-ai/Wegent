@@ -222,6 +222,7 @@ export function PopupMenu({
   menuWidth,
   fullWidth = false,
   triggerClassName,
+  ariaLabel,
   onOpen,
 }: {
   testId: string
@@ -233,6 +234,7 @@ export function PopupMenu({
   menuWidth?: number
   fullWidth?: boolean
   triggerClassName?: string
+  ariaLabel?: string
   onOpen?: () => void
 }) {
   const rootRef = useRef<HTMLSpanElement>(null)
@@ -247,7 +249,7 @@ export function PopupMenu({
     if (!open) return
     const triggerRect = rootRef.current?.getBoundingClientRect()
     if (!triggerRect) return
-    const width = Math.max(180, triggerRect.width, menuWidth ?? 0)
+    const width = Math.max(menuWidth ?? 180, triggerRect.width)
     const belowTop = triggerRect.bottom + 6
     const estimatedHeight = Math.min(360, menuRef.current?.scrollHeight ?? 320)
     const top =
@@ -284,6 +286,7 @@ export function PopupMenu({
         type="button"
         data-testid={testId}
         disabled={disabled}
+        aria-label={ariaLabel}
         aria-invalid={invalid || undefined}
         onClick={() => {
           if (!open) onOpen?.()
@@ -314,7 +317,7 @@ export function PopupMenu({
               onClick={() => {
                 if (!keepOpen) close()
               }}
-              className="fixed z-[11000] max-h-[360px] overflow-y-auto rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              className="fixed z-[11000] max-h-[360px] overflow-y-auto rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
               role="menu"
             >
               {children(close)}

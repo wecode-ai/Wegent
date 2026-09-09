@@ -14,6 +14,7 @@ from app.models.api_key import KEY_TYPE_SERVICE, APIKey
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem
 from app.models.user import User
+from app.services.auth import create_task_token
 
 
 def test_personal_api_key_creates_board_and_task(
@@ -146,3 +147,43 @@ def test_board_creation_endpoints_document_jwt_and_api_key_authentication(
         security = paths[path]["post"]["security"]
         assert {"OAuth2PasswordBearer": []} in security
         assert {"APIKeyHeader": []} in security
+
+
+def test_runtime_task_token_supports_wework_space_board_flow(
+    test_client: TestClient,
+    test_user: User,
+) -> None:
+    task_token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
+    headers = {"Authorization": f"Bearer {task_token}"}
+
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=headers,
+        json={"name": "Runtime board"},
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    list_response = test_client.get("/api/v1/cloud-projects", headers=headers)
+    assert list_response.status_code == 200
+    assert project_id in {item["id"] for item in list_response.json()["items"]}
+
+    item_response = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/loop-items",
+        headers=headers,
+        json={"title": "Created from a cloud Runtime"},
+    )
+    assert item_response.status_code == 201
+    item_id = item_response.json()["id"]
+
+    context_response = test_client.get(
+        f"/api/v1/loop-items/{item_id}",
+        headers=headers,
+    )
+    assert context_response.status_code == 200
+    assert context_response.json()["id"] == item_id

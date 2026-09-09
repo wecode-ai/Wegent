@@ -12,13 +12,14 @@ import {
 
 const REQUEST_FD = 3
 const RESPONSE_FD = 4
-const MAX_FRAME_BYTES = 1024 * 1024
+const MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 interface HostPipeSession {
   input: Readable
   output: Writable
   lines: Interface
   principal: string | null
+  child: ChildProcessWithoutNullStreams | null
 }
 
 export interface HostPipeEvents {
@@ -53,10 +54,14 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
     if (!input || typeof (input as Readable).pipe !== 'function') {
       throw new Error('DSH host response pipe is unavailable')
     }
-    this.attachStreams(input as Readable, output as Writable)
+    this.attachStreams(input as Readable, output as Writable, child)
   }
 
-  attachStreams(input: Readable, output: Writable): void {
+  attachStreams(
+    input: Readable,
+    output: Writable,
+    child: ChildProcessWithoutNullStreams | null = null
+  ): void {
     this.detach()
     const lines = createInterface({ input })
     const session: HostPipeSession = {
@@ -64,9 +69,13 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
       output,
       lines,
       principal: null,
+      child,
     }
     this.session = session
     lines.on('line', line => void this.handleLine(session, line))
+    const handleOutputError = (error: Error) => this.protocolFailure(session, error)
+    output.on('error', handleOutputError)
+    output.once('close', () => output.removeListener('error', handleOutputError))
     input.once('close', () => {
       if (this.session !== session) return
       this.detach()
@@ -75,6 +84,11 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
   }
 
   stop(): void {
+    this.detach()
+  }
+
+  detachChild(child: ChildProcessWithoutNullStreams): void {
+    if (this.session?.child !== child) return
     this.detach()
   }
 
@@ -188,8 +202,9 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
   }
 
   private protocolFailure(session: HostPipeSession, error: Error): void {
+    if (this.session !== session) return
     this.emit('protocolError', error)
-    if (this.session === session) this.detach()
+    this.detach()
   }
 
   private detach(): void {

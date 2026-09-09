@@ -28,8 +28,8 @@ export function SloganDisplay({ slogan, project }: SloganDisplayProps) {
     const parts = greeting.split('__PROJECT_NAME__')
 
     return (
-      <div className="text-center mb-8 min-h-[2.5rem] sm:min-h-[3rem]">
-        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-text-primary tracking-tight">
+      <div className="mb-10 min-h-8 text-center md:mb-8 md:min-h-[3rem]">
+        <h1 className="text-xl font-bold tracking-tight text-text-primary md:text-3xl lg:text-4xl">
           {parts[0]}
           <span className="text-primary">{project.name}</span>
           {parts[1]}
@@ -47,9 +47,9 @@ export function SloganDisplay({ slogan, project }: SloganDisplayProps) {
   const sloganText = slogan ? (currentLang === 'zh' ? slogan.zh : slogan.en) : ''
 
   return (
-    <div className="text-center mb-8 min-h-[2.5rem] sm:min-h-[3rem]">
+    <div className="mb-10 min-h-8 text-center md:mb-8 md:min-h-[3rem]">
       {sloganText && (
-        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-text-primary tracking-tight">
+        <h1 className="text-xl font-bold tracking-tight text-text-primary md:text-3xl lg:text-4xl">
           {sloganText}
         </h1>
       )}

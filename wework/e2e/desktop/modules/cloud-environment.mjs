@@ -1,7 +1,8 @@
 import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 
-import { createHash } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
+import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
 import { rm } from 'node:fs/promises'
 
 import {
@@ -19,7 +20,7 @@ import {
   appendProcessOutput,
   assert,
   commandOutput,
-  createServer,
+  commandOutputAsync,
   dirname,
   fetchJson,
   join,
@@ -33,6 +34,7 @@ import {
   spawn,
   stopProcess,
   stopProcessGroup,
+  waitForLogPattern,
   waitForUrl,
   weworkDir,
   writeFile,
@@ -41,6 +43,7 @@ import {
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
+const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
 const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelNamespace: 'default',
   weworkCloudModelResourceUserId: '0',
@@ -107,124 +110,18 @@ async function startRedisServer(
   throw new Error(`Redis did not start after ${REDIS_START_ATTEMPTS} attempts`)
 }
 
-class LocalPluginObjectStorage {
-  constructor() {
-    this.buckets = new Set()
-    this.objects = new Map()
-  }
-
-  async start() {
-    this.port = await reservePort()
-    this.server = createServer((request, response) => {
-      void this.handle(request, response).catch(error => {
-        if (response.headersSent) {
-          response.destroy(error instanceof Error ? error : undefined)
-          return
-        }
-        response.writeHead(error instanceof URIError ? 400 : 500)
-        response.end()
-      })
-    })
-    await new Promise((resolvePromise, reject) => {
-      this.server.once('error', reject)
-      this.server.listen(this.port, '127.0.0.1', resolvePromise)
-    })
-    this.endpoint = `http://127.0.0.1:${this.port}`
-  }
-
-  async handle(request, response) {
-    const url = new URL(request.url ?? '/', this.endpoint)
-    const [bucket = '', ...objectParts] = url.pathname.split('/').filter(Boolean)
-    const objectKey = decodeURIComponent(objectParts.join('/'))
-    const storageKey = `${bucket}/${objectKey}`
-    if (!objectKey) {
-      if (request.method === 'HEAD') {
-        response.writeHead(
-          this.buckets.has(bucket) ? 200 : 404,
-          this.buckets.has(bucket)
-            ? {}
-            : {
-                'x-minio-error-code': 'NoSuchBucket',
-                'x-minio-error-desc': 'Bucket does not exist',
-              }
-        )
-        response.end()
-        return
-      }
-      if (request.method === 'PUT') {
-        this.buckets.add(bucket)
-        response.writeHead(200)
-        response.end()
-        return
-      }
-    }
-    if (request.method === 'PUT') {
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      this.buckets.add(bucket)
-      this.objects.set(storageKey, Buffer.concat(chunks))
-      response.writeHead(200, {
-        ETag: `"${createHash('md5').update(this.objects.get(storageKey)).digest('hex')}"`,
-      })
-      response.end()
-      return
-    }
-    const object = this.objects.get(storageKey)
-    if (!object) {
-      response.writeHead(404, {
-        'Content-Type': 'application/xml',
-        'x-minio-error-code': 'NoSuchKey',
-        'x-minio-error-desc': 'Object does not exist',
-      })
-      response.end('<Error><Code>NoSuchKey</Code><Message>Not found</Message></Error>')
-      return
-    }
-    if (request.method === 'HEAD') {
-      response.writeHead(200, {
-        'Content-Length': String(object.length),
-        'Last-Modified': new Date().toUTCString(),
-        ETag: '"e2e"',
-      })
-      response.end()
-      return
-    }
-    if (request.method === 'GET') {
-      response.writeHead(200, {
-        'Content-Length': String(object.length),
-        'Content-Type': 'application/zip',
-      })
-      response.end(object)
-      return
-    }
-    if (request.method === 'DELETE') {
-      this.objects.delete(storageKey)
-      response.writeHead(204)
-      response.end()
-      return
-    }
-    response.writeHead(405)
-    response.end()
-  }
-
-  async stop() {
-    if (!this.server) return
-    await new Promise(resolvePromise => {
-      this.server.close(resolvePromise)
-      this.server.closeAllConnections?.()
-    })
-  }
-}
-
 class RealCloudEnvironment {
   constructor({
     claudeBinary,
     codexBinary,
+    managedCloudIdentity = false,
     modelServerUrl,
     scenarioConfigToml = '',
     workspacePath,
   }) {
     this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
+    this.managedCloudIdentity = managedCloudIdentity
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
@@ -256,7 +153,13 @@ class RealCloudEnvironment {
       ...process.env,
       DATABASE_URL: `sqlite:///${this.databasePath}`,
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
+      CELERY_BROKER_URL: `redis://127.0.0.1:${this.redisPort}/0`,
+      CELERY_RESULT_BACKEND: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
+      WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: 'desktop-e2e',
+      WEWORK_PLUGIN_CREDENTIAL_KEYS: JSON.stringify({
+        'desktop-e2e': randomBytes(32).toString('base64'),
+      }),
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       BACKEND_INTERNAL_URL: this.backendUrl,
       WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
@@ -268,6 +171,7 @@ class RealCloudEnvironment {
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
       ...remoteDeviceE2EExtension.backendEnv,
+      TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
       DB_AUTO_MIGRATE: 'false',
@@ -278,13 +182,27 @@ class RealCloudEnvironment {
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
       ATTACHMENT_S3_USE_SSL: 'false',
-      PLUGIN_PUBLISH_ENABLED: 'true',
     }
     this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
       cwd: backendDirectory,
       env: backendEnv,
     })
+    await this.launchBackend()
+
+    const password = `wework-desktop-e2e-${process.pid}`
+    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    this.authToken = setup.access_token
+    assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
+    await this.seedCloudProtocolModels()
+    await this.seedCloudVisionSidecarModels()
+  }
+
+  async launchBackend() {
     this.backend = spawn(
       'uv',
       [
@@ -300,9 +218,10 @@ class RealCloudEnvironment {
         String(this.backendPort),
       ],
       {
-        cwd: backendDirectory,
-        env: backendEnv,
+        cwd: join(repoDir, 'backend'),
+        env: this.backendEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
       }
     )
     await Promise.all([
@@ -313,17 +232,26 @@ class RealCloudEnvironment {
       `${this.backendUrl}/api/docs`,
       `Real cloud backend did not start; see ${this.backendLogPath}`
     )
+  }
 
-    const password = `wework-desktop-e2e-${process.pid}`
-    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    })
-    this.authToken = setup.access_token
-    assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
-    await this.seedCloudProtocolModels()
-    await this.seedCloudVisionSidecarModels()
+  async restartBackendWithTerminalProtocolV2(enabled) {
+    assert.equal(typeof enabled, 'boolean')
+    assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
+    await stopProcessGroup(this.backend)
+    const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
+    this.backendEnv = {
+      ...this.backendEnv,
+      TERMINAL_PROTOCOL_V2_ENABLED: String(enabled),
+    }
+    await this.launchBackend()
+    await waitForLogPattern(
+      this.backendLogPath,
+      new RegExp(
+        `\\[Device WS\\] Device registered: user=\\d+, device=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`
+      ),
+      { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
+    await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
   }
 
   async publishOfficialSmartApp(sourcePath) {
@@ -342,28 +270,12 @@ class RealCloudEnvironment {
     }
     for (let index = 1; index <= count; index += 1) {
       const slug = `desktop-e2e-auto-update-${index}`
-      const first = await this.publishPluginRelease({ headers, slug, version: '1.0.0' })
-      await fetchJson(
-        `${this.backendUrl}/api/admin/plugins/submissions/${first.submissionId}/review`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ approved: true, note: 'Desktop E2E initial release' }),
-        }
-      )
+      const first = await this.publishPluginRelease({ slug, version: '1.0.0' })
       await fetchJson(
         `${this.backendUrl}/api/plugins/marketplace/${first.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
         { method: 'POST', headers }
       )
-      const latest = await this.publishPluginRelease({ headers, slug, version: '2.0.0' })
-      await fetchJson(
-        `${this.backendUrl}/api/admin/plugins/submissions/${latest.submissionId}/review`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ approved: true, note: 'Desktop E2E update release' }),
-        }
-      )
+      await this.publishPluginRelease({ slug, version: '2.0.0' })
       this.pluginAutoUpdateFixtures.push({ pluginId: first.pluginId, slug })
     }
     this.pluginAutoUpdateFixturesSeeded = true
@@ -379,45 +291,59 @@ class RealCloudEnvironment {
     }
   }
 
-  async publishPluginRelease({ headers, slug, version }) {
-    const packageRoot = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
-    const manifestDir = join(packageRoot, '.codex-plugin')
-    const packagePath = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}.zip`)
-    await mkdir(manifestDir, { recursive: true })
-    await writeFile(
-      join(manifestDir, 'plugin.json'),
-      `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
-      'utf8'
-    )
-    await rm(packagePath, { force: true })
-    await runChecked('python3', ['-m', 'zipfile', '-c', packagePath, '.codex-plugin'], {
-      cwd: packageRoot,
-    })
-    const packageBytes = await readFile(packagePath)
-    const initialized = await fetchJson(`${this.backendUrl}/api/plugins/submissions/init`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
+  async publishPluginRelease({ slug, version, packageRoot: providedRoot, prebuilt, skills = {} }) {
+    const packageRoot =
+      providedRoot ?? join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
+    if (!providedRoot && !prebuilt) {
+      const manifestDir = join(packageRoot, '.codex-plugin')
+      await mkdir(manifestDir, { recursive: true })
+      await writeFile(
+        join(manifestDir, 'plugin.json'),
+        `${JSON.stringify(
+          {
+            name: slug,
+            version,
+            description: `Desktop E2E ${slug}`,
+            ...(Object.keys(skills).length ? { skills: './skills/' } : {}),
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      )
+      for (const [name, description] of Object.entries(skills)) {
+        const skillDir = join(packageRoot, 'skills', name)
+        await mkdir(skillDir, { recursive: true })
+        await writeFile(
+          join(skillDir, 'SKILL.md'),
+          `---\nname: ${name}\ndescription: ${description}\n---\n\n${description}\n`,
+          'utf8'
+        )
+      }
+    }
+    const output = await commandOutputAsync(
+      'uv',
+      [
+        'run',
+        'python',
+        'scripts/publish_official_plugin.py',
+        prebuilt?.path ?? packageRoot,
+        ...(prebuilt ? ['--prebuilt', '--sha256', prebuilt.sha256] : []),
+        '--slug',
         slug,
-        displayName: `Auto Update ${slug.split('-').at(-1)}`,
-        version,
-        filename: `${slug}.zip`,
-        sha256: createHash('sha256').update(packageBytes).digest('hex'),
-        sizeBytes: packageBytes.length,
-        visibility: 'workspace',
-      }),
-    })
-    const upload = await fetch(initialized.uploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/zip' },
-      body: packageBytes,
-    })
-    assert.equal(upload.ok, true, `Plugin E2E upload failed with HTTP ${upload.status}`)
-    await fetchJson(
-      `${this.backendUrl}/api/plugins/submissions/${initialized.submissionId}/complete`,
-      { method: 'POST', headers }
+        '--visibility',
+        'workspace',
+        '--created-by-user-id',
+        '1',
+        '--publisher',
+        'desktop-e2e',
+      ],
+      { cwd: join(repoDir, 'backend'), env: this.backendEnv }
     )
-    return initialized
+    const published = JSON.parse(output)
+    assert.ok(published.pluginId, 'Plugin E2E publisher did not return a plugin ID')
+    assert.ok(published.releaseId, 'Plugin E2E publisher did not return a release ID')
+    return published
   }
 
   async assertPluginAutoUpdateComplete(codexHome, expectedCount = 6) {
@@ -552,6 +478,33 @@ class RealCloudEnvironment {
       this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath),
       this.waitForDevice(REMOTE_DOCKER_DEVICE_ID, this.remoteDockerExecutorLogPath),
     ])
+    if (this.managedCloudIdentity) {
+      await this.configureManagedCloudIdentity()
+    }
+  }
+
+  async configureManagedCloudIdentity() {
+    await runChecked('sqlite3', [
+      this.databasePath,
+      [
+        'UPDATE kinds',
+        `SET json = json_set(json, '$.spec.cloudConfig.sandboxId', '${MANAGED_CLOUD_SANDBOX_ID}', '$.spec.cloudConfig.deviceId', '${CLOUD_DEVICE_ID}')`,
+        `WHERE kind = 'Device' AND name = '${CLOUD_DEVICE_ID}';`,
+      ].join(' '),
+    ])
+
+    const configured = await this.device(CLOUD_DEVICE_ID)
+    assert.equal(
+      configured?.cloud_config?.sandboxId,
+      MANAGED_CLOUD_SANDBOX_ID,
+      'The cloud E2E fixture did not create a distinct managed Sandbox identity'
+    )
+    assert.equal(
+      configured?.cloud_config?.deviceId,
+      CLOUD_DEVICE_ID,
+      'The cloud E2E fixture changed the Executor route identity'
+    )
+    await this.restartCloudExecutor()
   }
 
   async describePluginWorkspace(pluginRoot, taskWorkspace, taskId) {
@@ -605,20 +558,26 @@ class RealCloudEnvironment {
     return JSON.parse(marker.slice('[WEGENT_PLUGIN_RESULT]'.length))
   }
 
-  async createPluginWorkspaceTask() {
+  async createPluginWorkspaceTask({
+    message = PLUGIN_CREATOR_PROMPT,
+    title = 'Cloud Plugin Creator E2E',
+    workspacePath: providedWorkspace,
+  } = {}) {
     const teams = await fetchJson(`${this.backendUrl}/api/teams?page=1&limit=100`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
     const team = teams.items?.[0]
     assert.ok(team?.id, 'Cloud Plugin Creator E2E requires a Team fixture')
     assert.ok(this.remoteCodexHome, 'Cloud Executor Codex home is not initialized')
-    const workspacePath = join(
-      dirname(this.remoteCodexHome),
-      'Documents',
-      'Codex',
-      'plugin-workspace-publication',
-      `${process.pid}-${Date.now()}`
-    )
+    const workspacePath =
+      providedWorkspace ??
+      join(
+        dirname(this.remoteCodexHome),
+        'Documents',
+        'Codex',
+        'plugin-workspace-publication',
+        `${process.pid}-${Date.now()}`
+      )
     await mkdir(workspacePath, { recursive: true })
     const task = await fetchJson(`${this.backendUrl}/api/runtime-work/create`, {
       method: 'POST',
@@ -631,8 +590,8 @@ class RealCloudEnvironment {
         workspacePath,
         teamId: team.id,
         runtime: 'codex',
-        message: PLUGIN_CREATOR_PROMPT,
-        title: 'Cloud Plugin Creator E2E',
+        message,
+        title,
         modelId: CLOUD_PUBLIC_MODEL_NAME,
         modelType: 'public',
         modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
@@ -666,7 +625,7 @@ class RealCloudEnvironment {
         throw new Error(`Cloud runtime task ${address.taskId} settled as ${task.status}`)
       }
       const active =
-        task?.running === true || ['creating', 'queued', 'active', 'running'].includes(task?.status)
+        task?.running === true || ['creating', 'queued', 'running'].includes(task?.status)
       if (task?.workspacePath === address.workspacePath && !active) return task
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
@@ -712,10 +671,45 @@ class RealCloudEnvironment {
   }
 
   async device(deviceId) {
+    const devices = await this.devices()
+    return devices.find(device => device.device_id === deviceId) ?? null
+  }
+
+  async devices() {
     const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
-    return devices.items?.find(device => device.device_id === deviceId) ?? null
+    return devices.items ?? []
+  }
+
+  async waitForConnectedAppDevice() {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const devices = await this.devices()
+      const device = devices.find(
+        candidate => candidate.device_type === 'app' && candidate.status === 'online'
+      )
+      if (device) return device
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error('The desktop local executor did not register as an app device')
+  }
+
+  async waitForDeviceType(deviceId, expectedType) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const devices = await this.devices()
+      const matching = devices.filter(device => device.device_id === deviceId)
+      if (
+        matching.length === 1 &&
+        matching[0].device_type === expectedType &&
+        matching[0].status === 'online'
+      ) {
+        return matching[0]
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error(`Device ${deviceId} did not become an online ${expectedType} device`)
   }
 
   async worktreeCapabilities(deviceId = CLOUD_DEVICE_ID) {
@@ -836,7 +830,12 @@ class RealCloudEnvironment {
     }
   }
 
-  async startGeneratedRemoteDevice({ deviceId, deviceName, authToken }) {
+  async startGeneratedRemoteDevice({
+    deviceId,
+    deviceName,
+    authToken,
+    interactiveSessions = null,
+  }) {
     assert.ok(this.executorBinary, 'Remote executor binary is not ready')
     const home = join(resultDir, `generated-remote-device-${deviceId}`)
     const codexHome = join(home, 'codex')
@@ -851,6 +850,10 @@ class RealCloudEnvironment {
       logFile: `generated-remote-device-${deviceId}-runtime.log`,
       authToken,
     })
+    if (interactiveSessions) {
+      env.DEVICE_CODE_SERVER_ENABLED = String(interactiveSessions.codeServer)
+      env.DEVICE_TERMINAL_ENABLED = String(interactiveSessions.terminal)
+    }
     delete env.WEGENT_APP_IPC_DEVICE_ID
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
@@ -864,6 +867,7 @@ class RealCloudEnvironment {
       appendProcessOutput(executor.stderr, logPath),
     ])
     await this.waitForDevice(deviceId, logPath)
+    return { home, logPath }
   }
 
   async seedCloudProtocolModels() {
@@ -1170,7 +1174,7 @@ class RealCloudEnvironment {
     await stopProcessGroup(this.remoteExecutor)
     await stopProcessGroup(this.remoteDockerExecutor)
     await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
-    await stopProcess(this.backend)
+    await stopProcessGroup(this.backend)
     await this.pluginObjectStorage?.stop()
     await stopProcess(this.redis)
   }

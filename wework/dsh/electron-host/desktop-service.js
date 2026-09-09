@@ -35,11 +35,33 @@ export function createWeworkDesktopService(client) {
     notification: Object.freeze({
       show: options => invoke('notification.show', options),
     }),
+    browser: Object.freeze({
+      setRequestHeaderRule: rule => invoke('browser.setRequestHeaderRule', rule),
+      removeRequestHeaderRule: id => invoke('browser.removeRequestHeaderRule', { id }),
+      createBackgroundPage: id => invoke('browser.createBackgroundPage', { id }),
+      navigateBackgroundPage: (id, url) => invoke('browser.navigateBackgroundPage', { id, url }),
+      setBackgroundPageUserAgent: (id, userAgent) =>
+        invoke('browser.setBackgroundPageUserAgent', { id, userAgent }),
+      backgroundPageState: id => invoke('browser.backgroundPageState', { id }),
+      closeBackgroundPage: id => invoke('browser.closeBackgroundPage', { id }),
+    }),
+    secureStorage: Object.freeze({
+      get: key => invoke('secureStorage.get', { key }),
+      set: (key, value) => invoke('secureStorage.set', { key, value }),
+      delete: key => invoke('secureStorage.delete', { key }),
+    }),
+    preferences: Object.freeze({
+      get: () => invoke('preferences.get'),
+      update: patch => invoke('preferences.update', { patch }),
+    }),
     rendererHealth: Object.freeze({
       getState: () => invoke('rendererHealth.getState'),
     }),
     runtime: Object.freeze({
       restartCoreDsh: () => invoke('runtime.restartCoreDsh'),
+    }),
+    weworkSync: Object.freeze({
+      request: request => invoke('weworkSync.request', request),
     }),
     shell: Object.freeze({
       openExternal: url => invoke('shell.openExternal', { url }),

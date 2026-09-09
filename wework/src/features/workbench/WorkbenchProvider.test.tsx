@@ -28,7 +28,10 @@ import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
-import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
+import {
+  RUNTIME_RETRY_CONTINUATION_PROMPT,
+  useWorkbenchPaneSession,
+} from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
@@ -91,6 +94,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   ensureBundledPluginMarketplaceRegistered: vi.fn().mockResolvedValue(undefined),
   ensureLocalExecutorStarted: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
+  getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
   requestLocalExecutor: vi.fn(),
   subscribeLocalExecutorEvents: vi.fn(),
 }))
@@ -117,6 +121,7 @@ vi.mock('@/desktop/localExecutor', () => ({
     localExecutorMocks.ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
@@ -1068,6 +1073,12 @@ function ProjectSendProbe({
   const currentModelSelection =
     currentRuntimeTaskSummary?.modelSelection ??
     modelSelectionFromRuntimeHandle(currentRuntimeTask?.runtimeHandle)
+  const backgroundRuntimeTaskModelSelection =
+    workbench.projectChat.resolveRuntimeTaskModelSelection({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    })
 
   return (
     <div>
@@ -1075,6 +1086,9 @@ function ProjectSendProbe({
         {currentRuntimeTask
           ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
           : 'none'}
+      </span>
+      <span data-testid="background-runtime-task-model">
+        {backgroundRuntimeTaskModelSelection.selectedModel?.name ?? 'none'}
       </span>
       <span data-testid="current-project-name">
         {workbench.state.currentProject?.name ?? 'none'}
@@ -2056,11 +2070,23 @@ function RuntimeModelCompatibilityProbe() {
 function RuntimeModelSelectionProbe() {
   const workbench = useWorkbench()
   const mimoModel = workbench.projectChat.models.find(model => model.name === 'local-model:mimo')
+  const gptModel = workbench.projectChat.models.find(model => model.name === 'gpt-5.5')
+  const backgroundTaskModel = workbench.projectChat.resolveRuntimeTaskModelSelection({
+    deviceId: 'device-1',
+    workspacePath: '/workspace/project-alpha',
+    taskId: 'runtime-a',
+  })
 
   return (
     <div>
       <span data-testid="selected-model">{workbench.projectChat.selectedModel?.name ?? ''}</span>
       <span data-testid="active-model">{workbench.projectChat.activeModel?.name ?? ''}</span>
+      <span data-testid="background-task-selected-model">
+        {backgroundTaskModel.selectedModel?.name ?? ''}
+      </span>
+      <span data-testid="background-task-active-model">
+        {backgroundTaskModel.activeModel?.name ?? ''}
+      </span>
       <span data-testid="selected-mode">
         {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
       </span>
@@ -2071,6 +2097,15 @@ function RuntimeModelSelectionProbe() {
         }}
       >
         select mimo
+      </button>
+      <button
+        type="button"
+        data-testid="select-gpt-model"
+        onClick={() => {
+          if (gptModel) workbench.projectChat.setSelectedModel(gptModel)
+        }}
+      >
+        select gpt
       </button>
       <button
         type="button"
@@ -5512,6 +5547,68 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('serializes blank new chat model selection saves', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: { family: 'codex-provider', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'model-interface',
+          ui: { family: 'model-interface', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const firstSave = deferred<unknown>()
+    const updateCurrentUser = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockResolvedValue({})
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('selected-model')).toHaveTextContent('gpt-5.5'))
+    await userEvent.click(screen.getByText('select mimo'))
+    await waitFor(() => expect(updateCurrentUser).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByText('select gpt'))
+    expect(updateCurrentUser).toHaveBeenCalledTimes(1)
+
+    firstSave.resolve({})
+
+    await waitFor(() => expect(updateCurrentUser).toHaveBeenCalledTimes(2))
+    expect(updateCurrentUser).toHaveBeenLastCalledWith({
+      preferences: {
+        wework_new_chat_model_selection: expect.objectContaining({
+          modelName: 'gpt-5.5',
+          modelType: 'runtime',
+        }),
+      },
+    })
+  })
+
   test('restores a configured model for a cloud runtime task', async () => {
     const models: UnifiedModel[] = [
       {
@@ -5585,6 +5682,14 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<RuntimeModelSelectionProbe />, services)
 
+    await waitFor(() =>
+      expect(screen.getByTestId('background-task-selected-model')).toHaveTextContent(
+        'local-model:mimo'
+      )
+    )
+    expect(screen.getByTestId('background-task-active-model')).toHaveTextContent('local-model:mimo')
+    expect(screen.getByTestId('selected-model')).not.toHaveTextContent('local-model:mimo')
+
     await userEvent.click(await screen.findByText('open runtime a'))
 
     await waitFor(() =>
@@ -5652,6 +5757,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<ProjectSendProbe />, services)
 
+    await waitFor(() =>
+      expect(screen.getByTestId('background-runtime-task-model')).toHaveTextContent('gpt-5.6-sol')
+    )
     await userEvent.click(await screen.findByText('open project runtime task'))
 
     await waitFor(() =>
@@ -7317,7 +7425,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('remembers a local project task model and reasoning for the next task', async () => {
+  test('restores the local project default after a task-specific model override', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -7417,6 +7525,120 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         modelId: 'override-model',
         modelOptions: expect.objectContaining({ reasoning: 'high' }),
+      })
+    )
+
+    await userEvent.click(screen.getByText('start new project chat'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('project-model')
+    )
+    expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('medium')
+  })
+
+  test('updates the global new-task model from a follow-global local project', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'project-7',
+                name: 'Wegent',
+                source: 'local_project',
+                aiSettings: {
+                  modelSelection: null,
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+    })
+    const models: UnifiedModel[] = [
+      {
+        name: 'global-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+      {
+        name: 'override-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+    ]
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbenchForUser(
+      <ProjectSendProbe />,
+      {
+        id: 1,
+        user_name: 'alice',
+        email: 'a@b.c',
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'global-model',
+            modelType: 'runtime',
+            options: { reasoning: 'medium' },
+          },
+        },
+      },
+      services
+    )
+
+    await userEvent.click(await screen.findByText('select project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('global-model')
+    )
+
+    await userEvent.click(screen.getByText('select override model'))
+    await userEvent.click(screen.getByText('set high reasoning'))
+
+    await waitFor(() =>
+      expect(updateCurrentUser).toHaveBeenLastCalledWith({
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'override-model',
+            modelType: 'runtime',
+            options: expect.objectContaining({ reasoning: 'high' }),
+          },
+        },
       })
     )
 
@@ -10399,7 +10621,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
-  test('retries a live failure with the submitted prompt when the failed subtask is reused', async () => {
+  test('continues a failed conversation in a new turn when the failed subtask is reused', async () => {
     window.history.pushState({}, '', '/runtime-tasks?deviceId=device-1&taskId=runtime-restored')
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
@@ -10463,16 +10685,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(await screen.findByTestId('assistant-error-retry'))
 
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
-    await waitFor(() =>
-      expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
-    )
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
+    expect(screen.getAllByTestId('message-user').at(-1)).toHaveTextContent('继续')
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         address: expect.objectContaining({ taskId: 'runtime-restored' }),
-        message: '修复 CI',
-        retrySourceTurnId: 'reused-subtask',
+        message: RUNTIME_RETRY_CONTINUATION_PROMPT,
+        clientUserMessageId: expect.stringMatching(/^runtime-retry-continuation-/),
       })
     )
+    expect(sendRuntimeMessage.mock.calls[1][0]).not.toHaveProperty('retrySourceTurnId')
   })
 
   test('uses runtime transcript server times for blocks without timestamps', async () => {
@@ -15916,6 +16138,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('starts a queued Goal turn after the active response settles', async () => {
     let streamHandlers: ChatStreamHandlers = {}
+    const goalLoad = deferred<RuntimeGoalGetResponse>()
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
@@ -15976,6 +16199,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           },
         ],
       }),
+      getRuntimeGoal: vi.fn().mockReturnValue(goalLoad.promise),
       sendRuntimeMessage,
       setRuntimeGoal,
     })
@@ -16016,6 +16240,19 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(setRuntimeGoal).not.toHaveBeenCalled()
     expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('busy')
+    expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('继续修')
+
+    await act(async () => {
+      goalLoad.resolve({
+        accepted: true,
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        goal: null,
+      })
+      await goalLoad.promise
+    })
+    expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('继续修')
 
     await act(async () => {
       streamHandlers.onChatDone?.({

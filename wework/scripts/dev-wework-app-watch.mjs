@@ -6,11 +6,13 @@ import { normalizeFileViewerAssetManifest } from './lib/harness-runtime-metadata
 
 const weworkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const appWebRoot = path.join(weworkRoot, 'dsh', 'app-wework', 'web')
+const buildIdFile = path.join(appWebRoot, '.wework-build-id')
 const readyFile = process.env.WEWORK_APP_WATCH_READY_FILE?.trim()
 
 if (!readyFile) throw new Error('WEWORK_APP_WATCH_READY_FILE is required')
 
 await rm(readyFile, { force: true })
+await rm(appWebRoot, { recursive: true, force: true })
 
 process.env.VITE_APP_BASE_PATH = '/wework/app/'
 process.chdir(weworkRoot)
@@ -21,7 +23,10 @@ const watcher = await build({
   logLevel: 'warn',
   build: {
     outDir: appWebRoot,
-    emptyOutDir: true,
+    // Keep the previous hashed assets available until the completed build id
+    // is published. The running renderer may still request them while Vite is
+    // writing the next generation.
+    emptyOutDir: false,
     watch: {},
   },
 })
@@ -47,6 +52,7 @@ watcher.on('event', event => {
         await result?.close()
         await normalizeBuildMetadata(appWebRoot)
         completedBuilds += 1
+        await writeFile(buildIdFile, `${Date.now()}-${completedBuilds}\n`)
         await writeFile(readyFile, `${completedBuilds}\n`)
         console.log(`[wework-app-watch] built original Wework app (${completedBuilds})`)
       })

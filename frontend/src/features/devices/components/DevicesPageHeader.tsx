@@ -11,6 +11,7 @@
 
 import { Monitor, RefreshCw, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -19,6 +20,9 @@ export interface DevicesPageHeaderProps {
   hasDevices: boolean
   onRefresh: () => void
   onAddDevice: () => void
+  hasAdvancedDevices: boolean
+  showAdvancedDevices: boolean
+  onShowAdvancedDevicesChange: (show: boolean) => void
 }
 
 /**
@@ -34,11 +38,14 @@ export function DevicesPageHeader({
   hasDevices,
   onRefresh,
   onAddDevice,
+  hasAdvancedDevices,
+  showAdvancedDevices,
+  onShowAdvancedDevicesChange,
 }: DevicesPageHeaderProps) {
   const { t } = useTranslation('devices')
 
   return (
-    <div className="flex items-center justify-between mb-6">
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
         <Monitor className="w-6 h-6 text-primary" />
         <h2 className="text-lg font-semibold">{t('title')}</h2>
@@ -46,7 +53,22 @@ export function DevicesPageHeader({
           {t('beta')}
         </span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {hasAdvancedDevices && (
+          <label
+            htmlFor="show-advanced-devices"
+            className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-hover sm:min-h-0"
+            title={t('advanced_mode_description')}
+          >
+            <Switch
+              id="show-advanced-devices"
+              data-testid="show-advanced-devices-toggle"
+              checked={showAdvancedDevices}
+              onCheckedChange={onShowAdvancedDevicesChange}
+            />
+            <span>{t('advanced_mode')}</span>
+          </label>
+        )}
         {/* Add Device button - only show when devices exist */}
         {hasDevices && (
           <Button

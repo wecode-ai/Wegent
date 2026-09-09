@@ -534,6 +534,7 @@ fn attach_user_message_presentations(
         messages,
         presentations,
         &page_messages,
+        &[],
         false,
         false,
     );
@@ -543,6 +544,7 @@ fn attach_user_message_presentations_for_page(
     messages: &mut Vec<Value>,
     presentations: Vec<Value>,
     page_messages: &[Value],
+    page_turn_ids: &[String],
     has_more_before: bool,
     has_more_after: bool,
 ) {
@@ -565,6 +567,7 @@ fn attach_user_message_presentations_for_page(
                     && presentation_belongs_to_transcript_page(
                         &presentation,
                         page_messages,
+                        page_turn_ids,
                         has_more_before,
                         has_more_after,
                     ) =>
@@ -663,6 +666,7 @@ fn attach_user_message_presentations_for_page(
 fn presentation_belongs_to_transcript_page(
     presentation: &Value,
     page_messages: &[Value],
+    page_turn_ids: &[String],
     has_more_before: bool,
     has_more_after: bool,
 ) -> bool {
@@ -673,14 +677,15 @@ fn presentation_belongs_to_transcript_page(
     let presentation_turn_id = string_field(presentation, "turnId")
         .or_else(|| string_field(presentation, "turn_id"));
     if let Some(presentation_turn_id) = presentation_turn_id {
-        return page_messages.iter().any(|message| {
-            string_field(message, "turnId")
-                .or_else(|| string_field(message, "turn_id"))
-                .or_else(|| string_field(message, "subtaskId"))
-                .or_else(|| string_field(message, "subtask_id"))
-                .as_deref()
-                == Some(presentation_turn_id.as_str())
-        });
+        return page_turn_ids.contains(&presentation_turn_id)
+            || page_messages.iter().any(|message| {
+                string_field(message, "turnId")
+                    .or_else(|| string_field(message, "turn_id"))
+                    .or_else(|| string_field(message, "subtaskId"))
+                    .or_else(|| string_field(message, "subtask_id"))
+                    .as_deref()
+                    == Some(presentation_turn_id.as_str())
+            });
     }
 
     let Some(created_at) = timestamp_ms_field(presentation, "createdAt") else {

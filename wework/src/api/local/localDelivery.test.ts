@@ -85,6 +85,67 @@ describe('local delivery API', () => {
     })
   })
 
+  test('preserves and clears unread state for local board cards', async () => {
+    const unreadTask = {
+      ...taskRecord,
+      metadata: { ...taskRecord.metadata, is_unread: true },
+    }
+    const readTask = {
+      ...unreadTask,
+      metadata: { ...unreadTask.metadata, is_unread: false },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [unreadTask]
+      if (method === 'todos.mark_read') return readTask
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
+      items: [{ id: 'LOCAL-1', is_unread: true }],
+    })
+    await expect(api.markLoopItemRead('LOCAL-1')).resolves.toMatchObject({
+      id: 'LOCAL-1',
+      is_unread: false,
+    })
+    expect(request).toHaveBeenLastCalledWith('todos.mark_read', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+    })
+  })
+
+  test('maps the executor-owned Issue context marker', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') {
+        return [
+          {
+            ...taskRecord,
+            metadata: {
+              tags: [],
+              has_additional_context: false,
+              runtime_projection: {
+                source_title: taskRecord.title,
+                source_description: taskRecord.description,
+              },
+            },
+          },
+          {
+            ...taskRecord,
+            id: 'LOCAL-2',
+            metadata: { tags: [] },
+          },
+        ]
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    const { items } = await api.listLoopItems('project-1')
+
+    expect(items[0].has_additional_context).toBe(false)
+    expect(items[1].has_additional_context).toBe(true)
+  })
+
   test('lists every task execution associated with a work-item project', async () => {
     const execution = {
       id: 7,
@@ -615,6 +676,59 @@ describe('local delivery API', () => {
         priority: 'none',
         parent_id: null,
         tags: [],
+      },
+    })
+  })
+
+  test('creates a new local board item when the runtime task belongs to another project', async () => {
+    const movedTask = { ...taskRecord, id: 'LOCAL-MOVED', cloud_project_id: 'project-2' }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.user_context') {
+        return {
+          id: 'binding-old',
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: 'runtime-1',
+          task_title: 'Runtime task',
+          backend_task_id: null,
+          linked_at: '2026-08-31T00:00:00Z',
+        }
+      }
+      if (method === 'todos.create') return movedTask
+      if (method === 'todos.bind') return { id: 'binding-new' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.trackProjectTask(
+        'project-2',
+        { deviceId: 'local-device', taskId: 'runtime-1' },
+        'Runtime task',
+        'Move to another board'
+      )
+    ).resolves.toMatchObject({ item: { id: 'LOCAL-MOVED' } })
+
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-2',
+      todo: {
+        title: 'Runtime task',
+        description: 'Move to another board',
+        status: 'pending',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('todos.bind', {
+      project_id: 'project-2',
+      item_id: 'LOCAL-MOVED',
+      task: {
+        deviceId: 'local-device',
+        taskId: 'runtime-1',
+        taskTitle: 'Runtime task',
       },
     })
   })

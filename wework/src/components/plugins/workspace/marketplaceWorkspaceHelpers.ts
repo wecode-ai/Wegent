@@ -1,4 +1,5 @@
 import { createHttpClient } from '@/api/http'
+import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
 import {
   peekLocalCodexPluginsReadState,
   type LocalCodexMarketplace,
@@ -285,16 +286,18 @@ export function keepRicherMarketplacePluginDetail(
 
 export function createDefaultPluginApi(apiBaseUrl?: string, token?: string | null) {
   const runtime = getRuntimeConfig()
+  const resolvedApiBaseUrl = apiBaseUrl || runtime.apiBaseUrl
   return createPluginApi(
     createHttpClient({
-      baseUrl: apiBaseUrl || runtime.apiBaseUrl,
+      baseUrl: resolvedApiBaseUrl,
       ...(token === undefined
         ? {}
         : {
             getToken: () => token,
             redirectOnUnauthorized: false,
           }),
-    })
+    }),
+    resolvedApiBaseUrl
   )
 }
 
@@ -324,7 +327,7 @@ export function withMarketplaceDetailComponents(
 export function requiredConnectionNames(item: PluginMarketplaceItem): string[] {
   const pluginName = item.displayName || item.name
   return (item.components.connectors ?? [])
-    .filter(connector => connector.authPolicy === 'on_install')
+    .filter(requiresInstallConnectorAuth)
     .map(connector => connectorDisplayName(connector.slug, { pluginName }))
 }
 
@@ -432,6 +435,21 @@ export function isUserAddedMarketplace(marketplace: MarketplaceOption): boolean 
 
 export function localMarketplaceIdFromItem(item: PluginMarketplaceItem): string | null {
   return marketplaceItemMarketplaceId(item)
+}
+
+export function marketplacePluginDetailSelectionKey(item: PluginMarketplaceItem): string {
+  return [
+    marketplaceItemMarketplaceId(item) ?? 'cloud',
+    String(item.id),
+    item.name,
+    item.version ?? '',
+    item.latestReleaseId == null ? '' : String(item.latestReleaseId),
+    String(item.installedPluginId ?? ''),
+    String(Boolean(item.installed)),
+    String(Boolean(item.installedLocally)),
+    item.currentDeviceInstallation?.state ?? '',
+    String(item.currentDeviceInstallation?.actualReleaseId ?? ''),
+  ].join('::')
 }
 
 export function isMarketplaceSourceValid(value: string): boolean {

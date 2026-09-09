@@ -4,59 +4,68 @@
 
 'use client'
 
-import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
-import { FolderGit2, Check, Loader2 } from 'lucide-react'
-import { GitRepoInfo, TaskDetail } from '@/types/api'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronLeft, FolderGit2, GitBranch, Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+
+import { githubApis } from '@/apis/github'
+import { Command, CommandInput } from '@/components/ui/command'
+import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { paths } from '@/config/paths'
+import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Command, CommandInput } from '@/components/ui/command'
+import type { GitBranch as GitBranchType, GitRepoInfo, TaskDetail } from '@/types/api'
 
-import { RepositorySelectorFooter } from './RepositorySelectorFooter'
 import { useRepositorySearch } from '../../hooks/useRepositorySearch'
 import { getRepositoryIdentity } from './repositoryIdentity'
+import { RepositorySelectorFooter } from './RepositorySelectorFooter'
 
-// Initial number of repositories to render for performance
 const INITIAL_VISIBLE_COUNT = 50
-// Number of repositories to load on each scroll
 const LOAD_MORE_COUNT = 50
+
+type WorkspaceSelectorStep = 'repository' | 'branch'
 
 interface MobileRepositorySelectorProps {
   selectedRepo: GitRepoInfo | null
   handleRepoChange: (repo: GitRepoInfo | null) => void
+  selectedBranch: GitBranchType | null
+  handleBranchChange: (branch: GitBranchType | null) => void
   disabled: boolean
   selectedTaskDetail?: TaskDetail | null
+  onSelectorOpenChange?: (open: boolean) => void
 }
 
-/**
- * Mobile-specific Repository Selector
- * Renders as a full-width clickable row that opens a popover
- * Reuses useRepositorySearch hook for consistent behavior with desktop version
- */
 export default function MobileRepositorySelector({
   selectedRepo,
   handleRepoChange,
+  selectedBranch,
+  handleBranchChange,
   disabled,
   selectedTaskDetail,
+  onSelectorOpenChange,
 }: MobileRepositorySelectorProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('chat')
+  const { toast } = useToast()
   const router = useRouter()
   const [open, setOpen] = useState(false)
-  const listRef = useRef<HTMLDivElement>(null)
-  // Track visible count for progressive loading
+  const [step, setStep] = useState<WorkspaceSelectorStep>('repository')
+  const [activeRepo, setActiveRepo] = useState<GitRepoInfo | null>(selectedRepo)
+  const [branches, setBranches] = useState<GitBranchType[]>([])
+  const [branchLoading, setBranchLoading] = useState(false)
+  const [branchError, setBranchError] = useState<string | null>(null)
+  const [branchSearch, setBranchSearch] = useState('')
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
+  const listRef = useRef<HTMLDivElement>(null)
 
-  // Use the shared repository search hook
   const {
     repos,
     loading,
     isRefreshing,
     error,
+    currentSearchQuery,
     handleSearchChange,
     handleRefreshCache,
-    handleChange: baseHandleChange,
     resetSearch,
   } = useRepositorySearch({
     selectedRepo,
@@ -65,58 +74,96 @@ export default function MobileRepositorySelector({
     selectedTaskDetail,
   })
 
-  // Reset visible count when repos change (new search results)
-  // Use a ref to track if this is a new search/filter operation
   const prevReposRef = useRef(repos)
   useEffect(() => {
-    // Check if repos array actually changed (different references or different items)
-    const prevRepos = prevReposRef.current
-    const hasChanged =
-      prevRepos.length !== repos.length ||
+    const previousRepos = prevReposRef.current
+    const changed =
+      previousRepos.length !== repos.length ||
       (repos.length > 0 &&
-        prevRepos.length > 0 &&
-        prevRepos[0]?.git_repo_id !== repos[0]?.git_repo_id)
+        previousRepos.length > 0 &&
+        previousRepos[0]?.git_repo_id !== repos[0]?.git_repo_id)
 
-    if (hasChanged) {
+    if (changed) {
       setVisibleCount(INITIAL_VISIBLE_COUNT)
       prevReposRef.current = repos
     }
   }, [repos])
 
-  // Wrap handleChange to also close the popover
-  const handleChange = (value: string) => {
-    baseHandleChange(value)
-    setOpen(false)
-  }
+  useEffect(() => {
+    setActiveRepo(selectedRepo)
+    setBranchSearch('')
+    setBranchError(null)
 
-  const handleIntegrationClick = () => {
-    router.push(paths.settings.integrations.getHref())
-  }
+    if (!selectedRepo) {
+      setBranches([])
+      setBranchLoading(false)
+      return
+    }
 
-  const selectItems = useMemo(() => {
-    // Remove duplicates by repository identity
+    let ignore = false
+    setBranchLoading(true)
+    githubApis
+      .getBranches(selectedRepo)
+      .then(data => {
+        if (ignore) return
+
+        setBranches(data)
+        setBranchError(null)
+
+        const selectedStillExists = selectedBranch
+          ? data.find(branch => branch.name === selectedBranch.name)
+          : null
+        if (selectedStillExists) return
+
+        const taskBranchName =
+          selectedTaskDetail && 'branch_name' in selectedTaskDetail
+            ? selectedTaskDetail.branch_name
+            : null
+        const preferredBranch =
+          data.find(branch => branch.name === taskBranchName) ??
+          data.find(branch => branch.default) ??
+          null
+        handleBranchChange(preferredBranch)
+      })
+      .catch(() => {
+        if (ignore) return
+        const message = t('common:branches.load_failed')
+        setBranchError(message)
+        toast({ variant: 'destructive', title: message })
+      })
+      .finally(() => {
+        if (!ignore) setBranchLoading(false)
+      })
+
+    return () => {
+      ignore = true
+    }
+    // Repository identity is the fetch boundary; callbacks may be recreated by the parent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRepo])
+
+  const repositoryItems = useMemo(() => {
     const seen = new Set<string>()
-    const uniqueRepos = repos.filter(repo => {
-      const key = getRepositoryIdentity(repo)
-      if (seen.has(key)) {
-        return false
-      }
-      seen.add(key)
-      return true
-    })
-
-    const items = uniqueRepos.map(repo => ({
-      value: getRepositoryIdentity(repo),
-      label: repo.git_repo,
-    }))
+    const items = repos
+      .filter(repo => {
+        const key = getRepositoryIdentity(repo)
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .map(repo => ({
+        value: getRepositoryIdentity(repo),
+        label: repo.git_repo,
+        repo,
+      }))
 
     if (selectedRepo) {
-      const selectedRepoIdentity = getRepositoryIdentity(selectedRepo)
-      const hasSelected = items.some(item => item.value === selectedRepoIdentity)
-      if (!hasSelected) {
+      const selectedIdentity = getRepositoryIdentity(selectedRepo)
+      if (!items.some(item => item.value === selectedIdentity)) {
         items.unshift({
-          value: selectedRepoIdentity,
+          value: selectedIdentity,
           label: selectedRepo.git_repo,
+          repo: selectedRepo,
         })
       }
     }
@@ -124,135 +171,244 @@ export default function MobileRepositorySelector({
     return items
   }, [repos, selectedRepo])
 
-  // Get visible items based on current count
-  const visibleItems = useMemo(() => {
-    return selectItems.slice(0, visibleCount)
-  }, [selectItems, visibleCount])
+  const visibleRepositoryItems = useMemo(
+    () => repositoryItems.slice(0, visibleCount),
+    [repositoryItems, visibleCount]
+  )
+  const hasMoreRepositories = repositoryItems.length > visibleCount
+  const filteredBranches = useMemo(() => {
+    const query = branchSearch.trim().toLowerCase()
+    if (!query) return branches
+    return branches.filter(branch => branch.name.toLowerCase().includes(query))
+  }, [branchSearch, branches])
 
-  const hasMoreItems = selectItems.length > visibleCount
-
-  // Handle scroll to load more
   const handleScroll = useCallback(() => {
-    if (!listRef.current || !hasMoreItems) return
+    if (!listRef.current || !hasMoreRepositories) return
 
     const { scrollTop, scrollHeight, clientHeight } = listRef.current
-    // Load more when user scrolls to bottom (within 50px)
     if (scrollTop + clientHeight >= scrollHeight - 50) {
-      setVisibleCount(prev => Math.min(prev + LOAD_MORE_COUNT, selectItems.length))
+      setVisibleCount(previous => Math.min(previous + LOAD_MORE_COUNT, repositoryItems.length))
     }
-  }, [hasMoreItems, selectItems.length])
+  }, [hasMoreRepositories, repositoryItems.length])
 
-  // Handle popover open/close changes
   const handleOpenChange = useCallback(
-    (newOpen: boolean) => {
-      // Prevent opening when disabled
-      if ((disabled || loading) && newOpen) return
-      setOpen(newOpen)
-      // Reset search when closing
-      if (!newOpen) {
-        resetSearch()
+    (nextOpen: boolean) => {
+      if ((disabled || loading) && nextOpen) return
+
+      setOpen(nextOpen)
+      onSelectorOpenChange?.(nextOpen)
+      if (nextOpen) {
+        setStep('repository')
+        setActiveRepo(selectedRepo)
+        return
       }
+
+      resetSearch()
+      setBranchSearch('')
+      setStep('repository')
     },
-    [disabled, loading, resetSearch]
+    [disabled, loading, onSelectorOpenChange, resetSearch, selectedRepo]
   )
 
+  const handleRepositorySelect = (repo: GitRepoInfo) => {
+    const repositoryChanged =
+      !selectedRepo || getRepositoryIdentity(selectedRepo) !== getRepositoryIdentity(repo)
+
+    setActiveRepo(repo)
+    setStep('branch')
+    setBranchSearch('')
+
+    if (repositoryChanged) {
+      setBranches([])
+      setBranchError(null)
+      setBranchLoading(true)
+      handleBranchChange(null)
+      handleRepoChange(repo)
+    }
+  }
+
+  const handleBranchSelect = (branch: GitBranchType) => {
+    handleBranchChange(branch)
+    handleOpenChange(false)
+  }
+
+  const handleIntegrationClick = () => {
+    handleOpenChange(false)
+    router.push(paths.settings.integrations.getHref())
+  }
+
+  const selectedWorkspace = selectedRepo
+    ? `${selectedRepo.git_repo}${selectedBranch ? ` · ${selectedBranch.name}` : ''}`
+    : t('mobile_composer.not_selected')
+
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
+    <Drawer open={open} onOpenChange={handleOpenChange} shouldScaleBackground={false}>
+      <DrawerTrigger asChild>
         <button
           type="button"
           disabled={disabled || loading}
+          data-testid="mobile-repository-selector-trigger"
           className={cn(
-            'w-full flex items-center justify-between px-3 py-2.5',
-            'text-left transition-colors',
-            'hover:bg-hover active:bg-hover',
-            'disabled:opacity-50 disabled:cursor-not-allowed',
+            'flex w-full items-center justify-between px-3 py-2.5 text-left',
+            'transition-colors hover:bg-hover active:bg-hover',
+            'disabled:cursor-not-allowed disabled:opacity-50',
             loading && 'animate-pulse'
           )}
         >
-          <div className="flex items-center gap-3">
-            <FolderGit2 className="h-4 w-4 text-text-muted" />
-            <span className="text-sm">仓库</span>
-          </div>
-          <span className="text-sm text-text-muted truncate max-w-[140px]">
-            {selectedRepo?.git_repo || '未选择'}
+          <span className="flex min-w-0 items-center gap-3">
+            <FolderGit2 className="h-4 w-4 shrink-0 text-text-muted" />
+            <span className="text-sm">{t('mobile_composer.workspace')}</span>
+          </span>
+          <span className="ml-3 max-w-[160px] truncate text-sm text-text-muted">
+            {selectedWorkspace}
           </span>
         </button>
-      </PopoverTrigger>
-      <PopoverContent
-        className={cn(
-          'p-0 w-auto min-w-[280px] max-w-[min(500px,90vw)] border border-border bg-base',
-          'shadow-xl rounded-xl overflow-hidden',
-          'max-h-[400px] flex flex-col'
-        )}
-        align="end"
-        side="top"
-        sideOffset={4}
+      </DrawerTrigger>
+
+      <DrawerContent
+        className="max-h-[85vh] overflow-hidden bg-[#f2f2f7] dark:bg-[#1c1c1e]"
+        showHandle={false}
+        data-testid="mobile-repository-selector-drawer"
       >
+        <div className="flex justify-center pb-3 pt-2">
+          <div className="h-1 w-9 rounded-full bg-[#3c3c43]/30 dark:bg-[#5c5c5e]" />
+        </div>
+
+        <DrawerTitle className="px-4 pb-2 text-base font-semibold text-text-primary">
+          {step === 'repository' ? t('common:repos.repository') : t('common:repos.branch')}
+        </DrawerTitle>
+
+        {step === 'branch' && (
+          <button
+            type="button"
+            onClick={() => {
+              setStep('repository')
+              setBranchSearch('')
+            }}
+            className="mx-4 mb-2 flex min-h-11 max-w-[calc(100%-32px)] items-center gap-1 text-primary active:opacity-70"
+            data-testid="mobile-workspace-back-to-repositories"
+          >
+            <ChevronLeft className="h-5 w-5 shrink-0" />
+            <span className="truncate text-sm font-medium">{activeRepo?.git_repo}</span>
+          </button>
+        )}
+
         <Command
-          className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+          className={cn(
+            'min-h-0 flex-1 rounded-none border-0 bg-transparent',
+            '[&_[cmdk-input-wrapper]]:mx-4 [&_[cmdk-input-wrapper]]:mb-3',
+            '[&_[cmdk-input-wrapper]]:rounded-lg [&_[cmdk-input-wrapper]]:border-0',
+            '[&_[cmdk-input-wrapper]]:bg-[#e5e5ea] dark:[&_[cmdk-input-wrapper]]:bg-[#2c2c2e]'
+          )}
           shouldFilter={false}
         >
           <CommandInput
-            placeholder={t('branches.search_repository')}
-            onValueChange={handleSearchChange}
-            className="h-9 rounded-none border-b border-border flex-shrink-0 placeholder:text-text-muted text-sm"
+            placeholder={
+              step === 'repository'
+                ? t('common:branches.search_repository')
+                : t('common:branches.search_branch')
+            }
+            onValueChange={
+              step === 'repository' ? handleSearchChange : value => setBranchSearch(value)
+            }
+            value={step === 'repository' ? currentSearchQuery : branchSearch}
+            className="h-11 flex-shrink-0 text-sm placeholder:text-text-muted"
           />
+
           <div
             ref={listRef}
-            onScroll={handleScroll}
-            className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1"
+            onScroll={step === 'repository' ? handleScroll : undefined}
+            className="mx-4 min-h-[44px] max-h-[55vh] flex-1 overflow-y-auto rounded-xl bg-white dark:bg-[#2c2c2e]"
           >
-            {error ? (
-              <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
-            ) : selectItems.length === 0 ? (
-              <div className="py-4 text-center text-sm text-text-muted">
-                {loading ? 'Loading...' : t('branches.select_repository')}
-              </div>
-            ) : (
-              <>
-                <div className="p-1">
-                  {visibleItems.map(item => (
-                    <div
+            {step === 'repository' ? (
+              error ? (
+                <div className="px-3 py-4 text-center text-sm text-error">{error}</div>
+              ) : repositoryItems.length === 0 ? (
+                <div className="px-3 py-4 text-center text-sm text-text-muted">
+                  {loading ? t('common:loading') : t('common:branches.select_repository')}
+                </div>
+              ) : (
+                <>
+                  {visibleRepositoryItems.map((item, index) => (
+                    <button
+                      type="button"
                       key={item.value}
-                      onClick={() => handleChange(item.value)}
+                      onClick={() => handleRepositorySelect(item.repo)}
+                      data-testid="mobile-repository-option"
                       className={cn(
-                        'cursor-pointer px-3 py-1.5 text-sm rounded-md mx-1 my-[2px]',
-                        'hover:bg-hover',
-                        '!flex !flex-row !items-center !gap-3'
+                        'flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left text-sm',
+                        'active:bg-hover',
+                        index !== visibleRepositoryItems.length - 1 && 'border-b border-border'
                       )}
                     >
-                      <Check
-                        className={cn(
-                          'h-3 w-3 shrink-0',
-                          selectedRepo && getRepositoryIdentity(selectedRepo) === item.value
-                            ? 'opacity-100 text-primary'
-                            : 'opacity-0'
-                        )}
-                      />
-                      <span className="flex-1 min-w-0 truncate">{item.label}</span>
-                    </div>
+                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      {selectedRepo && getRepositoryIdentity(selectedRepo) === item.value && (
+                        <Check className="h-4 w-4 shrink-0 text-primary" />
+                      )}
+                    </button>
                   ))}
-                </div>
-                {/* Load more indicator */}
-                {hasMoreItems && (
-                  <div className="py-2 px-3 text-center text-xs text-text-muted">
-                    <div className="flex items-center justify-center gap-2">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      <span>{t('common:repos.scroll_to_load_more', 'Scroll to load more...')}</span>
+                  {hasMoreRepositories && (
+                    <div className="flex items-center justify-center gap-2 px-3 py-2 text-xs text-text-muted">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>{t('common:repos.scroll_to_load_more')}</span>
                     </div>
-                  </div>
-                )}
-              </>
+                  )}
+                </>
+              )
+            ) : branchError ? (
+              <div className="px-3 py-4 text-center text-sm text-error">{branchError}</div>
+            ) : branchLoading ? (
+              <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-text-muted">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>{t('common:branches.loading')}</span>
+              </div>
+            ) : filteredBranches.length === 0 ? (
+              <div className="px-3 py-4 text-center text-sm text-text-muted">
+                {branchSearch ? t('common:branches.no_match') : t('common:branches.no_branch')}
+              </div>
+            ) : (
+              filteredBranches.map((branch, index) => (
+                <button
+                  type="button"
+                  key={branch.name}
+                  onClick={() => handleBranchSelect(branch)}
+                  data-testid="mobile-branch-option"
+                  className={cn(
+                    'flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left text-sm',
+                    'active:bg-hover',
+                    index !== filteredBranches.length - 1 && 'border-b border-border'
+                  )}
+                >
+                  <GitBranch className="h-4 w-4 shrink-0 text-text-muted" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {branch.name}
+                    {branch.default && (
+                      <span className="ml-2 text-xs text-green-500">
+                        {t('common:branches.default')}
+                      </span>
+                    )}
+                  </span>
+                  {selectedBranch?.name === branch.name && (
+                    <Check className="h-4 w-4 shrink-0 text-primary" />
+                  )}
+                </button>
+              ))
             )}
           </div>
         </Command>
-        <RepositorySelectorFooter
-          onConfigureClick={handleIntegrationClick}
-          onRefreshClick={handleRefreshCache}
-          isRefreshing={isRefreshing}
-        />
-      </PopoverContent>
-    </Popover>
+
+        {step === 'repository' && (
+          <div className="px-4 pb-4 pt-3">
+            <div className="overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
+              <RepositorySelectorFooter
+                onConfigureClick={handleIntegrationClick}
+                onRefreshClick={handleRefreshCache}
+                isRefreshing={isRefreshing}
+              />
+            </div>
+          </div>
+        )}
+      </DrawerContent>
+    </Drawer>
   )
 }

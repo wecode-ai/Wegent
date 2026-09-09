@@ -8,6 +8,7 @@ import {
   updateQuickLaunchFunctionsConfig,
 } from './admin-quick-launch'
 import { outboundTokenAdminApis } from './outboundTokens'
+import { oauthClientAdminApis } from './oauthProvider'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
 import type { KnowledgeBaseRetrievalProfile, RetrievalConfigDraft } from '@/types/knowledge'
@@ -31,6 +32,13 @@ export type {
   TokenIssuerListResponse,
   TokenIssuerUpdateRequest,
 } from './outboundTokens'
+export type {
+  OAuthClient,
+  OAuthClientCreateRequest,
+  OAuthClientListResponse,
+  OAuthClientType,
+  OAuthClientUpdateRequest,
+} from './oauthProvider'
 
 // Admin User Types
 export type UserRole = 'admin' | 'user'
@@ -83,6 +91,7 @@ export interface AdminPublicModel {
   display_name: string | null
   json: Record<string, unknown>
   is_active: boolean
+  is_visible: boolean
   is_advanced: boolean
   created_at: string
   updated_at: string
@@ -97,6 +106,7 @@ export interface AdminPublicModelCreate {
   name: string
   namespace?: string
   json: Record<string, unknown>
+  is_visible?: boolean
 }
 
 export interface AdminPublicModelUpdate {
@@ -104,6 +114,7 @@ export interface AdminPublicModelUpdate {
   namespace?: string
   json?: Record<string, unknown>
   is_active?: boolean
+  is_visible?: boolean
   is_advanced?: boolean
 }
 
@@ -285,6 +296,34 @@ export interface ServiceKeyListResponse {
   total: number
 }
 
+// Plugin Release Key Types
+export interface PluginReleaseKey {
+  id: number
+  name: string
+  keyPrefix: string
+  description: string | null
+  expiresAt: string
+  lastUsedAt: string
+  createdAt: string
+  isActive: boolean
+  createdBy: string | null
+}
+
+export interface PluginReleaseKeyCreated extends PluginReleaseKey {
+  key: string // Full key, only at creation
+}
+
+export interface PluginReleaseKeyCreateRequest {
+  name: string
+  description?: string
+  expiresAt?: string
+}
+
+export interface PluginReleaseKeyListResponse {
+  items: PluginReleaseKey[]
+  total: number
+}
+
 // Personal Key Types (Admin Management)
 export interface AdminPersonalKey {
   id: number
@@ -375,6 +414,27 @@ export interface AdminPublicTeamListResponse {
   items: AdminPublicTeam[]
 }
 
+export interface CodeWikiGenerationPolicyStrategy {
+  id: string
+  enabled: boolean
+  team_name: string
+  team_namespace: string
+  display_name: string
+  description: string
+}
+
+export interface CodeWikiGenerationPolicyConfig {
+  version: number
+  configured: boolean
+  default_strategy: string
+  strategies: CodeWikiGenerationPolicyStrategy[]
+}
+
+export interface CodeWikiGenerationPolicyUpdate {
+  default_strategy: string
+  strategies: CodeWikiGenerationPolicyStrategy[]
+}
+
 export interface AdminPublicTeamCreate {
   name: string
   namespace?: string
@@ -393,7 +453,7 @@ export interface AdminPublicTeamIconUpload {
   url: string
 }
 
-export type AdminMarketplaceResourceType = 'agent' | 'skill'
+export type AdminMarketplaceResourceType = 'agent' | 'skill' | 'smart_app'
 
 export interface AdminMarketplaceExampleConversation {
   title: string
@@ -419,6 +479,82 @@ export interface AdminMarketplaceResourceUpdate {
 
 export interface AdminMarketplaceResourceListResponse {
   items: AdminMarketplaceResource[]
+  total: number
+  page: number
+  limit: number
+}
+
+export type AdminMarketplacePluginSource = 'wework-official' | 'enterprise'
+
+export interface AdminMarketplacePlugin {
+  id: number
+  catalog_namespace: AdminMarketplacePluginSource
+  name: string
+  display_name: string
+  description: string
+  version: string | null
+  author: string | null
+  featured_rank: number
+  is_listed: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminMarketplacePluginFilters {
+  search?: string
+  listingStatus?: 'all' | 'listed' | 'unlisted'
+  source?: 'all' | AdminMarketplacePluginSource
+  scoreOrder?: 'asc' | 'desc'
+}
+
+export interface AdminMarketplacePluginUpdate {
+  description?: string
+  featured_rank?: number
+  is_listed?: boolean
+}
+
+export interface AdminMarketplacePluginListResponse {
+  items: AdminMarketplacePlugin[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface AdminMarketplaceSmartApp {
+  id: number
+  name: string
+  display_name: string
+  summary: string
+  description_md: string
+  tags: string[]
+  icon_url: string
+  publisher_user_name: string | null
+  is_system: boolean
+  featured_rank: number
+  is_listed: boolean
+  needs_metadata: boolean
+}
+
+export interface AdminMarketplaceSmartAppFilters {
+  search?: string
+  listingStatus?: 'all' | 'listed' | 'unlisted'
+  source?: 'all' | 'official' | 'user'
+}
+
+export interface AdminMarketplaceSmartAppUpdate {
+  featured_rank?: number
+  is_listed?: boolean
+}
+
+export interface AdminMarketplaceSmartAppMetadataUpdate {
+  summary: string
+  descriptionMd: string
+  tags: string[]
+  icon?: File | null
+}
+
+export interface AdminMarketplaceSmartAppListResponse {
+  items: AdminMarketplaceSmartApp[]
   total: number
   page: number
   limit: number
@@ -775,6 +911,7 @@ export async function restartAllCloudDevices(): Promise<AdminDeviceBatchStartRes
 // Admin API Services
 export const adminApis = {
   ...outboundTokenAdminApis,
+  ...oauthClientAdminApis,
   getQuickLaunchFunctionsConfig,
   updateQuickLaunchFunctionsConfig,
   upgradeAllLocalDevices,
@@ -932,6 +1069,16 @@ export const adminApis = {
     })
   },
 
+  async getCodeWikiGenerationPolicy(): Promise<CodeWikiGenerationPolicyConfig> {
+    return apiClient.get('/admin/system-config/code-wiki-generation-policy')
+  },
+
+  async updateCodeWikiGenerationPolicy(
+    policy: CodeWikiGenerationPolicyUpdate
+  ): Promise<CodeWikiGenerationPolicyConfig> {
+    return apiClient.put('/admin/system-config/code-wiki-generation-policy', policy)
+  },
+
   async getMarketplaceTagsConfig(): Promise<MarketplaceTagsResponse> {
     return apiClient.get('/admin/system-config/marketplace-tags')
   },
@@ -985,6 +1132,32 @@ export const adminApis = {
    */
   async deleteServiceKey(keyId: number): Promise<void> {
     return apiClient.delete(`/admin/service-keys/${keyId}`)
+  },
+
+  // ==================== Plugin Release Key Management ====================
+
+  /**
+   * Get all keys dedicated to protected plugin release jobs
+   */
+  async getPluginReleaseKeys(): Promise<PluginReleaseKeyListResponse> {
+    return apiClient.get('/admin/plugin-release-keys')
+  },
+
+  /**
+   * Create a plugin release key
+   * The full key is only returned at creation time
+   */
+  async createPluginReleaseKey(
+    data: PluginReleaseKeyCreateRequest
+  ): Promise<PluginReleaseKeyCreated> {
+    return apiClient.post('/admin/plugin-release-keys', data)
+  },
+
+  /**
+   * Toggle plugin release key active status
+   */
+  async togglePluginReleaseKeyStatus(keyId: number): Promise<PluginReleaseKey> {
+    return apiClient.post(`/admin/plugin-release-keys/${keyId}/toggle-status`)
   },
 
   // ==================== Personal Key Management (Admin) ====================
@@ -1143,7 +1316,7 @@ export const adminApis = {
   },
 
   async getMarketplaceResources(
-    resourceType: AdminMarketplaceResourceType,
+    resourceType: Exclude<AdminMarketplaceResourceType, 'smart_app'>,
     page: number = 1,
     limit: number = 50
   ): Promise<AdminMarketplaceResourceListResponse> {
@@ -1157,6 +1330,71 @@ export const adminApis = {
     update: AdminMarketplaceResourceUpdate
   ): Promise<AdminMarketplaceResource> {
     return apiClient.put(`/admin/marketplace-resources/${resourceId}`, update)
+  },
+
+  async getMarketplacePlugins(
+    page: number = 1,
+    limit: number = 50,
+    filters: AdminMarketplacePluginFilters = {}
+  ): Promise<AdminMarketplacePluginListResponse> {
+    const query = new URLSearchParams({ page: String(page), limit: String(limit) })
+    if (filters.search) query.set('search', filters.search)
+    if (filters.listingStatus && filters.listingStatus !== 'all') {
+      query.set('listing_status', filters.listingStatus)
+    }
+    if (filters.source && filters.source !== 'all') query.set('source', filters.source)
+    if (filters.scoreOrder) query.set('score_order', filters.scoreOrder)
+    return apiClient.get(`/admin/marketplace-plugins?${query.toString()}`)
+  },
+
+  async updateMarketplacePlugin(
+    pluginId: number,
+    update: AdminMarketplacePluginUpdate
+  ): Promise<AdminMarketplacePlugin> {
+    return apiClient.put(`/admin/marketplace-plugins/${pluginId}`, update)
+  },
+
+  async getMarketplaceSmartApps(
+    page: number = 1,
+    limit: number = 50,
+    filters: AdminMarketplaceSmartAppFilters = {}
+  ): Promise<AdminMarketplaceSmartAppListResponse> {
+    const query = new URLSearchParams({ page: String(page), limit: String(limit) })
+    if (filters.search) query.set('search', filters.search)
+    if (filters.listingStatus && filters.listingStatus !== 'all') {
+      query.set('listing_status', filters.listingStatus)
+    }
+    if (filters.source && filters.source !== 'all') query.set('source', filters.source)
+    return apiClient.get(`/admin/marketplace-smart-apps?${query.toString()}`)
+  },
+
+  async updateMarketplaceSmartApp(
+    smartAppId: number,
+    update: AdminMarketplaceSmartAppUpdate
+  ): Promise<AdminMarketplaceSmartApp> {
+    return apiClient.put(`/admin/marketplace-smart-apps/${smartAppId}`, update)
+  },
+
+  async importOfficialMarketplaceSmartApp(packageFile: File): Promise<AdminMarketplaceSmartApp> {
+    const form = new FormData()
+    form.append('package', packageFile)
+    return apiClient.postForm('/admin/marketplace-smart-apps/import', form)
+  },
+
+  async updateOfficialMarketplaceSmartAppMetadata(
+    smartAppId: number,
+    update: AdminMarketplaceSmartAppMetadataUpdate
+  ): Promise<AdminMarketplaceSmartApp> {
+    const form = new FormData()
+    form.append('summary', update.summary)
+    form.append('description_md', update.descriptionMd)
+    form.append('tags', JSON.stringify(update.tags))
+    if (update.icon) form.append('icon', update.icon)
+    return apiClient.putForm(`/admin/marketplace-smart-apps/${smartAppId}/metadata`, form)
+  },
+
+  async deleteOfficialMarketplaceSmartApp(smartAppId: number): Promise<void> {
+    return apiClient.delete(`/admin/marketplace-smart-apps/${smartAppId}`)
   },
 
   // ==================== Public Bot Management ====================

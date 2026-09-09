@@ -53,6 +53,10 @@ for cmd in cargo uv black isort pytest npm npx pnpm; do
 done
 
 export CALL_LOG
+export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Wegent Push Gate Test}"
+export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-push-gate-test@localhost}"
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 
 # This historical range changes only backend Python files. It exercises the
 # Python module branch without pulling frontend or executor checks into the
@@ -175,7 +179,21 @@ if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec eslint src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts src/features/workbench/runtimeModelSelection.ts$' "$CALL_LOG"; then
+    echo "Expected Wework changes to lint only changed TypeScript files."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
+    echo "Expected ordinary Wework changes to avoid the full lint suite."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
     echo "Expected renderer source changes to run changed and sibling test files."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -189,14 +207,14 @@ if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT"; then
-    echo "Expected focused Wework pre-push tests to use four workers by default."
+if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT"; then
+    echo "Expected focused Wework pre-push tests to use two workers by default."
     cat "$WEWORK_TEST_OUT"
     exit 1
 fi
 
 STATIC_CHECK_LINE=$(grep -n 'Running static checks and unit tests in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
-UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
+UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
 if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
     [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
     echo "Expected Wework static checks to be reported before unit tests."
@@ -227,15 +245,15 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT
 refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 2$' "$CALL_LOG"; then
     echo "Expected full renderer tests to exclude Electron-owned test files."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
 fi
 
-if ! grep -qE 'Running full renderer unit tests with 4 workers' "$WEWORK_FULL_TEST_OUT"; then
-    echo "Expected full Wework renderer tests to use four workers by default."
+if ! grep -qE 'Running full renderer unit tests with 2 workers' "$WEWORK_FULL_TEST_OUT"; then
+    echo "Expected full Wework renderer tests to use two workers by default."
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
@@ -320,8 +338,15 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_MIXED_TEST_OU
 refs/heads/topic $MIXED_LOCAL_SHA refs/heads/topic $MIXED_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/api/changeRequests.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 src/api/changeRequests.test.ts$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to run only the related renderer test."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
+    echo "Expected Wework package metadata changes to run the full lint suite."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
@@ -355,6 +380,12 @@ PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FRONTEND_TEST_OUT" 2>&1
 refs/heads/topic $FRONTEND_LOCAL_SHA refs/heads/topic $FRONTEND_REMOTE_SHA
 EOF
+
+if ! grep -qE '^pnpm --filter wecode-ai-assistant run test --passWithNoTests --maxWorkers 2$' "$CALL_LOG"; then
+    echo "Expected frontend pre-push tests to bound JSDOM concurrency to two workers."
+    cat "$CALL_LOG"
+    exit 1
+fi
 
 if ! grep -qE '^pnpm --filter wecode-ai-assistant exec next typegen$' "$CALL_LOG"; then
     echo "Expected frontend changes to regenerate Next.js route types."

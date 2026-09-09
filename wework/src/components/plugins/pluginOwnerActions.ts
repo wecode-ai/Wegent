@@ -1,5 +1,3 @@
-export type PluginOwnerHeaderAction = 'publish' | 'publishNewVersion' | null
-
 export interface PluginOwnerListingRef {
   accessRole?: 'catalog' | 'owner' | 'recipient' | null
   visibility?: 'personal' | 'workspace' | 'public' | null
@@ -8,15 +6,11 @@ export interface PluginOwnerListingRef {
 export interface PluginOwnerActionsInput {
   isLocalCreated: boolean
   ownedListing: PluginOwnerListingRef | null
-  canPublish: boolean
-  canSharePersonalPlugins: boolean
 }
 
 export interface PluginOwnerActions {
-  headerAction: PluginOwnerHeaderAction
-  showPublishNewVersionInMenu: boolean
+  showShareAction: boolean
   canManageAccess: boolean
-  canOpenPublishDialog: boolean
 }
 
 /**
@@ -24,39 +18,32 @@ export interface PluginOwnerActions {
  * Access management lives in the availability section; publish submits a versioned package.
  */
 export function resolvePluginOwnerActions(input: PluginOwnerActionsInput): PluginOwnerActions {
-  const hasPublishCapability = input.canPublish || input.canSharePersonalPlugins
-  const canPackagePublish = input.isLocalCreated && hasPublishCapability
   const isOwner = input.ownedListing?.accessRole === 'owner'
+  const canPackageShare = input.isLocalCreated && input.ownedListing === null
   const visibility = input.ownedListing?.visibility ?? null
 
   if (!isOwner) {
     return {
-      headerAction: canPackagePublish ? 'publish' : null,
-      showPublishNewVersionInMenu: false,
+      showShareAction: canPackageShare,
       canManageAccess: false,
-      canOpenPublishDialog: canPackagePublish,
     }
   }
 
   if (visibility === 'personal') {
-    // Personal owners already have a cloud listing. Show republish as soon as
-    // capabilities allow — do not wait for the local created install row to hydrate.
+    // Personal owners already have a cloud listing. Keep sharing available without
+    // waiting for the local created install row to hydrate.
     // Click handlers still resolve a packable local target (or surface an error).
     return {
-      // Keep access management in the availability section only — no redundant header CTA.
-      headerAction: null,
-      showPublishNewVersionInMenu: hasPublishCapability,
+      showShareAction: true,
       canManageAccess: true,
-      canOpenPublishDialog: hasPublishCapability,
     }
   }
 
-  // Workspace/public republish requires org publish capability; personal-share alone is not enough.
+  // Enterprise catalog releases advance through the reviewed version workflow,
+  // not through the personal owner share dialog.
   return {
-    headerAction: input.canPublish ? 'publishNewVersion' : null,
-    showPublishNewVersionInMenu: false,
+    showShareAction: false,
     canManageAccess: false,
-    canOpenPublishDialog: input.canPublish,
   }
 }
 

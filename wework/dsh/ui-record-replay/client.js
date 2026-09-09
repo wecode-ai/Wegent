@@ -4,7 +4,7 @@ window.__ModuleLoader__.load({
     inject: ['slots', 'wework'],
     apply(ctx) {
       ctx.slots.inject('wework.route', () =>
-        ctx.wework.ui.register(ctx, 'wework.route', {
+        ctx.wework.contributions.register(ctx, 'wework.route', {
           id: 'record-replay.root',
           icon: 'list-restart',
           module: 'plugins/wework-ui-record-replay.js',
@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
         })
       )
       ctx.slots.inject('wework.sidebar.navigation', () =>
-        ctx.wework.ui.register(ctx, 'wework.sidebar.navigation', {
+        ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', {
           id: 'record-replay.navigation',
           activeItem: 'record-replay',
           icon: 'list-restart',

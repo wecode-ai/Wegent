@@ -20,7 +20,7 @@ async function writePlugin(profileRoot, name, manifest, files) {
   )
 }
 
-async function seedTauriProfile(userDataDirectory) {
+async function seedNativeDshProfile(userDataDirectory) {
   const profileRoot = join(userDataDirectory, 'dsh-core', 'profiles', PROFILE_NAME)
   await mkdir(profileRoot, { recursive: true })
   await writeFile(
@@ -168,6 +168,7 @@ async function assertReleasePackageResources() {
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
     readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
+    readFile(join(resourcesRoot, 'wework-app-static', 'wasm', 'data', 'sql-wasm.wasm')),
     readFile(
       join(
         resourcesRoot,
@@ -193,13 +194,27 @@ async function assertReleasePackageResources() {
     'dws',
     'electron',
     'executor',
+    'weworkAppStatic',
     'weworkCorePlugins',
   ])
   for (const component of Object.values(components.components)) {
     assert.equal(typeof component.version, 'string')
     if ('path' in component) assert.match(component.sha256, /^[0-9a-f]{64}$/)
   }
-  await readFile(join(resourcesRoot, components.components.codex.path))
+  const codexRoot = join(resourcesRoot, components.components.codex.path)
+  const codexRuntime = JSON.parse(
+    await readFile(join(codexRoot, 'WEGENT_CODEX_BINARY.json'), 'utf8')
+  )
+  const codexBinary = join(codexRoot, codexRuntime.binaryPath)
+  await Promise.all([
+    readFile(codexBinary),
+    readFile(
+      join(
+        dirname(codexBinary),
+        process.platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
+      )
+    ),
+  ])
 }
 
 export async function createDesktopScenario({
@@ -209,7 +224,7 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   await assertReleasePackageResources()
-  await seedTauriProfile(electronUserDataDirectory)
+  await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
     'dsh-core',
@@ -263,7 +278,7 @@ export async function createDesktopScenario({
     diagnostics() {
       return {
         nativeDshPluginCompatibility: true,
-        seededTauriProfile: true,
+        seededNativeDshProfile: true,
       }
     },
   }

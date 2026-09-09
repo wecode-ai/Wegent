@@ -181,14 +181,12 @@ def test_upsert_persistent_device_pins_first_runtime_instance(
     assert updated.json["spec"]["runtimeInstanceId"] == "runtime-first"
 
 
-@pytest.mark.parametrize("device_type", [DeviceType.LOCAL, DeviceType.APP])
-def test_upsert_local_and_app_devices_keep_runtime_instance_update_behavior(
+def test_upsert_local_device_rejects_runtime_replacement(
     test_db: Session,
     test_user,
-    device_type: DeviceType,
 ):
-    """Local and app registrations may continue updating their Runtime ID."""
-    device_id = f"{device_type.value}-replaceable-runtime"
+    """Local registrations cannot take over another Runtime's device ID."""
+    device_id = "local-replaceable-runtime"
     device = Kind(
         user_id=test_user.id,
         kind="Device",
@@ -200,7 +198,7 @@ def test_upsert_local_and_app_devices_keep_runtime_instance_update_behavior(
             "metadata": {"name": device_id, "namespace": "default"},
             "spec": {
                 "deviceId": device_id,
-                "deviceType": device_type.value,
+                "deviceType": DeviceType.LOCAL.value,
                 "runtimeInstanceId": "runtime-before",
             },
             "status": {"state": "Available"},
@@ -210,16 +208,50 @@ def test_upsert_local_and_app_devices_keep_runtime_instance_update_behavior(
     test_db.add(device)
     test_db.commit()
 
-    updated = device_service.upsert_device_crd(
+    with pytest.raises(RuntimeInstanceMismatchError):
+        device_service.upsert_device_crd(
+            test_db,
+            test_user.id,
+            device_id,
+            "Updated Runtime",
+            device_type=DeviceType.LOCAL.value,
+            runtime_instance_id="runtime-after",
+        )
+
+    test_db.refresh(device)
+    assert device.json["spec"]["runtimeInstanceId"] == "runtime-before"
+
+
+def test_upsert_new_app_identity_preserves_existing_record(
+    test_db: Session,
+    test_user,
+):
+    """A new Wework installation receives an independent device record."""
+    device_id = "app-replaceable-runtime"
+    original = device_service.upsert_device_crd(
         test_db,
         test_user.id,
         device_id,
-        "Updated Runtime",
-        device_type=device_type.value,
-        runtime_instance_id="runtime-after",
+        "Original Wework",
+        device_type=DeviceType.APP.value,
+        runtime_instance_id="runtime-before",
+        app_device_id="electron-before",
     )
 
-    assert updated.json["spec"]["runtimeInstanceId"] == "runtime-after"
+    replacement = device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        device_id,
+        "Updated Wework",
+        device_type=DeviceType.APP.value,
+        runtime_instance_id="runtime-after",
+        app_device_id="electron-after",
+    )
+
+    test_db.refresh(original)
+    assert replacement.id != original.id
+    assert original.json["spec"]["runtimeInstanceId"] == "runtime-before"
+    assert replacement.json["spec"]["runtimeInstanceId"] == "runtime-after"
 
 
 def test_upsert_app_device_uses_app_type_without_becoming_default(
@@ -235,8 +267,52 @@ def test_upsert_app_device_uses_app_type_without_becoming_default(
         device_type=DeviceType.APP.value,
         bind_shell="claudecode",
         app_device_id="app-device",
+        runtime_instance_id="runtime-app",
     )
 
     assert updated.json["spec"]["deviceType"] == DeviceType.APP.value
     assert updated.json["spec"]["appDeviceId"] == "app-device"
     assert updated.json["spec"]["isDefault"] is False
+
+
+def test_upsert_restores_legacy_remote_wework_device_as_app_without_duplicate(
+    test_db: Session,
+    test_user,
+):
+    device_id = "desktop-runtime-device"
+    runtime_instance_id = "runtime-stable"
+
+    legacy_remote_device = device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        device_id,
+        "MacBook App",
+        device_type=DeviceType.REMOTE.value,
+        runtime_instance_id=runtime_instance_id,
+        app_device_id=device_id,
+    )
+    restored_app_device = device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        device_id,
+        "MacBook App",
+        device_type=DeviceType.APP.value,
+        runtime_instance_id=runtime_instance_id,
+        app_device_id=device_id,
+    )
+
+    persisted = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.name == device_id,
+        )
+        .all()
+    )
+    assert legacy_remote_device.id == restored_app_device.id
+    assert len(persisted) == 1
+    assert persisted[0].json["spec"]["deviceType"] == DeviceType.APP.value
+    assert persisted[0].json["spec"]["runtimeInstanceId"] == runtime_instance_id
+    assert persisted[0].json["spec"]["appDeviceId"] == device_id

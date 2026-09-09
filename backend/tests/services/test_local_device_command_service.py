@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -766,10 +767,21 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert open_terminal_definition.post_processor is None
     assert sync_runtime_auth_file_definition is not None
     assert "WEGENT_RUNTIME_CONFIG_CONTENT" in sync_runtime_auth_file_definition.command
+    assert "WEGENT_EXECUTOR_HOME" in sync_runtime_auth_file_definition.command
+    assert "WEGENT_CODEX_HOME" in sync_runtime_auth_file_definition.command
+    assert ".expanduser()" not in sync_runtime_auth_file_definition.command
+    assert (
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH"
+        not in sync_runtime_auth_file_definition.command
+    )
     assert sync_runtime_auth_file_definition.post_processor == "json"
     assert read_runtime_auth_file_definition is not None
+    assert "WEGENT_EXECUTOR_HOME" in read_runtime_auth_file_definition.command
+    assert "WEGENT_CODEX_HOME" in read_runtime_auth_file_definition.command
+    assert ".expanduser()" not in read_runtime_auth_file_definition.command
     assert (
-        "WEGENT_RUNTIME_CONFIG_TARGET_PATH" in read_runtime_auth_file_definition.command
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH"
+        not in read_runtime_auth_file_definition.command
     )
     assert read_runtime_auth_file_definition.post_processor == "json"
     assert codex_threads_list_definition is not None
@@ -1008,14 +1020,89 @@ def test_local_device_command_registry_default_includes_workspace_file_commands(
     assert "MAX_BYTES = 262144" in read_definition.command
 
 
+def test_branch_diff_prefers_fork_parent_default_branch(tmp_path: Path) -> None:
+    """Fork branches should compare with their parent base instead of stale origin."""
+    from app.services.device.command_registry import resolve_local_device_command
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "tests@example.com")
+    _run_git(repo, "config", "user.name", "Tests")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "initial")
+    _run_git(repo, "branch", "-M", "main")
+    stale_origin_main = _run_git(repo, "rev-parse", "HEAD").decode().strip()
+
+    _run_git(repo, "remote", "add", "origin", "https://example.com/fork.git")
+    _run_git(repo, "update-ref", "refs/remotes/origin/main", stale_origin_main)
+    _run_git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    )
+
+    canonical_lines = "".join(f"canonical-{index}\n" for index in range(300))
+    (repo / "canonical.txt").write_text(canonical_lines, encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "canonical update")
+    canonical_main = _run_git(repo, "rev-parse", "HEAD").decode().strip()
+
+    _run_git(repo, "remote", "add", "upstream", "https://example.com/parent.git")
+    _run_git(repo, "update-ref", "refs/remotes/upstream/main", canonical_main)
+    _run_git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/upstream/HEAD",
+        "refs/remotes/upstream/main",
+    )
+
+    _run_git(repo, "checkout", "-qb", "feature/fork-base")
+    (repo / "feature.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "feature change")
+
+    shortstat_definition = resolve_local_device_command("git_branch_diff_shortstat", {})
+    diff_definition = resolve_local_device_command("git_branch_diff", {})
+    assert shortstat_definition is not None
+    assert diff_definition is not None
+
+    shortstat = subprocess.run(
+        shlex.split(shortstat_definition.command),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    diff = subprocess.run(
+        shlex.split(diff_definition.command),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert "1 file changed" in shortstat
+    assert "3 insertions(+)" in shortstat
+    assert "canonical.txt" not in diff
+    assert "feature.txt" in diff
+
+
 def test_remote_command_policy_separates_read_only_and_mutating_keys():
     from app.services.device.command_service import (
         REMOTE_DEVICE_COMMAND_KEYS,
         REMOTE_MUTATING_COMMAND_KEYS,
         REMOTE_READ_ONLY_COMMAND_KEYS,
+        RUNTIME_AUTH_COMMAND_KEYS,
     )
 
     assert REMOTE_READ_ONLY_COMMAND_KEYS.isdisjoint(REMOTE_MUTATING_COMMAND_KEYS)
+    assert RUNTIME_AUTH_COMMAND_KEYS == {
+        "read_runtime_auth_file",
+        "sync_runtime_auth_file",
+    }
     assert {
         "workspace_tree",
         "workspace_read_text_file",
@@ -1023,7 +1110,9 @@ def test_remote_command_policy_separates_read_only_and_mutating_keys():
     } <= REMOTE_READ_ONLY_COMMAND_KEYS
     assert {"git_checkout", "git_commit", "git_push"} <= REMOTE_MUTATING_COMMAND_KEYS
     assert REMOTE_DEVICE_COMMAND_KEYS == (
-        REMOTE_READ_ONLY_COMMAND_KEYS | REMOTE_MUTATING_COMMAND_KEYS
+        REMOTE_READ_ONLY_COMMAND_KEYS
+        | REMOTE_MUTATING_COMMAND_KEYS
+        | RUNTIME_AUTH_COMMAND_KEYS
     )
 
 
@@ -1855,11 +1944,13 @@ def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):
     """sync_runtime_auth_file should create auth JSON with private permissions."""
     from app.services.device.command_registry import SYNC_RUNTIME_AUTH_FILE_SCRIPT
 
+    executor_home = tmp_path / "executor-home"
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "WEGENT_EXECUTOR_HOME": str(executor_home),
+        "WEGENT_CODEX_HOME": "",
         "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
-        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"secret","account":{"id":"u1"}}',
     }
     result = subprocess.run(
@@ -1871,12 +1962,12 @@ def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):
     )
 
     payload = json.loads(result.stdout)
-    target = tmp_path / ".codex" / "auth.json"
+    target = executor_home / "codex" / "auth.json"
 
     assert payload == {
         "status": "written",
         "runtime": "codex",
-        "path": "~/.codex/auth.json",
+        "path": str(target),
     }
     assert json.loads(target.read_text(encoding="utf-8")) == {
         "account": {"id": "u1"},
@@ -1889,14 +1980,16 @@ def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_pat
     """sync_runtime_auth_file should skip when auth JSON already exists."""
     from app.services.device.command_registry import SYNC_RUNTIME_AUTH_FILE_SCRIPT
 
-    target = tmp_path / ".codex" / "auth.json"
+    executor_home = tmp_path / "executor-home"
+    target = executor_home / "codex" / "auth.json"
     target.parent.mkdir(parents=True)
     target.write_text('{"token":"existing"}\n', encoding="utf-8")
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "WEGENT_EXECUTOR_HOME": str(executor_home),
+        "WEGENT_CODEX_HOME": "",
         "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
-        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"new"}',
     }
     result = subprocess.run(
@@ -1910,7 +2003,7 @@ def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_pat
     assert json.loads(result.stdout) == {
         "status": "skipped_existing",
         "runtime": "codex",
-        "path": "~/.codex/auth.json",
+        "path": str(target),
     }
     assert target.read_text(encoding="utf-8") == '{"token":"existing"}\n'
 
@@ -1919,14 +2012,16 @@ def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
     """read_runtime_auth_file should return the auth JSON content."""
     from app.services.device.command_registry import READ_RUNTIME_AUTH_FILE_SCRIPT
 
-    target = tmp_path / ".codex" / "auth.json"
+    codex_home = tmp_path / "custom-codex-home"
+    target = codex_home / "auth.json"
     target.parent.mkdir(parents=True)
     target.write_text('{"token":"existing"}\n', encoding="utf-8")
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "WEGENT_EXECUTOR_HOME": str(tmp_path / "executor-home"),
+        "WEGENT_CODEX_HOME": str(codex_home),
         "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
-        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
     }
     result = subprocess.run(
         [sys.executable, "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
@@ -1939,7 +2034,7 @@ def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
     assert json.loads(result.stdout) == {
         "status": "read",
         "runtime": "codex",
-        "path": "~/.codex/auth.json",
+        "path": str(target),
         "content": '{"token":"existing"}\n',
     }
 
@@ -2401,6 +2496,53 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
 
 
 @pytest.mark.asyncio
+async def test_external_device_command_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            id=123,
+            name="app-device",
+            json={"spec": {"deviceType": "app"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="app-device",
+            command_key="repo_status",
+            command_config={"repo_status": {"command": "git status --short"}},
+            allow_app_device=False,
+        )
+
+    assert str(exc_info.value) == "Remote control is disabled for this app device"
+    execute_mock.assert_not_awaited()
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="app-device",
+        command_key="repo_status",
+        command_config={"repo_status": {"command": "git status --short"}},
+    )
+
+    assert result == {"success": True}
+    execute_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("device_type", "submitted_device_id", "dispatch_device_id"),
     [
@@ -2477,30 +2619,38 @@ async def test_execute_configured_device_command_allows_remote_directory_creatio
     [
         (
             "read_runtime_auth_file",
-            '{"status":"read","path":"~/.codex/auth.json","content":"{}"}',
+            '{"status":"read","path":"/runtime/codex/auth.json","content":"{}"}',
             {
                 "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
-                "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
             },
         ),
         (
             "sync_runtime_auth_file",
-            '{"status":"written","path":"~/.codex/auth.json"}',
+            '{"status":"written","path":"/runtime/codex/auth.json"}',
             {
                 "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
-                "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
                 "WEGENT_RUNTIME_CONFIG_CONTENT": "{}",
             },
         ),
     ],
 )
-async def test_execute_configured_device_command_allows_cloud_runtime_auth_commands(
+@pytest.mark.parametrize(
+    ("device_type", "submitted_device_id", "dispatch_device_id"),
+    [
+        ("cloud", "cloud-crd", "runtime-cloud"),
+        ("remote", "remote-device", "remote-device"),
+    ],
+)
+async def test_execute_configured_device_command_allows_runtime_auth_commands(
     monkeypatch: pytest.MonkeyPatch,
     command_key: str,
     stdout: str,
     env: dict[str, str],
+    device_type: str,
+    submitted_device_id: str,
+    dispatch_device_id: str,
 ) -> None:
-    """Cloud devices should support the constrained runtime auth commands."""
+    """Cloud and remote devices should support constrained runtime auth commands."""
     from app.schemas.device import DeviceType
     from app.services.device import command_service
     from app.services.device.command_registry import resolve_local_device_command
@@ -2515,18 +2665,18 @@ async def test_execute_configured_device_command_allows_cloud_runtime_auth_comma
             "timed_out": False,
         }
     )
-    online_mock = AsyncMock(return_value={"socket_id": "socket-cloud"})
+    online_mock = AsyncMock(return_value={"socket_id": f"socket-{device_type}"})
+
+    device_spec = {"deviceType": device_type}
+    if device_type == "cloud":
+        device_spec["cloudConfig"] = {"deviceId": dispatch_device_id}
+
     monkeypatch.setattr(
         command_service.device_service,
         "get_device_by_device_id",
         lambda db, user_id, device_id: SimpleNamespace(
-            name="cloud-crd",
-            json={
-                "spec": {
-                    "deviceType": "cloud",
-                    "cloudConfig": {"deviceId": "runtime-cloud"},
-                }
-            },
+            name=submitted_device_id,
+            json={"spec": device_spec},
         ),
     )
     monkeypatch.setattr(
@@ -2543,7 +2693,7 @@ async def test_execute_configured_device_command_allows_cloud_runtime_auth_comma
     result = await command_service.execute_configured_device_command(
         db=object(),
         user_id=7,
-        device_id="cloud-crd",
+        device_id=submitted_device_id,
         command_key=command_key,
         env=env,
     )
@@ -2552,10 +2702,14 @@ async def test_execute_configured_device_command_allows_cloud_runtime_auth_comma
     assert command_definition is not None
     assert result["success"] is True
     assert isinstance(result["stdout"], dict)
-    online_mock.assert_awaited_once_with(7, "runtime-cloud", DeviceType.CLOUD)
+    online_mock.assert_awaited_once_with(
+        7,
+        dispatch_device_id,
+        DeviceType(device_type),
+    )
     execute_mock.assert_awaited_once_with(
         user_id=7,
-        device_id="runtime-cloud",
+        device_id=dispatch_device_id,
         command=command_definition.command,
         path=None,
         args=[],
@@ -2563,47 +2717,6 @@ async def test_execute_configured_device_command_allows_cloud_runtime_auth_comma
         timeout_seconds=60,
         max_output_bytes=1024 * 1024,
     )
-
-
-@pytest.mark.asyncio
-async def test_execute_configured_device_command_rejects_remote_runtime_auth_command(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Remote devices should not gain access to runtime auth commands."""
-    from app.services.device import command_service
-
-    execute_mock = AsyncMock()
-    online_mock = AsyncMock(return_value={"socket_id": "socket-remote"})
-    monkeypatch.setattr(
-        command_service.device_service,
-        "get_device_by_device_id",
-        lambda db, user_id, device_id: SimpleNamespace(
-            name="remote-device",
-            json={"spec": {"deviceType": "remote"}},
-        ),
-    )
-    monkeypatch.setattr(
-        command_service.device_service,
-        "get_device_online_info_by_type",
-        online_mock,
-    )
-    monkeypatch.setattr(
-        command_service.local_device_command_service,
-        "execute_command",
-        execute_mock,
-    )
-
-    with pytest.raises(command_service.DeviceCommandError) as exc_info:
-        await command_service.execute_configured_device_command(
-            db=object(),
-            user_id=7,
-            device_id="remote-device",
-            command_key="read_runtime_auth_file",
-        )
-
-    assert "not supported for remote devices" in str(exc_info.value)
-    online_mock.assert_not_awaited()
-    execute_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2842,6 +2955,7 @@ async def test_execute_device_command_endpoint_maps_request_to_service(monkeypat
         env={"A": "B"},
         timeout_seconds=5,
         max_output_bytes=1024,
+        allow_app_device=False,
     )
 
 

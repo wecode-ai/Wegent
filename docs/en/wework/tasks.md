@@ -18,9 +18,16 @@ After enabling Experimental features, open the composer's **+** menu and select 
 
 For an existing task, open the right-side **Environment** panel and select **Link project space**. You can link the current project or task to a local or cloud project space, or quickly create a task in that space. Local-space operations remain on the current device; cloud-space operations use shared cloud data.
 
+After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. Wework offers two choices:
+
+- **Create board task** creates and links a card using the current task title and execution status.
+- **Link an existing board task** searches editable cards in the destination board by task ID or title and links the current task to the selected card without changing that card's status.
+
+When the destination differs from the current board, Wework asks you to confirm the move. After confirmation, the runtime task keeps only one user-selected board link. The original board card remains in place but is no longer linked to the runtime task. A newly created card enters the column that matches the current task state; for example, a settled task awaiting confirmation enters **In review**.
+
 ### Review board-task progress
 
-The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a subtle background in addition to the unread indicator.
+The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a distinct blue-accent background and border in addition to the unread indicator, then return to the standard card style after they are opened.
 
 Hover anywhere on a card to open a lightweight task workspace. It initially shows the latest user message and AI response, reusing the Task conversation's thinking, tool-call, and file-edit rendering. Longer conversations scroll inside the transcript area, and **Load earlier history** fetches older turns. The composer stays on one line until clicked, then expands with the same quick phrases and actions available in Task conversations. While the composer is active, the preview stays pinned until its top-right close button is clicked. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
 
@@ -63,6 +70,12 @@ bash executor/scripts/dev-cloud-device.sh stop     # stop
 The model provides the AI capability; the device determines where files and commands run. Local models run on the local device. Cloud models and devices require a Wegent connection.
 
 When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
+
+Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:
+
+- With no task open, the composer selection belongs to the current draft and the next new task. Standalone tasks save this selection as the default for later new tasks.
+- When a local project follows the global default, a project-composer selection updates the global new-task default used by later standalone tasks and other projects that follow the global default. When a project defines its own model and reasoning effort, a temporary composer change applies only to that task; starting another task restores the project default.
+- After a task starts, its model and reasoning effort belong to that task. Sending a follow-up persists the latest selection, so returning to the task restores it without changing the new-task or project default.
 
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 

@@ -52,7 +52,7 @@ async fn active_thread_tracking_counts_each_thread_independently() {
     client.mark_thread_active("thread-1").await;
     client.mark_thread_active("thread-1").await;
     client.mark_thread_active("thread-2").await;
-    client.mark_thread_idle("thread-1").await;
+    assert_eq!(client.mark_thread_idle("thread-1", true).await, None);
 
     {
         let state = client.state.lock().await;
@@ -60,9 +60,109 @@ async fn active_thread_tracking_counts_each_thread_independently() {
         assert_eq!(state.active_threads.get("thread-2"), Some(&1));
     }
 
-    client.mark_thread_idle("thread-1").await;
-    client.mark_thread_idle("thread-2").await;
+    assert!(client.mark_thread_idle("thread-1", true).await.is_some());
+    assert!(client.mark_thread_idle("thread-2", true).await.is_some());
     assert!(client.state.lock().await.active_threads.is_empty());
+}
+
+#[tokio::test]
+async fn idle_thread_tracking_evicts_the_oldest_subscription_over_capacity() {
+    let client = CodexAppServerClient::new("codex-idle-capacity-test");
+
+    for index in 1..=MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS {
+        let thread_id = format!("thread-{index}");
+        client.mark_thread_active(&thread_id).await;
+        let (_, overflow) = client
+            .mark_thread_idle(&thread_id, true)
+            .await
+            .expect("thread should become idle");
+        assert!(overflow.is_empty());
+    }
+
+    let overflow_thread_id = format!("thread-{}", MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS + 1);
+    client.mark_thread_active(&overflow_thread_id).await;
+    let (_, overflow) = client
+        .mark_thread_idle(&overflow_thread_id, true)
+        .await
+        .expect("thread should become idle");
+
+    assert_eq!(overflow.len(), 1);
+    assert_eq!(overflow[0].0, "thread-1");
+    let state = client.state.lock().await;
+    assert_eq!(
+        state.idle_thread_generations.len(),
+        MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS
+    );
+    assert!(!state.idle_thread_generations.contains_key("thread-1"));
+    assert!(state
+        .idle_thread_generations
+        .contains_key(&overflow_thread_id));
+}
+
+#[tokio::test]
+async fn reactivating_idle_thread_invalidates_its_previous_generation() {
+    let client = CodexAppServerClient::new("codex-idle-reactivation-test");
+
+    client.mark_thread_active("thread-1").await;
+    let (idle_generation, _) = client
+        .mark_thread_idle("thread-1", true)
+        .await
+        .expect("thread should become idle");
+    client.mark_thread_active("thread-1").await;
+
+    let state = client.state.lock().await;
+    let active_generation = state
+        .thread_generations
+        .get("thread-1")
+        .expect("reactivated thread should have a generation");
+    assert_ne!(*active_generation, idle_generation);
+    assert!(!state.idle_thread_generations.contains_key("thread-1"));
+}
+
+#[tokio::test]
+async fn lifecycle_gate_blocks_reactivation_until_idle_cleanup_finishes() {
+    let client = CodexAppServerClient::new("codex-idle-cleanup-race-test");
+
+    client.mark_thread_active("thread-1").await;
+    let (idle_generation, _) = client
+        .mark_thread_idle("thread-1", true)
+        .await
+        .expect("thread should become idle");
+    let lifecycle_gate = client.thread_lifecycle_gate("thread-1").await;
+    let lifecycle_guard = lifecycle_gate.lock().await;
+    let reactivation = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client.mark_thread_active("thread-1").await;
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while Arc::strong_count(&lifecycle_gate) == 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("reactivation should reach the lifecycle gate");
+
+    {
+        let state = client.state.lock().await;
+        assert_eq!(
+            state.idle_thread_generations.get("thread-1"),
+            Some(&idle_generation)
+        );
+        assert!(!state.active_threads.contains_key("thread-1"));
+    }
+
+    drop(lifecycle_guard);
+    reactivation.await.expect("reactivation should finish");
+    let state = client.state.lock().await;
+    assert_eq!(state.active_threads.get("thread-1"), Some(&1));
+    let active_generation = state
+        .thread_generations
+        .get("thread-1")
+        .expect("reactivated thread should have a generation");
+    assert_ne!(*active_generation, idle_generation);
+    assert!(!state.idle_thread_generations.contains_key("thread-1"));
 }
 
 #[tokio::test]
@@ -260,6 +360,12 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
     assert!(config
         .config_overrides
         .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+    assert!(config
+        .config_overrides
+        .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
+    assert!(config
+        .config_overrides
+        .contains(&CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -811,6 +917,12 @@ fn codex_launch_config_enables_streaming_patch_updates() {
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -1570,7 +1682,7 @@ fn required_loopback_hosts_are_merged_into_no_proxy() {
 
 #[test]
 fn codex_launch_config_forwards_task_identity_to_thread_only() {
-    let request = ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
         runtime_auth_token: Some("runtime-jwt".to_owned()),
@@ -1582,6 +1694,10 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         }),
         ..ExecutionRequest::default()
     };
+    request.extra.insert(
+        "runtimeTaskTitle".to_owned(),
+        json!("Identify local development instances"),
+    );
 
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
@@ -1618,6 +1734,10 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
         "alice"
     );
+    assert_eq!(
+        config["shell_environment_policy.set.WEWORK_PARENT_TITLE"],
+        "Identify local development instances"
+    );
 }
 
 #[test]
@@ -1642,57 +1762,6 @@ fn codex_worktree_launch_config_sets_pnpm_environment() {
 }
 
 #[test]
-fn turn_start_params_refreshes_task_identity_shell_environment() {
-    let request = ExecutionRequest {
-        task_id: "task-525".to_owned(),
-        auth_token: Some("task-jwt".to_owned()),
-        runtime_auth_token: Some("runtime-jwt".to_owned()),
-        skill_identity_token: Some("skill-jwt".to_owned()),
-        user_name: Some("alice".to_owned()),
-        prompt: Value::String("continue".to_owned()),
-        model_config: json!({
-            "model_id": "gpt-5.5-codex",
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let mut launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    launch_config
-        .config_overrides
-        .push("model_provider=wework-router".to_owned());
-
-    let params = turn_start_params("thread-1", &request, &launch_config, Vec::new());
-    let config = params
-        .get("config")
-        .and_then(Value::as_object)
-        .expect("turn config should include shell env");
-
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_TASK_ID"],
-        "task-525"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.AUTH_TOKEN"],
-        "task-jwt"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
-        "runtime-jwt"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
-        "skill-jwt"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
-        "alice"
-    );
-    assert!(config.contains_key("shell_environment_policy.set.PATH"));
-    assert!(config.get("model_provider").is_none());
-}
-
-#[test]
 fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     let request_launch_config = CodexLaunchConfig {
         env: BTreeMap::from([("HTTP_PROXY".to_owned(), "http://127.0.0.1:7890".to_owned())]),
@@ -1705,6 +1774,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
             "shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN=\"runtime-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN=\"skill-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_USER_NAME=\"alice\"".to_owned(),
+            "shell_environment_policy.set.WEWORK_PARENT_TITLE=\"Task title\"".to_owned(),
         ],
         model_provider: Some("wecode-openai".to_owned()),
         effort: Some("high".to_owned()),
@@ -1732,6 +1802,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
         "WEGENT_RUNTIME_AUTH_TOKEN",
         "WEGENT_SKILL_IDENTITY_TOKEN",
         "WEGENT_SKILL_USER_NAME",
+        "WEWORK_PARENT_TITLE",
     ] {
         assert!(!launch_config
             .config_overrides
@@ -1794,6 +1865,10 @@ fn codex_run_state_uses_commentary_agent_delta_as_fallback_final_content() {
         ExecutionOutcome::Completed {
             content: "I will inspect.".to_owned()
         }
+    );
+    assert_eq!(
+        state.response_value_origin(),
+        CodexResponseValueOrigin::ProcessFallback
     );
 }
 
@@ -2336,6 +2411,37 @@ fn codex_run_state_prefers_explicit_final_text_over_unphased_text() {
             content: "The task is complete.".to_owned()
         }
     );
+    assert_eq!(
+        state.response_value_origin(),
+        CodexResponseValueOrigin::Final
+    );
+}
+
+#[test]
+fn codex_run_state_marks_empty_completed_output() {
+    let mut state = CodexRunState::default();
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: String::new()
+        }
+    );
+    assert_eq!(
+        state.response_value_origin(),
+        CodexResponseValueOrigin::Empty
+    );
 }
 
 #[test]
@@ -2416,6 +2522,46 @@ fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
         "high"
     );
     assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
+}
+
+#[test]
+fn thread_collaboration_mode_update_params_resets_retained_plan_thread() {
+    let mut request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "gpt-5.5",
+        }),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "collaborationMode".to_owned(),
+        Value::String("default".to_owned()),
+    );
+    let launch_config = CodexLaunchConfig {
+        effort: Some("high".to_owned()),
+        ..CodexLaunchConfig::default()
+    };
+
+    let params = thread_collaboration_mode_update_params("thread-1", &request, &launch_config)
+        .expect("supported collaboration mode should produce settings");
+
+    assert_eq!(params["threadId"], "thread-1");
+    assert_eq!(params["collaborationMode"]["mode"], "default");
+    assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
+    assert_eq!(
+        params["collaborationMode"]["settings"]["reasoning_effort"],
+        "high"
+    );
+    assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
+}
+
+#[test]
+fn thread_collaboration_mode_update_params_skips_missing_mode() {
+    assert!(thread_collaboration_mode_update_params(
+        "thread-1",
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    )
+    .is_none());
 }
 
 #[test]
@@ -2523,6 +2669,10 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
         &CodexLaunchConfig::default(),
     );
 
+    assert_eq!(
+        thread_id_to_activate_before_start(&plan),
+        Some("resume-thread")
+    );
     match plan.start {
         CodexThreadStart::Request { operation, params } => {
             assert_eq!(operation, "thread/resume");
@@ -2547,6 +2697,7 @@ fn codex_thread_plan_starts_new_thread_without_identifiers() {
         &CodexLaunchConfig::default(),
     );
 
+    assert_eq!(thread_id_to_activate_before_start(&plan), None);
     match plan.start {
         CodexThreadStart::Request { operation, .. } => assert_eq!(operation, "thread/start"),
         CodexThreadStart::Direct(thread_id) => {
@@ -2976,6 +3127,26 @@ fn codex_permissions_approval_returns_requested_profile_and_scope() {
                 "scope": "turn",
                 "strictAutoReview": false
             })
+        );
+    }
+}
+
+#[test]
+fn codex_thread_launch_enables_user_input_in_default_mode() {
+    let request = ExecutionRequest::default();
+    let launch_config = CodexLaunchConfig {
+        config_overrides: codex_runtime_default_config_overrides(),
+        ..CodexLaunchConfig::default()
+    };
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+    ] {
+        assert_eq!(
+            params["config"]["features.default_mode_request_user_input"],
+            true
         );
     }
 }

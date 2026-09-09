@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
+from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -41,6 +42,7 @@ from app.core.logging import setup_logging
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
+from app.db.pool_observability import log_registered_pool_configurations
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.auth.internal_service_token import (
@@ -68,9 +70,14 @@ HIGH_FREQUENCY_HTTP_PATHS = {
     "/api/internal/callback/batch",
 }
 SENSITIVE_QUERY_PARAM_NAMES = {"access_token", "api_key", "signature", "token"}
+SENSITIVE_HTTP_BODY_PATHS = {
+    f"{settings.API_PREFIX}/external/oauth/revoke",
+    f"{settings.API_PREFIX}/external/oauth/token",
+}
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
+log_registered_pool_configurations()
 _logger = logging.getLogger(__name__)
 
 
@@ -126,6 +133,15 @@ def _request_context_fields(request_body: str) -> tuple[object, object, object]:
         body_json.get("task_id"),
         body_json.get("subtask_id"),
         body_json.get("user_id"),
+    )
+
+
+def _should_capture_http_body(path: str) -> bool:
+    if path in SENSITIVE_HTTP_BODY_PATHS:
+        return False
+    return not (
+        path.startswith(f"{settings.API_PREFIX}/sites/")
+        and "/environment-variables" in path
     )
 
 
@@ -331,26 +347,31 @@ async def lifespan(app: FastAPI):
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
 
-    # Start background jobs
-    logger.info("Starting background jobs...")
-    start_background_jobs(app)
-    logger.info("✓ Background jobs started")
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting background jobs...")
+        start_background_jobs(app)
+        logger.info("✓ Background jobs started")
+    else:
+        logger.info("Scheduled tasks are disabled; skipping background jobs")
 
     # Start scheduler backend (for Flow scheduling)
     # The scheduler backend is selected based on SCHEDULER_BACKEND config:
     # - "celery" (default): Uses Celery Beat with embedded/standalone mode
     # - "apscheduler": Uses APScheduler (lightweight, no Redis required)
     # - "xxljob": Uses XXL-JOB distributed scheduler
-    logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
-    from app.core.scheduler import start_scheduler
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
+        from app.core.scheduler import start_scheduler
 
-    scheduler = start_scheduler()
-    if scheduler:
-        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        scheduler = start_scheduler()
+        if scheduler:
+            logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        else:
+            logger.warning(
+                "Failed to start scheduler backend. Flow scheduling may not work."
+            )
     else:
-        logger.warning(
-            "Failed to start scheduler backend. Flow scheduling may not work."
-        )
+        logger.info("Scheduled tasks are disabled; skipping scheduler backend")
 
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
@@ -434,12 +455,15 @@ async def lifespan(app: FastAPI):
     await get_pending_request_registry()
     logger.info("✓ PendingRequestRegistry initialized")
 
-    # Start device heartbeat monitor for local device support
-    logger.info("Starting device heartbeat monitor...")
-    from app.services.device_monitor import start_device_monitor
+    # Start device heartbeat monitor for local device support.
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting device heartbeat monitor...")
+        from app.services.device_monitor import start_device_monitor
 
-    start_device_monitor()
-    logger.info("✓ Device heartbeat monitor started")
+        start_device_monitor()
+        logger.info("✓ Device heartbeat monitor started")
+    else:
+        logger.info("Scheduled tasks are disabled; skipping device heartbeat monitor")
 
     # Initialize IM Channel Manager and start enabled channels
     # This enables DingTalk, Feishu, WeChat bot integrations
@@ -472,6 +496,12 @@ async def lifespan(app: FastAPI):
         )
     except Exception as e:
         logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
+
+    logger.info("Starting terminal session invalidation listener...")
+    from app.services.device.terminal_session_service import terminal_session_service
+
+    await terminal_session_service.start()
+    logger.info("✓ Terminal session invalidation listener started")
 
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
@@ -559,6 +589,15 @@ async def lifespan(app: FastAPI):
         await shutdown_pending_request_registry()
         logger.info("✓ PendingRequestRegistry shutdown completed")
 
+        await terminal_session_service.stop()
+        logger.info("✓ Terminal session invalidation listener stopped")
+
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        external_loop_item_provider.close()
+
         # Step 7: Stop device heartbeat monitor
         from app.services.device_monitor import stop_device_monitor_async
 
@@ -640,6 +679,16 @@ def create_app():
         logger.debug("OpenTelemetry is disabled")
 
     @app.middleware("http")
+    async def attach_database_request_path(request: Request, call_next):
+        from app.db.pool_observability import reset_request_path, set_request_path
+
+        token = set_request_path(request.url.path)
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_path(token)
+
+    @app.middleware("http")
     async def log_requests(request: Request, call_next):
         from starlette.responses import StreamingResponse
 
@@ -678,6 +727,7 @@ def create_app():
             otel_config.enabled
             and otel_config.capture_request_body
             and request.method in ("POST", "PUT", "PATCH")
+            and _should_capture_http_body(request.url.path)
         ):
             try:
                 # Read the body
@@ -756,7 +806,9 @@ def create_app():
                             )
 
                     # Capture response body (only for non-streaming responses)
-                    if otel_config.capture_response_body:
+                    if otel_config.capture_response_body and _should_capture_http_body(
+                        request.url.path
+                    ):
                         if not isinstance(response, StreamingResponse):
                             try:
                                 # For regular responses, we need to read and reconstruct the body
@@ -808,6 +860,11 @@ def create_app():
         else:
             logger.info(response_log_message)
 
+        if response.status_code == 429:
+            from shared.telemetry.metrics import record_http_429_response
+
+            record_http_429_response()
+
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id
 
@@ -820,7 +877,7 @@ def create_app():
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
+        expose_headers=["Content-Disposition", "X-Request-ID"],
     )
 
     # Register exception handlers
@@ -841,6 +898,7 @@ def create_app():
         logger.info("Rate limiting enabled for API endpoints")
 
     # Include API routes
+    app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
 
     # Mount MCP Server endpoints

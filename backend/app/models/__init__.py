@@ -37,12 +37,21 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.oauth_refresh_token import OAuthRefreshToken
 from app.models.plugin_marketplace import (
     Plugin,
     PluginDeviceInstallation,
     PluginRelease,
     PluginSubmission,
     PluginUpstream,
+)
+from app.models.plugin_publication import (
+    PluginPublicationCheck,
+    PluginPublicationEvent,
+    PluginPublicationIdempotency,
+    PluginPublicationRequest,
+    PluginPublicationRevision,
+    PluginReleaseIdempotency,
 )
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
@@ -68,6 +77,12 @@ from app.models.task import TaskResource
 # All models should import Base directly from app.db.base
 # Import User last as it may have relationships to other models
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
+from app.models.wework_transcript import (
+    WeworkTranscript,
+    WeworkTranscriptArchive,
+    WeworkTranscriptTurn,
+)
 from app.models.wiki import WikiContent, WikiGeneration, WikiProject
 from app.models.work_queue import (
     QueueMessage,
@@ -80,10 +95,12 @@ from app.models.work_queue import (
 from app.schemas.namespace import GroupRole
 
 __all__ = [
+    "WeworkNotification",
     "DingtalkSyncedNode",
     "CloudProject",
     "CloudProjectFile",
     "LoopItemTaskBinding",
+    "LoopItemExecution",
     "LoopItem",
     "LoopItemAttachment",
     "LoopItemCollaborator",
@@ -94,6 +111,9 @@ __all__ = [
     "Delivery",
     "DeliveryAsset",
     "User",
+    "WeworkTranscript",
+    "WeworkTranscriptArchive",
+    "WeworkTranscriptTurn",
     "Kind",
     "IMPrivateSession",
     "IMSessionMode",
@@ -106,6 +126,7 @@ __all__ = [
     "Namespace",
     "NamespaceMember",
     "APIKey",
+    "OAuthRefreshToken",
     "KnowledgeDocument",
     "KnowledgeDocumentExternalSource",
     "KnowledgeArtifactRecord",
@@ -116,6 +137,12 @@ __all__ = [
     "PluginUpstream",
     "PluginSubmission",
     "PluginDeviceInstallation",
+    "PluginPublicationRequest",
+    "PluginPublicationRevision",
+    "PluginPublicationCheck",
+    "PluginPublicationEvent",
+    "PluginPublicationIdempotency",
+    "PluginReleaseIdempotency",
     "SmartApp",
     "SmartAppRelease",
     "SmartAppSubmission",

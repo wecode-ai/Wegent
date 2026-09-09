@@ -28,6 +28,19 @@ export interface CodeWikiSummary {
   updated_at: string
 }
 
+export interface CodeWikiGenerationStrategyOption {
+  id: string
+  revision: number
+  display_name: string
+  description: string
+}
+
+export interface CodeWikiGenerationStrategyCapabilities {
+  /** Null when the configured global default is not currently runnable. */
+  default_strategy: string | null
+  strategies: CodeWikiGenerationStrategyOption[]
+}
+
 export interface CodeWikiListResponse {
   items: CodeWikiSummary[]
   total: number
@@ -115,6 +128,8 @@ export interface CodeWikiRunResponse {
   reason: string
   generation_id: number
   task_id: number
+  strategy_id?: string
+  strategy_revision?: number
 }
 
 /**
@@ -138,6 +153,34 @@ export interface CodeWikiPageNode {
 
 export interface CodeWikiPageTree {
   pages: CodeWikiPageNode[]
+  /** The published version the returned navigation belongs to; zero means none. */
+  published_generation_id?: number
+}
+
+export type CodeWikiProgressStage =
+  | 'generating'
+  | 'planning'
+  | 'plan_review'
+  | 'revising_plan'
+  | 'writing'
+  | 'qa_review'
+  | 'repairing'
+  | 'recheck'
+  | 'publishing'
+  | 'finishing'
+
+export interface CodeWikiRunProgress {
+  /** Derived from persisted handoffs and verdicts; it is not a second workflow state. */
+  stage: CodeWikiProgressStage
+  /** Zero when the run does not use the coordinated four-step review flow. */
+  current_step: number
+  total_steps: number
+  /** Candidate pages written so far. Existing published pages are not counted. */
+  pages_written: number
+  /** Planned page count once the review handoff or no-review plan exists. */
+  pages_total: number
+  /** Whether planning was blocked on a Reviewer verdict for this run. */
+  review_required?: boolean
 }
 
 /**
@@ -165,6 +208,8 @@ export interface CodeWikiRunStatus {
    * rather than reported as the wiki being busy.
    */
   is_stale: boolean
+  /** Present only while a generation is running. */
+  progress?: CodeWikiRunProgress | null
   last_published_at?: string | null
   last_published_commit: string
 }
@@ -202,6 +247,8 @@ export interface CodeWikiRunRecord {
    * behind even if its container then died.
    */
   task_status: string
+  strategy_id?: string
+  strategy_revision?: number
 }
 
 export interface CodeWikiRunHistory {

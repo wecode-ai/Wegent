@@ -5,6 +5,8 @@ import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
+import { clearImagePreviewCache } from './imagePreviewCache'
+import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import '@/i18n'
 
 const desktopHostMock = vi.hoisted(() => ({
@@ -40,6 +42,34 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('lets complete user and assistant message regions inherit the UI weight', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-message',
+            role: 'user',
+            content: '请调整会话字体',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:00Z',
+          },
+          {
+            id: 'assistant-message',
+            role: 'assistant',
+            content: '会话字体已调整',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:01Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-user')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('message-assistant')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('assistant-message-content')).not.toHaveClass('font-medium')
+  })
+
   test('renders a generated Codex inline visualization from the changed workspace file', async () => {
     runtimeMock.electron = true
     desktopHostMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
@@ -259,6 +289,47 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
   })
 
+  test('offers Electron selection actions for streaming process text before tools', async () => {
+    runtimeMock.electron = true
+    const onAddSelectionToConversation = vi.fn()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-process-selection',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            blocks: [
+              {
+                id: 'process-before-tool',
+                type: 'text',
+                content: '我现在沿唯一正确链路继续取证。',
+                status: 'done',
+                createdAt: 1770000000000,
+              },
+              {
+                id: 'running-tool',
+                type: 'tool',
+                toolName: 'Bash',
+                toolInput: { command: 'pwd' },
+                status: 'streaming',
+                createdAt: 1770000000001,
+              },
+            ],
+            createdAt: '2026-08-31T06:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    selectText(screen.getByTestId('process-text-block'), '唯一正确链路')
+    await userEvent.click(await screen.findByTestId('add-selection-to-conversation-button'))
+    expect(onAddSelectionToConversation).toHaveBeenCalledWith('唯一正确链路')
+  })
+
   test('keeps captured selection actions when streaming replaces the selected text node', async () => {
     const onAddSelectionToConversation = vi.fn()
     const { rerender } = render(
@@ -345,6 +416,19 @@ describe('MessageList', () => {
   })
 
   test('renders generated image artifacts and opens an enlarged preview', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('image', {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-image-download')
+    let downloadedFilename = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+      downloadedFilename = this.download
+    })
+
     render(
       <MessageList
         messages={[
@@ -362,6 +446,7 @@ describe('MessageList', () => {
                 toolName: 'image_generation',
                 renderPayload: {
                   kind: 'image_generation',
+                  mimeType: 'image/webp',
                   imageBase64:
                     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg==',
                   revisedPrompt: 'Minimal dashboard concept',
@@ -378,7 +463,7 @@ describe('MessageList', () => {
     const image = await screen.findByTestId('generated-image')
     expect(image).toHaveAttribute(
       'src',
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
     expect(image).toHaveAttribute('alt', 'Minimal dashboard concept')
 
@@ -387,11 +472,19 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('attachment-image-lightbox')).toBeInTheDocument()
     expect(await screen.findByTestId('attachment-image-lightbox-image')).toHaveAttribute(
       'src',
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
     expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
       'alt',
       'Minimal dashboard concept'
+    )
+
+    await userEvent.click(screen.getByTestId('attachment-image-download'))
+    await waitFor(() => {
+      expect(downloadedFilename).toBe('generated-image-1.webp')
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
 
     await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
@@ -400,6 +493,118 @@ describe('MessageList', () => {
     fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
 
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
+  })
+
+  test('uses the translated fallback when a generated image has no revised prompt', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-image-without-prompt',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-09-04T10:00:01Z',
+            blocks: [
+              {
+                id: 'ig-without-prompt',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'image_generation',
+                renderPayload: {
+                  kind: 'image_generation',
+                  imageBase64:
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg==',
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('generated-image')).toHaveAttribute('alt', '生成的图片')
+    expect(screen.getByTestId('generated-image-preview-button')).toHaveAttribute(
+      'aria-label',
+      '生成的图片'
+    )
+  })
+
+  test('renders generated images from task workspace references', async () => {
+    const createObjectUrl = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:generated-workspace-image')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: '/workspace/outputs/generated-images/image.png',
+      name: 'image.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+    })
+
+    const { unmount } = render(
+      <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-workspace-image',
+              role: 'assistant',
+              content: 'Generated.',
+              status: 'done',
+              createdAt: '2026-09-02T10:00:01Z',
+              blocks: [
+                {
+                  id: 'ig-workspace-1',
+                  subtaskId: '1',
+                  type: 'tool',
+                  toolName: 'image_generation',
+                  renderPayload: {
+                    kind: 'image_generation',
+                    mimeType: 'image/png',
+                    size: 5,
+                    width: 1536,
+                    height: 1024,
+                    revisedPrompt: 'Workspace image',
+                    source: {
+                      type: 'workspace_file',
+                      deviceId: 'device-1',
+                      workspacePath: '/workspace',
+                      path: 'outputs/generated-images/image.png',
+                    },
+                  },
+                  status: 'done',
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ]}
+        />
+      </WorkspaceFileReaderProvider>
+    )
+
+    expect(await screen.findByTestId('generated-image')).toHaveAttribute(
+      'src',
+      'blob:generated-workspace-image'
+    )
+    expect(screen.getByTestId('generated-image-preview-button')).toHaveStyle({
+      aspectRatio: '1.5',
+    })
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      'device-1',
+      '/workspace/outputs/generated-images/image.png',
+      0,
+      '/workspace'
+    )
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob))
+
+    unmount()
+    expect(revokeObjectUrl).not.toHaveBeenCalled()
+    clearImagePreviewCache()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:generated-workspace-image')
   })
 
   test('does not render viewed images as final message artifacts', () => {
@@ -516,7 +721,7 @@ describe('MessageList', () => {
       unobserve = vi.fn()
       takeRecords = vi.fn(() => [])
       root = null
-      rootMargin = '800px 0px'
+      rootMargin = '1600px 0px'
       thresholds = [0]
     }
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
@@ -543,7 +748,21 @@ describe('MessageList', () => {
     expect(chunks.length).toBeGreaterThan(2)
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
-    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
+    expect(
+      chunks.slice(1, -1).every(chunk => {
+        const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
+        return (
+          placeholder?.style.maxHeight === (chunk as HTMLElement).style.minHeight &&
+          placeholder.classList.contains('overflow-hidden')
+        )
+      })
+    ).toBe(true)
 
     act(() => {
       intersectionCallbacks.forEach(callback =>
@@ -556,6 +775,12 @@ describe('MessageList', () => {
 
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
   })
 
   test('keeps message row containment during a plain text click', () => {
@@ -1335,7 +1560,7 @@ describe('MessageList', () => {
     ).toBeInTheDocument()
   })
 
-  test('shows thinking after partial streaming assistant content becomes visible', () => {
+  test('hides generic thinking after streaming assistant content becomes visible', () => {
     render(
       <MessageList
         messages={[
@@ -1352,7 +1577,7 @@ describe('MessageList', () => {
 
     const content = screen.getByTestId('message-assistant').querySelector('p')
     expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('shows only the running block after partial content', () => {
@@ -1382,7 +1607,12 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')).toBeInTheDocument()
-    expect(screen.getByText('正在搜索代码')).toHaveClass('tool-activity-shimmer')
+    const shimmer = screen.getByText('正在搜索代码')
+    expect(shimmer).toHaveClass('tool-activity-shimmer')
+    const shimmerBands = shimmer.querySelectorAll('.activity-shimmer-band')
+    expect(shimmerBands).toHaveLength(1)
+    expect(shimmerBands[0]).toHaveAttribute('data-text', '正在搜索代码')
+    expect(shimmer.querySelector('[data-grapheme]')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
@@ -1760,6 +1990,7 @@ describe('MessageList', () => {
   const originalRevokeObjectUrl = URL.revokeObjectURL
 
   afterEach(() => {
+    clearImagePreviewCache()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     runtimeMock.electron = false
@@ -1969,9 +2200,8 @@ describe('MessageList', () => {
       />
     )
 
-    const indicator = screen.getByTestId('thinking-indicator')
-    expect(indicator).toHaveTextContent('正在思考')
-    expect(indicator).not.toHaveTextContent('检查运行日志并定位事件边界')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.queryByText('检查运行日志并定位事件边界')).not.toBeInTheDocument()
   })
 
   test('keeps the latest reasoning summary on the thinking row after a tool completes', () => {
@@ -2119,7 +2349,12 @@ describe('MessageList', () => {
       assistantContent.compareDocumentPosition(processContent) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(processContent).toHaveClass('text-chat')
+    expect(processContent).toHaveClass('text-text-primary')
+    expect(processContent).not.toHaveClass('text-text-secondary')
     expect(processContent).not.toHaveClass('text-sm')
+    expect(processContent.closest('[data-testid="message-assistant"]')).not.toHaveClass(
+      'font-medium'
+    )
   })
 
   test('does not restore hidden failed content from runtime display order', () => {
@@ -3821,16 +4056,56 @@ describe('MessageList', () => {
     expect(fetchAttachmentBlob).toHaveBeenCalledWith(43)
   })
 
-  test('renders assistant markdown local image paths as file URLs', async () => {
+  test.each([
+    {
+      source: '/tmp/result.png',
+      title: 'Absolute path result',
+    },
+    {
+      source: 'file:///tmp/result.png',
+      title: 'File URL result',
+    },
+  ])(
+    'renders a titled assistant markdown local image from $source through an Electron blob preview',
+    async ({ source, title }) => {
+      runtimeMock.electron = true
+      URL.createObjectURL = vi.fn(() => 'blob:assistant-local-image')
+      URL.revokeObjectURL = vi.fn()
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-local-image',
+              role: 'assistant',
+              content: `生成结果：\n\n![local result](${source} "${title}")`,
+              status: 'done',
+              createdAt: '2026-05-25T15:08:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
+        'src',
+        'blob:assistant-local-image'
+      )
+      expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
+      expect(electronLocalFileMock.read).toHaveBeenCalledWith('/tmp/result.png')
+    }
+  )
+
+  test('renders an error when an assistant markdown local image cannot be read', async () => {
     runtimeMock.electron = true
+    electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
 
     render(
       <MessageList
         messages={[
           {
-            id: 'assistant-local-image',
+            id: 'assistant-missing-local-image',
             role: 'assistant',
-            content: '生成结果：\n\n![local result](/Users/yunpeng7/Pictures/result.png)',
+            content: '生成结果：\n\n![temporary result](/tmp/result.png)',
             status: 'done',
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
@@ -3838,11 +4113,11 @@ describe('MessageList', () => {
       />
     )
 
-    expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
-      'src',
-      'file:///Users/yunpeng7/Pictures/result.png'
+    expect(await screen.findByTestId('assistant-markdown-image-error')).toHaveTextContent(
+      'temporary result'
     )
-    expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
+    expect(electronLocalFileMock.read).toHaveBeenCalledWith('/tmp/result.png')
+    expect(screen.queryByTestId('assistant-markdown-image')).not.toBeInTheDocument()
   })
 
   test('opens an enlarged preview from a user message image attachment', async () => {
@@ -4730,7 +5005,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('renders only thinking before the first streamed response arrives', () => {
@@ -4755,7 +5030,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows trailing thinking once final text starts streaming', () => {
+  test('hides generic thinking once final text starts streaming', () => {
     render(
       <MessageList
         messages={[
@@ -4772,7 +5047,7 @@ describe('MessageList', () => {
 
     const status = screen.getByText('1 秒')
 
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(status.parentElement).toHaveAttribute('data-testid', 'processing-summary-header')
     expect(status.parentElement).not.toHaveClass('border-b')
@@ -4965,7 +5240,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('collapses tool rows and shows trailing thinking once final text is visible', () => {
+  test('collapses tool rows without trailing generic thinking once final text is visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -4991,7 +5266,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')

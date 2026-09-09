@@ -8,7 +8,7 @@
  * required for a document knowledge base and deliberately optional for a code wiki.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
@@ -20,7 +20,10 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/apis/code-wiki', () => ({
-  codeWikiApi: { resolve: jest.fn().mockResolvedValue(null) },
+  codeWikiApi: {
+    resolve: jest.fn().mockResolvedValue(null),
+    strategies: jest.fn().mockResolvedValue({ default_strategy: null, strategies: [] }),
+  },
 }))
 
 jest.mock('@/apis/knowledge', () => ({
@@ -59,6 +62,9 @@ jest.mock('@/apis/retrievers', () => ({
 
 jest.mock('@/features/tasks/components/selector', () => ({
   RepositorySelector: () => <div data-testid="repository-selector" />,
+}))
+jest.mock('@/features/knowledge/code-wiki/GenerationStrategySelect', () => ({
+  GenerationStrategySelect: () => null,
 }))
 
 jest.mock('@/components/model-select/ModelRefSelector', () => ({
@@ -160,6 +166,33 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
   })
 
+  it('silently falls back to automatic defaults when no profile is usable', async () => {
+    let resolveProfile: (value: {
+      version: number
+      retrieval_config: null
+      health: { status: string; fallback_reason: string }
+    }) => void
+    mockedGetKnowledgeBaseRetrievalProfile.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveProfile = resolve
+        })
+    )
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
+
+    await waitFor(() => expect(mockedGetKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      resolveProfile({
+        version: 1,
+        retrieval_config: null,
+        health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
+      })
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByTestId('knowledge-retrieval-profile-fallback')).not.toBeInTheDocument()
+  })
+
   it('swaps the opening-view field for repository fields when code is chosen', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
@@ -169,34 +202,6 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.queryByTestId('switch-kb-type')).not.toBeInTheDocument()
     expect(screen.getByTestId('repository-selector')).toBeInTheDocument()
     expect(screen.getByTestId('code-wiki-language')).toBeInTheDocument()
-  })
-
-  it('shows when an unusable profile falls back to automatic defaults', async () => {
-    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
-      version: 1,
-      retrieval_config: null,
-      health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
-    })
-    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
-
-    await screen.findByTestId('knowledge-retrieval-profile-fallback')
-    expect(
-      screen.getByText('knowledge:document.retrievalProfile.fallbackReasons.retriever_unavailable')
-    ).toBeInTheDocument()
-  })
-
-  it('shows the automatic-default notice when no profile is configured', async () => {
-    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
-      version: 0,
-      retrieval_config: null,
-      health: { status: 'missing', fallback_reason: null },
-    })
-    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
-
-    await screen.findByTestId('knowledge-retrieval-profile-fallback')
-    expect(
-      screen.getByText('knowledge:document.retrievalProfile.fallbackReasons.unavailable')
-    ).toBeInTheDocument()
   })
 
   it('offers both ways to name a repository', () => {

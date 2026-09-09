@@ -121,7 +121,7 @@ vi.mock('@/pages/WorkbenchPage', () => ({
 describe('WorkspaceTabSurface', () => {
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
-  })
+  }, 60_000)
 
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()

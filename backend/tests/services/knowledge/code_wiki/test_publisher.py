@@ -26,6 +26,7 @@ from app.services.knowledge.code_wiki.projection import (
     PENDING_INDEX_CLEANUP_KEY,
     ProjectionSideEffects,
 )
+from app.services.knowledge.code_wiki.projection_plan import PageSource
 from app.services.knowledge.code_wiki.publish_gate import (
     PUBLISH_GATE_EXT_KEY,
     PublishPolicy,
@@ -39,6 +40,7 @@ from app.services.knowledge.code_wiki.publisher import (
     published_generation_id,
     retry_pending_index_cleanup,
 )
+from app.services.knowledge.code_wiki.quality_gate import pages_fingerprint
 from app.services.knowledge.code_wiki.version_store import set_page_path
 
 USER_ID = 11
@@ -162,6 +164,98 @@ def test_a_first_publish_creates_the_pages_and_moves_the_pointer(
         "architecture/backend",
     }
     assert published_generation_id(knowledge_base) == generation.id
+
+
+def test_a_required_quality_review_refuses_a_full_rebuild_without_checkpoints(
+    test_db: Session, knowledge_base: Kind, effects: FakeEffects
+):
+    generation = _generation(test_db, knowledge_base.id)
+    generation.ext = {"qualityReview": {"required": True, "checkpoints": []}}
+    _page(test_db, generation, "index", "overview")
+
+    result = publish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=generation,
+        user_id=USER_ID,
+        effects=effects.build(),
+    )
+
+    assert not result.published
+    assert "passed plan review" in result.reason
+    assert published_generation_id(knowledge_base) == 0
+
+
+def test_a_required_quality_review_allows_matching_plan_and_qa(
+    test_db: Session, knowledge_base: Kind, effects: FakeEffects
+):
+    generation = _generation(test_db, knowledge_base.id)
+    pages = [PageSource(path="index", title="index", content="overview")]
+    fingerprint = pages_fingerprint(pages)
+    generation.ext = {
+        "content_write": {"summary": {"structure_order": ["index"]}},
+        "qualityReview": {
+            "required": True,
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "status": "passed",
+                    "paths": ["index"],
+                    "focusPaths": ["index"],
+                    "fingerprint": fingerprint,
+                },
+                {
+                    "phase": "qa",
+                    "status": "passed",
+                    "paths": ["index"],
+                    "fingerprint": fingerprint,
+                },
+            ],
+        },
+    }
+    _page(test_db, generation, "index", "overview")
+
+    result = publish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=generation,
+        user_id=USER_ID,
+        effects=effects.build(),
+    )
+
+    assert result.published
+
+
+def test_plan_only_review_publishes_after_a_matching_passed_plan(
+    test_db: Session, knowledge_base: Kind, effects: FakeEffects
+):
+    generation = _generation(test_db, knowledge_base.id)
+    generation.ext = {
+        "content_write": {"summary": {"structure_order": ["index"]}},
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_only",
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "status": "passed",
+                    "paths": ["index"],
+                    "focusPaths": ["index"],
+                }
+            ],
+        },
+    }
+    _page(test_db, generation, "index", "overview")
+
+    result = publish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=generation,
+        user_id=USER_ID,
+        effects=effects.build(),
+    )
+
+    assert result.published
 
 
 def test_a_rejected_version_leaves_the_pointer_and_pages_alone(
@@ -536,6 +630,61 @@ def test_the_agents_declared_order_is_what_gets_recorded(
         "index",
         "architecture",
         "api",
+    ]
+
+
+def test_required_review_accepts_a_legacy_csv_page_order(
+    test_db: Session, knowledge_base: Kind, effects: FakeEffects
+):
+    """Older completed versions stored a comma-separated order as one element."""
+    generation = _generation(test_db, knowledge_base.id)
+    pages = [
+        PageSource(path="index", title="index", content="body"),
+        PageSource(path="quickstart", title="quickstart", content="body"),
+        PageSource(path="architecture", title="architecture", content="body"),
+    ]
+    for path in (page.path for page in pages):
+        _page(test_db, generation, path, "body")
+    fingerprint = pages_fingerprint(pages)
+    generation.ext = {
+        "content_write": {
+            "summary": {"structure_order": ["index,quickstart,architecture"]}
+        },
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_and_qa",
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "status": "passed",
+                    "paths": [page.path for page in pages],
+                    "focusPaths": ["index"],
+                    "fingerprint": fingerprint,
+                },
+                {
+                    "phase": "qa",
+                    "status": "passed",
+                    "paths": [page.path for page in pages],
+                    "fingerprint": fingerprint,
+                },
+            ],
+        },
+    }
+    test_db.flush()
+
+    result = publish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=generation,
+        user_id=USER_ID,
+        effects=effects.build(),
+    )
+
+    assert result.published is True
+    assert (knowledge_base.json or {})["spec"][PAGE_ORDER_KEY] == [
+        "index",
+        "quickstart",
+        "architecture",
     ]
 
 

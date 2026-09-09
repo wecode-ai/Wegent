@@ -79,7 +79,6 @@ describe('Core DSH model sync', () => {
     await syncCoreDshModels(
       {
         options: [first, second],
-        preferredModelKey: second.key,
       },
       api
     )
@@ -116,7 +115,7 @@ describe('Core DSH model sync', () => {
         {
           op: 'set',
           path: ['provider'],
-          value: coreDshProviderId(second.key),
+          value: coreDshProviderId(first.key),
         },
         { op: 'set', path: ['model'], value: 'wework-selected' },
       ],
@@ -155,7 +154,6 @@ describe('Core DSH model sync', () => {
       syncCoreDshModels(
         {
           options: [modelOption('model-a', 'Model A'), modelOption('model-b', 'Model B')],
-          preferredModelKey: null,
         },
         api
       )
@@ -192,7 +190,7 @@ describe('Core DSH model sync', () => {
       }),
     }
 
-    await syncCoreDshModels({ options: [], preferredModelKey: null }, api)
+    await syncCoreDshModels({ options: [] }, api)
 
     expect(mutations).toEqual([
       {
@@ -209,7 +207,7 @@ describe('Core DSH model sync', () => {
     ])
   })
 
-  test('updates the Core DSH default when Wework selects another exposed model', async () => {
+  test('preserves a valid Core DSH default when the exposed catalog changes', async () => {
     const first = modelOption('model-a', 'Model A')
     const second = modelOption('model-b', 'Model B')
     const mutations: Array<{ ns: string; ops: Array<Record<string, unknown>> }> = []
@@ -244,15 +242,9 @@ describe('Core DSH model sync', () => {
       }),
     }
 
-    await syncCoreDshModels({ options: [first, second], preferredModelKey: second.key }, api)
+    await syncCoreDshModels({ options: [first, second] }, api)
 
-    expect(mutations.at(-1)).toEqual({
-      ns: 'agent-default-model',
-      ops: [
-        { op: 'set', path: ['provider'], value: coreDshProviderId(second.key) },
-        { op: 'set', path: ['model'], value: 'wework-selected' },
-      ],
-    })
+    expect(mutations.filter(mutation => mutation.ns === 'agent-default-model')).toHaveLength(0)
   })
 
   test('builds stable provider ids and text-only profiles by default', () => {
@@ -272,7 +264,7 @@ describe('Core DSH model sync', () => {
     })
   })
 
-  test('does not register again when initial selection resolves to the first model', async () => {
+  test('does not register again when the exposed catalog is unchanged', async () => {
     const first = modelOption('model-a', 'Model A')
     const resolveLaunch = vi.fn(async () => ({
       modelId: 'wework-selected',
@@ -297,10 +289,48 @@ describe('Core DSH model sync', () => {
       }),
     }
 
-    await scheduleCoreDshModelSync({ options: [first], preferredModelKey: null }, api)
-    await scheduleCoreDshModelSync({ options: [first], preferredModelKey: first.key }, api)
+    await scheduleCoreDshModelSync({ options: [first] }, api)
+    await scheduleCoreDshModelSync({ options: [first] }, api)
 
     expect(resolveLaunch).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not write Core DSH settings when the exposed catalog is unchanged', async () => {
+    const first = modelOption('model-a', 'Model A')
+    const second = modelOption('model-b', 'Model B')
+    const mutations: Array<Record<string, unknown>> = []
+    const resolveLaunch = vi.fn(async option => ({
+      modelId: 'wework-selected',
+      proxyToken: `token-${option.key}`,
+      baseUrl: `http://127.0.0.1:1234/v1/harness-router/token-${option.key}`,
+      env: {},
+    }))
+    const api: CoreDshModelSyncApi = {
+      resolveLaunch,
+      unregisterProxy: vi.fn(async () => undefined),
+      request: vi.fn(async (method, payload) => {
+        if (method === 'settings.describe') {
+          return {
+            namespaces: [
+              { ns: 'llm-pi-ai', user: {} },
+              { ns: 'agent-default-model', user: {} },
+            ],
+          }
+        }
+        if (method === 'settings.mutate') {
+          mutations.push(payload)
+          return {}
+        }
+        throw new Error(`Unexpected method: ${method}`)
+      }),
+    }
+
+    await scheduleCoreDshModelSync({ options: [first, second] }, api)
+    const mutationCount = mutations.length
+    await scheduleCoreDshModelSync({ options: [first, second] }, api)
+
+    expect(resolveLaunch).toHaveBeenCalledTimes(2)
+    expect(mutations).toHaveLength(mutationCount)
   })
 
   test('keeps a stable proxy token when a model profile is refreshed', async () => {
@@ -324,14 +354,8 @@ describe('Core DSH model sync', () => {
       }),
     }
 
-    await syncCoreDshModels(
-      { options: [modelOption('model-a', 'Model A')], preferredModelKey: null },
-      api
-    )
-    await syncCoreDshModels(
-      { options: [modelOption('model-a', 'Renamed Model A')], preferredModelKey: null },
-      api
-    )
+    await syncCoreDshModels({ options: [modelOption('model-a', 'Model A')] }, api)
+    await syncCoreDshModels({ options: [modelOption('model-a', 'Renamed Model A')] }, api)
 
     expect(unregisterProxy).not.toHaveBeenCalled()
   })

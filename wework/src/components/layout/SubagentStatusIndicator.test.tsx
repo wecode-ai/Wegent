@@ -21,6 +21,10 @@ describe('SubagentStatusIndicator', () => {
     expect(screen.getByTestId('subagent-status-panel')).toBeInTheDocument()
     expect(screen.getByText('worker')).toBeInTheDocument()
     expect(screen.getByText('0ffa96e5')).toBeInTheDocument()
+    const spinner = screen.getByTestId('subagent-status-item').querySelector('.animate-spin')
+    expect(spinner).toBeInstanceOf(HTMLSpanElement)
+    expect(spinner).toHaveClass('will-change-transform')
+    expect(spinner?.querySelector('svg')).not.toHaveClass('animate-spin')
   })
 
   test('collapses when title space is constrained and opens on hover', () => {

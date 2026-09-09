@@ -8,16 +8,23 @@ import type {
   ProjectWorkflowDefinition,
 } from '@/api/deliveries'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
+import type {
+  createProjectIncomingHookApi,
+  ProjectEventSourceCatalogItem,
+} from '@/api/projectIncomingHooks'
 import type { ExecutionListApi } from '@/features/todo/ProjectQueueView'
+import { modelSelectionIdentityOptions } from '@/features/workbench/runtimeModelSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type {
   CloneGitRepositoryInput,
   CreatedRuntimeProject,
   ProjectWithTasks,
   RuntimeWorkListResponse,
+  UnifiedModel,
 } from '@/types/api'
 import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
+import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationRulesView } from './AutomationRulesView.jsx'
 import {
@@ -36,6 +43,7 @@ interface ProjectAutomationViewProps {
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   projectAutomationApi?: WorkbenchServices['projectAutomationApi']
+  projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   runtimeProfileApi?: WorkbenchServices['runtimeProfileApi']
   executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
@@ -230,17 +238,26 @@ async function fetchExecutionCatalog(
     }),
     models: modelResponse.data
       .filter(model => model.isActive !== false && !model.compatibilityDisabled)
-      .map(model => ({
-        name: model.name,
-        label: model.displayName || model.name,
-        type: model.type,
-        options: Object.fromEntries(
-          Object.entries(model.config ?? {}).flatMap(([key, value]) =>
-            typeof value === 'string' ? [[key, value]] : []
-          )
-        ),
-      })),
+      .map(model => modelCatalogEntry(model)),
     plugins: [],
+  }
+}
+
+function modelCatalogEntry(model: UnifiedModel) {
+  const configOptions = Object.fromEntries(
+    Object.entries(model.config ?? {}).flatMap(([key, value]) =>
+      typeof value === 'string' ? [[key, value]] : []
+    )
+  )
+  return {
+    name: model.name,
+    label: getModelDisplayLabel(model),
+    type: model.type,
+    options: {
+      ...configOptions,
+      ...getDefaultModelOptions(model),
+      ...modelSelectionIdentityOptions(model),
+    },
   }
 }
 
@@ -270,6 +287,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     api,
     project,
     projectAutomationApi,
+    projectIncomingHookApi,
     deviceApi,
     modelApi,
     pluginApi,
@@ -280,6 +298,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   const projectId = String(project.id)
   const cacheKey = `${projectId}:${String(currentUserId ?? '')}`
   const projectRef = useRef(project)
+  const onProjectUpdatedRef = useRef(onProjectUpdated)
   const initialCache = readProjectAutomationRuleCache(cacheKey, projectAutomationApi)
   const [rules, setRules] = useState<AutomationUiRule[]>(() => initialCache?.rules ?? [])
   const [runs, setRuns] = useState<AutomationUiRun[]>([])
@@ -290,10 +309,15 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   const runsRequestRef = useRef<Promise<AutomationUiRun[]> | null>(null)
   const [loading, setLoading] = useState(() => !initialCache)
   const [error, setError] = useState('')
+  const [eventSourceCatalog, setEventSourceCatalog] = useState<ProjectEventSourceCatalogItem[]>([])
 
   useEffect(() => {
     projectRef.current = project
   }, [project])
+
+  useEffect(() => {
+    onProjectUpdatedRef.current = onProjectUpdated
+  }, [onProjectUpdated])
 
   const load = useCallback(
     async ({ force = false }: { force?: boolean } = {}) => {
@@ -342,7 +366,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
               version: result.projectVersion,
             }
             projectRef.current = updatedProject
-            onProjectUpdated?.(updatedProject)
+            onProjectUpdatedRef.current?.(updatedProject)
             return buildAutomationRuleSnapshot(updatedProject, [result.automation, ...backendRules])
           })
           request = { source: projectAutomationApi, promise }
@@ -371,12 +395,31 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
         setLoading(false)
       }
     },
-    [cacheKey, canManageAgents, currentUserId, onProjectUpdated, projectAutomationApi, projectId, t]
+    [cacheKey, canManageAgents, currentUserId, projectAutomationApi, projectId, t]
   )
 
   useEffect(() => {
     void Promise.resolve().then(() => load())
   }, [load])
+
+  useEffect(() => {
+    if (!projectIncomingHookApi) return
+    let active = true
+    void projectIncomingHookApi
+      .catalog()
+      .then(catalog => {
+        if (!active) return
+        setEventSourceCatalog(catalog)
+      })
+      .catch(loadError => {
+        if (active) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError))
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [projectId, projectIncomingHookApi])
 
   const refreshRuns = useCallback(async (): Promise<AutomationUiRun[]> => {
     if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
@@ -662,10 +705,25 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
       error={error}
       canManage={canManageAgents}
       projectTags={project.tags}
+      eventSourceCatalog={eventSourceCatalog}
+      projectIncomingHookApi={projectIncomingHookApi}
+      projectId={projectId}
+      project={project}
       onReload={reload}
       onLoadExecutionCatalog={loadExecutionCatalog}
       onLoadExecutionPlugins={loadExecutionPlugins}
       onLoadRuns={refreshRuns}
+      onRunRule={
+        projectAutomationApi
+          ? async rule => {
+              const run = await projectAutomationApi.runNow(projectId, rule.id)
+              setRuns(current => [
+                automationRunFromBackend(run, rule),
+                ...current.filter(item => item.id !== run.id),
+              ])
+            }
+          : undefined
+      }
       onSaveRule={persistRule}
       onToggleRule={toggleRule}
       onDuplicateRule={duplicateRule}

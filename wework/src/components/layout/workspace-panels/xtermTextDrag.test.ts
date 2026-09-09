@@ -2,7 +2,7 @@ import { fireEvent } from '@testing-library/react'
 import type { Terminal } from '@xterm/xterm'
 import { describe, expect, test, vi } from 'vitest'
 import { SELECTED_TEXT_CHANGED_EVENT, SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
-import { installXtermTextDrag, selectXtermBufferText } from './xtermTextDrag'
+import { installXtermTextDrag, readXtermBufferText, selectXtermBufferText } from './xtermTextDrag'
 
 describe('xterm text drag', () => {
   test('creates draggable regions over the visible terminal selection', () => {
@@ -104,7 +104,29 @@ describe('xterm text drag', () => {
     expect(dataTransfer.getData('text/plain')).toBe('terminal output')
     expect(dataTransfer.getData(SELECTED_TEXT_DRAG_TYPE)).toBe('true')
 
+    selectedText = ''
+    terminal.buffer.active.getLine = () => ({
+      translateToString: () => 'automated selection',
+    })
+    terminal.select = vi.fn(() => {
+      selectedText = 'automated selection'
+    })
+    const automationContainer = container as HTMLElement & {
+      __weworkSelectTextForE2E?: (value: string) => string
+      __weworkTextForE2E?: () => string
+    }
+    expect(automationContainer.__weworkTextForE2E?.()).toBe('automated selection')
+    expect(automationContainer.__weworkSelectTextForE2E?.('automated selection')).toBe(
+      'automated selection'
+    )
+    expect(selections.at(-1)).toEqual({
+      source: expect.stringMatching(/^terminal:/),
+      text: 'automated selection',
+      rect: { left: 0, top: 0, width: 150, height: 10 },
+    })
+
     controller.dispose()
+    expect(automationContainer.__weworkTextForE2E).toBeUndefined()
     expect(selections.at(-1)).toEqual({
       source: expect.stringMatching(/^terminal:/),
       text: null,
@@ -135,5 +157,21 @@ describe('xterm text drag', () => {
 
     expect(selectXtermBufferText(terminal, 'marker')).toBe('marker')
     expect(select).toHaveBeenCalledWith(7, 2, 6)
+  })
+
+  test('reads text directly from the xterm buffer', () => {
+    const lines = ['first line', '', 'latest output']
+    const terminal = {
+      buffer: {
+        active: {
+          length: lines.length,
+          getLine: (row: number) => ({
+            translateToString: () => lines[row] ?? '',
+          }),
+        },
+      },
+    } as unknown as Pick<Terminal, 'buffer'>
+
+    expect(readXtermBufferText(terminal)).toBe('first line\n\nlatest output')
   })
 })

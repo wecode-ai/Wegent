@@ -42,7 +42,6 @@ export interface CoreDshModelSyncApi {
 
 export interface CoreDshModelSyncInput {
   options: LocalHarnessModelOption[]
-  preferredModelKey: string | null
 }
 
 let activeRegistrations: CoreDshModelRegistration[] = []
@@ -137,7 +136,7 @@ export async function syncCoreDshModels(
   const previousRegistrations = activeRegistrations
   activeRegistrations = nextRegistrations
   await unregisterRemoved(previousRegistrations, nextRegistrations, api)
-  await syncDefaultModel(descriptions, registrations, input.preferredModelKey, api)
+  await syncDefaultModel(descriptions, registrations, api)
 }
 
 export function coreDshProviderId(modelKey: string): string {
@@ -210,20 +209,16 @@ export function resetCoreDshModelSyncForTests(): void {
 }
 
 function coreDshModelSyncSignature(input: CoreDshModelSyncInput): string {
-  const preferredModelKey = input.options.some(option => option.key === input.preferredModelKey)
-    ? input.preferredModelKey
-    : (input.options[0]?.key ?? null)
-  return JSON.stringify({
-    preferredModelKey,
-    models: input.options.map(option => ({
+  return JSON.stringify(
+    input.options.map(option => ({
       key: option.key,
       label: option.label,
       options: option.options,
       contextWindow: option.model.contextWindow,
       maxOutputTokens: option.model.maxOutputTokens,
       supportsImage: option.model.modelCapabilities?.supportsImage,
-    })),
-  })
+    }))
+  )
 }
 
 function configuredWeworkProviders(userSettings: unknown): string[] {
@@ -235,10 +230,8 @@ function configuredWeworkProviders(userSettings: unknown): string[] {
 async function syncDefaultModel(
   descriptions: DshSettingsDescription,
   registrations: Array<{
-    option: LocalHarnessModelOption
     provider: string
   }>,
-  preferredModelKey: string | null,
   api: CoreDshModelSyncApi
 ): Promise<void> {
   const settings = descriptions.namespaces.find(namespace => namespace.ns === 'agent-default-model')
@@ -264,15 +257,18 @@ async function syncDefaultModel(
   if (currentProvider && !currentProvider.startsWith(DSH_PROVIDER_PREFIX)) {
     return
   }
-  const preferred =
-    registrations.find(registration => registration.option.key === preferredModelKey) ??
-    registrations[0]
-  if (currentProvider === preferred.provider && currentModel === DSH_MODEL_ALIAS) return
+  if (
+    currentModel === DSH_MODEL_ALIAS &&
+    registrations.some(registration => registration.provider === currentProvider)
+  ) {
+    return
+  }
+  const defaultRegistration = registrations[0]
   await api
     .request('settings.mutate', {
       ns: 'agent-default-model',
       ops: [
-        { op: 'set', path: ['provider'], value: preferred.provider },
+        { op: 'set', path: ['provider'], value: defaultRegistration.provider },
         { op: 'set', path: ['model'], value: DSH_MODEL_ALIAS },
       ],
     })

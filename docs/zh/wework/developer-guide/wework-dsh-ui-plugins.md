@@ -23,20 +23,41 @@ Wework 的 DSH 扩展分为四层，插件应只依赖实际需要的层：
    依赖这个 host 包，只能使用 Wework 明确公开的 client adapter；同一 Core DSH
    页面中的插件共享 JavaScript 信任域，因此只应安装可信插件。
 
+## Core DSH 模型目录
+
+Wework 会把当前可执行的模型目录暴露为 Core DSH provider，并在目录新增、删除或
+模型配置变化时同步 provider 与本地代理。该同步只管理模型目录，不跟随 Wework
+输入区的当前模型选择：输入区选择是当前 Wework 会话的执行参数，而
+`agent-default-model` 是 Core DSH 创建新 Agent 时使用的部署默认值，两者不能互相
+覆盖。
+
+只切换 Wework 当前模型时，不得重新注册模型代理，也不得写入 Core DSH settings。
+Core DSH 中仍有效的现有默认模型应在目录同步后保留；只有该默认模型已经不可用时，
+才选择目录中的第一个模型。这样可以避免 `settings/document-updated` 和
+`llm/adapters-updated` 事件让所有常驻模型目录重载，并保持 Wework 工作台界面稳定。
+
 ## 扩展点
 
-| Slot                           | 用途                         | 必要元数据                        | 组件 props                |
-| ------------------------------ | ---------------------------- | --------------------------------- | ------------------------- |
-| `wework.action`                | 可由宿主入口调用的导航动作   | `id`、`path`                      | 无组件                    |
-| `wework.app`                   | 产品切换器与应用 surface     | `id`、`label`、`mode`             | `visible`、`tab`          |
-| `wework.route`                 | 顶层辅助页面                 | `id`、`path`、`telemetryFeature`  | `search`、`onNavigate`    |
-| `wework.sidebar.navigation`    | 左侧边栏导航入口             | `id`、`path`、`label`             | 元数据入口通常无组件      |
-| `wework.settings.page`         | 设置导航与设置内容           | `id`、`path`、`label`、`category` | 设置上下文与 `onBack`     |
-| `wework.workspace.tab`         | 顶部可关闭工作区 Tab         | `id`、`label`                     | `visible`、`tab`          |
-| `wework.workspace.sidebar.tab` | 右侧工作区面板 Tab 类型      | `id`、`label`                     | `visible`、`scope`、`tab` |
-| `wework.shell.before`          | 工作台根节点之前             | `id`                              | 空对象                    |
-| `wework.shell.after`           | 工作台根节点之后             | `id`                              | 空对象                    |
-| `wework.shell.overlay`         | 全局浮层，容器不接收指针事件 | `id`                              | 空对象                    |
+| Slot                                      | 用途                         | 必要元数据                        | 组件 props                    |
+| ----------------------------------------- | ---------------------------- | --------------------------------- | ----------------------------- |
+| `wework.action`                           | 可由宿主入口调用的导航动作   | `id`、`path`                      | 无组件                        |
+| `wework.app`                              | 产品切换器与应用 surface     | `id`、`label`、`mode`             | `visible`、`tab`              |
+| `wework.plugins.action`                   | 插件页操作                   | `id`、`label`                     | 宿主提供的操作回调            |
+| `wework.task.status`                      | 左侧任务行状态               | `id`                              | `task`、`workspace`、布局提示 |
+| `wework.environment.section`              | 环境面板附加区域             | `id`                              | `info`、`onClose`             |
+| `wework.board.card.status`                | 看板任务卡状态               | `id`                              | 看板项、任务绑定与布局提示    |
+| `wework.workspace.menu.section`           | 工作区弹出菜单附加区域       | `id`                              | 通用工作区上下文、关闭回调    |
+| `wework.project.work.section`             | 项目工作栏附加区域           | `id`                              | 通用项目上下文                |
+| `wework.project.create.section`           | 项目创建菜单附加区域         | `id`                              | 通用项目创建上下文、关闭回调  |
+| `wework.runtime-profile.workspace-policy` | 运行时工作区策略选项         | `id`、`label`                     | 无组件                        |
+| `wework.route`                            | 顶层辅助页面                 | `id`、`path`、`telemetryFeature`  | `search`、`onNavigate`        |
+| `wework.sidebar.navigation`               | 左侧边栏导航入口             | `id`、`path`、`label`             | 元数据入口通常无组件          |
+| `wework.settings.page`                    | 设置导航与设置内容           | `id`、`path`、`label`、`category` | 设置上下文与 `onBack`         |
+| `wework.workspace.tab`                    | 顶部可关闭工作区 Tab         | `id`、`label`                     | `visible`、`tab`              |
+| `wework.workspace.sidebar.tab`            | 右侧工作区面板 Tab 类型      | `id`、`label`                     | `visible`、`scope`、`tab`     |
+| `wework.shell.before`                     | 工作台根节点之前             | `id`                              | 空对象                        |
+| `wework.shell.after`                      | 工作台根节点之后             | `id`                              | 空对象                        |
+| `wework.shell.overlay`                    | 全局浮层，容器不接收指针事件 | `id`                              | 空对象                        |
 
 `wework.app` 的 `mode` 可以是：
 
@@ -47,6 +68,11 @@ Wework 的 DSH 扩展分为四层，插件应只依赖实际需要的层：
 `wework.action` 当前是稳定的路径动作描述，不是任意回调通道。插件注册
 `{ id, path }` 后，宿主内已有入口可以通过 action id 查找并执行导航；不要把函数、
 token 或不可序列化状态写入 descriptor。
+
+状态和区域 slot 都是可重复贡献的位置接口，不预设 Git、SVN、分支或版本管理语义。插件可以直接把
+React 组件作为 `ctx.wework.ui.register` 的第四个参数注册；宿主按 contribution
+顺序渲染，并只传递该位置的通用上下文。同一个 slot 可以由多个插件同时扩展；
+宿主不读取插件 id，也不根据贡献推断任何具体实现能力。
 
 第三方 `wework.settings.page` 和 `wework.route` 不应设置 Wework 内部使用的
 `module` 或 `component` 字段。直接把 React 组件作为
@@ -109,17 +135,18 @@ Wework 描述直接塞进 DSH options。DSH 会在宿主 slot 挂载、卸载或
 
 ## 可运行插件 Demo
 
-仓库中的
-[`wework/dsh/examples/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/examples/ui-extension-demo)
+“Wework 插件开发”Skill 携带的
+[`assets/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)
 是一个不依赖 Wework 私有 React 模块的完整第三方插件。它包含标准
 `package.json`、`cordis.patch.yml`、host 入口、client 入口和 Node 回归测试，并
-覆盖上表全部 slot。
+覆盖上表全部 slot。模型可以直接检查这份真实代码，并将其复制到可写项目目录后
+按需裁剪。
 
 开发环境中可以在“插件 → 管理 → Wework 插件”安装 Demo 目录的绝对路径，或者
 使用：
 
 ```text
-file:/absolute/path/to/Wegent/wework/dsh/examples/ui-extension-demo
+file:/absolute/path/to/copied/ui-extension-demo
 ```
 
 安装、更新、启停或卸载会修改受管的 `wework-core` profile；配置变更后需要重启
@@ -145,11 +172,18 @@ Wework 当前随 Core DSH 打包以下 UI 插件：
 - `@wegent/dsh-ui-applications`
 - `@wegent/dsh-ui-automations`
 - `@wegent/dsh-ui-cloud-work`
+- `@wegent/dsh-ui-git`
 
 这些包与第三方插件使用相同的 slot 协议。内置插件可以在 contribution 描述中
 声明 Wework 私有的 `component` id，由 Wework React 树渲染已有页面实现，以继承
 Auth、Cloud、Workbench 等宿主 Context。第三方插件不应使用该字段，应把自己的
 React 组件传给 `ctx.wework.ui.register` 的第四个参数。
+
+`@wegent/dsh-ui-git` 是上述通用位置接口的一种实现。它向工作区菜单、项目工作栏、
+项目创建菜单、任务状态、环境面板和看板卡片贡献自己的组件，并贡献“代码托管”和
+“工作树”设置页。分支、提交、推送、克隆、PR / MR 与执行参数均由插件组件解释；
+宿主接口不包含 Git 命令名、Git 插件 id、分支能力判断或 source-control section。
+禁用或不安装插件时，这些贡献位置为空，相关入口、轮询和设置页同时消失。
 
 ## 插件同步与指纹重载
 

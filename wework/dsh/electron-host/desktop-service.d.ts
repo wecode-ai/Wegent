@@ -48,6 +48,20 @@ export interface WeworkDesktopService {
       readonly taskAddressId?: string
     }): Promise<void>
   }
+  readonly browser: {
+    setRequestHeaderRule(rule: Record<string, unknown>): Promise<void>
+    removeRequestHeaderRule(id: string): Promise<void>
+    createBackgroundPage(id: string): Promise<BrowserBackgroundPageState>
+    navigateBackgroundPage(id: string, url: string): Promise<BrowserBackgroundPageState>
+    setBackgroundPageUserAgent(id: string, userAgent: string): Promise<BrowserBackgroundPageState>
+    backgroundPageState(id: string): Promise<BrowserBackgroundPageState>
+    closeBackgroundPage(id: string): Promise<void>
+  }
+  readonly secureStorage: {
+    get(key: string): Promise<string | null>
+    set(key: string, value: string): Promise<void>
+    delete(key: string): Promise<void>
+  }
   readonly rendererHealth: {
     getState(): Promise<WeworkRendererHealthSnapshot>
   }
@@ -55,6 +69,21 @@ export interface WeworkDesktopService {
     openExternal(url: string): Promise<void>
   }
   describe(): Promise<WeworkDesktopDescription>
+}
+
+export interface BrowserBackgroundPageState {
+  readonly id: string
+  readonly title: string | null
+  readonly url: string | null
+  readonly userAgent: string
+  readonly isLoading: boolean
+  readonly httpResponseCode: number | null
+  readonly httpStatusText: string | null
+  readonly navigationError: {
+    readonly code: number
+    readonly message: string
+    readonly url: string | null
+  } | null
 }
 
 declare module '@deepseek-ai/cordis' {

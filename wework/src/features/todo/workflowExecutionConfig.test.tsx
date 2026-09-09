@@ -8,6 +8,7 @@ import {
   itemNeedsExecutionConfiguration,
   mergeWorkflowExecutionConfig,
   resolveWorkflowExecutionConfig,
+  workflowNodeExecutionConfigComplete,
   workflowExecutionConfigComplete,
   workflowNeedsExecutionConfiguration,
 } from './workflowExecutionConfig'
@@ -33,7 +34,7 @@ function workflow(config = completeConfig): IssueWorkflowInstance {
         name: 'Build',
         depends_on: [],
         required: true,
-        workspace_policy: 'composer',
+        workspace_policy: 'none',
         automation_rule_id: 'rule-1',
         status: 'ready',
       },
@@ -276,6 +277,67 @@ describe('workflow execution configuration', () => {
         ],
       })
     ).toBe(false)
+  })
+
+  it('requires a workspace selection for a composer robot stage in a standalone conversation', () => {
+    expect(
+      workflowNodeExecutionConfigComplete(
+        { execution_config: completeConfig },
+        {
+          id: 'stage-1',
+          name: 'Build',
+          depends_on: [],
+          required: true,
+          workspace_policy: 'composer',
+          status: 'ready',
+        }
+      )
+    ).toBe(false)
+    expect(
+      workflowNeedsExecutionConfiguration({
+        ...workflow(),
+        nodes: [
+          {
+            ...workflow().nodes[0],
+            workspace_policy: 'composer',
+          },
+        ],
+      })
+    ).toBe(true)
+  })
+
+  it('accepts a composer robot stage bound to a real workspace', () => {
+    expect(
+      workflowNeedsExecutionConfiguration({
+        ...workflow(),
+        execution_config: {
+          ...completeConfig,
+          workspace_binding: { type: 'backend_project', projectId: 7 },
+        },
+        nodes: [
+          {
+            ...workflow().nodes[0],
+            workspace_policy: 'composer',
+          },
+        ],
+      })
+    ).toBe(false)
+  })
+
+  it('does not require workspace selection for unrestricted or inherited stages', () => {
+    for (const workspace_policy of ['none', 'inherit'] as const) {
+      expect(
+        workflowNeedsExecutionConfiguration({
+          ...workflow(),
+          nodes: [
+            {
+              ...workflow().nodes[0],
+              workspace_policy,
+            },
+          ],
+        })
+      ).toBe(false)
+    }
   })
 
   it('requires configuration for a direct robot stage with no runtime choices', () => {

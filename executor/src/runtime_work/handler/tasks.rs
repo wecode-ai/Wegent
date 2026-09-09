@@ -530,6 +530,19 @@ impl RuntimeWorkRpcHandler {
         link.project_instructions = request.system_prompt.clone();
         link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
+        if let (Some(runtime_handle), Some(payload_handle)) = (
+            link.runtime_handle.as_object_mut(),
+            payload
+                .get("runtimeHandle")
+                .or_else(|| payload.get("runtime_handle"))
+                .and_then(Value::as_object),
+        ) {
+            for key in ["wegentTeam"] {
+                if let Some(value) = payload_handle.get(key) {
+                    runtime_handle.insert(key.to_owned(), value.clone());
+                }
+            }
+        }
         if let Some(executable_path) = request
             .extra
             .get("runtime_executable_path")
@@ -636,6 +649,16 @@ impl RuntimeWorkRpcHandler {
             (queue_position, runtime_handle.as_object_mut())
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
+        }
+        if !self
+            .local_task_link(&local_task_id)
+            .is_some_and(|link| link.ephemeral)
+        {
+            self.track_default_work_item_async(
+                local_task_id.clone(),
+                title.clone(),
+                string_field(&payload, "message").unwrap_or_default(),
+            );
         }
         match payload
             .get("friendlyTitleExecutionRequest")

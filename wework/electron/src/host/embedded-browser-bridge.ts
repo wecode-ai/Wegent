@@ -258,6 +258,7 @@ export class EmbeddedBrowserBridge {
           )
         )
       case 'click':
+        return this.runClickAction(label, request)
       case 'typeText':
       case 'fill':
       case 'hover':
@@ -268,6 +269,20 @@ export class EmbeddedBrowserBridge {
       case 'scrollIntoView':
       case 'press':
         return this.runAction(label, request)
+      case 'nativeClick':
+        this.browser.clickAt(
+          label,
+          requiredCoordinate(request.x, 'x'),
+          requiredCoordinate(request.y, 'y')
+        )
+        return {
+          ok: true,
+          kind: 'browser.action',
+          action: 'click',
+          backend: 'electron-send-input-event',
+          executionKind: 'trusted-event',
+          synthetic: false,
+        }
       case 'waitFor':
         return this.waitForCondition(label, request)
       case 'screenshot':
@@ -324,7 +339,22 @@ export class EmbeddedBrowserBridge {
     )
   }
 
-  private async runAction(label: string, request: BrowserBridgeRequest): Promise<unknown> {
+  private async runClickAction(label: string, request: BrowserBridgeRequest): Promise<unknown> {
+    const preview = await this.runAction(label, request, true)
+    const point = actionCursorPoint(request, preview)
+    if (!point) return preview
+    const moveSequence = this.browser.showAgentCursor(label, point.x, point.y)
+    const arrived = await this.browser.waitForAgentCursorArrival(label, moveSequence)
+    if (!arrived) throw new Error('Timed out waiting for embedded browser agent cursor arrival')
+    if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
+    return this.runAction(label, request)
+  }
+
+  private async runAction(
+    label: string,
+    request: BrowserBridgeRequest,
+    previewOnly = false
+  ): Promise<unknown> {
     const input = {
       action: request.action === 'typeText' ? 'type' : request.action,
       selector: request.selector ?? null,
@@ -336,6 +366,7 @@ export class EmbeddedBrowserBridge {
       index: request.index ?? null,
       ref: request.ref ?? null,
       options: request.options ?? null,
+      previewOnly,
     }
     return this.evaluate(
       label,
@@ -574,6 +605,7 @@ function isObservableAction(action: string): boolean {
     'navigate',
     'inspect',
     'click',
+    'nativeClick',
     'typeText',
     'fill',
     'hover',
@@ -593,6 +625,7 @@ function isMutatingAction(action: string): boolean {
     'open',
     'navigate',
     'click',
+    'nativeClick',
     'typeText',
     'fill',
     'hover',
@@ -610,6 +643,40 @@ function actionTarget(request: BrowserBridgeRequest): string | null {
   if (request.index !== undefined) return `index ${request.index}`
   if (request.selector) return request.selector
   return request.url ?? null
+}
+
+function requiredCoordinate(value: unknown, name: string): number {
+  const coordinate = Number(value)
+  if (!Number.isFinite(coordinate) || coordinate < 0) {
+    throw new Error(`Embedded browser ${name} coordinate is invalid`)
+  }
+  return coordinate
+}
+
+function actionCursorPoint(
+  request: BrowserBridgeRequest,
+  preview: unknown
+): { x: number; y: number } | null {
+  if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null
+  const result = preview as Record<string, unknown>
+  if (result.ok !== true) return null
+  if (Number.isFinite(request.x) && Number.isFinite(request.y)) {
+    return { x: request.x as number, y: request.y as number }
+  }
+  const target = result.target
+  if (!target || typeof target !== 'object' || Array.isArray(target)) return null
+  const rect = (target as Record<string, unknown>).rect
+  if (!rect || typeof rect !== 'object' || Array.isArray(rect)) return null
+  const values = rect as Record<string, unknown>
+  const x = Number(values.x)
+  const y = Number(values.y)
+  const width = Number(values.width)
+  const height = Number(values.height)
+  if (![x, y, width, height].every(Number.isFinite)) return null
+  return {
+    x: x + width / 2,
+    y: y + height / 2,
+  }
 }
 
 function actionSignature(action: string, request: BrowserBridgeRequest): string {

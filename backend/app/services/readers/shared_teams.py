@@ -23,10 +23,18 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.resource_member import (
+    APPROVED_MEMBER_STATUS_VALUES,
+    ResourceMember,
+)
 from app.models.share_link import ResourceType
 
 logger = logging.getLogger(__name__)
+
+TEAM_RESOURCE_TYPE_VALUES = (
+    ResourceType.TEAM.value,
+    ResourceType.TEAM.name,
+)
 
 
 # =============================================================================
@@ -72,11 +80,11 @@ class SharedTeamReader(ISharedTeamReader):
         return (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type.in_(TEAM_RESOURCE_TYPE_VALUES),
                 ResourceMember.resource_id == team_id,
                 ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
             )
             .first()
             is not None
@@ -86,10 +94,10 @@ class SharedTeamReader(ISharedTeamReader):
         results = (
             db.query(ResourceMember.resource_id)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type.in_(TEAM_RESOURCE_TYPE_VALUES),
                 ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
             )
             .all()
         )
@@ -101,11 +109,11 @@ class SharedTeamReader(ISharedTeamReader):
         return (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type.in_(TEAM_RESOURCE_TYPE_VALUES),
                 ResourceMember.resource_id == team_id,
                 ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
             )
             .first()
         )

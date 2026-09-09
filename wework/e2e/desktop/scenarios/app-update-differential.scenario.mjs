@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { appendFile, cp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
+
 const TEST_TRAILER = Buffer.from('\nwework-e2e-differential-update\n')
+const UPDATE_CHANNEL = 'stable'
 const electronPackage = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -30,10 +34,13 @@ export async function createDesktopScenario({
 
   const resourcesRoot = resolve(appBinary, '..', '..', 'Resources')
   const releaseRoot = resolve(resourcesRoot, '..', '..', '..', '..')
+  const packagedComponents = JSON.parse(
+    await readFile(join(resourcesRoot, 'components.json'), 'utf8')
+  )
   const releaseAssets = await readdir(releaseRoot)
   const oldZipName = findSingle(
     releaseAssets,
-    name => /^WeWork_.+_macos_arm64\.zip$/.test(name),
+    name => name === `WeWork_${packagedComponents.appVersion}_macos_arm64.zip`,
     'macOS arm64 ZIP'
   )
   const oldZip = join(releaseRoot, oldZipName)
@@ -42,7 +49,7 @@ export async function createDesktopScenario({
 
   const currentVersion = versionFromMacZip(oldZipName)
   const targetVersion = nextPatchVersion(currentVersion)
-  const targetZipName = `WeWork_${targetVersion}_macos_arm64.zip`
+  const targetZipName = `WeWorkHostUpdate_${targetVersion}_macos_arm64.zip`
   const targetZip = join(resultDir, targetZipName)
   const targetBlockmap = `${targetZip}.blockmap`
   await cp(oldZip, targetZip)
@@ -59,10 +66,20 @@ export async function createDesktopScenario({
   const appUpdateLogs = await captureAppUpdateLogs(electronUserDataDirectory)
   await rm(updaterCache, { recursive: true, force: true })
   await mkdir(updaterCache, { recursive: true })
-  await cp(oldZip, join(updaterCache, 'update.zip'))
-  await cp(oldBlockmap, join(updaterCache, 'current.blockmap'))
+  const electronRequire = createRequire(electronPackage)
+  const { saveBaseline } = electronRequire('electron-updater/out/WeworkUpdateBaseline.js')
+  await saveBaseline(updaterCache, oldZip, oldBlockmapBytes, {
+    version: currentVersion,
+    arch: 'arm64',
+    url: `https://release.invalid/${oldZipName}`,
+    sha512: createHash('sha512')
+      .update(await readFile(oldZip))
+      .digest('base64'),
+  })
 
   let origin = ''
+  let rejectManifest = true
+  let targetComponentManifest
   const requests = []
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', origin)
@@ -71,6 +88,14 @@ export async function createDesktopScenario({
     requests.push({ method: request.method ?? 'GET', path, range })
 
     if (path === '/latest-mac.yml') {
+      if (rejectManifest) {
+        response.statusCode = 503
+        response.setHeader('content-type', 'text/html')
+        response.end(
+          '<!doctype html><style>body{color:red}</style><body>SGErrorDomain EOF https://internal.example/update</body>'
+        )
+        return
+      }
       const manifest = [
         `version: ${targetVersion}`,
         'files:',
@@ -86,12 +111,18 @@ export async function createDesktopScenario({
       response.end(manifest)
       return
     }
+    if (path === `/components-${UPDATE_CHANNEL}-macos-arm64.json`) {
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify(targetComponentManifest))
+      return
+    }
     if (path === `/${targetZipName}.blockmap`) {
       sendBytes(response, targetBlockmapBytes, 'application/octet-stream')
       return
     }
     if (path === `/${oldZipName}.blockmap`) {
-      sendBytes(response, oldBlockmapBytes, 'application/octet-stream')
+      response.statusCode = 500
+      response.end('The updater must use the verified local baseline blockmap')
       return
     }
     if (path === `/${targetZipName}`) {
@@ -126,6 +157,12 @@ export async function createDesktopScenario({
   const address = server.address()
   assert.ok(address && typeof address !== 'string')
   origin = `http://127.0.0.1:${address.port}`
+  targetComponentManifest = await componentManifestForTarget(
+    packagedComponents,
+    resourcesRoot,
+    targetVersion,
+    origin
+  )
 
   return {
     usesReleasePackageRuntimeAssets: true,
@@ -146,6 +183,26 @@ export async function createDesktopScenario({
       }
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="check-app-update-button"]')
+      await control.command('waitFor', '[data-testid="app-update-error-details-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const compactError = await control.command('getText', '[data-testid="app-update-status"]')
+      assert.match(compactError, /网络不可用|Network unavailable/)
+      assert.doesNotMatch(compactError, /<!doctype|<style|internal\.example/)
+
+      await control.command('click', '[data-testid="app-update-error-details-button"]')
+      await control.command('waitFor', '[data-testid="app-update-error-dialog"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const errorDetails = await control.command(
+        'getText',
+        '[data-testid="app-update-error-dialog"]'
+      )
+      assert.match(errorDetails, /APP_UPDATE_NETWORK_UNAVAILABLE/)
+      assert.doesNotMatch(errorDetails, /<!doctype|<style|internal\.example/)
+
+      rejectManifest = false
+      await control.command('click', '[data-testid="app-update-error-retry"]')
       await waitFor(async () => {
         const label = await control.command('getText', '[data-testid="check-app-update-button"]')
         return label.includes(targetVersion)
@@ -154,8 +211,35 @@ export async function createDesktopScenario({
         timeoutMs: Math.max(uiTimeoutMs, 120_000),
       })
 
+      const componentState = JSON.parse(
+        await readFile(join(electronUserDataDirectory, 'managed-components', 'state.json'), 'utf8')
+      )
+      assert.equal(componentState.pending?.appVersion, targetVersion)
+      assert.equal(componentState.pending?.stagedFromAppVersion, currentVersion)
+
+      const componentManifestPath = `/components-${UPDATE_CHANNEL}-macos-arm64.json`
+      const componentManifestRequestIndex = requests.findIndex(
+        request => request.path === componentManifestPath
+      )
+      const firstZipRequestIndex = requests.findIndex(
+        request => request.path === `/${targetZipName}`
+      )
+      assert.notEqual(
+        componentManifestRequestIndex,
+        -1,
+        'The target app component manifest was never requested'
+      )
+      assert.notEqual(firstZipRequestIndex, -1, 'The target ZIP was never requested')
+      assert.ok(
+        componentManifestRequestIndex < firstZipRequestIndex,
+        'The target app component manifest was not staged before the ZIP download'
+      )
+      assert.equal(
+        requests.some(request => request.path.startsWith('/unused-')),
+        false,
+        'The updater downloaded an unchanged packaged component'
+      )
       const zipRequests = requests.filter(request => request.path === `/${targetZipName}`)
-      assert.ok(zipRequests.length > 0, 'The target ZIP was never requested')
       assert.ok(
         zipRequests.some(request => request.range),
         'The updater did not request any ZIP byte ranges'
@@ -164,6 +248,11 @@ export async function createDesktopScenario({
         zipRequests.some(request => !request.range),
         false,
         'The updater fell back to a full ZIP download'
+      )
+      assert.equal(
+        requests.some(request => request.path === `/${oldZipName}.blockmap`),
+        false,
+        'The updater requested a guessed remote baseline blockmap'
       )
       const downloadedBytes = zipRequests.reduce(
         (total, request) => total + rangeLength(request.range),
@@ -193,6 +282,35 @@ export async function createDesktopScenario({
         appUpdateRequests: requests,
       }
     },
+  }
+}
+
+async function componentManifestForTarget(packaged, resourcesRoot, targetVersion, origin) {
+  const components = await Promise.all(
+    Object.entries(packaged.components)
+      .filter(([id]) => id !== 'electron')
+      .map(async ([id, component]) => {
+        const contentSha256 = await hashComponentPath(join(resourcesRoot, component.path))
+        return [
+          id,
+          {
+            version: component.version,
+            contentSha256,
+            archiveSha256: contentSha256,
+            archiveBytes: 1,
+            downloadUrl: `${origin}/unused-${id}.tar.gz`,
+            entryPath: '.',
+          },
+        ]
+      })
+  )
+  return {
+    schemaVersion: 1,
+    appVersion: targetVersion,
+    channel: UPDATE_CHANNEL,
+    platform: 'macos',
+    arch: 'arm64',
+    components: Object.fromEntries(components),
   }
 }
 

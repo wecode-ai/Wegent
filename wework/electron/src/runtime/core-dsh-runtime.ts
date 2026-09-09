@@ -10,8 +10,12 @@ const PROFILE_STAMP = '.wework-runtime.json'
 const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-app-wework', 'wework-app'],
   ['@wegent/dsh-electron-host', 'wework-electron-host'],
+  ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
+  ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
   ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
+  ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
+  ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
   ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],
@@ -19,17 +23,25 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
   ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
   ['@wegent/dsh-ui-record-replay', 'wework-ui-record-replay'],
+  ['@wegent/dsh-wework-plugin-developer', 'wework-plugin-developer'],
+  ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
+  ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
+  ['@wegent/dsh-ui-git', 'wework-ui-git'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
-const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(4).map(([packageName]) => packageName)
+const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
+  '@wegent/dsh-browser-runtime',
+  '@wegent/dsh-secure-storage',
   '@wegent/dsh-terminal-runtime',
+  '@wegent/dsh-plugin-runtime',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
+  '@wegent/dsh-transcript-sync',
 ] as const
 const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-core-apps',
@@ -39,6 +51,10 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-automations',
   '@wegent/dsh-ui-cloud-work',
   '@wegent/dsh-ui-record-replay',
+  '@wegent/dsh-wework-plugin-developer',
+  '@wegent/dsh-ui-home-focus',
+  '@wegent/dsh-ui-home-developer',
+  '@wegent/dsh-ui-git',
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 
@@ -129,6 +145,9 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     environment: {
       ...options.environment,
       DSH_HOME: dshHome,
+      WEWORK_APP_WEB_ROOT:
+        options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
+        join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
     },
     profile: PROFILE_NAME,

@@ -13,33 +13,47 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-const { getCapabilities } = vi.hoisted(() => ({
-  getCapabilities: vi.fn(),
+const { createDefaultPluginApi } = vi.hoisted(() => ({
+  createDefaultPluginApi: vi.fn(),
 }))
 
 vi.mock('./workspace/marketplaceWorkspaceHelpers', () => ({
-  createDefaultPluginApi: () => ({
-    getCapabilities,
-    searchPluginShareUsers: vi.fn().mockResolvedValue({ users: [] }),
-    searchPluginShareGroups: vi.fn().mockResolvedValue({ items: [] }),
+  createDefaultPluginApi,
+}))
+
+vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
+  useOptionalCloudConnection: () => ({
+    apiBaseUrl: 'https://cloud.example/api',
+    token: 'cloud-token',
   }),
 }))
 
 vi.mock('./PluginPublishDialog', () => ({
-  PluginPublishDialog: ({ onPublish }: { onPublish: (request: unknown) => void }) => (
-    <button
-      type="button"
-      data-testid="mock-publish-confirm"
-      onClick={() =>
-        onPublish({
-          visibility: 'personal',
-          targets: [{ entityType: 'user', entityId: '7', displayName: 'Ada' }],
-          allowCopy: true,
-        })
-      }
-    >
-      Confirm
-    </button>
+  PluginPublishDialog: ({
+    pluginName,
+    pluginVersion,
+    onPublish,
+  }: {
+    pluginName: string
+    pluginVersion: string
+    onPublish: (request: unknown) => void
+  }) => (
+    <div>
+      <span data-testid="mock-publish-version">{pluginName + ' v' + pluginVersion}</span>
+      <button
+        type="button"
+        data-testid="mock-publish-confirm"
+        onClick={() =>
+          onPublish({
+            visibility: 'personal',
+            targets: [{ entityType: 'user', entityId: '7', displayName: 'Ada' }],
+            allowCopy: true,
+          })
+        }
+      >
+        Confirm
+      </button>
+    </div>
   ),
 }))
 
@@ -48,11 +62,38 @@ const resultMarker =
 
 describe('PluginWorkspaceConversationResult', () => {
   beforeEach(() => {
-    getCapabilities.mockReset()
-    getCapabilities.mockResolvedValue({
-      canPublish: true,
-      canSharePersonalPlugins: true,
+    createDefaultPluginApi.mockReset()
+    createDefaultPluginApi.mockReturnValue({
+      searchPluginShareUsers: vi.fn().mockResolvedValue({ users: [] }),
+      searchPluginShareGroups: vi.fn().mockResolvedValue({ items: [] }),
     })
+  })
+
+  test('uses the active cloud connection for publication APIs', async () => {
+    render(
+      <PluginWorkspaceConversationResult
+        taskId="42"
+        messages={
+          [
+            {
+              id: 'assistant-1',
+              role: 'assistant',
+              status: 'sent',
+              content: resultMarker,
+            },
+          ] as WorkbenchMessage[]
+        }
+        waiting={false}
+        onSendAction={vi.fn().mockResolvedValue(true)}
+      />
+    )
+
+    await waitFor(() =>
+      expect(createDefaultPluginApi).toHaveBeenCalledWith(
+        'https://cloud.example/api',
+        'cloud-token'
+      )
+    )
   })
 
   test('opens the restored manifest and sends publication back through the original Task', async () => {
@@ -83,6 +124,8 @@ describe('PluginWorkspaceConversationResult', () => {
     )
 
     fireEvent.click(screen.getByTestId('plugin-creator-publish-plugin'))
+    await waitFor(() => expect(screen.getByTestId('mock-publish-version')).toBeInTheDocument())
+    expect(screen.getByTestId('mock-publish-version')).toHaveTextContent('Cloud Notes v0.1.0')
     fireEvent.click(screen.getByTestId('mock-publish-confirm'))
 
     await waitFor(() => expect(onSendAction).toHaveBeenCalledOnce())
@@ -100,63 +143,5 @@ describe('PluginWorkspaceConversationResult', () => {
       targets: [{ entityType: 'user', entityId: '7', displayName: 'Ada' }],
       allowCopy: true,
     })
-  })
-
-  test('loads publication capabilities only when the result first appears', async () => {
-    const messagesWithoutResult = [
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        status: 'sent',
-        content: 'Still creating the plugin',
-      },
-    ] as WorkbenchMessage[]
-    const { rerender } = render(
-      <PluginWorkspaceConversationResult
-        taskId="42"
-        messages={messagesWithoutResult}
-        waiting={true}
-        onSendAction={vi.fn().mockResolvedValue(true)}
-      />
-    )
-
-    expect(getCapabilities).not.toHaveBeenCalled()
-    const messages = [
-      ...messagesWithoutResult,
-      {
-        id: 'assistant-2',
-        role: 'assistant',
-        status: 'sent',
-        content: resultMarker,
-      },
-    ] as WorkbenchMessage[]
-    rerender(
-      <PluginWorkspaceConversationResult
-        taskId="42"
-        messages={messages}
-        waiting={false}
-        onSendAction={vi.fn().mockResolvedValue(true)}
-      />
-    )
-
-    await waitFor(() => expect(getCapabilities).toHaveBeenCalledOnce())
-    rerender(
-      <PluginWorkspaceConversationResult
-        taskId="42"
-        messages={[
-          ...messages,
-          {
-            id: 'assistant-3',
-            role: 'assistant',
-            status: 'streaming',
-            content: 'Continuing the conversation',
-          },
-        ]}
-        waiting={true}
-        onSendAction={vi.fn().mockResolvedValue(true)}
-      />
-    )
-
-    await waitFor(() => expect(getCapabilities).toHaveBeenCalledOnce())
   })
 })

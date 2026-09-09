@@ -9,7 +9,6 @@ import { ComputerUseSettingsPage } from '@/components/settings/ComputerUseSettin
 import { ContextSettingsPage } from '@/components/settings/ContextSettingsPage'
 import { ExecutionEnvironmentsSettingsPage } from '@/components/settings/ExecutionEnvironmentsSettingsPage'
 import { GeneralSettingsPage } from '@/components/settings/GeneralSettingsPage'
-import { GitHostingSettingsPage } from '@/components/settings/GitHostingSettingsPage'
 import { HarnessSettingsPage } from '@/components/settings/HarnessSettingsPage'
 import { KeyboardShortcutsSettingsPage } from '@/components/settings/KeyboardShortcutsSettingsPage'
 import { ModelSettingsPage } from '@/components/settings/ModelSettingsPage'
@@ -17,13 +16,11 @@ import { PluginSettingsPage } from '@/components/settings/PluginSettingsPage'
 import { ProxySettingsPage } from '@/components/settings/ProxySettingsPage'
 import { QuickPhrasesSettingsPage } from '@/components/settings/QuickPhrasesSettingsPage'
 import { RuntimeSettingsPage } from '@/components/settings/RuntimeSettingsPage'
-import { WorktreesSettingsPage } from '@/components/settings/WorktreesSettingsPage'
 import type { WeworkDshSettingsModuleProps } from '@/features/dsh-runtime/DshSettingsSurface'
 
 export default function CoreSettingsPage({
   page,
   services,
-  devices,
   onBack,
   onOpenCloudSettings,
   onOpenRuntimeTask,
@@ -62,8 +59,6 @@ export default function CoreSettingsPage({
       return <ExecutionEnvironmentsSettingsPage />
     case 'general':
       return <GeneralSettingsPage />
-    case 'git-hosting':
-      return <GitHostingSettingsPage />
     case 'harnesses':
       return <HarnessSettingsPage />
     case 'hooks':
@@ -85,16 +80,6 @@ export default function CoreSettingsPage({
           deliveryApi={services?.deliveryApi}
           deviceApi={services?.deviceApi}
           modelApi={services?.modelApi}
-        />
-      )
-    case 'worktrees':
-      return (
-        <WorktreesSettingsPage
-          api={services?.runtimeWorkApi}
-          devices={devices}
-          onOpenRuntimeTask={onOpenRuntimeTask}
-          onRefreshWorkLists={onRefreshWorkLists}
-          onLeaveSettings={onBack}
         />
       )
     default:

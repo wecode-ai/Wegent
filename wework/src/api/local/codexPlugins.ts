@@ -1,11 +1,14 @@
 import i18n from '@/i18n'
+import { sha256Hex } from '@/api/fileHash'
 import { getErrorMessage } from '@/lib/error-message'
+import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
 import {
   ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId,
   requestLocalExecutor,
 } from '@/desktop/localExecutor'
 import type {
@@ -37,6 +40,37 @@ import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPlugin
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
+
+const MAX_PERSONAL_PLUGIN_PACKAGE_BYTES = 50 * 1024 * 1024
+
+interface LocalPluginPackageArtifact {
+  name: string
+  path: string
+  size: number
+  sha256: string
+  cleanupToken: string
+}
+
+function validateLocalPluginPackageArtifact(
+  value: LocalPluginPackageArtifact
+): LocalPluginPackageArtifact {
+  if (
+    typeof value.name !== 'string' ||
+    !value.name.trim() ||
+    typeof value.path !== 'string' ||
+    !value.path.trim() ||
+    !Number.isSafeInteger(value.size) ||
+    value.size <= 0 ||
+    value.size > MAX_PERSONAL_PLUGIN_PACKAGE_BYTES ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.cleanupToken !== 'string' ||
+    !value.cleanupToken.trim()
+  ) {
+    throw new Error('Executor returned invalid personal plugin package metadata')
+  }
+  return value
+}
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -208,9 +242,14 @@ export interface LocalCodexPluginApi {
     refresh?: boolean
     /** Start a new membership read when a newer refresh supersedes a pending one. */
     shareInflight?: boolean
+    /** Read current membership and reject partial inventory instead of assuming absence. */
+    requireComplete?: boolean
   }): Promise<InstalledPluginListResponse & { deviceId?: string }>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
-  listApps(params?: { forceRefetch?: boolean }): Promise<LocalDeviceApp[]>
+  listApps(params?: {
+    forceRefetch?: boolean
+    includeInaccessible?: boolean
+  }): Promise<LocalDeviceApp[]>
   listAvailablePlugins(params?: {
     q?: string
     marketplaceId?: string
@@ -279,6 +318,7 @@ export interface CodexPluginSummary {
 
 interface CodexPluginConnector {
   slug: string
+  accountAuth?: NonNullable<InstalledPluginComponents['connectors']>[number]['accountAuth']
   authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
   localAuth?: {
     kind?: 'local_qr' | 'browser_oauth'
@@ -406,6 +446,7 @@ let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
 let cachedStateAt = 0
 let cachedStateParamsKey = ''
+let activeReadStateDeviceId: string | null = null
 const inflightReadState = new Map<string, Promise<LocalCodexPluginsState>>()
 let inflightPluginInstalled: Promise<{
   marketplaces: CodexPluginMarketplaceEntry[]
@@ -431,6 +472,7 @@ export function clearLocalCodexPluginsReadStateCache(): void {
   cachedStateGeneration = 0
   cachedStateAt = 0
   cachedStateParamsKey = ''
+  activeReadStateDeviceId = null
   inflightReadState.clear()
   inflightPluginInstalled = null
   inflightWegentStoreList = null
@@ -764,7 +806,28 @@ function persistReadStateSnapshot(
   writePersistedReadStateStore(store)
 }
 
-function hydrateReadStateCacheFromSession(): void {
+function readStateMatchesDevice(
+  state: LocalCodexPluginsState | null | undefined,
+  deviceId: string
+): state is LocalCodexPluginsState {
+  return Boolean(state && deviceId && state.deviceId.trim() === deviceId)
+}
+
+function resetInMemoryReadStateForDevice(deviceId: string): void {
+  if (activeReadStateDeviceId === deviceId) return
+  activeReadStateDeviceId = deviceId
+  cachedState = null
+  cachedStateGeneration = 0
+  cachedStateAt = 0
+  cachedStateParamsKey = ''
+  inflightReadState.clear()
+  inflightPluginInstalled = null
+  inflightWegentStoreList = null
+  didHydrateReadStateSession = false
+  warmupReadStatePromise = null
+}
+
+function hydrateReadStateCacheFromSession(deviceId: string): void {
   if (didHydrateReadStateSession) return
   didHydrateReadStateSession = true
   if (cachedState) return
@@ -774,6 +837,7 @@ function hydrateReadStateCacheFromSession(): void {
   )[0]
   if (!entry) return
   if (Date.now() - entry.cachedAt > READ_STATE_DURABLE_TTL_MS) return
+  if (!readStateMatchesDevice(entry.state, deviceId)) return
   cachedState = entry.state
   cachedStateAt = entry.cachedAt
   cachedStateParamsKey = entry.paramsKey
@@ -785,6 +849,8 @@ function rememberReadStateSnapshot(
   state: LocalCodexPluginsState,
   generation: number
 ): void {
+  const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  if (!readStateMatchesDevice(state, deviceId)) return
   if (generation < cachedStateGeneration) return
   cachedState = state
   cachedStateGeneration = generation
@@ -800,12 +866,18 @@ export function peekLocalCodexPluginsReadState(
     mergeAllMarketplaces?: boolean
   } = {}
 ): LocalCodexPluginsState | null {
-  hydrateReadStateCacheFromSession()
+  const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  if (!deviceId) return null
+  resetInMemoryReadStateForDevice(deviceId)
+  hydrateReadStateCacheFromSession(deviceId)
   const paramsKey = readStateParamsKey(params)
-  if (cachedState && cachedStateParamsKey === paramsKey) return cachedState
+  if (readStateMatchesDevice(cachedState, deviceId) && cachedStateParamsKey === paramsKey) {
+    return cachedState
+  }
   const persisted = readPersistedReadStateStore().entries[paramsKey]
   if (!persisted) return null
   if (Date.now() - persisted.cachedAt > READ_STATE_DURABLE_TTL_MS) return null
+  if (!readStateMatchesDevice(persisted.state, deviceId)) return null
   cachedState = persisted.state
   cachedStateAt = persisted.cachedAt
   cachedStateParamsKey = paramsKey
@@ -1286,6 +1358,7 @@ type PersonalMarketplaceListResult = {
 }
 
 type WegentStorePluginSummary = {
+  defaultPrompt?: PluginInterface['defaultPrompt']
   name: string
   packageId: string
   marketplace: string
@@ -1545,6 +1618,7 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     const localAuth = connector.localAuth
     return {
       slug: connector.slug,
+      ...(connector.accountAuth ? { accountAuth: connector.accountAuth } : {}),
       authPolicy:
         connector.authPolicy === 'on_install' ||
         connector.authPolicy === 'on_use' ||
@@ -1859,6 +1933,7 @@ function toWegentStoreInstalledPlugin(
         path: plugin.pluginPath,
       },
       interface: {
+        defaultPrompt: plugin.defaultPrompt,
         displayName: plugin.displayName?.trim() || plugin.name,
         shortDescription: plugin.description ?? null,
         logo: plugin.logo ?? null,
@@ -1872,37 +1947,42 @@ function toWegentStoreInstalledPlugin(
  * Lists packages referenced by the active capability manifest. Avoids Codex
  * plugin/list so installed enterprise ZIPs can paint without scanning caches.
  */
-export async function listWegentStorePluginsFromDisk(): Promise<InstalledPlugin[]> {
+export async function listWegentStorePluginsFromDisk(
+  requireComplete = false
+): Promise<InstalledPlugin[]> {
   if (!isElectronRuntime()) return []
-  if (inflightWegentStoreList) return inflightWegentStoreList
-  const pending = requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
-    .catch(error => {
-      console.warn('[Wework] list wegent store plugins from disk failed', error)
-      return null
-    })
-    .then(listed => {
-      if (!listed?.plugins?.length) {
-        if (listed) {
+  const pending =
+    inflightWegentStoreList ??
+    requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
+      .then(listed => {
+        if (!listed || !Array.isArray(listed.plugins))
+          throw new Error('Invalid local plugin inventory')
+        if (!listed.plugins.length) {
           console.info('[Wework] wegent store disk list empty', {
             storePath: listed.storePath || null,
           })
+          return [] as InstalledPlugin[]
         }
-        return [] as InstalledPlugin[]
-      }
-      console.info('[Wework] wegent store disk list', {
-        storePath: listed.storePath || null,
-        count: listed.plugins.length,
-        names: listed.plugins.map(plugin => plugin.name),
+        console.info('[Wework] wegent store disk list', {
+          storePath: listed.storePath || null,
+          count: listed.plugins.length,
+          names: listed.plugins.map(plugin => plugin.name),
+        })
+        return listed.plugins.map(plugin =>
+          toWegentStoreInstalledPlugin(plugin, listed.storePath || plugin.pluginPath)
+        )
       })
-      return listed.plugins.map(plugin =>
-        toWegentStoreInstalledPlugin(plugin, listed.storePath || plugin.pluginPath)
-      )
-    })
-    .finally(() => {
-      if (inflightWegentStoreList === pending) inflightWegentStoreList = null
-    })
+      .finally(() => {
+        if (inflightWegentStoreList === pending) inflightWegentStoreList = null
+      })
   inflightWegentStoreList = pending
-  return pending
+  try {
+    return await pending
+  } catch (error) {
+    if (requireComplete) throw error
+    console.warn('[Wework] list wegent store plugins from disk failed', error)
+    return []
+  }
 }
 
 function toInstalledPlugin(
@@ -2323,7 +2403,10 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isDesktopRuntime()) return emptyState
-  hydrateReadStateCacheFromSession()
+  const executorStatus = await ensureLocalExecutorStarted()
+  const deviceId = executorStatus.deviceId?.trim() ?? ''
+  resetInMemoryReadStateForDevice(deviceId)
+  hydrateReadStateCacheFromSession(deviceId)
   const paramsKey = readStateParamsKey(params)
   if (
     !params.refresh &&
@@ -2452,10 +2535,16 @@ async function loadReadStateSnapshot(
     deviceId: executorStatus.deviceId?.trim() ?? '',
   }
   const state = retainOpenAiOfficialCatalog(
-    cachedStateParamsKey === paramsKey ? cachedState : null,
+    cachedStateParamsKey === paramsKey && readStateMatchesDevice(cachedState, loadedState.deviceId)
+      ? cachedState
+      : null,
     loadedState
   )
-  if (generation < cachedStateGeneration && cachedStateParamsKey === paramsKey && cachedState) {
+  if (
+    generation < cachedStateGeneration &&
+    cachedStateParamsKey === paramsKey &&
+    readStateMatchesDevice(cachedState, loadedState.deviceId)
+  ) {
     return cachedState
   }
   if (generation >= cachedStateGeneration) {
@@ -2631,7 +2720,9 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
   return detailed
 }
 
-async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {}): Promise<{
+async function loadInstalledPluginsOnly(
+  options: { shareInflight?: boolean; requireComplete?: boolean } = {}
+): Promise<{
   installedPlugins: InstalledPlugin[]
   deviceId: string
 }> {
@@ -2639,7 +2730,7 @@ async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {
   await ensureBundledPluginMarketplaceRegistered()
   const [installedResponse, storePlugins] = await Promise.all([
     requestPluginInstalled({ shareInflight: options.shareInflight }),
-    listWegentStorePluginsFromDisk(),
+    listWegentStorePluginsFromDisk(options.requireComplete),
   ])
   const bundled = getInitializedBundledPluginMarketplace()
   const personalPath =
@@ -2784,21 +2875,42 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         throw new Error('Packaging a local plugin requires the Wework desktop app')
       }
       const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
+      let artifact: LocalPluginPackageArtifact | null = null
       try {
-        const packaged = await requestLocalExecutor<{ name: string; bytes: number[] }>(
+        const response = await requestLocalExecutor<LocalPluginPackageArtifact>(
           'executor.plugins.personal.package',
-          {
-            marketplacePath: ensured.marketplacePath,
-            pluginName: ensured.pluginName,
-          }
+          { marketplacePath: ensured.marketplacePath, pluginName: ensured.pluginName }
         )
-        return new File([new Uint8Array(packaged.bytes)], packaged.name, {
+        artifact = response
+        const packaged = validateLocalPluginPackageArtifact(response)
+        const bytes = await readElectronLocalFile(packaged.path, {
+          expectedSize: packaged.size,
+          maxBytes: MAX_PERSONAL_PLUGIN_PACKAGE_BYTES,
+        })
+        if (bytes.byteLength !== packaged.size) {
+          throw new Error('Personal plugin package size did not match Executor metadata')
+        }
+        const sha256 = await sha256Hex(new Blob([bytes]))
+        if (sha256 !== packaged.sha256) {
+          throw new Error('Personal plugin package checksum did not match Executor metadata')
+        }
+        return new File([bytes], packaged.name, {
           type: 'application/zip',
         })
       } catch (error) {
         throw new Error(getErrorMessage(error, 'Failed to package local plugin'), {
           cause: error,
         })
+      } finally {
+        if (typeof artifact?.cleanupToken === 'string' && artifact.cleanupToken.trim()) {
+          try {
+            await requestLocalExecutor('executor.plugins.personal.package.cleanup', {
+              cleanupToken: artifact.cleanupToken,
+            })
+          } catch (cleanupError) {
+            console.warn('[Wework] Failed to clean up local plugin package artifact', cleanupError)
+          }
+        }
       }
     },
     async deletePersonalPlugin(pluginName, sourceMarketplacePath) {
@@ -3002,7 +3114,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       const peeked = peekLocalCodexPluginsReadState(mergeParams) || peekLocalCodexPluginsReadState()
       // Auto-sync / device inventory must bypass peek. Durable snapshots and a
       // fresh readState cache can both lag behind plugin/installed.
-      if (!options?.refresh) {
+      if (!options?.refresh && !options?.requireComplete) {
         // Only trust a non-empty install list while the readState snapshot is still
         // fresh. Durable localStorage can keep installs for days after uninstall.
         const peekedIsFresh =
@@ -3012,7 +3124,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           return { items: peeked.installedPlugins, deviceId: peeked.deviceId }
         }
       }
-      const loaded = await loadInstalledPluginsOnly({ shareInflight: options?.shareInflight })
+      const loaded = await loadInstalledPluginsOnly({
+        shareInflight: options?.shareInflight,
+        requireComplete: options?.requireComplete,
+      })
       const installedPlugins = loaded.installedPlugins
       if (cachedState) {
         cachedState = {
@@ -3058,7 +3173,9 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         apps.push(...response.data.map(toLocalDeviceApp))
         cursor = response.nextCursor
       } while (cursor)
-      return apps.filter(app => app.isEnabled !== false && app.isAccessible !== false)
+      return apps.filter(
+        app => app.isEnabled !== false && (params.includeInaccessible || app.isAccessible !== false)
+      )
     },
     async listAvailablePlugins(params = {}) {
       const state = await readState({

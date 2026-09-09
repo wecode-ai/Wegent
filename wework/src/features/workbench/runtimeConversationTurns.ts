@@ -208,6 +208,13 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           items,
+          ...(!isTerminalProcessingBlockStatus(action.block.status) && {
+            status: 'streaming' as const,
+            completedAt: undefined,
+            error: undefined,
+            errorType: undefined,
+            stoppedNotice: undefined,
+          }),
           streamingThinkingContent:
             action.block.type === 'thinking' || action.block.type === 'tool'
               ? getLatestThinkingContent(processingBlocks(items))
@@ -240,6 +247,14 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           items,
+          ...(action.updates.status !== undefined &&
+            !isTerminalProcessingBlockStatus(action.updates.status) && {
+              status: 'streaming' as const,
+              completedAt: undefined,
+              error: undefined,
+              errorType: undefined,
+              stoppedNotice: undefined,
+            }),
           streamingThinkingContent:
             previousBlock?.type === 'block' && previousBlock.block.type === 'thinking'
               ? getLatestThinkingContent(processingBlocks(items))
@@ -954,8 +969,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
     const blocks = processingBlocks(assistantItems)
     const firstItem = assistantItems[0]
     const createdAt =
-      textItems[0]?.createdAt ??
-      (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : new Date().toISOString())
+      textItems[0]?.createdAt ?? (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : '')
     messages.push({
       id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? 'pending'}:${
         firstItem?.id ?? 'assistant'

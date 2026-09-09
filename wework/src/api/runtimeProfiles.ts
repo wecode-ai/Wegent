@@ -1,6 +1,6 @@
 import type { HttpClient } from './http'
 
-export type RuntimeWorkspacePolicy = 'project' | 'git_worktree'
+export type RuntimeWorkspacePolicy = string
 
 export interface RuntimeProfile {
   id: string

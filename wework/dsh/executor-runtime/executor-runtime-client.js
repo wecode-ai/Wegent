@@ -69,10 +69,12 @@ export class ExecutorRuntimeClient {
     return this.description
   }
 
-  request(method, params = {}, timeoutMs = this.requestTimeoutMs) {
+  request(method, params = {}, timeoutMs = this.requestTimeoutMs, requestId) {
     if (method !== 'executor.protocol.describe') {
       if (!this.description && this.negotiationPromise) {
-        return this.negotiationPromise.then(() => this.request(method, params, timeoutMs))
+        return this.negotiationPromise.then(() =>
+          this.request(method, params, timeoutMs, requestId)
+        )
       }
       assertRendererMethod(method, this.description?.renderer_methods)
     }
@@ -81,7 +83,15 @@ export class ExecutorRuntimeClient {
         new ExecutorRuntimeError('runtime_not_ready', 'Executor runtime is not ready', true)
       )
     }
-    const id = randomUUID()
+    const id = requestId?.trim() || randomUUID()
+    if (this.pending.has(id)) {
+      return Promise.reject(
+        new ExecutorRuntimeError(
+          'duplicate_request_id',
+          `Executor request ID ${id} is already in flight`
+        )
+      )
+    }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)

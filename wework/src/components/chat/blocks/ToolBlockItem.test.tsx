@@ -99,6 +99,8 @@ describe('ToolBlockItem', () => {
 
     expect(block).toHaveAccessibleName('正在处理')
     expect(block).toHaveTextContent('Let me explore the repository structure.')
+    expect(block).toHaveClass('text-text-primary')
+    expect(block).not.toHaveClass('text-text-secondary')
     expect(block.querySelector('svg')).not.toBeInTheDocument()
     expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
   })
@@ -257,6 +259,35 @@ describe('ToolBlockItem', () => {
       'raw details should stay hidden'
     )
     expect(screen.getByTestId('generic-tool-output')).toHaveTextContent('"status": "ok"')
+  })
+
+  test('renders image generation as a completed status without empty tool details', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'image-generation-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'image_generation',
+          toolInput: { prompt: 'A minimal product image' },
+          renderPayload: {
+            kind: 'image_generation',
+            source: {
+              type: 'workspace_file',
+              deviceId: 'device-1',
+              workspacePath: '/workspace',
+              path: 'outputs/generated-images/image.png',
+            },
+          },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('图片已生成')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /展开工具详情/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('工具未返回内容')).not.toBeInTheDocument()
   })
 
   test('renders node_repl js as JavaScript command activity with details', async () => {

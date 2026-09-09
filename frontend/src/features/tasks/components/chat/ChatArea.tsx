@@ -160,7 +160,6 @@ function isGenerateMode(taskType: TaskType): taskType is GenerateMode {
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',
   'knowledge_base',
-  'table',
 ])
 
 function isPipelineNextStepContext(context: unknown): context is SubtaskContextBrief {
@@ -414,8 +413,11 @@ function ChatAreaContent({
   const imageCapabilities = imageConfig?.capabilities
   const imageReferenceFormats = imageCapabilities?.image_formats
   const videoGenerationModes = useMemo(
-    () => videoCapabilities?.generation_modes ?? [],
-    [videoCapabilities?.generation_modes]
+    () =>
+      teamHidesVideoParam(chatState.selectedTeam, 'generation_mode')
+        ? []
+        : (videoCapabilities?.generation_modes ?? []),
+    [chatState.selectedTeam, videoCapabilities?.generation_modes]
   )
   const [selectedVideoGenerationMode, setSelectedVideoGenerationMode] = useState<
     string | undefined
@@ -1300,6 +1302,7 @@ function ChatAreaContent({
     controlsContainerWidth,
   } = useFloatingInput({
     hasMessages: hasMessagesForHooks,
+    inputAlwaysAtBottom,
   })
 
   // For video/image mode, use respective model selection; otherwise use regular model selection
@@ -2050,58 +2053,6 @@ function ChatAreaContent({
     []
   )
 
-  // Callback for re-selecting a context from a message badge
-  const handleContextReselect = useCallback(
-    (context: SubtaskContextBrief) => {
-      // Convert SubtaskContextBrief to ContextItem format
-      let contextItem: ContextItem | null = null
-
-      if (context.context_type === 'knowledge_base') {
-        if (!context.knowledge_id) return
-        contextItem = {
-          id: context.knowledge_id,
-          name: context.name,
-          type: 'knowledge_base',
-          document_count: context.document_count ?? undefined,
-          document_ids: context.document_ids ?? undefined,
-          folder_ids: context.folder_ids ?? undefined,
-          folder_names: context.folder_names ?? undefined,
-          include_subfolders: context.include_subfolders ?? undefined,
-          scope_restricted: context.scope_restricted ?? undefined,
-        }
-      } else if (context.context_type === 'table') {
-        if (!context.document_id) return
-        contextItem = {
-          id: `table-${context.document_id}`,
-          name: context.name,
-          type: 'table',
-          document_id: context.document_id,
-          source_config: context.source_config ?? undefined,
-        }
-      } else if (context.context_type === 'external_knowledge') {
-        const ref = buildExternalRefFromContext(context)
-        if (!ref) return
-        contextItem = {
-          id: buildExternalContextId(ref),
-          name: context.name,
-          type: 'external_knowledge',
-          ref,
-        }
-      }
-
-      if (!contextItem) return
-
-      const currentContexts = selectedContextsRef.current
-      const isAlreadySelected = currentContexts.some(
-        c => c.type === contextItem!.type && c.id === contextItem!.id
-      )
-      if (isAlreadySelected) return
-
-      setSelectedContexts([...currentContexts, contextItem])
-    },
-    [setSelectedContexts]
-  )
-
   const handlePipelineNextStepClick = useCallback(() => {
     setIsPipelineNextStepOpen(true)
   }, [])
@@ -2285,7 +2236,7 @@ function ChatAreaContent({
         }
       }
 
-      // Restore knowledge base and table contexts
+      // Restore knowledge base contexts
       const restoredContextItems: ContextItem[] = []
       for (const ctx of rawContexts) {
         if (ctx.context_type === 'knowledge_base') {
@@ -2300,15 +2251,6 @@ function ChatAreaContent({
             folder_names: ctx.folder_names ?? undefined,
             include_subfolders: ctx.include_subfolders ?? undefined,
             scope_restricted: ctx.scope_restricted ?? undefined,
-          })
-        } else if (ctx.context_type === 'table') {
-          if (!ctx.document_id) continue
-          restoredContextItems.push({
-            id: `table-${ctx.document_id}`,
-            name: ctx.name,
-            type: 'table',
-            document_id: ctx.document_id,
-            source_config: ctx.source_config ?? undefined,
           })
         } else if (ctx.context_type === 'external_knowledge') {
           const ref = buildExternalRefFromContext(ctx)
@@ -2631,7 +2573,6 @@ function ChatAreaContent({
               hasMessages={hasMessages}
               pendingTaskId={streamHandlers.pendingTaskId}
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
-              onContextReselect={handleContextReselect}
               hideGroupChatOptions={taskType === 'knowledge'}
               onUseAsReference={handleUseAsReference}
               onReEdit={handleReEdit}
@@ -2654,11 +2595,8 @@ function ChatAreaContent({
       >
         {/* Center area for input when no messages (and not in inputAlwaysAtBottom mode) */}
         {!hasMessages && !inputAlwaysAtBottom && (
-          <div
-            className="flex-1 flex items-center justify-center w-full"
-            style={{ marginBottom: '12vh' }}
-          >
-            <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="flex w-full flex-1 items-start justify-center pt-[8dvh] md:items-center md:pt-0 md:[margin-bottom:12vh]">
+            <div ref={floatingInputRef} className="mx-auto w-full max-w-4xl px-3 sm:px-6">
               {taskType !== 'knowledge' && (
                 <SloganDisplay slogan={chatState.randomSlogan} project={activeProject} />
               )}
@@ -2700,9 +2638,11 @@ function ChatAreaContent({
           <div
             className="absolute inset-0 flex flex-col items-center w-full px-4 sm:px-6 overflow-y-auto pt-4"
             style={{
-              // Reserve space for: GuidedQuestions (~200px max) + ChatInputCard (~120px) + padding (32px)
-              // This prevents overlap between summary card and guided questions on smaller screens
-              paddingBottom: guidedQuestions && guidedQuestions.length > 0 ? '352px' : '152px',
+              // Keep the empty-state scroller clear of the actual floating input,
+              // whose height varies with the selected controls. The extra space is
+              // for the fade above the input; the floor avoids a first-render jump
+              // before the input has been measured.
+              paddingBottom: `${Math.max(inputHeight + 32, 152)}px`,
             }}
           >
             {emptyStateContent}

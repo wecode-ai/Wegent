@@ -24,7 +24,10 @@ use tokio::{
 };
 
 use crate::{
-    agents::{runtime_capabilities, task_identity::task_identity_env},
+    agents::{
+        runtime_capabilities,
+        task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
+    },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
@@ -64,11 +67,18 @@ const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
 const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
     "features.tool_call_mcp_elicitation=false";
+const CODEX_ENABLE_UPDATE_PLAN_OVERRIDE: &str = "tools.update_plan.enabled=true";
+const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
+    "features.default_mode_request_user_input=true";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
 const CODEX_GLOBAL_NOTIFICATION_CAPACITY: usize = 2048;
 const CODEX_THREAD_NOTIFICATION_CAPACITY: usize = 2048;
+const MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS: usize = 4;
+const IDLE_CODEX_THREAD_SUBSCRIPTION_TTL: Duration = Duration::from_secs(30 * 60);
+const IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRY_DELAY: Duration = Duration::from_secs(15);
+const MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES: u8 = 3;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
 Everything before this boundary is inherited history from the parent thread. It is reference context only. It is not your current task.
@@ -217,11 +227,29 @@ struct ActiveCodexTurn {
     turn_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexResponseValueOrigin {
+    Final,
+    ProcessFallback,
+    Empty,
+}
+
+impl CodexResponseValueOrigin {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Final => "final",
+            Self::ProcessFallback => "process_fallback",
+            Self::Empty => "empty",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
     pub response_item_id: Option<String>,
+    pub response_value_origin: CodexResponseValueOrigin,
     pub goal_status: Option<String>,
     pub goal_status_observed: bool,
 }
@@ -411,19 +439,30 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
+    async fn restart_if_no_competing_work(
+        &self,
+        active_thread_id: &str,
+    ) -> Result<(), (usize, usize)> {
         let process = {
             let mut state = self.state.lock().await;
             let active_turn_count = state.active_threads.values().sum::<usize>();
             let Some(process) = state.process.as_ref() else {
-                state.thread_generations.clear();
+                state
+                    .thread_generations
+                    .retain(|thread_id, _| thread_id == active_thread_id);
+                state.idle_thread_generations.clear();
                 return Ok(());
             };
             let pending_request_count = process.pending.lock().await.len();
-            if active_turn_count > 0 || pending_request_count > 0 {
+            let current_thread_is_only_active = state.active_threads.len() == 1
+                && state.active_threads.get(active_thread_id) == Some(&1);
+            if !current_thread_is_only_active || pending_request_count > 0 {
                 return Err((active_turn_count, pending_request_count));
             }
-            state.thread_generations.clear();
+            state
+                .thread_generations
+                .retain(|thread_id, _| thread_id == active_thread_id);
+            state.idle_thread_generations.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -614,13 +653,18 @@ impl CodexAppServerClient {
         state
             .thread_generations
             .insert(thread_id.to_owned(), generation);
+        state.idle_thread_generations.remove(thread_id);
         *state
             .active_threads
             .entry(thread_id.to_owned())
             .or_insert(0) += 1;
     }
 
-    async fn mark_thread_idle(&self, thread_id: &str) -> Option<u64> {
+    async fn mark_thread_idle(
+        &self,
+        thread_id: &str,
+        retain_subscription: bool,
+    ) -> Option<(u64, Vec<(String, u64)>)> {
         let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
         let mut state = self.state.lock().await;
@@ -630,7 +674,30 @@ impl CodexAppServerClient {
             return None;
         }
         state.active_threads.remove(thread_id);
-        state.thread_generations.get(thread_id).copied()
+        let generation = state.thread_generations.get(thread_id).copied()?;
+        if !retain_subscription {
+            state.thread_generations.remove(thread_id);
+            state.idle_thread_generations.remove(thread_id);
+            return Some((generation, Vec::new()));
+        }
+        state
+            .idle_thread_generations
+            .insert(thread_id.to_owned(), generation);
+
+        let mut overflow = Vec::new();
+        while state.idle_thread_generations.len() > MAX_IDLE_CODEX_THREAD_SUBSCRIPTIONS {
+            let Some((oldest_thread_id, oldest_generation)) = state
+                .idle_thread_generations
+                .iter()
+                .min_by_key(|(_, generation)| **generation)
+                .map(|(thread_id, generation)| (thread_id.clone(), *generation))
+            else {
+                break;
+            };
+            state.idle_thread_generations.remove(&oldest_thread_id);
+            overflow.push((oldest_thread_id, oldest_generation));
+        }
+        Some((generation, overflow))
     }
 
     async fn thread_lifecycle_gate(&self, thread_id: &str) -> Arc<Mutex<()>> {
@@ -652,18 +719,16 @@ impl CodexAppServerClient {
         gate
     }
 
-    async fn clear_idle_thread_generation(&self, thread_id: &str, generation: u64) {
+    pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
         let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
-        let mut state = self.state.lock().await;
-        if !state.active_threads.contains_key(thread_id)
-            && state.thread_generations.get(thread_id) == Some(&generation)
         {
+            let mut state = self.state.lock().await;
             state.thread_generations.remove(thread_id);
+            state.idle_thread_generations.remove(thread_id);
         }
-    }
+        drop(_lifecycle_guard);
 
-    pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
         let result = self.request_thread_unsubscribe(thread_id).await;
         if let Err(error) = result {
             log_executor_event(
@@ -685,47 +750,82 @@ impl CodexAppServerClient {
         generation: u64,
     ) -> Result<bool, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let response_rx = {
-            let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
-            let _lifecycle_guard = lifecycle_gate.lock().await;
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        {
+            let state = self.state.lock().await;
+            if state.active_threads.contains_key(thread_id)
+                || state.thread_generations.get(thread_id) != Some(&generation)
             {
-                let state = self.state.lock().await;
-                if state.active_threads.contains_key(thread_id)
-                    || state.thread_generations.get(thread_id) != Some(&generation)
-                {
-                    return Ok(false);
-                }
+                return Ok(false);
             }
+        }
 
-            let response_rx = self
-                .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
-                .await?;
+        let response_rx = self
+            .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await?;
+        {
             let mut state = self.state.lock().await;
             if !state.active_threads.contains_key(thread_id)
                 && state.thread_generations.get(thread_id) == Some(&generation)
             {
                 state.thread_generations.remove(thread_id);
+                state.idle_thread_generations.remove(thread_id);
             }
-            response_rx
-        };
+        }
 
-        with_rpc_timeout("thread/unsubscribe", timeout_seconds, async {
+        let result = with_rpc_timeout("thread/unsubscribe", timeout_seconds, async {
             response_rx
                 .await
                 .map_err(|_| "codex app-server response channel closed".to_owned())?
         })
-        .await?;
-        Ok(true)
+        .await;
+        match result {
+            Ok(_) => Ok(true),
+            Err(error) => {
+                let mut state = self.state.lock().await;
+                if !state.active_threads.contains_key(thread_id)
+                    && !state.thread_generations.contains_key(thread_id)
+                {
+                    state
+                        .thread_generations
+                        .insert(thread_id.to_owned(), generation);
+                    state
+                        .idle_thread_generations
+                        .insert(thread_id.to_owned(), generation);
+                }
+                Err(error)
+            }
+        }
     }
 
-    fn unsubscribe_thread_in_background(&self, thread_id: String, generation: u64) {
+    fn unsubscribe_thread_in_background(
+        &self,
+        thread_id: String,
+        generation: u64,
+        delay: Duration,
+        reason: &'static str,
+        remaining_retries: u8,
+    ) {
         let client = self.clone();
         tokio::spawn(async move {
-            let observation = CodexThreadUnsubscribeObservation::new(thread_id.clone());
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            let observation = CodexThreadUnsubscribeObservation::new(thread_id.clone(), reason);
             let result = client
                 .request_thread_unsubscribe_if_idle(&thread_id, generation)
                 .await;
             observation.finish(&result);
+            if result.is_err() && remaining_retries > 0 {
+                client.unsubscribe_thread_in_background(
+                    thread_id,
+                    generation,
+                    IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRY_DELAY,
+                    "retry",
+                    remaining_retries - 1,
+                );
+            }
         });
     }
 
@@ -816,18 +916,23 @@ impl CodexAppServerClient {
 
 struct CodexThreadUnsubscribeObservation {
     thread_id: String,
+    reason: &'static str,
     started_at: Instant,
     finished: bool,
 }
 
 impl CodexThreadUnsubscribeObservation {
-    fn new(thread_id: String) -> Self {
+    fn new(thread_id: String, reason: &'static str) -> Self {
         log_executor_event(
             "codex shared thread unsubscribe background started",
-            &[("thread_id", thread_id.clone())],
+            &[
+                ("thread_id", thread_id.clone()),
+                ("reason", reason.to_owned()),
+            ],
         );
         Self {
             thread_id,
+            reason,
             started_at: Instant::now(),
             finished: false,
         }
@@ -836,6 +941,7 @@ impl CodexThreadUnsubscribeObservation {
     fn finish(mut self, result: &Result<bool, String>) {
         let mut fields = vec![
             ("thread_id", self.thread_id.clone()),
+            ("reason", self.reason.to_owned()),
             (
                 "elapsed_ms",
                 self.started_at.elapsed().as_millis().to_string(),
@@ -863,6 +969,7 @@ impl Drop for CodexThreadUnsubscribeObservation {
             "codex shared thread unsubscribe background cancelled",
             &[
                 ("thread_id", self.thread_id.clone()),
+                ("reason", self.reason.to_owned()),
                 (
                     "elapsed_ms",
                     self.started_at.elapsed().as_millis().to_string(),
@@ -898,6 +1005,7 @@ struct CodexAppServerSharedState {
     next_id: u64,
     active_threads: HashMap<String, usize>,
     thread_generations: HashMap<String, u64>,
+    idle_thread_generations: HashMap<String, u64>,
     next_thread_generation: u64,
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
     runtime_proxy_env: BTreeMap<String, String>,
@@ -910,6 +1018,7 @@ impl Default for CodexAppServerSharedState {
             next_id: 1,
             active_threads: HashMap::new(),
             thread_generations: HashMap::new(),
+            idle_thread_generations: HashMap::new(),
             next_thread_generation: 1,
             thread_lifecycle_gates: HashMap::new(),
             runtime_proxy_env: BTreeMap::new(),
@@ -1365,6 +1474,17 @@ fn codex_thread_plan(
     }
 }
 
+fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&str> {
+    match &thread_plan.start {
+        CodexThreadStart::Direct(thread_id) => Some(thread_id),
+        CodexThreadStart::Request {
+            operation: "thread/resume",
+            params,
+        } => params.get("threadId").and_then(Value::as_str),
+        CodexThreadStart::Request { .. } => None,
+    }
+}
+
 fn thread_id_from_response(
     operation: &str,
     response: &Value,
@@ -1448,12 +1568,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
-        if !matches!(thread_plan.start, CodexThreadStart::Direct(_)) {
-            if let Some(thread_id) = resume_thread_id.as_deref() {
-                // An idle thread is unsubscribed after its previous turn. Resume establishes the
-                // next owner subscription and loads the latest materialized snapshot.
-                client.unsubscribe_thread(thread_id).await;
-            }
+        if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            client.mark_thread_active(thread_id).await;
+            subscribed_thread_id = Some(thread_id.to_owned());
         }
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
@@ -1482,9 +1599,18 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_id
             }
         };
+        if let Some(active_thread_id) = subscribed_thread_id.as_deref() {
+            if active_thread_id != thread_id {
+                return Err(format!(
+                    "codex app-server resumed thread {thread_id} instead of requested thread {active_thread_id}"
+                ));
+            }
+        } else {
+            client.mark_thread_active(&thread_id).await;
+            subscribed_thread_id = Some(thread_id.clone());
+        }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
-        subscribed_thread_id = Some(thread_id.clone());
         let mut notification_rx = client
             .subscribe_thread_notifications_for_launch_config(&launch_config, &thread_id)
             .await?;
@@ -1502,6 +1628,13 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         if awaits_initial_goal_turn {
+            if let Some(settings_params) =
+                thread_collaboration_mode_update_params(&thread_id, request, &launch_config)
+            {
+                client
+                    .request("thread/settings/update", settings_params)
+                    .await?;
+            }
             let goal = initial_thread_goal
                 .as_ref()
                 .expect("initial goal must exist when awaiting its turn");
@@ -1521,7 +1654,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let active_turn_id = if awaits_initial_goal_turn {
@@ -1607,11 +1739,13 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
         let response_item_id = state.response_item_id().map(str::to_owned);
+        let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
             response_item_id,
+            response_value_origin,
             goal_status,
             goal_status_observed,
         })
@@ -1619,15 +1753,28 @@ async fn run_codex_app_server_turn_on_shared_client(
     .await;
 
     if let Some(thread_id) = subscribed_thread_id {
-        if let Some(generation) = client.mark_thread_idle(&thread_id).await {
-            // Ephemeral threads cannot be resumed after app-server unloads them, so keep the
-            // owner subscription alive while the temporary chat may still send direct turns.
-            if result.is_ok() && !prepared.request.ephemeral {
-                client.unsubscribe_thread_in_background(thread_id, generation);
-            } else {
-                client
-                    .clear_idle_thread_generation(&thread_id, generation)
-                    .await;
+        let retain_subscription = result.is_ok() && !prepared.request.ephemeral;
+        if let Some((generation, overflow)) = client
+            .mark_thread_idle(&thread_id, retain_subscription)
+            .await
+        {
+            if retain_subscription {
+                client.unsubscribe_thread_in_background(
+                    thread_id,
+                    generation,
+                    IDLE_CODEX_THREAD_SUBSCRIPTION_TTL,
+                    "ttl",
+                    MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES,
+                );
+                for (overflow_thread_id, overflow_generation) in overflow {
+                    client.unsubscribe_thread_in_background(
+                        overflow_thread_id,
+                        overflow_generation,
+                        Duration::ZERO,
+                        "capacity",
+                        MAX_IDLE_CODEX_THREAD_UNSUBSCRIBE_RETRIES,
+                    );
+                }
             }
         }
     }
@@ -1865,11 +2012,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
         }
         log_executor_event("codex turn request finished", &turn_fields);
         let response_item_id = state.response_item_id().map(str::to_owned);
+        let response_value_origin = state.response_value_origin();
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         Ok(CodexAppServerTurn {
             thread_id,
             outcome,
             response_item_id,
+            response_value_origin,
             goal_status,
             goal_status_observed,
         })
@@ -2637,7 +2786,10 @@ fn spawn_codex_app_server(
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
     let mut command = Command::new(&resolved_binary);
-    for key in EXECUTOR_INTERNAL_ENV_KEYS {
+    for key in EXECUTOR_INTERNAL_ENV_KEYS
+        .iter()
+        .chain(TASK_SCOPED_ENV_KEYS.iter())
+    {
         command.env_remove(key);
     }
     for config_override in &launch_config.config_overrides {
@@ -3208,6 +3360,8 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
     overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
+    overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
     overrides
 }
 
@@ -4787,11 +4941,15 @@ async fn request_shared_thread_id_with_provider_recovery(
     {
         return Err(provider_error);
     }
+    let active_thread_id = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "codex app-server thread/resume params missing threadId".to_owned())?;
 
     let mut fields = task_fields(task_id, subtask_id);
     fields.push(("operation", operation.to_owned()));
     fields.push(("error", provider_error.clone()));
-    match client.restart_if_idle().await {
+    match client.restart_if_no_competing_work(active_thread_id).await {
         Ok(()) => {
             log_executor_event(
                 "codex shared stale thread provider recovery restarting",
@@ -4849,6 +5007,26 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     Value::Object(params)
+}
+
+pub(crate) async fn start_codex_app_server_thread(
+    client: &CodexAppServerClient,
+    request: &ExecutionRequest,
+) -> Result<String, String> {
+    let launch_config = build_codex_launch_config(request)?;
+    client
+        .ensure_process_for_launch_config(&launch_config)
+        .await?;
+    let response = client
+        .request("thread/start", thread_start_params(request, &launch_config))
+        .await?;
+    let thread_id = thread_id_from_response(
+        "thread/start",
+        &response,
+        launch_config.model_provider.as_deref(),
+    )?;
+    bind_local_proxy_thread(&launch_config, &thread_id)?;
+    Ok(thread_id)
 }
 
 fn thread_fork_params(
@@ -4945,6 +5123,17 @@ fn thread_resume_params(
     Value::Object(params)
 }
 
+fn thread_collaboration_mode_update_params(
+    thread_id: &str,
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) -> Option<Value> {
+    Some(json!({
+        "threadId": thread_id,
+        "collaborationMode": codex_collaboration_mode_payload(request, launch_config)?,
+    }))
+}
+
 fn insert_codex_developer_instructions(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
@@ -4973,24 +5162,6 @@ fn append_thread_launch_params(
     let mut config = launch_config.thread_config.clone();
     for override_value in &launch_config.config_overrides {
         if let Some((key, value)) = config_override_entry(override_value) {
-            config.insert(key, value);
-        }
-    }
-    if !config.is_empty() {
-        params.insert("config".to_owned(), Value::Object(config));
-    }
-}
-
-fn append_turn_shell_environment_params(
-    params: &mut serde_json::Map<String, Value>,
-    launch_config: &CodexLaunchConfig,
-) {
-    let mut config = serde_json::Map::new();
-    for override_value in &launch_config.config_overrides {
-        let Some((key, value)) = config_override_entry(override_value) else {
-            continue;
-        };
-        if key.starts_with("shell_environment_policy.set.") {
             config.insert(key, value);
         }
     }
@@ -5032,7 +5203,6 @@ fn turn_start_params(
     if let Some(summary) = &launch_config.summary {
         params.insert("summary".to_owned(), Value::String(summary.clone()));
     }
-    append_turn_shell_environment_params(&mut params, launch_config);
     if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
         params.insert("collaborationMode".to_owned(), collaboration_mode);
     }

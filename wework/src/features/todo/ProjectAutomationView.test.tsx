@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
+import { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { AutomationRulesView } from './AutomationRulesView.jsx'
+import { automationRuleFromBackend } from './automationRuleBackend'
 import { ProjectAutomationView } from './ProjectAutomationView'
 
 const localExecutorMocks = vi.hoisted(() => ({
@@ -18,6 +21,12 @@ const project = {
   name: 'Automation project',
   current_user_id: 7,
   tags: ['自动开发', '缺陷'],
+  task_provider: 'gitlab',
+  provider_config: {
+    domain: 'gitlab.example',
+    repository: 'Test-Gitlab',
+    credential_configured: true,
+  },
 } as CloudProject
 
 const rule: ProjectAutomationRule = {
@@ -116,8 +125,6 @@ const rule: ProjectAutomationRule = {
       ],
     },
   },
-  webhookEventId: 'event-1',
-  webhookSecret: null,
   cronExpression: null,
   timezone: 'Asia/Shanghai',
   assignmentMode: 'manual',
@@ -191,11 +198,15 @@ function renderView({
   listedRules = [rule],
   listedRuns = [run],
   onProjectUpdated,
+  incomingHookApi,
+  modelApi,
 }: {
   viewProject?: CloudProject
   listedRules?: ProjectAutomationRule[]
   listedRuns?: ProjectAutomationRun[]
   onProjectUpdated?: (project: CloudProject) => void
+  incomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
+  modelApi?: WorkbenchServices['modelApi']
 } = {}) {
   const projectAutomationApi = {
     list: vi.fn().mockResolvedValue(listedRules),
@@ -233,18 +244,20 @@ function renderView({
       },
     ]),
   } as unknown as WorkbenchServices['deviceApi']
-  const modelApi = {
-    listModels: vi.fn().mockResolvedValue({
-      data: [
-        {
-          name: 'codex-runtime',
-          displayName: 'Codex Runtime',
-          type: 'runtime',
-          isActive: true,
-        },
-      ],
-    }),
-  } as unknown as WorkbenchServices['modelApi']
+  const modelApiOrDefault =
+    modelApi ??
+    ({
+      listModels: vi.fn().mockResolvedValue({
+        data: [
+          {
+            name: 'codex-runtime',
+            displayName: 'Codex Runtime',
+            type: 'runtime',
+            isActive: true,
+          },
+        ],
+      }),
+    } as unknown as WorkbenchServices['modelApi'])
   const pluginApi = {
     listPlugins: vi.fn().mockResolvedValue([
       {
@@ -255,25 +268,48 @@ function renderView({
       },
     ]),
   }
-  const view = render(
+  const projectAutomationView = (
+    updatedCallback: ((project: CloudProject) => void) | undefined = onProjectUpdated
+  ) => (
     <ProjectAutomationView
       api={{} as NonNullable<WorkbenchServices['deliveryApi']>}
       project={viewProject}
       projectAutomationApi={projectAutomationApi}
+      projectIncomingHookApi={incomingHookApi}
       deviceApi={deviceApi}
-      modelApi={modelApi}
+      modelApi={modelApiOrDefault}
       pluginApi={pluginApi}
       currentUserId={7}
       canManageAgents
-      onProjectUpdated={onProjectUpdated}
+      onProjectUpdated={updatedCallback}
     />
   )
-  return { projectAutomationApi, deviceApi, modelApi, pluginApi, view }
+  const view = render(projectAutomationView())
+  return {
+    projectAutomationApi,
+    deviceApi,
+    modelApi: modelApiOrDefault,
+    pluginApi,
+    view,
+    rerender: (updatedCallback?: (project: CloudProject) => void) =>
+      view.rerender(projectAutomationView(updatedCallback)),
+  }
 }
 
 async function openRuleEditor(ruleId = 'rule-1') {
   fireEvent.click(await screen.findByTestId(`automation-card-${ruleId}`))
   return screen.findByTestId('automation-rule-editor')
+}
+
+function refreshedFirstStepPrompt(
+  current: ReturnType<typeof automationRuleFromBackend>,
+  prompt: string
+) {
+  return {
+    ...current,
+    version: current.version + 1,
+    steps: current.steps.map((step, index) => (index === 0 ? { ...step, prompt } : step)),
+  }
 }
 
 describe('ProjectAutomationView', () => {
@@ -407,6 +443,89 @@ describe('ProjectAutomationView', () => {
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
   })
 
+  test('renders schedule status and last-run metadata on the automation card', async () => {
+    const scheduled = {
+      ...rule,
+      triggerType: 'schedule' as const,
+      cronExpression: '16 * * * *',
+      nextRunAt: '2026-09-07T08:16:00Z',
+      lastRunAt: '2026-09-07T07:16:00Z',
+      lastRunStatus: 'succeeded' as const,
+    }
+
+    renderView({ listedRules: [scheduled] })
+
+    const card = await screen.findByTestId('automation-card-rule-1')
+    expect(card).toHaveTextContent('运行中 · 下次 16:16')
+    expect(card).toHaveTextContent('2026/09/07 15:16 · 成功')
+    expect(screen.getByTestId('automation-toggle-rule-1')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  test('dismisses the automation card menu from outside clicks and Escape', async () => {
+    renderView()
+
+    const menuButton = await screen.findByTestId('automation-menu-rule-1')
+    fireEvent.click(menuButton)
+    expect(screen.getByTestId('automation-menu-rule-1-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('automation-menu-rule-1-menu')).not.toBeInTheDocument()
+
+    fireEvent.click(menuButton)
+    expect(screen.getByTestId('automation-menu-rule-1-menu')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('automation-menu-rule-1-menu')).not.toBeInTheDocument()
+  })
+
+  test('does not reload automation rules when a parent callback changes', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const { projectAutomationApi, rerender } = renderView({ onProjectUpdated: vi.fn() })
+      expect(await screen.findByTestId('automation-card-rule-1')).toBeInTheDocument()
+      expect(projectAutomationApi.list).toHaveBeenCalledOnce()
+
+      now += 31_000
+      rerender(vi.fn())
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(projectAutomationApi.list).toHaveBeenCalledOnce()
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  test('preserves a dirty editor draft when refreshed rules arrive', async () => {
+    const initialRule = automationRuleFromBackend(rule)
+    const refreshedRule = refreshedFirstStepPrompt(initialRule, '服务端刷新内容')
+    const view = render(<AutomationRulesView rules={[initialRule]} runs={[]} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+    fireEvent.change(screen.getByTestId('execution-node-prompt-step-1'), {
+      target: { value: '尚未保存的本地输入' },
+    })
+
+    view.rerender(<AutomationRulesView rules={[refreshedRule]} runs={[]} />)
+
+    expect(screen.getByTestId('execution-node-prompt-step-1')).toHaveValue('尚未保存的本地输入')
+    expect(screen.getByText('待保存')).toBeInTheDocument()
+  })
+
+  test('applies a refreshed rule when the editor draft is clean', async () => {
+    const initialRule = automationRuleFromBackend(rule)
+    const refreshedRule = refreshedFirstStepPrompt(initialRule, '服务端刷新内容')
+    const view = render(<AutomationRulesView rules={[initialRule]} runs={[]} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    view.rerender(<AutomationRulesView rules={[refreshedRule]} runs={[]} />)
+
+    expect(screen.getByTestId('execution-node-prompt-step-1')).toHaveValue('服务端刷新内容')
+    expect(screen.queryByText('有未保存更改')).not.toBeInTheDocument()
+  })
+
   test('opens and applies an embedded template from the template store', async () => {
     const { deviceApi, modelApi, pluginApi } = renderView()
     await screen.findByTestId('automation-card-rule-1')
@@ -422,11 +541,52 @@ describe('ProjectAutomationView', () => {
     expect(deviceApi.listDevices).toHaveBeenCalledOnce()
     expect(modelApi.listModels).toHaveBeenCalledOnce()
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
-    expect(screen.getByDisplayValue('每日 Issue 巡检')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每日 Issue 巡检')
     expect(screen.getByTestId('automation-workflow-canvas')).toBeInTheDocument()
   })
 
+  test('creates a new board automation enabled by default', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.create = vi.fn().mockImplementation((_projectId, input) =>
+      Promise.resolve({
+        ...rule,
+        id: 'rule-created',
+        name: input.name,
+        prompt: input.prompt,
+        enabled: input.enabled,
+        eventConfig: input.eventConfig,
+      })
+    )
+    await screen.findByTestId('automation-card-rule-1')
+
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    const nameInput = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(nameInput, { target: { value: '自动保存的新规则' } })
+    fireEvent.blur(nameInput)
+
+    await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
+    expect(vi.mocked(projectAutomationApi.create).mock.calls[0][1].enabled).toBe(true)
+  })
+
+  test('clears a pending auto-save timer when the view unmounts', () => {
+    vi.useFakeTimers()
+    try {
+      const view = render(<AutomationRulesView rules={[]} runs={[]} />)
+      fireEvent.click(screen.getByTestId('automation-create-blank'))
+      fireEvent.change(screen.getByTestId('automation-rule-description'), {
+        target: { value: '等待自动保存' },
+      })
+
+      expect(vi.getTimerCount()).toBe(1)
+
+      view.unmount()
+
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   test('opens a backend rule as a horizontal draggable React Flow workflow', async () => {
     const { view } = renderView()
     await openRuleEditor()
@@ -439,16 +599,14 @@ describe('ProjectAutomationView', () => {
     expect(screen.queryByTestId('automation-editor-leftbar')).not.toBeInTheDocument()
     const navigation = screen.getByTestId('automation-editor-navigation')
     const backButton = screen.getByTestId('automation-editor-back')
+    const objectBar = screen.getByTestId('automation-editor-object-bar')
     const sectionMenu = screen.getByTestId('automation-editor-section-menu')
     expect(navigation).not.toHaveClass('border', 'bg-background/95', 'shadow-md')
-    expect(backButton).toHaveClass('size-8', 'border', 'bg-background/95', 'shadow-md')
-    expect(sectionMenu.firstElementChild).toHaveClass(
-      'h-8',
-      'border',
-      'bg-background/95',
-      'shadow-md'
-    )
+    expect(objectBar).toHaveClass('h-9', 'border', 'bg-background/95', 'shadow-md')
+    expect(backButton).toHaveClass('size-7')
+    expect(sectionMenu).toHaveClass('h-9', 'border', 'bg-background/95', 'shadow-md')
     expect(sectionMenu).toHaveTextContent('编排')
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('新 Issue 自动开发')
     expect(screen.getByTestId('automation-editor-rightbar')).not.toContainElement(
       screen.getByTestId('automation-editor-global-actions')
     )
@@ -465,6 +623,71 @@ describe('ProjectAutomationView', () => {
     expect(screen.getByTestId('automation-node-insert-after-step-2')).toBeInTheDocument()
     expect(view.container.querySelector('[data-id^="append-edge:"]')).toBeNull()
     expect(view.container.querySelector('[data-id^="insert-"]')).toBeNull()
+  })
+
+  test('renames an automation inline and supports commit or cancel keyboard actions', async () => {
+    const { projectAutomationApi } = renderView()
+    vi.mocked(projectAutomationApi.update).mockImplementation(
+      async (_projectId, _ruleId, input) => ({
+        ...rule,
+        name: input.name ?? rule.name,
+        version: input.version + 1,
+      })
+    )
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    let input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '不保存的名称' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('新 Issue 自动开发')
+    expect(screen.queryByTestId('automation-save')).not.toBeInTheDocument()
+    expect(projectAutomationApi.update).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '每日数据同步' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每日数据同步')
+    expect(projectAutomationApi.update).toHaveBeenCalledWith(
+      '11',
+      'rule-1',
+      expect.objectContaining({ version: 2, name: '每日数据同步' })
+    )
+    expect(screen.queryByTestId('automation-save')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '每小时数据同步' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每小时数据同步')
+  })
+
+  test('creates a new automation when its inline name is committed', async () => {
+    const { projectAutomationApi } = renderView()
+    vi.mocked(projectAutomationApi.create).mockImplementation(async (_projectId, input) => ({
+      ...rule,
+      id: 'rule-new',
+      name: input.name,
+      prompt: input.prompt,
+      eventConfig: input.eventConfig,
+    }))
+    await screen.findByTestId('automation-card-rule-1')
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    const input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '每日巡检' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每日巡检')
+    expect(screen.getByText('已保存')).toBeInTheDocument()
   })
 
   test('shows understandable local and cloud execution device names', async () => {
@@ -516,6 +739,75 @@ describe('ProjectAutomationView', () => {
     expect(environmentSelect.querySelector('.lucide-cloud')).toBeInTheDocument()
   })
 
+  test('preserves backend cloud model identity in automation execution config', async () => {
+    const { projectAutomationApi, deviceApi, modelApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    vi.mocked(deviceApi.listDevices).mockResolvedValue([
+      {
+        id: 2,
+        device_id: 'cloud-device',
+        name: 'Cloud Device',
+        status: 'online',
+        is_default: true,
+        device_type: 'cloud',
+      },
+    ] as never)
+    vi.mocked(modelApi.listModels).mockResolvedValue({
+      data: [
+        {
+          name: 'deepseek-v4-flash-vision-exp',
+          displayName: 'deepseek-v4-flash-vision-exp',
+          type: 'public',
+          namespace: 'default',
+          resourceUserId: 0,
+          isActive: true,
+          config: {
+            ui: {
+              family: 'deepseek',
+              modelLabel: 'DeepSeek V4 Flash Vision',
+              region: 'public',
+            },
+          },
+        },
+      ],
+    })
+
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    fireEvent.click(screen.getByTestId('execution-node-environment-step-1'))
+    fireEvent.click(
+      await screen.findByTestId('execution-node-environment-step-1-option-cloud-device')
+    )
+    await screen.findByRole('option', { name: '公网:DeepSeek V4 Flash Vision' })
+    fireEvent.change(screen.getByTestId('execution-node-model-step-1'), {
+      target: { value: 'deepseek-v4-flash-vision-exp' },
+    })
+
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(projectAutomationApi.update)
+          .mock.calls.at(-1)?.[2]
+          .eventConfig?.runtime_workflow_definition?.nodes.find(node => node.id === 'step-1')
+          ?.execution_config?.model
+      ).toBe('deepseek-v4-flash-vision-exp')
+    )
+    const input = vi.mocked(projectAutomationApi.update).mock.calls.at(-1)![2]
+    expect(
+      input.eventConfig?.runtime_workflow_definition?.nodes.find(node => node.id === 'step-1')
+        ?.execution_config
+    ).toMatchObject({
+      execution_device_id: 'cloud-device',
+      model: 'deepseek-v4-flash-vision-exp',
+      model_type: 'public',
+      model_options: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+      },
+    })
+  })
+
   test('clears execution environment and model and persists the unconfigured node', async () => {
     const { projectAutomationApi } = renderView()
     projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
@@ -533,8 +825,6 @@ describe('ProjectAutomationView', () => {
     expect(modelSelect).toHaveValue('')
     expect(screen.getByRole('option', { name: '不指定模型' })).not.toBeDisabled()
 
-    fireEvent.click(screen.getByTestId('automation-save'))
-
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
     const storedNode = (
@@ -551,7 +841,7 @@ describe('ProjectAutomationView', () => {
         }
       }
     ).graph.nodes[0]
-    const runtimeNode = input.eventConfig?.runtime_workflow_definition?.nodes[0]
+    const runtimeNode = input.eventConfig?.runtime_workflow_definition?.nodes[1]
 
     expect(storedNode).toMatchObject({
       environment: '',
@@ -567,6 +857,62 @@ describe('ProjectAutomationView', () => {
       model: null,
       model_type: null,
       model_options: {},
+    })
+  })
+
+  test('persists the cloud model identity in workflow model options', async () => {
+    const { projectAutomationApi } = renderView({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'dpskv4f',
+              displayName: 'deepseekv4flash',
+              type: 'user',
+              namespace: 'default',
+              resourceUserId: 1,
+              isActive: true,
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+              },
+            },
+          ],
+        }),
+      } as unknown as WorkbenchServices['modelApi'],
+    })
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'deepseekv4flash' })).toBeInTheDocument()
+    )
+    fireEvent.change(screen.getByTestId('execution-node-model-step-1'), {
+      target: { value: 'dpskv4f' },
+    })
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    const storedNode = (
+      input.eventConfig?.wework_flow as {
+        graph: {
+          nodes: Array<{
+            model: string
+            modelType: string | null
+            modelOptions: Record<string, string>
+          }>
+        }
+      }
+    ).graph.nodes[0]
+    expect(storedNode).toMatchObject({
+      model: 'dpskv4f',
+      modelType: 'user',
+      modelOptions: {
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '1',
+      },
     })
   })
 
@@ -601,33 +947,49 @@ describe('ProjectAutomationView', () => {
     expect(node).not.toHaveTextContent('本机 ·')
   })
 
-  test('uses hand mode by default and allows switching to pointer mode', async () => {
+  test('uses pointer mode by default and allows switching to hand mode', async () => {
     renderView()
     await openRuleEditor()
 
     const handMode = screen.getByTestId('automation-canvas-hand-mode')
     const pointerMode = screen.getByTestId('automation-canvas-pointer-mode')
     expect(handMode.parentElement).toHaveClass(
-      'h-16',
-      'w-8',
+      'w-9',
       'grid-rows-2',
-      'overflow-hidden',
       'border',
       'bg-background/95',
       'shadow-md'
     )
-    expect(handMode.parentElement).not.toHaveClass('gap-1', 'p-1')
-    expect(handMode).toHaveClass('h-full', 'w-full')
-    expect(pointerMode).toHaveClass('h-full', 'w-full')
+    expect(handMode.parentElement).toHaveClass('gap-1', 'p-1')
+    expect(handMode).toHaveClass('size-7')
+    expect(pointerMode).toHaveClass('size-7')
     expect(handMode).not.toHaveClass('border', 'shadow-md')
     expect(pointerMode).not.toHaveClass('border', 'shadow-md')
-    expect(handMode).toHaveClass('active')
-    expect(pointerMode).not.toHaveClass('active')
-
-    fireEvent.click(pointerMode)
-
     expect(pointerMode).toHaveClass('active')
     expect(handMode).not.toHaveClass('active')
+
+    fireEvent.click(handMode)
+
+    expect(handMode).toHaveClass('active')
+    expect(pointerMode).not.toHaveClass('active')
+  })
+
+  test('deletes the selected workflow node with Backspace without intercepting text input', async () => {
+    const uiRule = automationRuleFromBackend(rule)
+    const onSaveRule = vi.fn().mockImplementation(async value => value)
+    render(<AutomationRulesView rules={[uiRule]} runs={[]} onSaveRule={onSaveRule} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    const nameInput = screen.getByTestId('execution-node-name-step-1')
+    fireEvent.keyDown(nameInput, { key: 'Backspace' })
+    expect(screen.getByTestId('execution-node-step-1')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Backspace' })
+
+    expect(screen.queryByTestId('execution-node-step-1')).not.toBeInTheDocument()
+    await waitFor(() => expect(onSaveRule).toHaveBeenCalledOnce())
+    expect(onSaveRule.mock.calls[0][0].steps.map(step => step.id)).toEqual(['step-2', 'step-3'])
   })
 
   test('selects and persists the required deliverable type', async () => {
@@ -641,8 +1003,6 @@ describe('ProjectAutomationView', () => {
     const typeSelect = screen.getByRole('combobox', { name: /交付物类型/ })
     fireEvent.change(typeSelect, { target: { value: 'file' } })
     expect(typeSelect).toHaveValue('file')
-
-    fireEvent.click(screen.getByTestId('automation-save'))
 
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
@@ -670,7 +1030,7 @@ describe('ProjectAutomationView', () => {
         max_files: 1,
       },
     })
-    expect(workflow?.nodes[0]?.required_deliverables?.[0]).toMatchObject({
+    expect(workflow?.nodes[1]?.required_deliverables?.[0]).toMatchObject({
       value_type: 'file',
       file_constraints: {
         accepted_types: [],
@@ -700,8 +1060,6 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(promptInput as HTMLTextAreaElement, {
       target: { value: '在动态分配前完成检查。' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
-
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
     const flow = input.eventConfig?.wework_flow as {
@@ -714,6 +1072,331 @@ describe('ProjectAutomationView', () => {
     expect(successor?.dependencies).toEqual([inserted?.id])
   })
 
+  test('inserts a loop container and renders its loop body', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-loop-trigger'))
+
+    expect(await screen.findByTestId(/^loop-node-loop-/)).toBeInTheDocument()
+    expect(screen.getByTestId(/^loop-body-node-/)).toBeInTheDocument()
+    const loopMain = screen.getByTestId(/^loop-node-main-/)
+    expect(loopMain).toHaveTextContent('循环')
+    expect(loopMain).toHaveTextContent('最多 5 次')
+    expect(screen.getByTestId('loop-node-name')).toHaveValue('循环')
+  })
+
+  test('inserts a branch node inside a loop and renders condition rows', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-loop-trigger'))
+    expect(await screen.findByTestId(/^loop-node-loop-/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId(/^automation-node-insert-after-loop-start-/))
+    fireEvent.click(screen.getByTestId(/^automation-node-insert-after-branch-loop-start-/))
+
+    const branchNode = await screen.findByTestId(/^loop-body-node-loop-body-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('loop-body-node-', '')
+    expect(
+      await screen.findByText('还没有分支，可通过分支节点右侧的加号添加。')
+    ).toBeInTheDocument()
+    expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+
+    expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
+  })
+
+  test('creates another branch from the right plus of a branch inside a loop', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-loop-trigger'))
+    fireEvent.click(await screen.findByTestId(/^automation-node-insert-after-loop-start-/))
+    fireEvent.click(screen.getByTestId(/^automation-node-insert-after-branch-loop-start-/))
+
+    const branchNode = await screen.findByTestId(/^loop-body-node-loop-body-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('loop-body-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-branch-${branchId}`))
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByTestId(/^loop-body-node-/)
+          .filter(node => node.textContent?.includes('按事件路由'))
+      ).toHaveLength(2)
+    )
+  })
+
+  test('creates a loop end from the right plus of a branch inside a loop', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-loop-trigger'))
+    fireEvent.click(await screen.findByTestId(/^automation-node-insert-after-loop-start-/))
+    fireEvent.click(screen.getByTestId(/^automation-node-insert-after-branch-loop-start-/))
+
+    const branchNode = await screen.findByTestId(/^loop-body-node-loop-body-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('loop-body-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-loopEnd-${branchId}`))
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByTestId(/^loop-body-node-/)
+          .some(node => node.getAttribute('aria-label') === '循环结束')
+      ).toBe(true)
+    )
+  })
+
+  test('persists loop max attempts and timeout without loop variables or break conditions', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-loop-trigger'))
+    fireEvent.click(await screen.findByTestId(/^loop-node-main-loop-/))
+
+    expect(screen.queryByTestId('loop-variable-add')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('loop-break-add')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('loop-max-attempts'), { target: { value: '8' } })
+    fireEvent.change(screen.getByTestId('loop-timeout-seconds'), { target: { value: '600' } })
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    const flow = input.eventConfig?.wework_flow as {
+      graph: { nodes: Array<{ nodeType: string; loopConfig: Record<string, unknown> }> }
+    }
+    const loop = flow.graph.nodes.find(node => node.nodeType === 'loop')
+    expect(loop?.loopConfig).toMatchObject({
+      maxAttempts: 8,
+      timeoutSeconds: 600,
+    })
+  })
+
+  test('inserts a top-level branch node and creates a branch handler', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    expect(await screen.findByTestId(/^branch-node-branch-/)).toBeInTheDocument()
+    expect(screen.getByText('完成后继续')).toBeInTheDocument()
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+    expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3)
+    expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
+  })
+
+  test('creates a branch handler from the right plus with the next available event', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+
+    expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3)
+    expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
+  })
+
+  test('offers every supported top-level node type from the branch right plus', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    ;['task', 'dynamic', 'loop', 'branch'].forEach(kind => {
+      expect(
+        screen.getByTestId(`automation-node-insert-after-${kind}-${branchId}`)
+      ).toBeInTheDocument()
+    })
+  })
+
+  test('offers branch and loop-end handlers inside a loop branch', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-loop-trigger'))
+    fireEvent.click(await screen.findByTestId(/^automation-node-insert-after-loop-start-/))
+    fireEvent.click(screen.getByTestId(/^automation-node-insert-after-branch-loop-start-/))
+
+    const branchNode = await screen.findByTestId(/^loop-body-node-loop-body-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('loop-body-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    ;['task', 'branch', 'loopEnd'].forEach(kind => {
+      expect(
+        screen.getByTestId(`automation-node-insert-after-${kind}-${branchId}`)
+      ).toBeInTheDocument()
+    })
+  })
+
+  test('creates a branch handler from the right plus and switches to branch settings', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+
+    expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3)
+    expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
+  })
+
+  test('stacks branch condition handlers downward in a single column', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+
+    const readPosition = handle => {
+      const node = handle?.closest('.react-flow__node')
+      if (!node) return null
+      const match = (node.style.transform || '').match(/translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/)
+      return match ? { x: Number(match[1]), y: Number(match[2]) } : null
+    }
+    const positions = screen
+      .getAllByTestId(/^execution-node-step-/)
+      .map(readPosition)
+      .filter(Boolean)
+
+    // The two condition handlers share the column's x and stack by y.
+    const ysByX = new Map<number, number[]>()
+    positions.forEach(position => {
+      const ys = ysByX.get(position.x) ?? []
+      ys.push(position.y)
+      ysByX.set(position.x, ys)
+    })
+    expect([...ysByX.values()].some(ys => new Set(ys).size >= 2)).toBe(true)
+  })
+
+  test('shows the localized label for the merged event type on a branch node', async () => {
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'gitlab',
+          collectionModes: ['webhook', 'poll', 'hybrid'],
+          resourceTypes: ['project'],
+          eventTypes: ['change_request.merged', 'change_request.checks_failed'],
+          executionTargets: ['continue_binding', 'create_issue'],
+          nameKey: 'event_sources.gitlab.name',
+          descriptionKey: 'event_sources.gitlab.description',
+        },
+      ]),
+      list: vi.fn().mockResolvedValue([]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    renderView({ incomingHookApi })
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+    fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-condition-source-0')).toHaveValue('gitlab')
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-condition-event-0')).toHaveValue('change_request.merged')
+    )
+
+    expect((await screen.findAllByText(/分支 1/)).length).toBeGreaterThan(0)
+    // The branch row applies eventTypeLabel instead of the raw identifier.
+    const branchRow = screen
+      .getAllByText(/分支 1/)
+      .map(element => element.closest('.react-flow-branch-condition-row'))
+      .find(Boolean)
+    expect(branchRow?.textContent).not.toContain('change_request.merged')
+  })
+
+  test('places a node inserted after a loop to the right of its rendered width', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-loop-trigger'))
+
+    const loopNode = await screen.findByTestId(/^loop-node-loop-/)
+    const loopId = loopNode.getAttribute('data-testid').replace('loop-node-', '')
+
+    const readPosition = handle => {
+      const node = handle?.closest('.react-flow__node')
+      if (!node) return null
+      const match = (node.style.transform || '').match(/translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/)
+      return match ? { x: Number(match[1]), y: Number(match[2]) } : null
+    }
+    const loopPosition = readPosition(loopNode)
+
+    // Insert a task node immediately after the loop.
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${loopId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${loopId}`))
+
+    const loopNodeEl = loopNode.closest('.react-flow__node')
+    const loopWidth = Number.parseFloat(loopNodeEl?.style.width || '560')
+
+    expect(loopPosition?.x).not.toBeNull()
+    const loopLeft = loopPosition?.x ?? 0
+    await waitFor(() => {
+      // The node inserted after the loop must clear the loop's rendered width,
+      // and no execution node may fall inside the loop's horizontal span.
+      const positions = screen
+        .getAllByTestId(/^execution-node-step-/)
+        .map(readPosition)
+        .filter(Boolean)
+      expect(positions.some(position => position.x >= loopLeft + loopWidth)).toBe(true)
+      positions.forEach(position => {
+        expect(position.x < loopLeft || position.x >= loopLeft + loopWidth).toBe(true)
+      })
+    })
+  })
+
   test('rejects saving a workflow with an unnamed execution node', async () => {
     const { projectAutomationApi } = renderView()
     await openRuleEditor()
@@ -721,9 +1404,37 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(screen.getByTestId('execution-node-name-step-1'), {
       target: { value: '' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
+    expect(await screen.findByText('等待补全')).toBeInTheDocument()
+    expect(screen.getByText('等待补全')).toHaveAttribute('title', '请填写所有执行节点名称')
+    expect(projectAutomationApi.update).not.toHaveBeenCalled()
+  })
 
-    expect(await screen.findByText('请填写所有执行节点名称')).toBeInTheDocument()
+  test('saves an automation without an optional description', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.change(screen.getByTestId('automation-rule-description'), {
+      target: { value: '   ' },
+    })
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    expect(input.eventConfig?.wework_flow).toMatchObject({ description: '' })
+    expect(input.prompt).not.toContain('自动化目标：')
+  })
+
+  test('keeps the current automation name when an inline rename is empty', async () => {
+    const { projectAutomationApi } = renderView()
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    const input = screen.getByRole('textbox', { name: '自动化名称' })
+    fireEvent.change(input, {
+      target: { value: '   ' },
+    })
+    fireEvent.blur(input)
+
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('新 Issue 自动开发')
+    expect(screen.queryByTestId('automation-save')).not.toBeInTheDocument()
     expect(projectAutomationApi.update).not.toHaveBeenCalled()
   })
 
@@ -745,6 +1456,19 @@ describe('ProjectAutomationView', () => {
     expect(screen.getByTestId('automation-rule-editor')).toHaveStyle({
       '--automation-right-panel-width': '0px',
     })
+  })
+
+  test('opens branch settings when the branch body is pressed', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    fireEvent.click(branchNode)
+
+    expect(await screen.findByTestId('branch-event-wait-mode')).toBeInTheDocument()
+    expect(branchNode).toHaveClass('selected')
   })
 
   test('closes the workflow detail panel from its header action', async () => {
@@ -835,8 +1559,6 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(screen.getByTestId('ai-coordinator-model'), {
       target: { value: 'codex-runtime' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
-
     await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.create).mock.calls[0][1]
     expect(input.eventConfig?.runtime_workflow_definition).toMatchObject({
@@ -876,26 +1598,61 @@ describe('ProjectAutomationView', () => {
     expect(screen.getByTestId(/ai-allocation-node-/)).toHaveClass('react-flow-dynamic-group')
     expect(viewport?.style.transform).toBe(viewportTransform)
 
-    const deleteStage = view.container.querySelector<HTMLElement>(
-      '[data-testid^="execution-node-delete-dag-stage-"]'
-    )
-    expect(deleteStage).not.toBeNull()
-    fireEvent.click(deleteStage!)
+    const dynamicSettings = screen.getByTestId('ai-coordinator-prompt')
+    expect(dynamicSettings).toBeInTheDocument()
+  })
+
+  test('renders consecutive inserted steps at distinct positions instead of stacking', async () => {
+    const { view } = renderView()
+    await screen.findByTestId('automation-card-rule-1')
+
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-task-trigger'))
+    await screen.findByTestId(/^execution-node-step-/)
+
+    // Ensure the next inserted step gets a distinct id even when both clicks
+    // land in the same millisecond.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 2))
+    })
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-task-trigger'))
 
     await waitFor(() =>
-      expect(view.container.querySelector('[data-testid^="dag-stage-node-"]')).toBeNull()
+      expect(view.container.querySelectorAll('[data-testid^="execution-node-step-"]')).toHaveLength(
+        2
+      )
     )
-    expect(screen.getByTestId(/ai-allocation-node-/).closest('.react-flow__node')).toHaveStyle({
-      width: '300px',
-      height: '132px',
+    // The draft reflows the previously inserted step out of the way, so the
+    // rendered React Flow positions must differ instead of stacking on top of
+    // each other (the originally reported "nodes disappear" symptom).
+    await waitFor(() => {
+      const rendered = Array.from(
+        view.container.querySelectorAll<HTMLElement>('.react-flow__node')
+      ).map(node => ({
+        id: node.getAttribute('data-id'),
+        transform: node.style.transform,
+      }))
+      expect(
+        new Set(
+          rendered
+            .filter(entry => entry.id?.startsWith('step-'))
+            .map(entry => entry.transform)
+            .filter(Boolean)
+        ).size
+      ).toBe(2)
     })
-    expect(view.container.querySelector('[data-testid^="dag-stage-add-first-"]')).not.toBeNull()
+    const transforms = Array.from(
+      view.container.querySelectorAll<HTMLElement>('[data-testid^="execution-node-step-"]')
+    ).map(step => step.closest('.react-flow__node')?.style.transform)
+
+    expect(new Set(transforms.filter(Boolean)).size).toBe(2)
   })
 
   test('shows backend run history inside the current automation', async () => {
     renderView()
     await openRuleEditor()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
 
     expect(screen.getByTestId('current-automation-runs')).toBeInTheDocument()
@@ -916,7 +1673,6 @@ describe('ProjectAutomationView', () => {
       listedRuns: [waitingRun],
     })
     await openRuleEditor()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
 
     const row = await screen.findByTestId('current-run-run-waiting-runtime')
@@ -940,7 +1696,6 @@ describe('ProjectAutomationView', () => {
       listedRuns: [queuedRun],
     })
     await openRuleEditor()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
     expect(await screen.findByTestId('current-run-run-refresh')).toHaveTextContent('排队中')
     await act(async () => {
@@ -1012,7 +1767,7 @@ describe('ProjectAutomationView', () => {
         projectVersion: 4,
         workflowDefinition: expect.objectContaining({
           version: 3,
-          nodes: [expect.objectContaining({ id: 'implement' })],
+          nodes: expect.arrayContaining([expect.objectContaining({ id: 'implement' })]),
         }),
       })
     )
@@ -1106,10 +1861,669 @@ describe('ProjectAutomationView', () => {
 
     expect(await screen.findByTestId('automation-card-root-rule')).toBeInTheDocument()
     await openRuleEditor('root-rule')
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
     await waitFor(() => expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1))
     expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1)
     expect(projectAutomationApi.listRuns).toHaveBeenCalledWith('21', 'root-rule')
   })
+
+  test('offers webhook/poll triggers and selects an existing project subscription', async () => {
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'github',
+          collectionModes: ['webhook', 'poll', 'hybrid'],
+          resourceTypes: ['repository'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding', 'create_issue'],
+          nameKey: 'event_sources.github.name',
+          descriptionKey: 'event_sources.github.description',
+        },
+        {
+          sourceType: 'gitlab',
+          collectionModes: ['webhook', 'poll', 'hybrid'],
+          resourceTypes: ['project'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding', 'create_issue'],
+          nameKey: 'event_sources.gitlab.name',
+          descriptionKey: 'event_sources.gitlab.description',
+        },
+        {
+          sourceType: 'wework',
+          collectionModes: ['internal'],
+          resourceTypes: ['project_space'],
+          eventTypes: ['task.created', 'task.status_changed'],
+          executionTargets: ['existing_issue'],
+          nameKey: 'event_sources.wework.name',
+          descriptionKey: 'event_sources.wework.description',
+        },
+      ]),
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'sub-1',
+          projectId: '11',
+          name: 'acme/app',
+          status: 'active',
+          sourceType: 'github',
+          collectionMode: 'webhook',
+          resource: {
+            resourceType: 'repository',
+            url: 'https://github.com/acme/app',
+            displayName: 'acme/app',
+          },
+          webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-1',
+          pollIntervalSeconds: null,
+          credentialRef: null,
+          health: {},
+          lastEventAt: null,
+          nextPollAt: null,
+          version: 1,
+          createdAt: '2026-08-28T00:00:00Z',
+          updatedAt: '2026-08-28T00:00:00Z',
+        },
+      ]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    renderView({ incomingHookApi })
+    await openRuleEditor()
+
+    const triggerType = screen.getByTestId('automation-trigger-type')
+    const optionValues = Array.from(triggerType.querySelectorAll('option')).map(
+      option => option.value
+    )
+    expect(optionValues).toEqual(expect.arrayContaining(['schedule', 'wework', 'webhook', 'poll']))
+
+    fireEvent.change(triggerType, {
+      target: { value: 'webhook' },
+    })
+
+    await waitFor(() => expect(triggerType).toHaveValue('webhook'))
+    expect(screen.getByTestId('automation-trigger-platform')).toHaveValue('github')
+    await waitFor(() =>
+      expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-1')
+    )
+    expect(screen.getAllByText('acme/app').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('automation-manage-event-subscriptions')).toBeInTheDocument()
+    expect(screen.queryByTestId('automation-execution-target')).toBeNull()
+    expect(
+      screen
+        .getByTestId('automation-event-subscription')
+        .compareDocumentPosition(screen.getByTestId('automation-target-branches')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  test('filters subscriptions by the selected collection mode', async () => {
+    const pollHook = {
+      id: 'sub-2',
+      projectId: '11',
+      name: 'acme/app poll',
+      status: 'active',
+      sourceType: 'github',
+      collectionMode: 'poll',
+      resource: {
+        resourceType: 'repository',
+        url: 'https://github.com/acme/app',
+        displayName: 'acme/app',
+      },
+      webhookUrl: null,
+      pollIntervalSeconds: 300,
+      credentialRef: 'github',
+      health: {},
+      lastEventAt: null,
+      nextPollAt: null,
+      version: 1,
+      createdAt: '2026-08-28T00:00:00Z',
+      updatedAt: '2026-08-28T00:00:00Z',
+    }
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'github',
+          collectionModes: ['webhook', 'poll', 'hybrid'],
+          resourceTypes: ['repository'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding', 'create_issue'],
+          nameKey: 'event_sources.github.name',
+          descriptionKey: 'event_sources.github.description',
+        },
+        {
+          sourceType: 'gitlab',
+          collectionModes: ['webhook', 'poll', 'hybrid'],
+          resourceTypes: ['project'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding', 'create_issue'],
+          nameKey: 'event_sources.gitlab.name',
+          descriptionKey: 'event_sources.gitlab.description',
+        },
+        {
+          sourceType: 'wework',
+          collectionModes: ['internal'],
+          resourceTypes: ['project_space'],
+          eventTypes: ['task.created', 'task.status_changed'],
+          executionTargets: ['existing_issue'],
+          nameKey: 'event_sources.wework.name',
+          descriptionKey: 'event_sources.wework.description',
+        },
+      ]),
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'sub-1',
+          projectId: '11',
+          name: 'acme/app',
+          status: 'active',
+          sourceType: 'github',
+          collectionMode: 'webhook',
+          resource: {
+            resourceType: 'repository',
+            url: 'https://github.com/acme/app',
+            displayName: 'acme/app',
+          },
+          webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-1',
+          pollIntervalSeconds: null,
+          credentialRef: null,
+          health: {},
+          lastEventAt: null,
+          nextPollAt: null,
+          version: 1,
+          createdAt: '2026-08-28T00:00:00Z',
+          updatedAt: '2026-08-28T00:00:00Z',
+        },
+        pollHook,
+      ]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    renderView({ incomingHookApi })
+    await openRuleEditor()
+
+    fireEvent.change(screen.getByTestId('automation-trigger-type'), {
+      target: { value: 'webhook' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-1')
+    )
+
+    fireEvent.change(screen.getByTestId('automation-trigger-type'), {
+      target: { value: 'poll' },
+    })
+    await waitFor(() => expect(screen.getByTestId('automation-trigger-type')).toHaveValue('poll'))
+    expect(screen.getByTestId('automation-trigger-platform')).toHaveValue('github')
+    expect(screen.getByTestId('automation-trigger-poll-interval')).toHaveValue(5)
+    fireEvent.change(screen.getByTestId('automation-trigger-poll-interval'), {
+      target: { value: '7' },
+    })
+    expect(screen.getByTestId('automation-trigger-poll-interval')).toHaveValue(7)
+    expect(screen.queryByTestId('automation-event-subscription')).toBeNull()
+    expect(screen.queryByTestId('automation-manage-event-subscriptions')).toBeNull()
+  })
+
+  test('configures a branch listener from upstream PR/MR deliveries without a project repository', async () => {
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'github',
+          collectionModes: ['webhook', 'poll'],
+          resourceTypes: ['repository'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['create_issue'],
+          nameKey: 'event_sources.github.name',
+          descriptionKey: 'event_sources.github.description',
+        },
+        {
+          sourceType: 'gitlab',
+          collectionModes: ['webhook', 'poll'],
+          resourceTypes: ['project'],
+          eventTypes: ['change_request.comment_created'],
+          executionTargets: ['create_issue'],
+          nameKey: 'event_sources.gitlab.name',
+          descriptionKey: 'event_sources.gitlab.description',
+        },
+      ]),
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'gitlab-webhook',
+          projectId: '11',
+          name: 'acme/app GitLab',
+          status: 'active',
+          sourceType: 'gitlab',
+          collectionMode: 'webhook',
+          resource: {
+            resourceType: 'project',
+            url: 'https://gitlab.com/acme/app',
+            displayName: 'acme/app',
+          },
+          webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/gitlab-webhook',
+          pollIntervalSeconds: null,
+          credentialRef: null,
+          health: {},
+          lastEventAt: null,
+          nextPollAt: null,
+          version: 1,
+          createdAt: '2026-08-28T00:00:00Z',
+          updatedAt: '2026-08-28T00:00:00Z',
+        },
+      ]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    const { projectAutomationApi } = renderView({
+      incomingHookApi,
+      viewProject: {
+        ...project,
+        task_provider: 'local',
+        provider_config: {},
+      } as CloudProject,
+    })
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+    fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-condition-event-0')).toHaveValue(
+        'change_request.checks_failed'
+      )
+    )
+    expect(screen.getByTestId('branch-condition-source-0')).toHaveValue('github')
+    const handlerNode = screen
+      .getAllByTestId(/^execution-node-step-/)
+      .find(node => node.getAttribute('data-testid') !== 'execution-node-step-1')
+    fireEvent.click(handlerNode!)
+    fireEvent.change(screen.getByTestId(/^execution-node-name-/), {
+      target: { value: '处理 MR 事件' },
+    })
+    fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
+    expect(screen.queryByText(/当前项目未连接 GitHub\/GitLab 仓库/)).toBeNull()
+    expect(screen.queryByTestId('branch-manage-event-subscriptions')).toBeNull()
+    fireEvent.change(screen.getByTestId('branch-condition-source-0'), {
+      target: { value: 'gitlab' },
+    })
+    expect(screen.getByTestId('branch-condition-source-0')).toHaveValue('gitlab')
+    fireEvent.change(screen.getByTestId('branch-event-wait-mode'), {
+      target: { value: 'webhook' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-event-subscription')).toHaveValue('gitlab-webhook')
+    )
+    fireEvent.click(screen.getByTestId('branch-manage-event-subscriptions'))
+    expect(await screen.findByTestId('event-subscription-manager')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('branch-condition-event-0'), {
+      target: { value: 'change_request.comment_created' },
+    })
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    fireEvent.change(screen.getByRole('textbox', { name: '自动化名称' }), {
+      target: { value: '上游 MR 监听' },
+    })
+    fireEvent.blur(screen.getByRole('textbox', { name: '自动化名称' }))
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalled())
+    const input = projectAutomationApi.update.mock.calls.at(-1)?.[2]
+    const branch = input.eventConfig.runtime_workflow_definition.nodes.find(
+      node => node.node_type === 'branch'
+    )
+    expect(branch.event_wait).toEqual({
+      subject_source: 'upstream_pull_request',
+      collection_mode: 'webhook',
+      subscription_id: 'gitlab-webhook',
+      poll_interval_seconds: null,
+    })
+    expect(branch.branch_conditions[0].source_type).toBe('gitlab')
+  })
+
+  test('creates and deletes webhook subscriptions inline from a trigger node', async () => {
+    let created = false
+    const createdHook = {
+      id: 'sub-new',
+      projectId: '11',
+      name: 'GitHub repository',
+      status: 'active',
+      sourceType: 'github',
+      collectionMode: 'webhook',
+      resource: {
+        resourceType: 'repository',
+        url: 'https://github.com/acme/app',
+        displayName: 'acme/app',
+      },
+      webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-new',
+      pollIntervalSeconds: null,
+      credentialRef: null,
+      health: {},
+      lastEventAt: null,
+      nextPollAt: null,
+      version: 1,
+      createdAt: '2026-08-28T00:00:00Z',
+      updatedAt: '2026-08-28T00:00:00Z',
+    }
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'github',
+          collectionModes: ['webhook'],
+          resourceTypes: ['repository'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding'],
+          nameKey: 'event_sources.github.name',
+          descriptionKey: 'event_sources.github.description',
+        },
+        {
+          sourceType: 'wework',
+          collectionModes: ['internal'],
+          resourceTypes: ['project_space'],
+          eventTypes: ['task.created', 'task.status_changed'],
+          executionTargets: ['existing_issue'],
+          nameKey: 'event_sources.wework.name',
+          descriptionKey: 'event_sources.wework.description',
+        },
+      ]),
+      list: vi.fn().mockImplementation(() => Promise.resolve(created ? [createdHook] : [])),
+      create: vi.fn().mockImplementation(() => {
+        created = true
+        return Promise.resolve(createdHook)
+      }),
+      update: vi.fn(),
+      rotate: vi.fn(),
+      remove: vi.fn().mockResolvedValue(undefined),
+      listEvents: vi.fn().mockResolvedValue([]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    renderView({ incomingHookApi })
+    await openRuleEditor()
+    expect(screen.queryByTestId('automation-open-event-subscriptions')).toBeNull()
+    fireEvent.change(screen.getByTestId('automation-trigger-type'), {
+      target: { value: 'webhook' },
+    })
+    const manageSubscriptions = await screen.findByTestId('automation-manage-event-subscriptions')
+    fireEvent.click(manageSubscriptions)
+    const subscriptionEditor = await screen.findByTestId('event-subscription-editor')
+    expect(manageSubscriptions).toHaveClass('shrink-0', 'whitespace-nowrap')
+    expect(screen.getByTestId('event-subscription-manager')).toHaveClass('min-w-0')
+    expect(screen.getByTestId('event-subscription-manager')).not.toHaveClass('overflow-hidden')
+    expect(screen.getByTestId('event-subscription-add')).toHaveClass(
+      'shrink-0',
+      'whitespace-nowrap'
+    )
+    expect(subscriptionEditor).toHaveClass('min-w-0')
+    expect(screen.queryByTestId('event-subscription-collection-mode')).toBeNull()
+    expect(screen.queryByText('Webhook + 轮询')).toBeNull()
+    fireEvent.change(screen.getByTestId('event-subscription-name'), {
+      target: { value: 'GitHub repository' },
+    })
+    fireEvent.change(screen.getByTestId('event-subscription-resource-url'), {
+      target: { value: 'https://github.com/acme/app' },
+    })
+    fireEvent.click(screen.getByTestId('event-subscription-save'))
+
+    await screen.findByTestId('event-subscription-card-sub-new')
+    expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-new')
+    expect(incomingHookApi.create).toHaveBeenCalledWith('11', {
+      name: 'GitHub repository',
+      sourceType: 'github',
+      collectionMode: 'webhook',
+      resource: {
+        url: 'https://github.com/acme/app',
+      },
+      pollIntervalSeconds: null,
+      credentialRef: null,
+    })
+    expect(
+      screen.getAllByText('https://cloud.example/api/v1/incoming-hooks/sub-new').length
+    ).toBeGreaterThan(0)
+    expect(screen.queryByText('todo.event_subscription_signing_secret')).toBeNull()
+    expect(screen.queryByTestId('event-subscription-reveal-sub-new')).toBeNull()
+
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(screen.getByTestId('event-subscription-actions-sub-new'))
+    fireEvent.click(await screen.findByTestId('event-subscription-delete-sub-new'))
+    await waitFor(() => expect(incomingHookApi.remove).toHaveBeenCalledWith('11', 'sub-new'))
+    expect(screen.queryByTestId('event-subscription-card-sub-new')).toBeNull()
+    expect(screen.getByTestId('automation-event-subscription')).toHaveValue('')
+    confirm.mockRestore()
+  })
+
+  test('keeps unsaved edits when a background rules refresh lands while editing', async () => {
+    const uiRule = automationRuleFromBackend(rule)
+    const view = render(
+      <AutomationRulesView
+        rules={[uiRule]}
+        runs={[]}
+        eventSourceCatalog={[]}
+        projectId="11"
+        canManage
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('automation-card-rule-1'))
+
+    // The exact reported scenario: a brand-new execution node is added while
+    // the editor is open and it has not been saved yet.
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-task-step-1'))
+    expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3)
+
+    // A background automations refresh replaces the rule in the list with the
+    // server copy, which has no trace of the unsaved node.
+    view.rerender(
+      <AutomationRulesView
+        rules={[automationRuleFromBackend({ ...rule, name: '服务端旧名称' })]}
+        runs={[]}
+        eventSourceCatalog={[]}
+        projectId="11"
+        canManage
+      />
+    )
+
+    // The new node must not disappear, and the restored server name must not
+    // clobber the in-progress draft.
+    await waitFor(() => expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3))
+    expect(screen.queryByText('服务端旧名称')).not.toBeInTheDocument()
+  })
+
+  test('removes an empty branch condition when its handler node is deleted', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+
+    const handlerNode = screen
+      .getAllByTestId(/^execution-node-step-/)
+      .find(node => node.getAttribute('data-testid') !== 'execution-node-step-1')
+    expect(handlerNode).toBeDefined()
+    fireEvent.click(handlerNode!)
+    const handlerDelete = await screen.findByTestId(/^execution-node-delete-step-/)
+    fireEvent.click(handlerDelete)
+
+    expect(screen.queryByText('分支 1')).not.toBeInTheDocument()
+    expect(screen.getByTestId(`branch-node-${branchId}`)).toBeInTheDocument()
+  })
+})
+
+test('runs a paused schedule from the card and editor and shows the returned run', async () => {
+  const scheduled = {
+    ...rule,
+    triggerType: 'schedule' as const,
+    cronExpression: '17 * * * *',
+    enabled: false,
+  }
+  const { projectAutomationApi } = renderView({ listedRules: [scheduled], listedRuns: [] })
+  vi.mocked(projectAutomationApi.runNow).mockResolvedValue({
+    ...run,
+    id: 'manual-new',
+    trigger: 'manual',
+  })
+  fireEvent.click(await screen.findByTestId('automation-run-rule-1'))
+  await waitFor(() => expect(projectAutomationApi.runNow).toHaveBeenCalledWith('11', 'rule-1'))
+  expect(screen.queryByTestId('automation-rule-editor')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  await waitFor(() => expect(screen.getByTestId('automation-run')).toBeEnabled())
+  fireEvent.click(screen.getByTestId('automation-run'))
+  await waitFor(() => expect(projectAutomationApi.runNow).toHaveBeenCalledTimes(2))
+  vi.mocked(projectAutomationApi.listRuns).mockResolvedValue([
+    { ...run, id: 'manual-new', trigger: 'manual' },
+  ])
+  fireEvent.click(screen.getByTestId('open-current-automation-runs'))
+  expect(await screen.findByTestId('current-run-manual-new')).toBeInTheDocument()
+})
+
+test('auto-saves hourly minutes before running', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  const onRunRule = vi.fn()
+  const onSaveRule = vi.fn().mockImplementation(async value => value)
+  render(
+    <AutomationRulesView
+      rules={[scheduled]}
+      runs={[]}
+      onRunRule={onRunRule}
+      onSaveRule={onSaveRule}
+    />
+  )
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  expect(screen.getByTestId('automation-trigger-frequency')).toHaveValue('hourly')
+  fireEvent.change(screen.getByTestId('automation-trigger-minute'), { target: { value: '59' } })
+  expect(screen.getByTestId('automation-run')).toBeDisabled()
+  await waitFor(() => expect(screen.getByTestId('automation-run')).toBeEnabled())
+  expect(onSaveRule.mock.calls[0][0].trigger.schedule.time).toBe('00:59')
+})
+
+test('serializes auto-saves and preserves edits made during a request', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  let resolveFirstSave!: (value: typeof scheduled) => void
+  const onSaveRule = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<typeof scheduled>(resolve => {
+          resolveFirstSave = resolve
+        })
+    )
+    .mockImplementationOnce(async value => value)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onSaveRule={onSaveRule} />)
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+
+  const description = screen.getByTestId('automation-rule-description')
+  fireEvent.change(description, { target: { value: '第一次修改' } })
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledOnce())
+  expect(screen.getByText('保存中')).toBeInTheDocument()
+
+  fireEvent.change(description, { target: { value: '请求期间的最新修改' } })
+  await act(async () => resolveFirstSave(onSaveRule.mock.calls[0][0]))
+
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledTimes(2))
+  expect(onSaveRule.mock.calls[1][0].description).toBe('请求期间的最新修改')
+  expect(description).toHaveValue('请求期间的最新修改')
+  await waitFor(() => expect(screen.getByText('已保存')).toBeInTheDocument())
+})
+
+test('keeps the draft after an auto-save failure and retries explicitly', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  const onSaveRule = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('保存服务暂不可用'))
+    .mockImplementationOnce(async value => value)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onSaveRule={onSaveRule} />)
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+
+  const description = screen.getByTestId('automation-rule-description')
+  fireEvent.change(description, { target: { value: '失败后仍需保留' } })
+
+  const retry = await screen.findByTestId('automation-save-retry')
+  expect(retry).toHaveAttribute('title', '保存服务暂不可用')
+  expect(description).toHaveValue('失败后仍需保留')
+  expect(onSaveRule).toHaveBeenCalledOnce()
+
+  fireEvent.click(retry)
+
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledTimes(2))
+  expect(onSaveRule.mock.calls[1][0].description).toBe('失败后仍需保留')
+  await waitFor(() => expect(screen.getByText('已保存')).toBeInTheDocument())
+})
+
+test('flushes a pending auto-save before leaving the editor', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  const onSaveRule = vi.fn().mockImplementation(async value => value)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onSaveRule={onSaveRule} />)
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  fireEvent.change(screen.getByTestId('automation-rule-description'), {
+    target: { value: '返回前保存' },
+  })
+
+  fireEvent.click(screen.getByTestId('automation-editor-back'))
+
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledOnce())
+  expect(onSaveRule.mock.calls[0][0].description).toBe('返回前保存')
+  await waitFor(() =>
+    expect(screen.queryByTestId('automation-rule-editor')).not.toBeInTheDocument()
+  )
+})
+
+test('prevents duplicate starts and recovers after a run failure', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  let rejectRun!: (reason: Error) => void
+  const onRunRule = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRun = reject
+        })
+    )
+    .mockResolvedValue(undefined)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onRunRule={onRunRule} />)
+  const button = screen.getByTestId('automation-run-rule-1')
+  fireEvent.click(button)
+  fireEvent.click(button)
+  expect(onRunRule).toHaveBeenCalledTimes(1)
+  expect(button).toBeDisabled()
+  await act(async () => rejectRun(new Error('Run unavailable')))
+  expect(screen.getByText('Run unavailable')).toBeInTheDocument()
+  expect(button).toBeEnabled()
+  fireEvent.click(button)
+  await waitFor(() => expect(onRunRule).toHaveBeenCalledTimes(2))
+})
+
+test('hides event run actions and disables scheduled runs without management permission', () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    id: 'scheduled',
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  render(
+    <AutomationRulesView
+      rules={[automationRuleFromBackend(rule), scheduled]}
+      runs={[]}
+      canManage={false}
+      onRunRule={vi.fn()}
+    />
+  )
+  expect(screen.queryByTestId('automation-run-rule-1')).not.toBeInTheDocument()
+  expect(screen.getByTestId('automation-run-scheduled')).toBeDisabled()
 })

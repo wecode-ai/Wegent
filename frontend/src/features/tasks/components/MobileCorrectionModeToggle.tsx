@@ -9,13 +9,7 @@ import { Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MobileSwitchIndicator } from './mobile-switch-indicator'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
+import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
 import {
   ModelCascadeContent,
   type ModelCascadeLabels,
@@ -29,6 +23,7 @@ interface MobileCorrectionModeToggleProps {
   disabled?: boolean
   correctionModelName?: string | null
   taskId: number | null
+  onSelectorOpenChange?: (open: boolean) => void
 }
 
 /**
@@ -41,6 +36,7 @@ export default function MobileCorrectionModeToggle({
   disabled = false,
   correctionModelName,
   taskId,
+  onSelectorOpenChange,
 }: MobileCorrectionModeToggleProps) {
   const { t } = useTranslation('chat')
   const [showModelSelector, setShowModelSelector] = useState(false)
@@ -99,7 +95,7 @@ export default function MobileCorrectionModeToggle({
     if (disabled) return
 
     if (!enabled) {
-      setShowModelSelector(true)
+      handleModelSelectorOpenChange(true)
     } else {
       onToggle(false)
       correctionApis.clearCorrectionModeState(taskId)
@@ -118,13 +114,15 @@ export default function MobileCorrectionModeToggle({
     }
     correctionApis.saveCorrectionModeState(taskId, state)
 
-    setShowModelSelector(false)
-    setSearchQuery('')
+    handleModelSelectorOpenChange(false)
   }
 
-  const handleDialogClose = () => {
-    setShowModelSelector(false)
-    setSearchQuery('')
+  const handleModelSelectorOpenChange = (open: boolean) => {
+    setShowModelSelector(open)
+    onSelectorOpenChange?.(open)
+    if (!open) {
+      setSearchQuery('')
+    }
   }
 
   const cascadeLabels: ModelCascadeLabels = useMemo(
@@ -171,14 +169,22 @@ export default function MobileCorrectionModeToggle({
         <MobileSwitchIndicator checked={enabled} disabled={disabled} />
       </button>
 
-      {/* Model Selection Dialog */}
-      <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>
-        <DialogContent className="max-w-[calc(100vw-24px)] overflow-hidden p-4 sm:max-w-3xl sm:p-6">
-          <DialogHeader>
-            <DialogTitle>{t('correction.select_model')}</DialogTitle>
-            <DialogDescription>{t('correction.select_model_desc')}</DialogDescription>
-          </DialogHeader>
-
+      <Drawer
+        open={showModelSelector}
+        onOpenChange={handleModelSelectorOpenChange}
+        shouldScaleBackground={false}
+      >
+        <DrawerContent
+          className="max-h-[85vh] overflow-hidden bg-[#f2f2f7] dark:bg-[#1c1c1e]"
+          showHandle={false}
+          data-testid="mobile-correction-model-drawer"
+        >
+          <div className="flex justify-center pb-3 pt-2">
+            <div className="h-1 w-9 rounded-full bg-[#3c3c43]/30 dark:bg-[#5c5c5e]" />
+          </div>
+          <DrawerTitle className="px-4 pb-2 text-base font-semibold text-text-primary">
+            {t('correction.select_model')}
+          </DrawerTitle>
           {isLoading ? (
             <div className="flex h-[320px] items-center justify-center">
               <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary" />
@@ -192,7 +198,7 @@ export default function MobileCorrectionModeToggle({
               onSelectModel={handleModelSelect}
               getModelKey={model => `${model.type}-${model.name}`}
               variant="mobile"
-              className="w-full"
+              className="w-full bg-transparent [&_input]:h-11"
               renderModelBadges={model => (
                 <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
                   {model.type === 'public'
@@ -207,8 +213,8 @@ export default function MobileCorrectionModeToggle({
               }
             />
           )}
-        </DialogContent>
-      </Dialog>
+        </DrawerContent>
+      </Drawer>
     </>
   )
 }

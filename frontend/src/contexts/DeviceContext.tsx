@@ -41,7 +41,7 @@ export interface DeviceUpgradeState {
 }
 
 interface DeviceContextType {
-  /** List of all devices (including offline) */
+  /** List of Wegent execution devices, including Wework and offline devices */
   devices: DeviceInfo[]
   /** Currently selected device ID (null = cloud executor) */
   selectedDeviceId: string | null
@@ -50,7 +50,7 @@ interface DeviceContextType {
   /** Set a device as the default executor */
   setDefaultDevice: (deviceId: string) => Promise<void>
   /** Delete a device registration */
-  deleteDevice: (deviceId: string) => Promise<void>
+  deleteDevice: (recordId: number) => Promise<void>
   /** Refresh device list from server */
   refreshDevices: () => Promise<void>
   /** Loading state */
@@ -105,13 +105,23 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
     [upgradingDevices]
   )
 
-  // Fetch all devices (including offline)
+  // Fetch all Wegent execution devices (including Wework and offline devices)
   const refreshDevices = useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
       const response = await deviceApis.getAllDevices()
-      setDevices(response.items || [])
+      setDevices(
+        (response.items || []).map(device =>
+          device.execution_target_id
+            ? {
+                ...device,
+                registered_device_id: device.device_id,
+                device_id: device.execution_target_id || device.device_id,
+              }
+            : device
+        )
+      )
     } catch (err) {
       console.error('[DeviceContext] Failed to fetch devices:', err)
       setError('Failed to load devices')
@@ -139,11 +149,11 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
   }, [])
 
   // Delete a device registration
-  const deleteDevice = useCallback(async (deviceId: string) => {
+  const deleteDevice = useCallback(async (recordId: number) => {
     try {
-      await deviceApis.deleteDevice(deviceId)
+      await deviceApis.deleteDevice(recordId)
       // Update local state
-      setDevices(prev => prev.filter(d => d.device_id !== deviceId))
+      setDevices(prev => prev.filter(d => d.id !== recordId))
     } catch (err) {
       console.error('[DeviceContext] Failed to delete device:', err)
       throw err
@@ -154,6 +164,20 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
   useEffect(() => {
     refreshDevices()
   }, [refreshDevices])
+
+  // Drop stale selections that no longer exist.
+  useEffect(() => {
+    if (
+      !isLoading &&
+      selectedDeviceId &&
+      !devices.some(
+        device =>
+          device.device_id === selectedDeviceId || device.registered_device_id === selectedDeviceId
+      )
+    ) {
+      setSelectedDeviceId(null)
+    }
+  }, [devices, isLoading, selectedDeviceId])
 
   // Handle real-time device events via WebSocket
   useEffect(() => {

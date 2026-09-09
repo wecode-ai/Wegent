@@ -40,6 +40,7 @@ jobs:
       prerelease: ${{ steps.plan.outputs.prerelease }}
       publish_release: ${{ steps.version.outputs.publish_release }}
       release_kind: ${{ steps.plan.outputs.kind }}
+      componentized_host_update: ${{ steps.current-channel.outputs.componentized_host_update }}
 
     steps:
       - name: Create release app token
@@ -83,6 +84,10 @@ jobs:
           const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
           appendFileSync(outputPath, `app_version=${manifest.appVersion || ''}\n`)
           appendFileSync(outputPath, `source_ref=${manifest.sourceSha || ''}\n`)
+          appendFileSync(
+            outputPath,
+            `componentized_host_update=${manifest.capabilities?.componentizedHostUpdate === 1}\n`,
+          )
           NODE
           fi
 
@@ -180,28 +185,24 @@ jobs:
             runner: macos-14
             platform: macos
             arch: arm64
-            node_arch: arm64
             cargo_target: aarch64-apple-darwin
             codex_target: aarch64-apple-darwin
           - name: macOS x64
             runner: macos-14
             platform: macos
             arch: x64
-            node_arch: x64
             cargo_target: x86_64-apple-darwin
             codex_target: x86_64-apple-darwin
           - name: Windows x64
             runner: windows-latest
             platform: windows
             arch: x64
-            node_arch: x64
             cargo_target: x86_64-pc-windows-msvc
             codex_target: x86_64-pc-windows-msvc
           - name: Linux x64
             runner: ubuntu-latest
             platform: linux
             arch: x64
-            node_arch: x64
             cargo_target: x86_64-unknown-linux-gnu
             codex_target: x86_64-unknown-linux-gnu
 
@@ -211,14 +212,15 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.release_sha }}
 
-      - name: Install Rosetta 2
-        if: matrix.platform == 'macos' && matrix.arch == 'x64'
-        run: sudo softwareupdate --install-rosetta --agree-to-license || true
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           targets: ${{ matrix.cargo_target }}
+
+      - name: Set up compiler cache
+        uses: ./.github/actions/setup-sccache
+        with:
+          save-cache: "true"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
@@ -227,7 +229,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
-          architecture: ${{ matrix.node_arch }}
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
@@ -280,6 +281,8 @@ jobs:
             exit 1
           }
           echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          # Reuse one keychain so parallel electron-builder processes do not race during cleanup.
+          echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
           echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
 
       - name: Prepare Apple notarization key
@@ -295,59 +298,54 @@ jobs:
           chmod 0600 "$key_path"
           echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
+      - name: Restore immutable signed components
+        if: matrix.platform == 'macos'
+        uses: actions/cache@v4
+        with:
+          path: wework/electron/.cache/signed-components
+          key: signed-components-v1-${{ matrix.arch }}-${{ env.APPLE_SIGNING_IDENTITY }}-${{ needs.prepare-release.outputs.release_sha }}
+          restore-keys: |
+            signed-components-v1-${{ matrix.arch }}-${{ env.APPLE_SIGNING_IDENTITY }}-
+
       - name: Build signed Electron release
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          CSC_LINK: ${{ matrix.platform == 'macos' && secrets.MACOS_CERTIFICATE_BASE64 || '' }}
           VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
           VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           VITE_WEWORK_RUNTIME_MODE: local-first
           WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
           WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
           WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
+          WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: ${{ needs.prepare-release.outputs.componentized_host_update != 'true' }}
           WEWORK_SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
 
-      - name: Verify formal release package startup
+      - name: Verify formal release package
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         env:
           CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
-        run: pnpm --filter wework e2e:desktop -- --segment release-package-startup
+        run: |
+          pnpm --filter wework e2e:desktop -- \
+            --parallel-segments release-package-startup,component-update,app-update-differential
+          pnpm --filter wework e2e:desktop -- --segment app-update-baseline
 
-      - name: Verify formal release component update
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
-        env:
-          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
-          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
-          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
-          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
-        run: pnpm --filter wework e2e:desktop -- --segment component-update
-
-      - name: Verify formal release differential app update
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
-        env:
-          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
-          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
-          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
-          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
-        run: pnpm --filter wework e2e:desktop -- --segment app-update-differential
-
-      - name: Prepare installer and legacy bridge assets
+      - name: Prepare desktop release assets
         shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WEWORK_USE_COMPONENTIZED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
         run: |
           node wework/scripts/prepare-desktop-release-assets.mjs \
             "${{ matrix.platform }}" \
@@ -355,12 +353,24 @@ jobs:
             "${{ needs.prepare-release.outputs.version }}" \
             "$RUNNER_TEMP/wework-release-assets"
 
+      - name: Verify componentized macOS update package
+        if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
+        run: |
+          set -euo pipefail
+          zip="$(find "$RUNNER_TEMP/wework-release-assets" -maxdepth 1 -name 'WeWorkHostUpdate_*_macos_*.zip' -print -quit)"
+          test -n "$zip"
+          if unzip -Z1 "$zip" | grep -Eq '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)/'; then
+            echo "::error::The online Host update contains managed component resources."
+            exit 1
+          fi
+
       - name: Upload release build
         uses: actions/upload-artifact@v4
         with:
           name: wework-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/wework-release-assets/*
           if-no-files-found: error
+          compression-level: 0
 
   publish:
     name: Publish release and update channels
@@ -391,12 +401,13 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Generate Electron and legacy updater manifests
+      - name: Generate desktop update manifests
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          WEWORK_USE_COMPONENTIZED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
         run: |
           set -euo pipefail
           notes="$(mktemp)"
@@ -420,11 +431,13 @@ jobs:
           set -euo pipefail
           find release-assets -maxdepth 1 -type f \
             ! -name 'components-*.json' \
-            ! -name 'WeworkComponent_coreDsh_*.tar.gz' \
-            ! -name 'WeworkComponent_codex_*.tar.gz' \
-            ! -name 'WeworkComponent_dws_*.tar.gz' \
+            ! -name 'WeworkComponent_*.tar.gz' \
             -print0 |
             xargs -0 gh release upload "$RELEASE_TAG" --clobber
+          while IFS= read -r component_name; do
+            [[ -n "$component_name" ]] || continue
+            gh release upload "$RELEASE_TAG" "release-assets/$component_name" --clobber
+          done < <(node wework/scripts/desktop-component-release.mjs release-assets version)
           if [[ "$RELEASE_KIND" == "full" ]]; then
             gh release upload "$RELEASE_TAG" release-manifests/* --clobber
           else
@@ -459,18 +472,31 @@ jobs:
             gh release create wework-updater \
               --target "$RELEASE_SHA" \
               --title "Wework shared dependencies and updater manifests" \
-              --notes "Content-addressed shared dependencies plus rolling Electron, component, and legacy Tauri update manifests." \
+              --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests." \
               --prerelease
           fi
           gh release edit wework-updater \
             --target "$RELEASE_SHA" \
             --title "Wework shared dependencies and updater manifests" \
-            --notes "Content-addressed shared dependencies plus rolling Electron, component, and legacy Tauri update manifests."
+            --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests."
 
           existing_component_assets="$RUNNER_TEMP/existing-component-assets.txt"
           gh release view wework-updater \
             --json assets \
             --jq '.assets[].name' > "$existing_component_assets"
+          harness_runtime_assets="$RUNNER_TEMP/harness-runtime-assets"
+          node wework/scripts/collect-harness-runtime-release-assets.mjs \
+            release-assets \
+            "$harness_runtime_assets"
+          while IFS= read -r runtime_asset; do
+            runtime_name="$(basename "$runtime_asset")"
+            if grep -Fqx "$runtime_name" "$existing_component_assets"; then
+              echo "Reusing immutable Harness Runtime asset $runtime_name."
+              continue
+            fi
+            gh release upload wework-updater "$runtime_asset"
+            echo "$runtime_name" >> "$existing_component_assets"
+          done < <(find "$harness_runtime_assets" -maxdepth 1 -type f | sort)
           while IFS= read -r component_asset; do
             component_name="$(basename "$component_asset")"
             if grep -Fqx "$component_name" "$existing_component_assets"; then
@@ -479,27 +505,29 @@ jobs:
             fi
             gh release upload wework-updater "$component_asset"
             echo "$component_name" >> "$existing_component_assets"
-          done < <(find release-assets -maxdepth 1 -type f \
-            \( -name 'WeworkComponent_coreDsh_*.tar.gz' \
-            -o -name 'WeworkComponent_codex_*.tar.gz' \
-            -o -name 'WeworkComponent_dws_*.tar.gz' \) \
-            -print | sort)
+          done < <(
+            node wework/scripts/desktop-component-release.mjs release-assets shared |
+              while IFS= read -r component_name; do
+                [[ -n "$component_name" ]] && printf '%s\n' "release-assets/$component_name"
+              done
+          )
 
           publish_channel() {
             local channel="$1"
             local electron_channel="$channel"
             local current_assets="$RUNNER_TEMP/current-${channel}-assets.json"
-            local current_manifest="$RUNNER_TEMP/current-${channel}.json"
+            local current_manifest="$RUNNER_TEMP/current-${channel}.yml"
             [[ "$channel" == "stable" ]] && electron_channel="latest"
 
             gh release view wework-updater --json assets > "$current_assets"
             if gh release download wework-updater \
-              --pattern "${channel}-darwin-aarch64.json" \
+              --pattern "${electron_channel}-mac.yml" \
               --output "$current_manifest" \
               --clobber >/dev/null 2>&1; then
-              current_version="$(node -e \
-                "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version)" \
-                "$current_manifest")"
+              current_version="$(
+                node wework/scripts/update-channel-manifests.mjs \
+                  read-electron-version "$current_manifest"
+              )"
               if [[ "$RELEASE_KIND" == "component" ]]; then
                 if [[ "$current_version" != "$RELEASE_VERSION" ]]; then
                   if [[ "$channel" == "$RELEASE_CHANNEL" ]]; then
@@ -537,15 +565,14 @@ jobs:
             fi
 
             gh release upload wework-updater \
-              "release-manifests/${electron_channel}.yml" \
-              "release-manifests/${electron_channel}-mac.yml" \
-              "release-manifests/${channel}-darwin-aarch64.json" \
-              "release-manifests/${channel}-darwin-x86_64.json" \
-              "release-manifests/${channel}-windows-x86_64.json" \
               "release-manifests/components-${channel}-macos-arm64.json" \
               "release-manifests/components-${channel}-macos-x64.json" \
               "release-manifests/components-${channel}-windows-x64.json" \
               "release-manifests/components-${channel}-linux-x64.json" \
+              --clobber
+            gh release upload wework-updater \
+              "release-manifests/${electron_channel}.yml" \
+              "release-manifests/${electron_channel}-mac.yml" \
               --clobber
           }
 

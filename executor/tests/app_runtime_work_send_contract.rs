@@ -489,15 +489,14 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     wait_for_turn_count(&log_path, 2).await;
 
     let calls = read_json_lines(&log_path);
-    let unsubscribe_index = calls
-        .iter()
-        .position(|call| call["method"] == "thread/unsubscribe")
-        .expect("send should release the loaded thread before changing providers");
-    let resume_index = calls
-        .iter()
-        .position(|call| call["method"] == "thread/resume")
-        .expect("send should resume the existing thread");
-    assert!(unsubscribe_index < resume_index);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        0,
+        "a follow-up must keep the loaded thread and its background processes alive"
+    );
     let resume = calls
         .iter()
         .find(|call| call["method"] == "thread/resume")
@@ -572,11 +571,12 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     && data["updates"]["status"] == "streaming"
             })
             .is_some()
-            && find_runtime_event(runtime_events, "response.block.created", |event| {
-                let block = &event["payload"]["data"]["block"];
-                block["type"] == "text"
-                    && block["content"] == "done"
-                    && block["status"] == "streaming"
+            && find_runtime_event(runtime_events, "response.output_text.delta", |event| {
+                event["payload"]["data"]["delta"] == "done"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.output_text.done", |event| {
+                event["payload"]["data"]["text"] == "done"
             })
             .is_some()
             && find_runtime_event(runtime_events, "response.completed", |event| {
@@ -632,27 +632,52 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "streaming"
     );
 
-    let final_process_block =
-        find_runtime_event(&runtime_events, "response.block.created", |event| {
-            let block = &event["payload"]["data"]["block"];
-            block["type"] == "text" && block["content"] == "done" && block["status"] == "streaming"
+    let final_delta_positions = runtime_events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            (event["event"] == "response.output_text.delta"
+                && event["payload"]["data"]["delta"] == "done")
+                .then_some(index)
         })
-        .expect("final-answer phase delta should create a process text block");
+        .collect::<Vec<_>>();
     assert_eq!(
-        final_process_block["payload"]["data"]["block"]["content"],
-        "done"
+        final_delta_positions.len(),
+        1,
+        "final-answer phase should emit exactly one matching output delta"
     );
-    assert!(
-        find_runtime_event(&runtime_events, "response.output_text.delta", |event| {
-            event["payload"]["data"]["delta"] == "done"
+    let final_delta_position = final_delta_positions[0];
+    let final_delta = &runtime_events[final_delta_position];
+    assert_eq!(final_delta["payload"]["data"]["item_id"], "final-2");
+    assert_eq!(final_delta["payload"]["data"]["delta"], "done");
+    let final_done_positions = runtime_events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            (event["event"] == "response.output_text.done"
+                && event["payload"]["data"]["text"] == "done")
+                .then_some(index)
         })
-        .is_none(),
-        "assistant text must not emit a final-text delta while the turn is streaming"
+        .collect::<Vec<_>>();
+    assert_eq!(
+        final_done_positions.len(),
+        1,
+        "completed final-answer item should emit exactly one matching output completion"
     );
-    let completed = find_runtime_event(&runtime_events, "response.completed", |event| {
-        event["payload"]["data"]["value"] == "done"
-    })
-    .expect("completed response should contain only the final answer");
+    let final_done_position = final_done_positions[0];
+    let final_done = &runtime_events[final_done_position];
+    assert_eq!(final_done["payload"]["data"]["item_id"], "final-2");
+    let completed_position = runtime_events
+        .iter()
+        .position(|event| {
+            event["event"] == "response.completed" && event["payload"]["data"]["value"] == "done"
+        })
+        .expect("completed response should contain only the final answer");
+    assert!(
+        final_delta_position < final_done_position && final_done_position < completed_position,
+        "final output events should be ordered delta, done, response.completed"
+    );
+    let completed = &runtime_events[completed_position];
     assert_eq!(completed["payload"]["data"]["value"], "done");
 }
 
@@ -1221,7 +1246,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
 }
 
 #[tokio::test]
-async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
+async fn runtime_tasks_keep_subscription_between_turns_and_release_it_on_archive() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -1292,7 +1317,6 @@ async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "local-task-persistent").await;
-    wait_for_method_count(&log_path, "thread/unsubscribe", 3).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1321,7 +1345,7 @@ async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        3
+        0
     );
 
     let archived = handler
@@ -1335,7 +1359,7 @@ async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
         .await
         .expect("archive should succeed");
     assert_eq!(archived["success"], true);
-    wait_for_method_count(&log_path, "thread/unsubscribe", 4).await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
 }
 
 #[tokio::test]
@@ -1813,7 +1837,6 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
         .is_some()
     );
     wait_until_task_idle(&handler, "local-task-goal-loop").await;
-    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1830,15 +1853,17 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
             .count(),
         0
     );
-    let continuation_marker = calls
+    assert!(calls
         .iter()
-        .position(|call| call["event"] == "goal-continuation-completed")
-        .expect("goal continuation should finish before the thread is released");
-    let unsubscribe = calls
-        .iter()
-        .position(|call| call["method"] == "thread/unsubscribe")
-        .expect("terminal goal turn should release its subscription");
-    assert!(continuation_marker < unsubscribe);
+        .any(|call| call["event"] == "goal-continuation-completed"));
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        0,
+        "a completed goal should retain the thread during the idle window"
+    );
 }
 
 #[tokio::test]
@@ -3879,6 +3904,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"workspace."}}}}'
       printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$final_id"'","type":"agentMessage","text":"done","phase":"finalAnswer"}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
       ;;
   esac

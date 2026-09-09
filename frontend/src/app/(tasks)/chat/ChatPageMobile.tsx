@@ -11,7 +11,6 @@ import { UserGroupIcon } from '@heroicons/react/24/outline'
 import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import type { Team, TaskType } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
@@ -305,7 +304,7 @@ export function ChatPageMobile() {
         <TopNavigation
           activePage="chat"
           variant="with-sidebar"
-          title={currentTaskTitle}
+          title={currentTaskTitle || t('common:tasks.new_conversation')}
           taskDetail={selectedTaskDetail}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           onTaskDeleted={handleTaskDeleted}
@@ -317,11 +316,12 @@ export function ChatPageMobile() {
           {!hasOpenTask && !isGenerationMode && (
             <Button
               variant="outline"
-              size="sm"
+              size="icon"
               onClick={() => setIsCreateGroupChatOpen(true)}
-              className="h-8 w-8 p-0 rounded-[7px]"
+              className="h-11 w-11 rounded-xl"
+              data-testid="mobile-create-group-chat"
             >
-              <UserGroupIcon className="h-3.5 w-3.5" />
+              <UserGroupIcon className="h-5 w-5" />
               <span className="sr-only">{t('groupChat.create.button')}</span>
             </Button>
           )}
@@ -334,7 +334,6 @@ export function ChatPageMobile() {
             />
           )}
           {shareButton}
-          <ThemeToggle />
         </TopNavigation>
         {/* Chat area - taskType switches based on device selection */}
         <ChatArea

@@ -26,6 +26,8 @@ mod tools;
 
 #[derive(Debug, Clone)]
 struct LocalAuthSpec {
+    connector_slug: String,
+    account_auth: bool,
     kind: String,
     health: Vec<String>,
     start: Vec<String>,
@@ -52,15 +54,26 @@ const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
 
 pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
     let (plugin_root, spec) = resolve_request(&payload)?;
-    let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
-    let result = run_plugin_command(
-        &plugin_root,
-        &spec.health,
-        tool.as_deref(),
-        DEFAULT_COMMAND_TIMEOUT_SECONDS,
-    )
-    .await?;
-    Ok(normalize_status_response(&result, &spec, None))
+    // A source that still owns its credential remains usable without the cloud.
+    let local = async {
+        let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
+        let result = run_plugin_command(
+            &plugin_root,
+            &spec.health,
+            tool.as_deref(),
+            DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        )
+        .await?;
+        Ok::<_, AppIpcError>(normalize_status_response(&result, &spec, None))
+    }
+    .await;
+    if local.as_ref().is_ok_and(|result| result["status"] == "ok") {
+        return local;
+    }
+    if let Some(status) = account_lifecycle(&plugin_root, &spec, "status").await? {
+        return Ok(status);
+    }
+    local
 }
 
 pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
@@ -77,7 +90,11 @@ pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
     )
     .await?;
     let qr_image = read_qr_image(&result, &spec.qr_field)?;
-    Ok(normalize_status_response(&result, &spec, qr_image))
+    let response = normalize_status_response(&result, &spec, qr_image);
+    if response["status"] == "ok" {
+        account_lifecycle(&plugin_root, &spec, "login").await?;
+    }
+    Ok(response)
 }
 
 pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
@@ -97,11 +114,39 @@ pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
     )
     .await?;
     let qr_image = read_qr_image(&result, &spec.qr_field).ok().flatten();
-    Ok(normalize_status_response(&result, &spec, qr_image))
+    let response = normalize_status_response(&result, &spec, qr_image);
+    if response["status"] == "ok" {
+        account_lifecycle(&plugin_root, &spec, "login").await?;
+    }
+    Ok(response)
 }
 
 pub async fn logout(payload: Value) -> Result<Value, AppIpcError> {
     let (plugin_root, spec) = resolve_request(&payload)?;
+    let plugin_key = string_field(&payload, "pluginKey")
+        .or_else(|| string_field(&payload, "plugin_key"))
+        .unwrap_or_default();
+    let mut sessions = browser_auth_sessions().lock().await;
+    let ids: Vec<_> = sessions
+        .iter()
+        .filter(|(_, session)| {
+            session.plugin_key == plugin_key && session.connector_slug == spec.connector_slug
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let tasks: Vec<_> = ids
+        .into_iter()
+        .filter_map(|id| sessions.remove(&id))
+        .map(|session| {
+            session.task.abort();
+            session.task
+        })
+        .collect();
+    drop(sessions);
+    for task in tasks {
+        let _ = task.await;
+    }
+    account_lifecycle(&plugin_root, &spec, "logout").await?;
     if spec.logout.is_empty() {
         return Ok(json!({ "status": "ok", "deleted": false }));
     }
@@ -352,6 +397,8 @@ fn load_local_auth_spec(
     };
     let default_timeout = if kind == "browser_oauth" { 300 } else { 45 };
     Ok(LocalAuthSpec {
+        connector_slug: connector["slug"].as_str().unwrap_or_default().to_owned(),
+        account_auth: connector["accountAuth"].is_object(),
         kind,
         health: command_list(local_auth.get("health"))?,
         start: command_list(local_auth.get("start"))?,
@@ -567,6 +614,11 @@ async fn start_browser_auth(
                 browser_session_state("error", &redact_secrets(&error.message), &task_session_id)
             }
         };
+        if final_state["status"] == "ok" {
+            if let Err(error) = account_lifecycle(&plugin_root, &spec, "login").await {
+                final_state = browser_session_state("error", &error.code, &task_session_id);
+            }
+        }
         final_state["sessionId"] = Value::String(task_session_id);
         *task_state.lock().await = final_state;
     });
@@ -657,6 +709,19 @@ fn browser_session_state(status: &str, hint: &str, session_id: &str) -> Value {
     })
 }
 
+async fn account_lifecycle(
+    root: &Path,
+    spec: &LocalAuthSpec,
+    action: &str,
+) -> Result<Option<Value>, AppIpcError> {
+    if !spec.account_auth {
+        return Ok(None);
+    }
+    crate::plugin_account_auth::local_lifecycle::exchange(root, &spec.connector_slug, action)
+        .await
+        .map_err(|error| AppIpcError::new(error.0, error.0))
+}
+
 async fn run_plugin_command(
     plugin_root: &Path,
     args: &[String],
@@ -671,9 +736,10 @@ async fn run_plugin_command(
     }
     let program = resolve_program(plugin_root, &args[0])?;
     let rest = &args[1..];
-    let mut command = plugin_command(&program, rest);
+    let mut command = plugin_command(&program, rest)?;
     command
         .current_dir(plugin_root)
+        .envs(crate::plugin_account_auth::broker::environment())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -713,35 +779,104 @@ async fn run_plugin_command(
     Ok(parsed)
 }
 
-fn plugin_command(program: &Path, rest: &[String]) -> Command {
+fn plugin_command(program: &Path, rest: &[String]) -> Result<Command, AppIpcError> {
+    let search_paths = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let system_root = env::var_os("SystemRoot")
+        .or_else(|| env::var_os("WINDIR"))
+        .map(PathBuf::from);
+    plugin_command_for_platform(
+        program,
+        rest,
+        cfg!(windows),
+        &search_paths,
+        system_root.as_deref(),
+    )
+}
+
+fn plugin_command_for_platform(
+    program: &Path,
+    rest: &[String],
+    windows: bool,
+    search_paths: &[PathBuf],
+    system_root: Option<&Path>,
+) -> Result<Command, AppIpcError> {
     if looks_like_shell_script(program) {
         let mut cmd = Command::new("sh");
         cmd.arg(program);
         for arg in rest {
             cmd.arg(arg);
         }
-        cmd
-    } else if program.extension().and_then(|ext| ext.to_str()) == Some("ps1") {
-        let mut cmd = Command::new("pwsh");
-        cmd.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ]);
-        cmd.arg(program);
-        for arg in rest {
-            cmd.arg(arg);
-        }
-        cmd
+        Ok(cmd)
+    } else if program
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"))
+    {
+        let powershell_program = if windows {
+            resolve_windows_powershell_program(search_paths, system_root)?
+        } else {
+            PathBuf::from("pwsh")
+        };
+        Ok(powershell_command(program, rest, &powershell_program))
     } else {
         let mut cmd = Command::new(program);
         for arg in rest {
             cmd.arg(arg);
         }
-        cmd
+        Ok(cmd)
     }
+}
+
+fn powershell_command(program: &Path, rest: &[String], powershell_program: &Path) -> Command {
+    let mut cmd = Command::new(powershell_program);
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+    ]);
+    cmd.arg(program);
+    for arg in rest {
+        cmd.arg(arg);
+    }
+    cmd
+}
+
+fn resolve_windows_powershell_program(
+    search_paths: &[PathBuf],
+    system_root: Option<&Path>,
+) -> Result<PathBuf, AppIpcError> {
+    if let Some(pwsh) = search_paths
+        .iter()
+        .map(|directory| directory.join("pwsh.exe"))
+        .find_map(|candidate| {
+            if candidate.is_file() {
+                candidate.canonicalize().ok()
+            } else {
+                None
+            }
+        })
+    {
+        return Ok(pwsh);
+    }
+
+    let windows_powershell = system_root
+        .unwrap_or_else(|| Path::new(r"C:\Windows"))
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    if windows_powershell.is_file() {
+        return Ok(windows_powershell);
+    }
+
+    Err(AppIpcError::new(
+        "local_auth_powershell_missing",
+        "PowerShell was not found. Install PowerShell 7 (pwsh.exe) or enable Windows PowerShell 5.1 (powershell.exe).",
+    ))
 }
 
 fn resolve_program(plugin_root: &Path, arg: &str) -> Result<PathBuf, AppIpcError> {
@@ -959,7 +1094,8 @@ mod tests {
         let command = plugin_command(
             Path::new("plugin with spaces/scripts/local-auth.sh"),
             &["login".to_owned(), "中文".to_owned()],
-        );
+        )
+        .unwrap();
         let command = command.as_std();
         assert_eq!(command.get_program(), "sh");
         assert_eq!(
@@ -970,9 +1106,10 @@ mod tests {
 
     #[test]
     fn powershell_command_uses_process_scoped_execution_policy_bypass() {
-        let command = plugin_command(
+        let command = powershell_command(
             Path::new("plugin with spaces/scripts/local-auth.ps1"),
             &["login".to_owned(), "中文".to_owned()],
+            Path::new("pwsh"),
         );
         let command = command.as_std();
         assert_eq!(command.get_program(), "pwsh");
@@ -989,6 +1126,159 @@ mod tests {
                 "中文"
             ]
         );
+    }
+
+    #[test]
+    fn windows_powershell_prefers_pwsh_from_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let tools = temp.path().join("tools");
+        let system_root = temp.path().join("Windows");
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(tools.join("pwsh.exe"), "").unwrap();
+        let windows_powershell = system_root
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        fs::create_dir_all(windows_powershell.parent().unwrap()).unwrap();
+        fs::write(&windows_powershell, "").unwrap();
+
+        assert_eq!(
+            resolve_windows_powershell_program(std::slice::from_ref(&tools), Some(&system_root))
+                .unwrap(),
+            tools.join("pwsh.exe").canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn windows_powershell_makes_relative_path_entry_absolute() {
+        let current_dir = env::current_dir().unwrap();
+        let temp = tempfile::tempdir_in(&current_dir).unwrap();
+        let relative_temp = temp.path().strip_prefix(&current_dir).unwrap();
+        let tools = relative_temp.join("tools");
+        let pwsh = tools.join("pwsh.exe");
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(&pwsh, "").unwrap();
+
+        assert!(tools.is_relative());
+        assert_eq!(
+            resolve_windows_powershell_program(&[tools], None).unwrap(),
+            pwsh.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn windows_powershell_falls_back_to_system_51() {
+        let temp = tempfile::tempdir().unwrap();
+        let system_root = temp.path().join("Windows");
+        let windows_powershell = system_root
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        fs::create_dir_all(windows_powershell.parent().unwrap()).unwrap();
+        fs::write(&windows_powershell, "").unwrap();
+
+        assert_eq!(
+            resolve_windows_powershell_program(&[], Some(&system_root)).unwrap(),
+            windows_powershell
+        );
+    }
+
+    #[test]
+    fn windows_powershell_reports_clear_error_when_unavailable() {
+        let temp = tempfile::tempdir().unwrap();
+        let error = resolve_windows_powershell_program(&[], Some(temp.path())).unwrap_err();
+
+        assert_eq!(error.code, "local_auth_powershell_missing");
+        assert!(error.message.contains("PowerShell 7"));
+        assert!(error.message.contains("PowerShell 5.1"));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_system_powershell_runs_local_auth_lifecycle_without_pwsh() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_root = temp.path().join("plugin");
+        let scripts = plugin_root.join("scripts");
+        let executor_home = temp.path().join("executor-home");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::create_dir_all(&executor_home).unwrap();
+        fs::write(scripts.join("local-auth.sh"), "#!/bin/sh\n").unwrap();
+        fs::write(
+            scripts.join("local-auth.ps1"),
+            r#"param([string]$Action = 'health')
+$marker = Join-Path $env:WEGENT_EXECUTOR_HOME 'windows-powershell-51-auth'
+switch ($Action) {
+  'health' {
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+      Write-Output '{"status":"ok"}'
+    } else {
+      Write-Output '{"status":"need_login"}'
+    }
+  }
+  'login' {
+    Set-Content -LiteralPath $marker -Value 'ready'
+    Write-Output '{"status":"ok"}'
+  }
+  'logout' {
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    Write-Output '{"status":"ok"}'
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let system_root = env::var_os("SystemRoot")
+            .or_else(|| env::var_os("WINDIR"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let program =
+            resolve_program_for_platform(&plugin_root, "scripts/local-auth.sh", true).unwrap();
+
+        for (action, expected_status) in [
+            ("health", "need_login"),
+            ("login", "ok"),
+            ("health", "ok"),
+            ("logout", "ok"),
+        ] {
+            let mut command = plugin_command_for_platform(
+                &program,
+                &[action.to_owned()],
+                true,
+                &[],
+                Some(&system_root),
+            )
+            .unwrap();
+            assert_eq!(
+                command.as_std().get_program(),
+                system_root
+                    .join("System32")
+                    .join("WindowsPowerShell")
+                    .join("v1.0")
+                    .join("powershell.exe")
+            );
+            let output = command
+                .current_dir(&plugin_root)
+                .env("WEGENT_EXECUTOR_HOME", &executor_home)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "Windows PowerShell local-auth {action} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                result.get("status").and_then(Value::as_str),
+                Some(expected_status)
+            );
+        }
     }
 
     #[test]
@@ -1014,6 +1304,8 @@ mod tests {
     #[test]
     fn normalize_ok_status() {
         let spec = LocalAuthSpec {
+            connector_slug: "test".into(),
+            account_auth: false,
             kind: "local_qr".to_owned(),
             health: vec![],
             start: vec![],

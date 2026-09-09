@@ -1,5 +1,5 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor } from '@tanstack/react-virtual'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
   CSSProperties,
@@ -89,6 +89,7 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import { getRuntimeMessageActiveThinking } from '@/features/workbench/runtimeThinking'
 import { SelectionActionsPopover } from './SelectionActionsPopover'
+import { useBottomOriginVirtualizer } from './useBottomOriginVirtualizer'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -136,6 +137,7 @@ interface MessageListProps {
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   virtualAnchorToEnd?: boolean
+  bottomOrigin?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -229,6 +231,7 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   virtualAnchorToEnd = true,
+  bottomOrigin = false,
   renderGapAfterMessage,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null)
@@ -267,7 +270,7 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isDesktopRuntime() && Boolean(scrollElementRef)
+  const virtualMessages = isDesktopRuntime() && scrollElementRef !== undefined
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
@@ -280,14 +283,20 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
+  const bottomOriginAppendOnlyItemKeys = useMemo(
+    () =>
+      new Set(
+        visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
+      ),
+    [visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
   )
-  const initialVirtualOffset = useMemo(() => {
-    const viewportHeight = scrollElementRef?.current?.clientHeight ?? 0
+  const initialVirtualContentHeight = useMemo(() => {
     const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    const contentHeight =
+    return (
       MESSAGE_LIST_PADDING_TOP_PX +
       MESSAGE_LIST_PADDING_BOTTOM_PX +
       visibleMessages.reduce((total, message, index) => {
@@ -296,25 +305,13 @@ export const MessageList = memo(function MessageList({
         const gap = index < visibleMessages.length - 1 ? MESSAGE_LIST_GAP_PX : 0
         return total + size + gap
       }, 0)
-    return Math.max(0, contentHeight - viewportHeight - initialDistanceFromBottomPx)
-  }, [
-    initialDistanceFromBottomPx,
-    initialMeasurementsCache,
-    messageIntrinsicHeights,
-    scrollElementRef,
-    visibleMessages,
-  ])
-  // TanStack Virtual owns mutable measurement callbacks that React Compiler must not memoize.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const messageVirtualizer = useVirtualizer({
+    )
+  }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
+  const messageVirtualizer = useBottomOriginVirtualizer({
+    bottomOrigin,
+    bottomOriginAppendOnlyItemKeys,
     count: visibleMessages.length,
     enabled: virtualMessages,
-    getScrollElement: () => scrollElementRef?.current ?? null,
-    initialRect: {
-      width: scrollElementRef?.current?.clientWidth ?? 0,
-      height: scrollElementRef?.current?.clientHeight ?? 0,
-    },
-    initialOffset: initialVirtualOffset,
     getItemKey: index => visibleMessages[index]?.id ?? index,
     estimateSize: index => {
       const message = visibleMessages[index]
@@ -325,6 +322,7 @@ export const MessageList = memo(function MessageList({
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
     anchorTo: virtualAnchorToEnd ? 'end' : 'start',
+    followOnAppend: virtualAnchorToEnd ? 'auto' : false,
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
@@ -336,9 +334,14 @@ export const MessageList = memo(function MessageList({
       return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
     initialMeasurementsCache,
+    initialContentHeightPx: initialVirtualContentHeight,
+    initialDistanceFromBottomPx,
+    positionKey: conversationKey,
+    scrollElementRef,
+    shouldAdjustScrollPositionOnItemSizeChange: bottomOrigin
+      ? undefined
+      : preserveScrollPositionOutsideVirtualizer,
   })
-  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
-    preserveScrollPositionOutsideVirtualizer
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
 
   useLayoutEffect(() => {
@@ -725,6 +728,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
   const changed = [
     previous.messages !== next.messages ? 'messages' : null,
     previous.scrollElementRef !== next.scrollElementRef ? 'scrollElementRef' : null,
+    previous.bottomOrigin !== next.bottomOrigin ? 'bottomOrigin' : null,
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? 'initialDistanceFromBottomPx'
       : null,
@@ -2040,7 +2044,10 @@ export function AssistantMessage({
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const memoryCitations = message.memoryCitations ?? []
-  const generatedImages = useMemo(() => getGeneratedImages(displayBlocks), [displayBlocks])
+  const generatedImages = useMemo(
+    () => getGeneratedImages(displayBlocks, t('tool_activity.image_generation_alt')),
+    [displayBlocks, t]
+  )
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
   const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
@@ -2223,9 +2230,6 @@ export function AssistantMessage({
               />
             </div>
           ) : null}
-          {shouldShowThinking && hasVisibleContent && (
-            <AssistantThinkingIndicator content={activeThinkingContent} />
-          )}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -2283,39 +2287,126 @@ export function AssistantMessage({
 
 interface GeneratedImageArtifact {
   id: string
-  src: string
   alt: string
+  mimeType: string
+  fileExtension: string
+  size: number
+  width?: number
+  height?: number
+  src?: string
+  workspaceFile?: Attachment['workspace_file']
+}
+
+const GENERATED_IMAGE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/bmp': '.bmp',
+}
+
+function resolveGeneratedImageType(
+  mimeType: unknown,
+  dataUrl?: string
+): { mimeType: string; fileExtension: string } | null {
+  const dataUrlMimeType = /^data:([^;,]+)/i.exec(dataUrl ?? '')?.[1]
+  const normalizedMimeType =
+    (dataUrlMimeType ?? (typeof mimeType === 'string' ? mimeType : 'image/png'))
+      .split(';', 1)[0]
+      .trim()
+      .toLowerCase() || 'image/png'
+  const fileExtension = GENERATED_IMAGE_FILE_EXTENSIONS[normalizedMimeType]
+  return fileExtension ? { mimeType: normalizedMimeType, fileExtension } : null
+}
+
+function generatedImageDownloadFilename(attachment: Attachment, index: number): string {
+  const extension = attachment.file_extension?.startsWith('.')
+    ? attachment.file_extension
+    : `.${attachment.file_extension || 'png'}`
+  return `generated-image-${index + 1}${extension}`
 }
 
 function generatedImageAttachment(image: GeneratedImageArtifact, index: number): Attachment {
   return {
     id: index + 1,
     filename: image.alt,
-    file_size: 0,
-    mime_type: 'image/png',
+    file_size: image.size,
+    mime_type: image.mimeType,
     status: 'ready',
-    file_extension: '.png',
+    file_extension: image.fileExtension,
     created_at: '',
     local_preview_url: image.src,
+    workspace_file: image.workspaceFile,
+    image_width: image.width,
+    image_height: image.height,
   }
 }
 
-function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
-  return blocks.flatMap(block => {
+function getGeneratedImages(
+  blocks: ProcessingBlock[],
+  fallbackAlt: string
+): GeneratedImageArtifact[] {
+  return blocks.flatMap((block): GeneratedImageArtifact[] => {
     if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
     const payload = block.renderPayload
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+    const source = Reflect.get(payload, 'source')
+    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    const alt =
+      typeof revisedPrompt === 'string' && revisedPrompt.trim() ? revisedPrompt : fallbackAlt
+    if (typeof source === 'object' && source !== null && !Array.isArray(source)) {
+      const sourceType = Reflect.get(source, 'type')
+      const deviceId = Reflect.get(source, 'deviceId')
+      const workspacePath = Reflect.get(source, 'workspacePath')
+      const path = Reflect.get(source, 'path')
+      if (
+        sourceType === 'workspace_file' &&
+        typeof deviceId === 'string' &&
+        deviceId.trim() &&
+        typeof workspacePath === 'string' &&
+        workspacePath.trim() &&
+        typeof path === 'string' &&
+        path.trim()
+      ) {
+        const imageType = resolveGeneratedImageType(Reflect.get(payload, 'mimeType'))
+        if (!imageType) return []
+        const size = Reflect.get(payload, 'size')
+        const width = Reflect.get(payload, 'width')
+        const height = Reflect.get(payload, 'height')
+        return [
+          {
+            id: block.id,
+            alt,
+            ...imageType,
+            size: typeof size === 'number' && Number.isFinite(size) && size >= 0 ? size : 0,
+            width:
+              typeof width === 'number' && Number.isFinite(width) && width > 0 ? width : undefined,
+            height:
+              typeof height === 'number' && Number.isFinite(height) && height > 0
+                ? height
+                : undefined,
+            workspaceFile: {
+              device_id: deviceId,
+              workspace_path: workspacePath,
+              path,
+            },
+          },
+        ]
+      }
+    }
     const imageBase64 = Reflect.get(payload, 'imageBase64')
     if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
-    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    const imageType = resolveGeneratedImageType(Reflect.get(payload, 'mimeType'), imageBase64)
+    if (!imageType) return []
     return [
       {
         id: block.id,
-        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
-        alt:
-          typeof revisedPrompt === 'string' && revisedPrompt.trim()
-            ? revisedPrompt
-            : 'Generated image',
+        src: imageBase64.startsWith('data:')
+          ? imageBase64
+          : `data:${imageType.mimeType};base64,${imageBase64}`,
+        alt,
+        ...imageType,
+        size: 0,
       },
     ]
   })
@@ -2350,6 +2441,7 @@ function GeneratedImagePreview({
       attachment={attachment}
       galleryAttachments={galleryAttachments}
       galleryIndex={index}
+      resolveDownloadFilename={generatedImageDownloadFilename}
       buttonTestId="generated-image-preview-button"
       imageTestId="generated-image"
       loadingTestId="generated-image-loading"
@@ -2509,7 +2601,8 @@ function shouldShowAssistantThinkingIndicator({
 }): boolean {
   return (
     isStreaming &&
-    (!hasProcessingDisplayBlock || hasVisibleContent || hasTrailingCompletedProcessText)
+    !hasVisibleContent &&
+    (!hasProcessingDisplayBlock || hasTrailingCompletedProcessText)
   )
 }
 

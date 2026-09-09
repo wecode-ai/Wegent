@@ -191,3 +191,72 @@ fn lock_env() -> std::sync::MutexGuard<'static, ()> {
         .lock()
         .expect("lock test environment")
 }
+
+#[test]
+fn wework_first_start_uses_a_persisted_uuid_before_app_profile_connects() {
+    let _lock = lock_env();
+    let _device_id = EnvGuard::remove("DEVICE_ID");
+    let _device_type = EnvGuard::set("DEVICE_TYPE", "local");
+    let _app = EnvGuard::set("WEGENT_APP_IPC_DEVICE_ID", "electron-test");
+    let path = temp_path("wework-uuid.json");
+    let first = load_device_config(Some(path.to_str().unwrap())).unwrap();
+    assert_eq!(
+        uuid::Uuid::parse_str(&first.device_id)
+            .unwrap()
+            .get_version_num(),
+        4
+    );
+    let second = load_device_config(Some(path.to_str().unwrap())).unwrap();
+    assert_eq!(first.device_id, second.device_id);
+    assert_eq!(first.runtime_instance_id, second.runtime_instance_id);
+    let independent =
+        load_device_config(Some(temp_path("wework-other.json").to_str().unwrap())).unwrap();
+    assert_ne!(first.device_id, independent.device_id);
+}
+
+#[test]
+fn wework_keeps_legacy_identity_and_rejects_corrupt_config() {
+    let _lock = lock_env();
+    let _device_id = EnvGuard::remove("DEVICE_ID");
+    let _runtime = EnvGuard::remove("WEGENT_RUNTIME_INSTANCE_ID");
+    let _app = EnvGuard::set("WEGENT_APP_IPC_DEVICE_ID", "electron-test");
+    let path = temp_path("wework-legacy.json");
+    fs::write(
+        &path,
+        r#"{"device_id":"local-device","runtime_instance_id":"runtime-old"}"#,
+    )
+    .unwrap();
+    let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
+    assert_eq!(config.device_id, "local-device");
+    assert_eq!(config.runtime_instance_id, "runtime-old");
+    fs::write(&path, "broken config").unwrap();
+    assert!(load_device_config(Some(path.to_str().unwrap())).is_err());
+    assert_eq!(fs::read_to_string(path).unwrap(), "broken config");
+}
+
+#[test]
+fn simultaneous_wework_initialization_has_one_identity() {
+    let _lock = lock_env();
+    let _device_id = EnvGuard::remove("DEVICE_ID");
+    let _app = EnvGuard::set("WEGENT_APP_IPC_DEVICE_ID", "electron-test");
+    let path = temp_path("wework-concurrent.json");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let workers: Vec<_> = (0..4)
+        .map(|_| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                load_device_config(Some(path.to_str().unwrap())).unwrap()
+            })
+        })
+        .collect();
+    let configs: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    for config in &configs {
+        assert_eq!(config.device_id, configs[0].device_id);
+        assert_eq!(config.runtime_instance_id, configs[0].runtime_instance_id);
+    }
+}

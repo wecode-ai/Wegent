@@ -578,3 +578,44 @@ class TestStreamingServiceReasoning:
                 "summary": "Inspected backend",
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_image_block_is_included_as_generation_output_item(
+        self, streaming_service
+    ):
+        async def block_stream():
+            yield StreamingChunk(
+                type="block_created",
+                data={
+                    "block": {
+                        "id": "image-1",
+                        "type": "image",
+                        "status": "done",
+                        "image_urls": ["/api/attachments/51"],
+                        "image_download_urls": ["download-url"],
+                        "image_count": 1,
+                    }
+                },
+            )
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="default#image-agent",
+            chat_stream=block_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        assert completed["response"]["output"] == [
+            {
+                "type": "image_generation_call",
+                "id": "image-1",
+                "status": "completed",
+                "image_urls": ["/api/attachments/51"],
+                "image_download_urls": ["download-url"],
+                "image_attachment_ids": [],
+                "metadata": {"count": 1},
+            }
+        ]

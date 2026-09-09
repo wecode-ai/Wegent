@@ -243,14 +243,17 @@ export function createDefaultWorkbenchServices(
   cloudConnection?: CloudConnectionServicesSnapshot
 ): WorkbenchServices {
   if (isLocalFirstAppRuntime()) {
-    if (
-      cloudConnection?.isConnected &&
-      cloudConnection.backendUrl &&
-      cloudConnection.apiBaseUrl &&
-      cloudConnection.socketBaseUrl &&
-      cloudConnection.socketPath &&
-      cloudConnection.token
-    ) {
+    if (cloudConnection?.isConnected) {
+      if (
+        !cloudConnection.backendUrl ||
+        !cloudConnection.apiBaseUrl ||
+        !cloudConnection.socketBaseUrl ||
+        !cloudConnection.socketPath ||
+        !cloudConnection.token ||
+        !cloudConnection.user
+      ) {
+        throw new Error('Connected cloud runtime configuration is incomplete')
+      }
       return withConfiguredFeedbackApi(
         createHybridWorkbenchServices({
           backendUrl: cloudConnection.backendUrl,

@@ -25,6 +25,11 @@ from app.services.device.command_registry import (
     build_local_device_command_argv,
     resolve_local_device_command,
 )
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    device_kind_type,
+    remote_control_is_enabled,
+)
 from app.services.device_service import device_service
 
 logger = logging.getLogger(__name__)
@@ -75,11 +80,13 @@ REMOTE_MUTATING_COMMAND_KEYS = frozenset(
         "turn_file_changes_revert",
     }
 )
-REMOTE_DEVICE_COMMAND_KEYS = (
-    REMOTE_READ_ONLY_COMMAND_KEYS | REMOTE_MUTATING_COMMAND_KEYS
-)
-CLOUD_DEVICE_COMMAND_KEYS = REMOTE_DEVICE_COMMAND_KEYS | frozenset(
+RUNTIME_AUTH_COMMAND_KEYS = frozenset(
     {"read_runtime_auth_file", "sync_runtime_auth_file"}
+)
+REMOTE_DEVICE_COMMAND_KEYS = (
+    REMOTE_READ_ONLY_COMMAND_KEYS
+    | REMOTE_MUTATING_COMMAND_KEYS
+    | RUNTIME_AUTH_COMMAND_KEYS
 )
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 INTERNAL_DEVICE_COMMAND_KEYS = frozenset({"sync_git_credentials"})
@@ -99,20 +106,6 @@ class DeviceCommandUnknownKeyError(DeviceCommandError):
 
 class DeviceCommandConfigurationError(DeviceCommandError):
     """Raised when configured command metadata is invalid."""
-
-
-def _device_kind_type(device_kind: Any) -> Optional[DeviceType]:
-    spec = getattr(device_kind, "json", None)
-    spec = spec.get("spec", {}) if isinstance(spec, dict) else {}
-    if "deviceType" not in spec:
-        return DeviceType.LOCAL
-    device_type = spec.get("deviceType")
-    if not isinstance(device_type, str):
-        return None
-    try:
-        return DeviceType(device_type)
-    except ValueError:
-        return None
 
 
 def _resolve_cloud_runtime_device_id(device_kind: Any) -> str:
@@ -135,13 +128,21 @@ async def _resolve_dispatch_device_id(
     command_key: str,
     device_kind: Any,
     device_type: Optional[DeviceType],
+    allow_app_device: bool,
 ) -> str:
     if device_type is None:
         raise DeviceCommandError(
             "Device command RPC is not supported for unknown device type"
         )
 
+    if not allow_app_device and not remote_control_is_enabled(device_type):
+        raise DeviceCommandError(REMOTE_CONTROL_DISABLED_MESSAGE)
+
     if device_type in LOCAL_COMMAND_DEVICE_TYPES:
+        if device_type == DeviceType.APP:
+            from app.services.device.identity import record_route_id
+
+            return record_route_id(device_kind)
         return submitted_device_id
 
     if device_type not in {DeviceType.CLOUD, DeviceType.REMOTE}:
@@ -149,12 +150,7 @@ async def _resolve_dispatch_device_id(
             f"Device command RPC is not supported for {device_type.value} devices"
         )
 
-    supported_command_keys = (
-        CLOUD_DEVICE_COMMAND_KEYS
-        if device_type == DeviceType.CLOUD
-        else REMOTE_DEVICE_COMMAND_KEYS
-    )
-    if command_key not in supported_command_keys:
+    if command_key not in REMOTE_DEVICE_COMMAND_KEYS:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "
             f"{device_type.value} devices"
@@ -330,12 +326,13 @@ async def execute_configured_device_command(
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     command_config: Optional[Mapping[str, Any]] = None,
     allow_internal: bool = False,
+    allow_app_device: bool = True,
 ) -> dict[str, Any]:
     """Execute a configured local device command for internal Backend callers."""
     device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
     if not device_kind:
         raise DeviceCommandNotFoundError("Device not found or access denied")
-    device_type = _device_kind_type(device_kind)
+    device_type = device_kind_type(device_kind)
 
     if command_key in INTERNAL_DEVICE_COMMAND_KEYS and not allow_internal:
         raise DeviceCommandUnknownKeyError(
@@ -365,6 +362,7 @@ async def execute_configured_device_command(
         command_key=command_key,
         device_kind=device_kind,
         device_type=device_type,
+        allow_app_device=allow_app_device,
     )
 
     execute_kwargs = {

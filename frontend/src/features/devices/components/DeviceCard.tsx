@@ -26,6 +26,17 @@ import { RunningTasksList } from './RunningTasksList'
 import { VersionBadge } from './VersionBadge'
 import { getStatusColor, isOpenClawDevice } from '../utils/device-status'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useState } from 'react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 export interface DeviceCardProps {
   device: DeviceInfo
@@ -62,6 +73,10 @@ export function DeviceCard({
   upgradeStatus,
 }: DeviceCardProps) {
   const { t } = useTranslation('devices')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const deleteDisabled =
+    device.device_type !== 'cloud' &&
+    (device.status !== 'offline' || device.running_tasks.length > 0 || device.slot_used > 0)
 
   /**
    * Get localized status text.
@@ -80,6 +95,7 @@ export function DeviceCard({
 
   return (
     <div
+      data-testid={`device-record-${device.id}`}
       className={cn(
         'bg-surface border rounded-lg p-4',
         device.is_default ? 'border-primary' : 'border-border'
@@ -100,6 +116,14 @@ export function DeviceCard({
                   {t('default_device')}
                 </span>
               )}
+              {device.device_type === 'app' && (
+                <span
+                  data-testid="wework-device-badge"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full"
+                >
+                  {t('wework_device_badge')}
+                </span>
+              )}
               {isOpenClawDevice(device) && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-red-50 text-red-600 rounded-full">
                   {t('openclaw_badge')}
@@ -107,7 +131,9 @@ export function DeviceCard({
               )}
             </div>
             <div className="flex items-center gap-2">
-              <p className="text-sm text-text-muted">{device.device_id}</p>
+              <p className="text-sm text-text-muted">
+                {device.registered_device_id || device.device_id}
+              </p>
               {device.status !== 'offline' && (
                 <VersionBadge
                   executorVersion={device.executor_version}
@@ -161,6 +187,7 @@ export function DeviceCard({
                     onClick={() => onStartTask(device.device_id)}
                     disabled={device.status !== 'online'}
                     className="flex items-center gap-2"
+                    data-testid={`start-device-chat-${device.registered_device_id || device.device_id}`}
                   >
                     <Play className="w-4 h-4" />
                     {t('start_task')}
@@ -171,7 +198,13 @@ export function DeviceCard({
           </TooltipProvider>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                data-testid={`device-menu-${device.id}`}
+                aria-label={t('device_actions')}
+              >
                 <MoreVertical className="w-4 h-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -186,7 +219,12 @@ export function DeviceCard({
                   {t('set_as_default')}
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem danger onClick={() => onDelete(device)}>
+              <DropdownMenuItem
+                danger
+                disabled={deleteDisabled}
+                onClick={() => setConfirmDelete(true)}
+                data-testid={`delete-device-${device.id}`}
+              >
                 <Trash2 className="w-4 h-4 mr-2" />
                 {t('delete_device')}
               </DropdownMenuItem>
@@ -194,6 +232,30 @@ export function DeviceCard({
           </DropdownMenu>
         </div>
       </div>
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('delete_confirm_description', { name: device.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="cancel-delete-device">
+              {t('delete_cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="primary"
+              data-testid="confirm-delete-device"
+              disabled={deleteDisabled}
+              onClick={() => onDelete(device)}
+            >
+              {t('delete_device')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Running tasks list */}
       {device.running_tasks.length > 0 && (

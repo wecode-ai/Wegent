@@ -121,6 +121,77 @@ def test_the_generation_id_travels_with_the_run():
     assert "42" in build_full_prompt(_context())
 
 
+def test_a_full_rebuild_names_the_bounded_quality_loop() -> None:
+    prompt = build_full_prompt(_context())
+
+    assert "Writer/Reviewer" in prompt
+    assert "REVIEW_CONTRACT.md" in prompt
+    assert "`plan_only` review policy" in prompt
+    assert "do not open QA or Recheck" in prompt
+
+
+def test_full_prompt_names_executor_generated_reviewer_agent_type() -> None:
+    prompt = build_full_prompt(
+        _context(
+            reviewer_agent_type="reviewer-bot-106",
+            section_writer_agent_type="section-writer-107",
+        )
+    )
+
+    assert "`reviewer-bot-106`" in prompt
+    assert "complete Plan handoff" in prompt
+    assert "`review-open`" in prompt
+    assert "synchronously" in prompt
+    assert "review-status" in prompt
+    assert "exactly once" in prompt
+    assert "`nextAction`" in prompt
+    assert "phase remains `ready`" in prompt
+    assert "exits 3" in prompt
+    assert "context compaction" in prompt
+    assert "sleep, poll" in prompt
+    assert "CODE_WIKI_REVIEW_PHASE" not in prompt
+    assert "wait-seconds" not in prompt
+    assert "`section-writer-107`" in prompt
+    assert "Work Package ID" in prompt
+    assert "missing planned pages" in prompt
+    assert "Plan amendment protocol" in prompt
+    assert "do not submit it directly" in prompt
+    assert "write_pages_then_complete" not in prompt
+
+
+def test_adaptive_full_prompt_combines_delegated_research_and_writing() -> None:
+    prompt = build_full_prompt(
+        _context(
+            strategy_id="coordinator_adaptive",
+            section_writer_agent_type="section-writer-107",
+        )
+    )
+    normalized = " ".join(prompt.split())
+
+    assert "Strategy: `coordinator_adaptive`" in prompt
+    assert "Start with shallow discovery" in prompt
+    assert "exactly one author" in prompt
+    assert "`coordinator` or `writer:<work-package-id>`" in prompt
+    assert "`section-writer-107`" in prompt
+    assert "one complete research-and-writing Work Package" in prompt
+    assert "do not run a separate exploration delegation first" in normalized
+    assert "same standard" in prompt
+    assert "purpose, `Must explain`" in prompt
+    assert "Do not open Plan, QA, Recheck" in prompt
+    assert "review-open" not in prompt
+    assert "review-status" not in prompt
+
+
+def test_solo_full_prompt_forbids_subagents_and_review() -> None:
+    prompt = build_full_prompt(_context(strategy_id="coordinator_solo"))
+
+    assert "Strategy: `coordinator_solo`" in prompt
+    assert "sole author" in prompt
+    assert "Do not call the Claude Code `Task` or `Agent` tool" in prompt
+    assert "no subagent or review loop" in prompt
+    assert "review-open" not in prompt
+
+
 def test_the_mode_selects_the_prompt():
     assert build_prompt(_context(), full=True) == build_full_prompt(_context())
     assert build_prompt(_context(), full=False) == build_incremental_prompt(_context())

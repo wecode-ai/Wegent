@@ -32,6 +32,8 @@ PlantUML 默认从 `https://www.plantuml.com/plantuml/svg` 请求 SVG。部署�
 
 Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软滚动条使用透明轨道和具有足够对比度的灰色滑块，使滚动位置始终可辨认。
 
+Markdown 代码块保持不换行时，必须显示不依赖操作系统覆盖式滚动条设置的横向滚动条。滑块宽度应反映当前可见范围，并支持拖动到长代码行末尾；流式输出期间继续隐藏滑块，输出完成后再显示。
+
 ## 数据传输
 
 本机工作区的目录枚举、文本读取和二进制分块读取由 Wework Electron 进程直接访问磁盘，不经过 executor IPC。文本最多读取 256 KiB，二进制通过 `read_local_workspace_file_chunk` 以 1 MiB 分块读取。未知扩展名使用首个分块探测内容；如果判定为二进制，首个分块必须直接复用于后续组装，不能重复读取。项目空间中的云文件已经下载为 `Blob`，未知类型只检查前 64 KiB。每个工作区请求都携带工作区根目录并在 Rust 侧执行规范化路径校验，拒绝通过符号链接或相对路径逃逸工作区。前端按顺序组装二进制分块为 `File` 后交给查看器。
@@ -41,6 +43,24 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 本机原生命令 `read_local_workspace_text_file` 会返回 `editable` 和 `revision`；远端设备对应使用 executor IPC 的 `workspace_read_text_file`。只有未截断且可按 UTF-8 解码的文本文件可以进入编辑模式；二进制、超出 256 KiB 的文本和解码失败的文件只能预览。
 
 保存仍由 Rust executor 通过 `workspace_write_text_file` 实现，因为写入需要沿用任务工作区的并发修改检查和原子替换语义。IPC 载荷携带文件内容、文件名和读取时得到的 `revision`。executor 在写入前重新读取磁盘文件并比对 SHA-256 revision；如果文件已被外部修改，保存会失败，前端必须阻止覆盖并提示用户重新加载。写入必须限制在同一工作区根目录内，并通过同目录临时文件原子替换目标文件。通过远端设备打开的文件仍然只能预览。
+
+## 预览耗时诊断
+
+桌面应用会把单次文件链接点击和后续预览操作关联到同一个 `traceId`，并将诊断事件写入 Electron 日志目录下的 `file-preview.log`。日志采用 2 MiB 上限并保留两个轮转文件，只记录文件扩展名、路径长度、文件大小、分块数量、阶段和耗时，不记录完整路径、文件内容或凭据。
+
+排查“点击后右侧面板迟迟不出现”时，按同一 `traceId` 检查以下阶段：
+
+1. `message_link_click` 到 `filesystem_stat_end`：在打开右侧面板前判断目标是文件还是目录。
+2. `open_file_request_queued` 到 `open_file_request_effect`：文件请求从工作台状态进入文件面板。
+3. `parent_tree_start` 到 `parent_tree_end`：读取父目录并确认目标条目。
+4. `file_chunk_start` 到 `file_chunk_end`：读取一个二进制分块。
+5. `base64_decode_end` 和 `file_constructed`：在 renderer 中解码分块、复制字节并构造浏览器 `File`。
+6. `binary_preview_state_queued` 到 `binary_preview_committed`：React 接收预览状态并提交二进制预览。
+7. `file_viewer_react_commit`：记录 Flyfish Viewer 的 React commit 耗时和查看器类型。
+
+每个关键阶段后还会安排一个零延迟定时器，并通过 `renderer_queue_probe.lagMs` 测量 renderer 事件队列延迟；达到 50 ms 时记录 `blocked: true`。如果前一阶段已经结束，但该探针明显延后，说明同步 JavaScript、布局、绘制或其它 renderer 长任务正在阻塞队列。`preview_loading_clear_skipped` 表示当前请求已被后续文件请求替换，应按请求竞态排查，而不是把它解释为单次读取未结束。
+
+当读取经过 executor App IPC 时，`executor.log` 会为对应请求记录 `command_key`、处理耗时、响应字节数和 `queue_wait_ms`。`app IPC request finished` 很快但 `app IPC response queued.queue_wait_ms` 很大，表示响应写入队列存在背压；executor 已快速入队但前端的 `file_chunk_end` 明显延后，则继续检查 IPC 传输和 renderer 消息消费。
 
 ## 预览状态生命周期
 
@@ -54,4 +74,4 @@ Pierre CodeView 的 `items`、`options`、`selectedLines` 和选择回调也是�
 
 ## 验证
 
-修改预览器时至少验证 Markdown 的默认预览、源码切换、长文档滚动和单一标题栏，以及 Dart、未知扩展名的 UTF-8 源码、未知扩展名的二进制文件、PDF、DOCX、XLSX、CSV、PPTX、PNG/JPEG/WebP、HTML、Mermaid、PlantUML、切换文件、取消加载、目录树展开、符号链接工作区和工作区边界拒绝行为。未知二进制文件还必须验证探测分块不会重复读取。图片必须覆盖明暗主题和透明通道，确认预览画布及透明区域不会残留渲染器的浅色背景。图表还必须覆盖明暗主题、包含 HTML 换行标签的 Mermaid、危险元素和事件属性清理、完整 SVG 自适应、复制 PNG 和系统保存窗口。还应在任务流式更新期间持续观察已打开的文本预览，确认等价工作区目标重新渲染时不会重复读取或闪烁；真实桌面 E2E 必须在后台消息持续更新时选中文本、等待多次工作台刷新，并断言浏览器原生选区仍然存在。
+修改预览器时至少验证 Markdown 的默认预览、源码切换、长文档滚动、长代码行横向滚动和单一标题栏，以及 Dart、未知扩展名的 UTF-8 源码、未知扩展名的二进制文件、PDF、DOCX、XLSX、CSV、PPTX、PNG/JPEG/WebP、HTML、Mermaid、PlantUML、切换文件、取消加载、目录树展开、符号链接工作区和工作区边界拒绝行为。Markdown 长代码行验证必须分别确认流式输出期间隐藏滑块，以及输出完成后滑块持续可见、尺寸与溢出比例一致，并可拖动到行尾。未知二进制文件还必须验证探测分块不会重复读取。图片必须覆盖明暗主题和透明通道，确认预览画布及透明区域不会残留渲染器的浅色背景。图表还必须覆盖明暗主题、包含 HTML 换行标签的 Mermaid、危险元素和事件属性清理、完整 SVG 自适应、复制 PNG 和系统保存窗口。还应在任务流式更新期间持续观察已打开的文本预览，确认等价工作区目标重新渲染时不会重复读取或闪烁；真实桌面 E2E 必须在后台消息持续更新时选中文本、等待多次工作台刷新，并断言浏览器原生选区仍然存在。

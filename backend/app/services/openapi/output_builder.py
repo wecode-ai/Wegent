@@ -7,21 +7,39 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Any, Iterable, Optional
 
+from app.core.config import settings
 from app.models.subtask import Subtask, SubtaskRole
 from app.schemas.openapi_response import (
     FunctionCallOutputItem,
+    ImageGenerationCallOutputItem,
     MCPCallOutputItem,
     OutputMessage,
     OutputTextContent,
     ResponseOutputItem,
     ShellCallAction,
     ShellCallOutputItem,
+    VideoGenerationCallOutputItem,
 )
+from app.services.attachment.public_link import (
+    build_public_attachment_download_url,
+)
+from app.services.execution.agents.image.download_url import build_image_download_url
 from app.services.openapi.helpers import subtask_status_to_message_status
 
 SHELL_TOOL_NAMES = {"exec", "command_tool"}
+VIDEO_DOWNLOAD_URL_EXPIRES_SECONDS = 3600
+
+
+def build_video_download_url(attachment_id: int) -> str:
+    """Create a one-hour public download URL for a generated video."""
+    return build_public_attachment_download_url(
+        attachment_id,
+        timedelta(seconds=VIDEO_DOWNLOAD_URL_EXPIRES_SECONDS),
+        settings.WEGENT_BACKEND_PUBLIC_URL,
+    )
 
 
 def _dump_arguments(value: Any) -> str:
@@ -129,6 +147,105 @@ def _shell_call_status(block: Optional[dict[str, Any]]) -> str:
     if block_status == "pending":
         return "in_progress"
     return "completed"
+
+
+def _generation_status(block: dict[str, Any], default_status: str) -> str:
+    block_status = str(block.get("status") or "").strip().lower()
+    if block_status in {"error", "failed"}:
+        return "failed"
+    if block.get("is_placeholder") or block_status in {
+        "pending",
+        "queued",
+        "creating",
+        "streaming",
+        "in_progress",
+    }:
+        return "in_progress"
+    if block_status in {"done", "completed"}:
+        return "completed"
+    return default_status
+
+
+def build_generation_output_item_from_block(
+    block: dict[str, Any],
+    *,
+    default_status: str = "completed",
+) -> Optional[ResponseOutputItem]:
+    """Convert an image or video result block into a Responses output item."""
+    block_type = block.get("type")
+    block_id = str(block.get("id") or "")
+    if not block_id:
+        return None
+
+    status = _generation_status(block, default_status)
+    if block_type == "image":
+        attachment_ids = [
+            attachment_id
+            for attachment_id in block.get("image_attachment_ids") or []
+            if isinstance(attachment_id, int)
+        ]
+        download_urls = (
+            [
+                build_image_download_url(attachment_id)
+                for attachment_id in attachment_ids
+            ]
+            if attachment_ids
+            else [
+                url
+                for url in block.get("image_download_urls") or []
+                if isinstance(url, str)
+            ]
+        )
+        image_urls = [
+            url for url in block.get("image_urls") or [] if isinstance(url, str)
+        ]
+        return ImageGenerationCallOutputItem(
+            id=block_id,
+            status=status,
+            image_urls=image_urls,
+            image_download_urls=download_urls,
+            image_attachment_ids=attachment_ids,
+            metadata={
+                key: value
+                for key, value in {
+                    "count": block.get("image_count") or len(image_urls),
+                    "size": block.get("image_size"),
+                    "download_url_expires_in_seconds": block.get(
+                        "image_download_url_expires_in_seconds"
+                    ),
+                }.items()
+                if value is not None
+            },
+        )
+    if block_type == "video":
+        attachment_id = block.get("video_attachment_id")
+        valid_attachment_id = attachment_id if isinstance(attachment_id, int) else None
+        video_url = (
+            build_video_download_url(valid_attachment_id)
+            if valid_attachment_id is not None
+            else block.get("video_url") or None
+        )
+        return VideoGenerationCallOutputItem(
+            id=block_id,
+            status=status,
+            video_url=video_url,
+            video_attachment_id=valid_attachment_id,
+            metadata={
+                key: value
+                for key, value in {
+                    "thumbnail": block.get("video_thumbnail"),
+                    "duration": block.get("video_duration"),
+                    "progress": block.get("video_progress"),
+                    "download_url_expires_in_seconds": (
+                        VIDEO_DOWNLOAD_URL_EXPIRES_SECONDS
+                        if valid_attachment_id is not None
+                        else None
+                    ),
+                }.items()
+                if value is not None
+            },
+        )
+    return None
 
 
 def _index_tool_blocks(
@@ -370,6 +487,11 @@ def _build_items_from_blocks(
     output: list[ResponseOutputItem] = []
     emitted_text = False
     emitted_reasoning = False
+    emitted_media = False
+    message_status = _message_status(subtask, status_override)
+    generation_default_status = (
+        message_status if message_status in {"in_progress", "completed"} else "failed"
+    )
 
     def append_message(content: list[OutputTextContent]) -> None:
         output.append(
@@ -387,6 +509,12 @@ def _build_items_from_blocks(
             continue
         if block.get("type") == "tool":
             output.append(_build_tool_item_from_block(block))
+        elif generation_item := build_generation_output_item_from_block(
+            block,
+            default_status=generation_default_status,
+        ):
+            emitted_media = True
+            output.append(generation_item)
         elif block.get("type") == "text":
             content = block.get("content")
             if isinstance(content, str) and content:
@@ -407,7 +535,9 @@ def _build_items_from_blocks(
                 )
 
     final_text = (
-        "" if emitted_text else content_override or str(result.get("value") or "")
+        ""
+        if emitted_text or emitted_media
+        else content_override or str(result.get("value") or "")
     )
     final_reasoning = str(result.get("reasoning_content") or "")
     if final_text or (final_reasoning and not emitted_reasoning):

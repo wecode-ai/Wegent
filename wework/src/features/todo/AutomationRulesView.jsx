@@ -8,18 +8,23 @@ import {
   CheckCircle2,
   ChevronDown,
   Circle,
+  CircleDot,
   Clock3,
   Cloud,
   Code2,
   Copy,
+  Flag,
   FolderKanban,
   GitBranch,
   History,
   Laptop,
   LayoutGrid,
   MoreHorizontal,
+  Pencil,
+  Play,
   Plus,
   Puzzle,
+  Repeat,
   Search,
   Sparkles,
   Tag,
@@ -30,9 +35,20 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 import { PopupMenu } from '@/components/common/MenuSelect'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
+import { eventTypeLabel } from './eventTypeLabel'
+import { EventSubscriptionPicker } from './EventSubscriptionManager'
+import {
+  BRANCH_HANDLER_ROW_GAP,
+  OUTER_NODE_GAP,
+  OUTER_NODE_HEIGHT,
+  OUTER_NODE_WIDTH,
+  loopBodyNodeSize,
+  stepCanvasSize,
+} from './canvasGeometry'
 
 const ACTIVE_RUN_STATUSES = new Set([
   'pending',
@@ -41,7 +57,11 @@ const ACTIVE_RUN_STATUSES = new Set([
   'waiting_device',
   'running',
 ])
+const AUTO_SAVE_DELAY_MS = 600
 const EMPTY_EXECUTION_CATALOG = { environments: [], models: [], plugins: [] }
+const AUTOMATION_PANEL_GAP = 12
+const AUTOMATION_RIGHT_PANEL_WIDTH = 400
+const AUTOMATION_RIGHT_PANEL_TOP = 64
 const DELIVERABLE_TYPE_OPTIONS = [
   { value: 'text', label: '文本' },
   { value: 'file', label: '文件' },
@@ -50,6 +70,8 @@ const DELIVERABLE_TYPE_OPTIONS = [
   { value: 'pull_request', label: 'PR/MR' },
   { value: 'url', label: '链接' },
 ]
+const BRANCH_HANDLER_COLUMN_GAP = OUTER_NODE_WIDTH + OUTER_NODE_GAP // matches addStep column spacing
+const LOOP_BODY_HANDLER_COLUMN_GAP = 260 // matches loop body column spacing
 
 function runMatchesFilter(status, filter) {
   if (filter === 'all') return true
@@ -101,6 +123,13 @@ function createExecutionNode({
   executionConfigOverride = false,
   approvalPolicy = undefined,
   subgraph = null,
+  nodeType = 'task',
+  role = null,
+  loopId = null,
+  bodyNodeIds = [],
+  loopConfig = null,
+  branchConditions = [],
+  eventWait = null,
 }) {
   return {
     id,
@@ -129,6 +158,13 @@ function createExecutionNode({
     executionConfigOverride,
     approvalPolicy,
     subgraph,
+    nodeType,
+    role,
+    loopId,
+    bodyNodeIds,
+    loopConfig,
+    branchConditions,
+    eventWait,
   }
 }
 
@@ -248,6 +284,205 @@ function createDynamicAllocationNode(executionCatalog, id = `step-${Date.now()}`
   })
 }
 
+function createLoopNode(id = `loop-${Date.now()}`) {
+  const bodyId = `loop-start-${Date.now()}`
+  return createExecutionNode({
+    id,
+    kind: 'loop',
+    name: '循环',
+    prompt: '',
+    dependencies: [],
+    dependencyContext: {},
+    executionMode: 'manual',
+    workspacePolicy: 'none',
+    nodeType: 'loop',
+    bodyNodeIds: [bodyId],
+    loopConfig: {
+      maxAttempts: 5,
+      timeoutSeconds: null,
+    },
+    subgraph: {
+      nodes: [
+        createExecutionNode({
+          id: bodyId,
+          name: '循环开始',
+          kind: 'task',
+          nodeType: 'loopStart',
+          executionMode: 'manual',
+          workspacePolicy: 'none',
+          dependencies: [],
+          dependencyContext: {},
+          x: 0,
+          y: 0,
+        }),
+      ],
+    },
+  })
+}
+
+function createLoopBodyNode(executionCatalog, loopId, kind) {
+  const id = `loop-body-${Date.now()}`
+  if (kind === 'branch') {
+    return createExecutionNode({
+      id,
+      name: '分支',
+      kind: 'task',
+      nodeType: 'branch',
+      loopId,
+      executionMode: 'manual',
+      workspacePolicy: 'none',
+      dependencies: [],
+      dependencyContext: {},
+      x: 240,
+      y: 0,
+      branchConditions: [],
+      eventWait: {
+        collectionMode: 'poll',
+        subscriptionId: null,
+        pollIntervalSeconds: 300,
+      },
+    })
+  }
+  if (kind === 'loopEnd') {
+    return createExecutionNode({
+      id,
+      name: '循环结束',
+      kind: 'task',
+      nodeType: 'loopEnd',
+      loopId,
+      executionMode: 'manual',
+      workspacePolicy: 'none',
+      dependencies: [],
+      dependencyContext: {},
+      x: 240,
+      y: 90,
+    })
+  }
+  return createExecutionNode({
+    ...defaultExecutionConfiguration(executionCatalog),
+    id,
+    name: '',
+    prompt: '',
+    kind: 'task',
+    nodeType: 'task',
+    loopId,
+    dependencies: [],
+    dependencyContext: {},
+    x: 240,
+    y: 90,
+  })
+}
+
+function createBranchNode(id = `branch-${Date.now()}`) {
+  return createExecutionNode({
+    id,
+    kind: 'branch',
+    name: '分支',
+    prompt: '',
+    dependencies: [],
+    dependencyContext: {},
+    executionMode: 'manual',
+    workspacePolicy: 'none',
+    nodeType: 'branch',
+    branchConditions: [],
+    eventWait: {
+      collectionMode: 'poll',
+      subscriptionId: null,
+      pollIntervalSeconds: 300,
+    },
+  })
+}
+
+function createBranchHandlerNode(executionCatalog, kind, id) {
+  if (kind === 'dynamic') return createDynamicAllocationNode(executionCatalog, id)
+  if (kind === 'loop') return createLoopNode(id)
+  if (kind === 'branch') return createBranchNode(id)
+  return createExecutionNode({
+    ...defaultExecutionConfiguration(executionCatalog),
+    id,
+    name: '',
+    prompt: '',
+  })
+}
+
+function createLoopBranchHandlerNode(executionCatalog, loopId, kind) {
+  if (kind === 'branch') return createLoopBodyNode(executionCatalog, loopId, 'branch')
+  if (kind === 'loopEnd') return createLoopBodyNode(executionCatalog, loopId, 'loopEnd')
+  return createLoopBodyNode(executionCatalog, loopId, 'task')
+}
+
+function insertStepAfter(
+  container,
+  anchorId,
+  node,
+  { gap, condition = null, alignY = null, stack = false, nodeSize = stepCanvasSize }
+) {
+  const branchIndex = container.findIndex(candidate => candidate.id === anchorId)
+  if (branchIndex < 0) return null
+  const anchor = container[branchIndex]
+  const nodeId = node.id
+  const insertionX = (anchor.x ?? 0) + gap
+  // Condition handlers already added to this branch stay in the handler column
+  // so new handlers stack downward instead of pushing the column to the right.
+  const handlerIds = new Set(
+    (anchor.branchConditions ?? []).flatMap(condition => condition.handlerNodeIds ?? [])
+  )
+  let insertionY
+  if (alignY != null) {
+    insertionY = alignY
+  } else if (stack) {
+    const stackedHandlers = container.filter(candidate => handlerIds.has(candidate.id))
+    if (stackedHandlers.length > 0) {
+      const bottomY = Math.max(
+        ...stackedHandlers.map(candidate => (candidate.y ?? 0) + nodeSize(candidate).height)
+      )
+      insertionY = bottomY + BRANCH_HANDLER_ROW_GAP
+    } else {
+      insertionY = anchor.y ?? 0
+    }
+  } else {
+    insertionY = anchor.y ?? 0
+  }
+  const inserted = {
+    ...node,
+    x: insertionX,
+    y: insertionY,
+    dependencies: [anchorId],
+    dependencyContext: { [anchorId]: ['final_result', 'deliveries'] },
+  }
+  const next = []
+  container.forEach((node, index) => {
+    let value = node
+    if (!stack || !handlerIds.has(node.id)) {
+      if (node.x >= insertionX) value = { ...value, x: value.x + gap }
+    }
+    if (node.id === anchorId && condition) {
+      value = {
+        ...value,
+        branchConditions: [
+          ...(value.branchConditions ?? []),
+          { ...condition, handlerNodeIds: [nodeId] },
+        ],
+      }
+    }
+    next.push(value)
+    if (index === branchIndex) next.push(inserted)
+  })
+  return { container: next, nodeId }
+}
+
+function findBranchOwner(steps, branchId) {
+  const topStep = steps.find(step => step.id === branchId && step.kind === 'branch')
+  if (topStep) return { type: 'top', step: topStep }
+  const loopStep = steps.find(
+    step =>
+      step.kind === 'loop' &&
+      (step.subgraph?.nodes ?? []).some(node => node.id === branchId && node.nodeType === 'branch')
+  )
+  if (loopStep) return { type: 'loop', step: loopStep }
+  return null
+}
+
 function createStageConstraint(overrides) {
   return createExecutionNode({
     id: overrides.id,
@@ -276,7 +511,8 @@ const automationTemplates = [
     icon: 'development',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
+      collectionMode: 'webhook',
       startMode: 'immediate',
       event: 'created',
       tags: ['自动开发'],
@@ -338,7 +574,7 @@ const automationTemplates = [
     icon: 'testing',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: ['自动测试'],
@@ -379,7 +615,7 @@ const automationTemplates = [
     icon: 'schedule',
     trigger: {
       type: 'schedule',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: [],
@@ -412,7 +648,7 @@ const automationTemplates = [
     icon: 'defect',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'status',
       event: 'created',
       tags: ['缺陷'],
@@ -461,7 +697,7 @@ const weekdayLabels = {
   sunday: '周日',
 }
 
-function triggerPresentation(trigger) {
+function triggerPresentation(trigger, t) {
   if (trigger.type === 'schedule') {
     const schedule = trigger.schedule
     const frequency =
@@ -469,8 +705,20 @@ function triggerPresentation(trigger) {
         ? `每周${weekdayLabels[schedule.weekday]}`
         : frequencyLabels[schedule.frequency]
     return {
-      label: `${frequency} ${schedule.time}`,
+      label:
+        schedule.frequency === 'hourly'
+          ? t('workbench.board_automation_hourly_summary', {
+              minute: Number(schedule.time.split(':')[1]),
+            })
+          : `${frequency} ${schedule.time}`,
       detail: `按计划执行 · ${schedule.timezone}`,
+    }
+  }
+
+  if (trigger.source !== 'wework') {
+    return {
+      label: eventTypeLabel(trigger.event, t),
+      detail: trigger.subscriptionId ? `事件订阅 ${trigger.subscriptionId}` : '选择事件订阅后运行',
     }
   }
 
@@ -528,6 +776,55 @@ function cloneRule(rule) {
   }
 }
 
+function validateRule(rule) {
+  if (!rule.name.trim()) return '请填写自动化名称'
+
+  const hasUnnamedNode = nodes =>
+    nodes.some(
+      node =>
+        !node.name.trim() ||
+        ((node.kind === 'dynamic' || node.kind === 'loop') &&
+          hasUnnamedNode(node.subgraph?.nodes ?? []))
+    )
+  if (hasUnnamedNode(rule.steps)) return '请填写所有执行节点名称'
+
+  const hasInvalidBranchCondition = nodes =>
+    nodes.some(
+      node =>
+        (node.branchConditions ?? []).some(condition => !(condition.eventType ?? '').trim()) ||
+        hasInvalidBranchCondition(node.subgraph?.nodes ?? [])
+    )
+  if (hasInvalidBranchCondition(rule.steps)) return '请为每个分支选择事件类型'
+
+  const hasDuplicateBranchCondition = nodes =>
+    nodes.some(node => {
+      const conditionKeys = new Set()
+      const duplicated = (node.branchConditions ?? []).some(condition => {
+        const key = `${condition.sourceType ?? 'github'}:${condition.eventType ?? ''}`
+        if (conditionKeys.has(key)) return true
+        conditionKeys.add(key)
+        return false
+      })
+      return duplicated || hasDuplicateBranchCondition(node.subgraph?.nodes ?? [])
+    })
+  return hasDuplicateBranchCondition(rule.steps) ? '同一分支下的事件平台和事件类型不能重复' : ''
+}
+
+function mergeSavedIdentity(rule, saved) {
+  return {
+    ...rule,
+    id: saved.id,
+    persisted: saved.persisted,
+    origin: saved.origin,
+    version: saved.version,
+    updatedAt: saved.updatedAt,
+    nextRunAt: saved.nextRunAt,
+    lastRunAt: saved.lastRunAt,
+    lastRunStatus: saved.lastRunStatus,
+    legacyDefinition: saved.legacyDefinition,
+  }
+}
+
 function makeRule() {
   return {
     id: `draft-${crypto.randomUUID()}`,
@@ -535,12 +832,15 @@ function makeRule() {
     origin: 'automation',
     version: 1,
     name: '未命名自动化',
-    description: '描述这条自动化要完成什么',
-    enabled: false,
+    description: '',
+    enabled: true,
     updatedAt: '尚未保存',
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: null,
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: [],
@@ -594,16 +894,38 @@ export function AutomationRulesView({
   error = '',
   canManage = true,
   projectTags = [],
+  eventSourceCatalog = [],
+  projectIncomingHookApi,
+  projectId,
+  project,
   executionCatalog: initialExecutionCatalog = EMPTY_EXECUTION_CATALOG,
   onReload,
   onLoadExecutionCatalog,
   onLoadExecutionPlugins,
   onLoadRuns,
+  onRunRule,
   onSaveRule,
   onToggleRule,
   onDuplicateRule,
   onDeleteRule,
 }) {
+  const { t } = useTranslation('common')
+  const runningRef = useRef(new Set())
+  const [runningIds, setRunningIds] = useState(new Set())
+  const runRule = async rule => {
+    if (!onRunRule || !canManage || !rule.persisted || runningRef.current.has(rule.id)) return
+    runningRef.current.add(rule.id)
+    setRunningIds(new Set(runningRef.current))
+    try {
+      await onRunRule(rule)
+      notify(t('workbench.board_automation_run_started'))
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    } finally {
+      runningRef.current.delete(rule.id)
+      setRunningIds(new Set(runningRef.current))
+    }
+  }
   const [view, setView] = useState('home')
   const [homeTab, setHomeTab] = useState('rules')
   const [filter, setFilter] = useState('all')
@@ -618,22 +940,42 @@ export function AutomationRulesView({
   const [panelTab, setPanelTab] = useState('settings')
   const [templateStoreOpen, setTemplateStoreOpen] = useState(false)
   const [toast, setToast] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [saveState, setSaveState] = useState('saved')
+  const [saveError, setSaveError] = useState('')
   const [runsLoading, setRunsLoading] = useState(false)
+  const draftRef = useRef(draft)
+  const savedSnapshotRef = useRef('')
+  const saveTimerRef = useRef(null)
+  const saveRequestRef = useRef(null)
+  const flushAutoSaveRef = useRef(null)
+  const failedSnapshotRef = useRef('')
+  const leavingEditorRef = useRef(false)
   const executionCatalogRequestRef = useRef(null)
   const executionPluginRequestRef = useRef(null)
   const runsRequestRef = useRef(null)
+  const pollingSubscriptionRef = useRef(null)
+  const toastTimerRef = useRef(null)
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
 
   useEffect(() => {
     setRules(backendRules)
-    setDraft(current => {
-      if (!current.persisted) return current
-      const refreshed = backendRules.find(rule => rule.id === current.id)
-      return refreshed ? cloneRule(refreshed) : current
-    })
   }, [backendRules])
+
+  useEffect(() => {
+    if (!draft.persisted || JSON.stringify(draft) !== savedSnapshot) return
+    const refreshed = backendRules.find(rule => rule.id === draft.id)
+    if (!refreshed) return
+    if (refreshed.version <= draft.version) return
+    const refreshedSnapshot = JSON.stringify(refreshed)
+    if (refreshedSnapshot === savedSnapshot) return
+    const nextDraft = cloneRule(refreshed)
+    draftRef.current = nextDraft
+    savedSnapshotRef.current = refreshedSnapshot
+    setDraft(nextDraft)
+    setSavedSnapshot(refreshedSnapshot)
+    setSaveState('saved')
+  }, [backendRules, draft, savedSnapshot])
 
   useEffect(() => {
     setRuns(backendRuns)
@@ -643,22 +985,40 @@ export function AutomationRulesView({
     setExecutionCatalog(initialExecutionCatalog)
   }, [initialExecutionCatalog])
 
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
+      }
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
+      }
+    },
+    []
+  )
+
   const visibleRules = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return rules.filter(rule => {
       const matchesStatus =
         filter === 'all' || (filter === 'enabled' ? rule.enabled : !rule.enabled)
-      const trigger = triggerPresentation(rule.trigger)
+      const trigger = triggerPresentation(rule.trigger, t)
       const matchesQuery =
         !normalized ||
         `${rule.name} ${rule.description} ${trigger.label}`.toLowerCase().includes(normalized)
       return matchesStatus && matchesQuery
     })
-  }, [filter, query, rules])
+  }, [filter, query, rules, t])
 
   const notify = message => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current)
+    }
     setToast(message)
-    window.setTimeout(() => setToast(''), 2200)
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null
+      setToast('')
+    }, 2200)
   }
 
   const loadExecutionCatalog = async () => {
@@ -707,8 +1067,15 @@ export function AutomationRulesView({
   }
 
   const openRule = rule => {
-    setDraft(cloneRule(rule))
-    setSavedSnapshot(JSON.stringify(rule))
+    const nextDraft = cloneRule(rule)
+    const nextSnapshot = JSON.stringify(rule)
+    draftRef.current = nextDraft
+    savedSnapshotRef.current = nextSnapshot
+    failedSnapshotRef.current = ''
+    setDraft(nextDraft)
+    setSavedSnapshot(nextSnapshot)
+    setSaveState('saved')
+    setSaveError('')
     setEditorSection('workflow')
     setSelectedNode({ type: 'trigger' })
     setPanelTab('settings')
@@ -718,8 +1085,14 @@ export function AutomationRulesView({
 
   const createRule = () => {
     const rule = makeRule()
+    const nextSnapshot = JSON.stringify(rule)
+    draftRef.current = rule
+    savedSnapshotRef.current = nextSnapshot
+    failedSnapshotRef.current = ''
     setDraft(rule)
-    setSavedSnapshot('')
+    setSavedSnapshot(nextSnapshot)
+    setSaveState('pending')
+    setSaveError('')
     setEditorSection('workflow')
     setSelectedNode({ type: 'trigger' })
     setPanelTab('settings')
@@ -727,11 +1100,64 @@ export function AutomationRulesView({
     refreshExecutionCatalog()
   }
 
+  const ensureTriggerPollingSubscription = async trigger => {
+    if (
+      !projectIncomingHookApi ||
+      !projectId ||
+      trigger.collectionMode !== 'poll' ||
+      trigger.subscriptionId
+    ) {
+      return
+    }
+    const repository = project?.provider_config?.repository?.trim()
+    const domain = project?.provider_config?.domain?.trim()
+    if (!repository || project?.task_provider !== trigger.source) return
+    const defaultDomain = trigger.source === 'github' ? 'github.com' : 'gitlab.com'
+    const resourceUrl = `https://${domain || defaultDomain}/${repository}`
+    try {
+      const existing = (await projectIncomingHookApi.list(projectId)).find(
+        item =>
+          item.collectionMode === 'poll' &&
+          item.sourceType === trigger.source &&
+          item.resource?.url === resourceUrl
+      )
+      if (existing) {
+        pollingSubscriptionRef.current = existing
+        updateDraft(current =>
+          current.trigger.subscriptionId === existing.id
+            ? current
+            : { ...current, trigger: { ...current.trigger, subscriptionId: existing.id } }
+        )
+        return
+      }
+      const created = await projectIncomingHookApi.create(projectId, {
+        name: `${project.name} 轮询`,
+        sourceType: trigger.source,
+        collectionMode: 'poll',
+        resource: { url: resourceUrl },
+        pollIntervalSeconds: 300,
+        credentialRef: 'project-provider',
+      })
+      pollingSubscriptionRef.current = created
+      updateDraft(current => ({
+        ...current,
+        trigger: { ...current.trigger, subscriptionId: created.id },
+      }))
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const applyTemplate = template => {
     const rule = makeRuleFromTemplate(template, executionCatalog)
+    draftRef.current = rule
+    savedSnapshotRef.current = ''
+    failedSnapshotRef.current = ''
     setTemplateStoreOpen(false)
     setDraft(rule)
     setSavedSnapshot('')
+    setSaveState('pending')
+    setSaveError('')
     setEditorSection('workflow')
     setSelectedNode({ type: 'trigger' })
     setPanelTab('settings')
@@ -776,45 +1202,149 @@ export function AutomationRulesView({
   }
 
   const updateDraft = updater => {
-    setDraft(current => (typeof updater === 'function' ? updater(current) : updater))
+    const nextDraft = typeof updater === 'function' ? updater(draftRef.current) : updater
+    draftRef.current = nextDraft
+    setDraft(nextDraft)
   }
 
-  const saveRule = async () => {
-    if (!draft.name.trim() || !draft.description.trim()) {
-      notify('请填写自动化名称和说明')
+  const flushAutoSave = async ({ retryFailed = false } = {}) => {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    if (saveRequestRef.current) {
+      return saveRequestRef.current
+    }
+
+    const candidate = cloneRule(draftRef.current)
+    const candidateSnapshot = JSON.stringify(candidate)
+    if (candidateSnapshot === savedSnapshotRef.current) {
+      setSaveState(candidate.persisted ? 'saved' : 'pending')
+      return candidate
+    }
+
+    const validationError = validateRule(candidate)
+    if (validationError) {
+      setSaveState('invalid')
+      setSaveError(validationError)
       return null
     }
-    const hasUnnamedNode = nodes =>
-      nodes.some(
-        node =>
-          !node.name.trim() ||
-          (node.kind === 'dynamic' && hasUnnamedNode(node.subgraph?.nodes ?? []))
-      )
-    if (hasUnnamedNode(draft.steps)) {
-      notify('请填写所有执行节点名称')
+    if (failedSnapshotRef.current === candidateSnapshot && !retryFailed) {
+      setSaveState('error')
       return null
     }
-    setSaving(true)
+
+    failedSnapshotRef.current = ''
+    setSaveState('saving')
+    setSaveError('')
+    const request = (async () => {
+      try {
+        const saved = onSaveRule ? await onSaveRule(candidate) : candidate
+        const nextSavedSnapshot = JSON.stringify(saved)
+        savedSnapshotRef.current = nextSavedSnapshot
+        setSavedSnapshot(nextSavedSnapshot)
+        setRules(current => [
+          saved,
+          ...current.filter(rule => rule.id !== candidate.id && rule.id !== saved.id),
+        ])
+        const currentDraft = draftRef.current
+        const nextDraft =
+          JSON.stringify(currentDraft) === candidateSnapshot
+            ? cloneRule(saved)
+            : mergeSavedIdentity(currentDraft, saved)
+        draftRef.current = nextDraft
+        setDraft(nextDraft)
+        setSaveState(JSON.stringify(draftRef.current) === nextSavedSnapshot ? 'saved' : 'pending')
+        return saved
+      } catch (requestError) {
+        failedSnapshotRef.current = candidateSnapshot
+        setSaveError(requestError instanceof Error ? requestError.message : String(requestError))
+        setSaveState('error')
+        return null
+      } finally {
+        saveRequestRef.current = null
+        const latestSnapshot = JSON.stringify(draftRef.current)
+        const latestValidationError = validateRule(draftRef.current)
+        const shouldContinue =
+          latestSnapshot !== savedSnapshotRef.current &&
+          latestSnapshot !== failedSnapshotRef.current &&
+          !latestValidationError
+        if (shouldContinue) {
+          setSaveState('pending')
+          queueMicrotask(() => flushAutoSaveRef.current?.())
+        } else if (latestValidationError) {
+          setSaveError(latestValidationError)
+          setSaveState('invalid')
+        }
+      }
+    })()
+    saveRequestRef.current = request
+    return request
+  }
+  flushAutoSaveRef.current = flushAutoSave
+
+  useEffect(() => {
+    if (view !== 'editor') return undefined
+    const currentSnapshot = JSON.stringify(draft)
+    if (currentSnapshot === savedSnapshot) {
+      if (!saveRequestRef.current) setSaveState(draft.persisted ? 'saved' : 'pending')
+      return undefined
+    }
+
+    const validationError = validateRule(draft)
+    if (validationError) {
+      setSaveError(validationError)
+      setSaveState('invalid')
+      return undefined
+    }
+    if (saveRequestRef.current) {
+      return undefined
+    }
+    if (failedSnapshotRef.current === currentSnapshot) {
+      setSaveState('error')
+      return undefined
+    }
+
+    setSaveError('')
+    setSaveState('pending')
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null
+      void flushAutoSaveRef.current?.()
+    }, AUTO_SAVE_DELAY_MS)
+    return () => {
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+    }
+  }, [draft, savedSnapshot, view])
+
+  const leaveEditor = async () => {
+    if (leavingEditorRef.current) return
+    leavingEditorRef.current = true
     try {
-      const candidate = cloneRule(draft)
-      const saved = onSaveRule ? await onSaveRule(candidate) : candidate
-      setDraft(cloneRule(saved))
-      setRules(current => {
-        const withoutDraft = current.filter(rule => rule.id !== draft.id)
-        const exists = withoutDraft.some(rule => rule.id === saved.id)
-        return exists
-          ? withoutDraft.map(rule => (rule.id === saved.id ? saved : rule))
-          : [saved, ...withoutDraft]
-      })
-      setSavedSnapshot(JSON.stringify(saved))
-      notify('自动化已保存')
-      return saved
-    } catch (saveError) {
-      notify(saveError instanceof Error ? saveError.message : String(saveError))
-      return null
+      while (true) {
+        if (saveRequestRef.current) await saveRequestRef.current
+        if (JSON.stringify(draftRef.current) === savedSnapshotRef.current) break
+        const validationError = validateRule(draftRef.current)
+        if (validationError) {
+          setSaveError(validationError)
+          setSaveState('invalid')
+          notify(validationError)
+          return
+        }
+        const saved = await flushAutoSaveRef.current?.({ retryFailed: true })
+        if (!saved) return
+      }
+      setView('home')
     } finally {
-      setSaving(false)
+      leavingEditorRef.current = false
     }
+  }
+
+  const retryAutoSave = () => {
+    failedSnapshotRef.current = ''
+    void flushAutoSaveRef.current?.({ retryFailed: true })
   }
 
   const duplicateRule = async rule => {
@@ -852,12 +1382,16 @@ export function AutomationRulesView({
     const step =
       kind === 'dynamic'
         ? createDynamicAllocationNode(executionCatalog)
-        : createExecutionNode({
-            ...defaultExecutionConfiguration(executionCatalog),
-            id: `step-${Date.now()}`,
-            name: '',
-            prompt: '',
-          })
+        : kind === 'loop'
+          ? createLoopNode()
+          : kind === 'branch'
+            ? createBranchNode()
+            : createExecutionNode({
+                ...defaultExecutionConfiguration(executionCatalog),
+                id: `step-${Date.now()}`,
+                name: '',
+                prompt: '',
+              })
     updateDraft(current => {
       const anchorIndex = anchorStepId
         ? current.steps.findIndex(candidate => candidate.id === anchorStepId)
@@ -866,11 +1400,21 @@ export function AutomationRulesView({
       if (anchorStepId && !anchor) return current
       if (placement === 'before' && !anchor) return current
 
-      const insertionX = placement === 'before' ? (anchor?.x ?? 440) : anchor ? anchor.x + 420 : 440
+      const anchorSize = anchor
+        ? stepCanvasSize(anchor)
+        : { width: OUTER_NODE_WIDTH, height: OUTER_NODE_HEIGHT }
+      const stepSize = stepCanvasSize(step)
+      const insertionX =
+        placement === 'before'
+          ? (anchor?.x ?? 440)
+          : anchor
+            ? anchor.x + anchorSize.width + OUTER_NODE_GAP
+            : 440
       const insertionY = anchor?.y ?? 226
+      const shift = Math.max(OUTER_NODE_WIDTH + OUTER_NODE_GAP, stepSize.width + OUTER_NODE_GAP)
       const shifted = current.steps.map(candidate =>
         candidate.id !== anchor?.id && candidate.x >= insertionX
-          ? { ...candidate, x: candidate.x + 420 }
+          ? { ...candidate, x: candidate.x + shift }
           : candidate
       )
       const inheritedDependencies =
@@ -933,26 +1477,35 @@ export function AutomationRulesView({
     setSelectedNode({ type: 'step', id: step.id })
   }
 
-  const removeSelectedStep = () => {
-    if (selectedNode.type !== 'step') return
+  const removeStep = (stepId = selectedNode.id) => {
+    if (!stepId) return
     updateDraft(current => {
-      const removed = current.steps.find(step => step.id === selectedNode.id)
+      const removed = current.steps.find(step => step.id === stepId)
       if (!removed) return current
       return {
         ...current,
         steps: current.steps
-          .filter(step => step.id !== selectedNode.id)
+          .filter(step => step.id !== stepId)
           .map(step => {
-            if (!step.dependencies.includes(selectedNode.id)) return step
+            const cleanedConditions = (step.branchConditions ?? [])
+              .map(condition => ({
+                ...condition,
+                handlerNodeIds: condition.handlerNodeIds.filter(id => id !== stepId),
+              }))
+              .filter(condition => condition.handlerNodeIds.length > 0)
+            if (!step.dependencies.includes(stepId)) {
+              return { ...step, branchConditions: cleanedConditions }
+            }
             const dependencies = Array.from(
               new Set([
-                ...step.dependencies.filter(dependencyId => dependencyId !== selectedNode.id),
+                ...step.dependencies.filter(dependencyId => dependencyId !== stepId),
                 ...removed.dependencies,
               ])
             )
             return {
               ...step,
               dependencies,
+              branchConditions: cleanedConditions,
               dependencyContext: Object.fromEntries(
                 dependencies.map(dependencyId => [
                   dependencyId,
@@ -975,21 +1528,32 @@ export function AutomationRulesView({
           runs={runs.filter(run => run.ruleId === draft.id)}
           runsLoading={runsLoading}
           dirty={dirty}
+          saveState={saveState}
+          saveError={saveError}
           editorSection={editorSection}
           selectedNode={selectedNode}
           panelTab={panelTab}
-          saving={saving}
+          canManage={canManage}
+          canRun={canManage && Boolean(onRunRule)}
+          running={runningIds.has(draft.id)}
+          onRun={() => runRule(draft)}
           projectTags={projectTags}
+          eventSourceCatalog={eventSourceCatalog}
+          projectIncomingHookApi={projectIncomingHookApi}
+          projectId={projectId}
           executionCatalog={executionCatalog}
-          onBack={() => setView('home')}
+          onBack={leaveEditor}
           onEditorSectionChange={changeEditorSection}
           onSelectNode={setSelectedNode}
           onPanelTabChange={changePanelTab}
           onDraftChange={updateDraft}
-          onSave={saveRule}
+          onRetrySave={retryAutoSave}
           onAddStep={addStep}
-          onRemoveStep={removeSelectedStep}
+          onRemoveStep={removeStep}
           onOpenPluginMenu={preparePluginMenu}
+          onTriggerCollectionModeChange={() =>
+            void ensureTriggerPollingSubscription(draftRef.current.trigger)
+          }
         />
       </div>
     )
@@ -1117,6 +1681,8 @@ export function AutomationRulesView({
                   key={rule.id}
                   rule={rule}
                   onOpen={() => openRule(rule)}
+                  onRun={onRunRule ? () => runRule(rule) : undefined}
+                  running={runningIds.has(rule.id)}
                   canManage={canManage}
                   onToggle={async () => {
                     try {
@@ -1192,6 +1758,7 @@ export function AutomationRulesView({
 }
 
 function TemplateStore({ templates, onClose, onApply }) {
+  const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('all')
   const [selectedId, setSelectedId] = useState(templates[0]?.id)
@@ -1354,7 +1921,7 @@ function TemplateStore({ templates, onClose, onApply }) {
                   </span>
                   <div>
                     <small>触发规则</small>
-                    <strong>{triggerPresentation(selectedTemplate.trigger).label}</strong>
+                    <strong>{triggerPresentation(selectedTemplate.trigger, t).label}</strong>
                   </div>
                 </div>
                 <div className={automationClass('template-preview-steps')}>
@@ -1388,7 +1955,8 @@ function TemplateStore({ templates, onClose, onApply }) {
 }
 
 function TemplateCard({ template, selected, onSelect, onApply }) {
-  const trigger = triggerPresentation(template.trigger)
+  const { t } = useTranslation('common')
+  const trigger = triggerPresentation(template.trigger, t)
   return (
     <article className={automationClass(`template-card ${selected ? 'selected' : ''}`)}>
       <button
@@ -1438,80 +2006,156 @@ function TemplateIcon({ type }) {
   )
 }
 
-function AutomationCard({ rule, canManage, onOpen, onToggle, onDuplicate, onDelete }) {
+function AutomationCard({
+  rule,
+  canManage,
+  onOpen,
+  onToggle,
+  onDuplicate,
+  onDelete,
+  onRun,
+  running,
+}) {
+  const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
-  const trigger = triggerPresentation(rule.trigger)
+  const trigger = triggerPresentation(rule.trigger, t)
   const TriggerIcon = rule.trigger.type === 'schedule' ? Clock3 : Webhook
+  const statusText = running
+    ? t('workbench.board_automation_running')
+    : rule.enabled
+      ? rule.nextRunAt
+        ? `运行中 · 下次 ${formatCardTime(rule.nextRunAt)}`
+        : '运行中'
+      : '已停用'
+  const lastRunText = rule.lastRunAt
+    ? `${formatCardTimestamp(rule.lastRunAt)}${rule.lastRunStatus ? ` · ${runStatusPresentation(rule.lastRunStatus).label}` : ''}`
+    : '尚未运行'
 
   return (
     <article
-      className={automationClass('automation-card')}
+      className={automationClass(`automation-card ${rule.enabled ? 'enabled' : ''}`)}
       data-testid={`automation-card-${rule.id}`}
-      onClick={onOpen}
+      onClick={event => {
+        if (event.target.closest('button')) return
+        onOpen()
+      }}
     >
       <div className={automationClass('card-head')}>
         <span className={automationClass('automation-icon')}>
           <Zap size={19} />
         </span>
-        <div>
+        <div className={automationClass('card-title')}>
           <h3>{rule.name}</h3>
-          <p>{rule.description}</p>
+          <span className={automationClass('card-status')}>
+            <i />
+            {statusText}
+          </span>
         </div>
         <div className={automationClass('card-menu-anchor')}>
-          <button
-            className={automationClass('icon-button')}
-            onClick={event => {
-              event.stopPropagation()
-              setMenuOpen(value => !value)
-            }}
-            aria-label="更多操作"
+          <PopupMenu
+            testId={`automation-menu-${rule.id}`}
+            menuWidth={144}
+            triggerClassName={automationClass('icon-button')}
+            ariaLabel="更多操作"
+            trigger={<MoreHorizontal size={17} />}
           >
-            <MoreHorizontal size={17} />
-          </button>
-          {menuOpen ? (
-            <div
-              className={automationClass('card-menu')}
-              onClick={event => event.stopPropagation()}
-            >
-              <button onClick={onDuplicate}>
-                <Copy size={14} />
-                创建独立副本
-              </button>
-              <button className={automationClass('danger')} onClick={onDelete}>
-                <Trash2 size={14} />
-                删除
-              </button>
-            </div>
-          ) : null}
+            {close => (
+              <>
+                <button
+                  className={automationClass('card-menu-action')}
+                  onClick={() => {
+                    close()
+                    onDuplicate()
+                  }}
+                >
+                  <Copy size={14} />
+                  创建独立副本
+                </button>
+                <button
+                  className={automationClass('card-menu-action danger')}
+                  onClick={() => {
+                    close()
+                    onDelete()
+                  }}
+                >
+                  <Trash2 size={14} />
+                  删除
+                </button>
+              </>
+            )}
+          </PopupMenu>
         </div>
       </div>
 
       <div className={automationClass('trigger-summary')}>
-        <span>
-          <TriggerIcon size={14} />
-          触发规则
-        </span>
-        <strong>{trigger.label}</strong>
-        <small>{trigger.detail}</small>
+        <TriggerIcon className={automationClass('trigger-summary-icon')} size={18} />
+        <div className={automationClass('trigger-summary-copy')}>
+          <span>触发规则</span>
+          <strong>{trigger.label}</strong>
+          <small>{trigger.detail}</small>
+        </div>
       </div>
 
       <div className={automationClass('card-footer')}>
-        <span>{rule.updatedAt}</span>
-        <button
-          role="switch"
-          aria-checked={rule.enabled}
-          disabled={!canManage}
-          className={automationClass(`switch ${rule.enabled ? 'on' : ''}`)}
-          onClick={event => {
-            event.stopPropagation()
-            onToggle()
-          }}
-        >
-          <i />
-        </button>
+        <div className={automationClass('card-last-run')}>
+          <span>上次运行</span>
+          <strong>{lastRunText}</strong>
+        </div>
+        <div className={automationClass('card-actions')}>
+          {rule.trigger.type === 'schedule' && onRun ? (
+            <button
+              className={automationClass('card-run-action')}
+              data-testid={`automation-run-${rule.id}`}
+              disabled={!canManage || running}
+              onClick={event => {
+                event.stopPropagation()
+                onRun()
+              }}
+            >
+              <Play size={14} />
+              {t(running ? 'workbench.board_automation_running' : 'workbench.board_automation_run')}
+            </button>
+          ) : null}
+          <button
+            role="switch"
+            aria-checked={rule.enabled}
+            aria-label={rule.enabled ? '停用自动化' : '启用自动化'}
+            data-testid={`automation-toggle-${rule.id}`}
+            disabled={!canManage}
+            className={automationClass(`switch ${rule.enabled ? 'on' : ''}`)}
+            onClick={event => {
+              event.stopPropagation()
+              onToggle()
+            }}
+          >
+            <span>
+              <i />
+            </span>
+          </button>
+        </div>
       </div>
     </article>
   )
+}
+
+function formatCardTimestamp(value) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(value))
+}
+
+function formatCardTime(value) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(value))
 }
 
 function WorkflowEditor({
@@ -1519,26 +2163,40 @@ function WorkflowEditor({
   runs,
   runsLoading,
   dirty,
+  saveState,
+  saveError,
   editorSection,
   selectedNode,
   panelTab,
-  saving,
+  canManage,
+  canRun,
+  running,
+  onRun,
   projectTags,
+  eventSourceCatalog,
+  projectIncomingHookApi,
+  projectId,
   executionCatalog,
   onBack,
   onSelectNode,
   onPanelTabChange,
   onDraftChange,
-  onSave,
+  onRetrySave,
   onAddStep,
   onRemoveStep,
   onOpenPluginMenu,
   onEditorSectionChange,
+  onTriggerCollectionModeChange,
 }) {
+  const { t } = useTranslation('common')
   const [runStatus, setRunStatus] = useState('all')
   const [selectedRunId, setSelectedRunId] = useState(runs[0]?.id ?? null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(draft.name)
+  const renameInputRef = useRef(null)
+  const deleteButtonRef = useRef(null)
   const needsSave = dirty || !draft.persisted
-  const trigger = triggerPresentation(draft.trigger)
+  const trigger = triggerPresentation(draft.trigger, t)
   const TriggerIcon = draft.trigger.type === 'schedule' ? Clock3 : Webhook
   const visibleRuns = runs.filter(run => runMatchesFilter(run.status, runStatus))
   const selectedRun = visibleRuns.find(run => run.id === selectedRunId) ?? visibleRuns[0] ?? null
@@ -1553,8 +2211,68 @@ function WorkflowEditor({
       : null
   const selectedDagStage =
     selectedDagParent?.subgraph?.nodes.find(stage => stage.id === selectedNode.stageId) ?? null
+  const selectedLoopParent =
+    selectedNode.type === 'loopBody'
+      ? (draft.steps.find(step => step.id === selectedNode.loopId) ?? null)
+      : null
+  const selectedLoopBody =
+    selectedLoopParent?.subgraph?.nodes.find(bodyStep => bodyStep.id === selectedNode.bodyId) ??
+    null
+  const eventTypeOptions = useMemo(
+    () =>
+      Array.from(
+        new Set((eventSourceCatalog ?? []).flatMap(source => source.eventTypes ?? []))
+      ).sort(),
+    [eventSourceCatalog]
+  )
+  const branchConditionCatalog = useMemo(() => {
+    const sources = (eventSourceCatalog ?? []).filter(
+      source => source.sourceType === 'github' || source.sourceType === 'gitlab'
+    )
+    if (sources.length > 0) {
+      return sources.map(source => ({
+        sourceType: source.sourceType,
+        eventTypes:
+          source.eventTypes?.filter(eventType => eventType.startsWith('change_request.')) ?? [],
+      }))
+    }
+    return [{ sourceType: 'github', eventTypes: eventTypeOptions }]
+  }, [eventSourceCatalog, eventTypeOptions])
   const hasSelectedNode = selectedNode.type !== 'none'
   const showRightPanel = editorSection === 'runs' || hasSelectedNode
+
+  useEffect(() => {
+    if (renaming) {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+      return
+    }
+    setRenameValue(draft.name)
+  }, [draft.name, renaming])
+
+  useEffect(() => {
+    const deleteSelectedNode = event => {
+      if (event.key !== 'Backspace' && event.key !== 'Delete') return
+      if (
+        event.target instanceof HTMLElement &&
+        (event.target.isContentEditable ||
+          event.target.closest(
+            'input, textarea, select, [contenteditable="true"], [role="textbox"]'
+          ))
+      ) {
+        return
+      }
+
+      const deleteButton = deleteButtonRef.current
+      if (!deleteButton) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      deleteButton.click()
+    }
+
+    window.addEventListener('keydown', deleteSelectedNode, true)
+    return () => window.removeEventListener('keydown', deleteSelectedNode, true)
+  }, [])
 
   const updateTrigger = (key, value) => {
     onDraftChange(current => ({
@@ -1565,6 +2283,23 @@ function WorkflowEditor({
 
   const updateRule = (key, value) => {
     onDraftChange(current => ({ ...current, [key]: value }))
+  }
+
+  const startRenaming = () => {
+    setRenameValue(draft.name)
+    setRenaming(true)
+  }
+
+  const commitRename = () => {
+    const value = renameValue.trim()
+    setRenameValue(value || draft.name)
+    setRenaming(false)
+    if (value && value !== draft.name) updateRule('name', value)
+  }
+
+  const cancelRename = () => {
+    setRenameValue(draft.name)
+    setRenaming(false)
   }
 
   const updateStep = (key, value) => {
@@ -1687,23 +2422,23 @@ function WorkflowEditor({
     onSelectNode({ type: 'dagStage', stepId, stageId: id })
   }
 
-  const removeDagStage = () => {
-    if (!selectedDagParent || !selectedDagStage) return
+  const removeDagStage = (stepId = selectedDagParent?.id, stageId = selectedDagStage?.id) => {
+    if (!stepId || !stageId) return
     onDraftChange(current => ({
       ...current,
       steps: current.steps.map(step =>
-        step.id === selectedDagParent.id
+        step.id === stepId
           ? {
               ...step,
               subgraph: {
                 nodes: step.subgraph.nodes
-                  .filter(stage => stage.id !== selectedDagStage.id)
+                  .filter(stage => stage.id !== stageId)
                   .map(stage => ({
                     ...stage,
-                    dependencies: stage.dependencies.filter(id => id !== selectedDagStage.id),
+                    dependencies: stage.dependencies.filter(id => id !== stageId),
                     dependencyContext: Object.fromEntries(
                       Object.entries(stage.dependencyContext).filter(
-                        ([dependencyId]) => dependencyId !== selectedDagStage.id
+                        ([dependencyId]) => dependencyId !== stageId
                       )
                     ),
                   })),
@@ -1712,7 +2447,7 @@ function WorkflowEditor({
           : step
       ),
     }))
-    onSelectNode({ type: 'step', id: selectedDagParent.id })
+    onSelectNode({ type: 'step', id: stepId })
   }
 
   const toggleDagDependency = (stepId, stageId, dependencyId) => {
@@ -1768,6 +2503,158 @@ function WorkflowEditor({
     }))
   }
 
+  const insertLoopBodyNode = (loopId, anchorBodyId = null, placement = 'after', kind = 'task') => {
+    const bodyStep = createLoopBodyNode(executionCatalog, loopId, kind)
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step => {
+        if (step.id !== loopId) return step
+        const body = [...(step.subgraph?.nodes ?? [])]
+        const anchorIndex = anchorBodyId
+          ? body.findIndex(candidate => candidate.id === anchorBodyId)
+          : -1
+        const anchor = anchorIndex >= 0 ? body[anchorIndex] : null
+        const loopStart = body.find(candidate => candidate.nodeType === 'loopStart')
+        const insertionX = anchor ? anchor.x + 260 : 0
+        const insertionY = anchor?.y ?? body.length * 120
+        const inserted = {
+          ...bodyStep,
+          x: insertionX,
+          y: insertionY,
+          dependencies:
+            kind === 'branch' && loopStart ? [loopStart.id] : anchorBodyId ? [anchorBodyId] : [],
+        }
+        const next = [...body]
+        next.splice(
+          anchorIndex >= 0 ? anchorIndex + (placement === 'after' ? 1 : 0) : next.length,
+          0,
+          inserted
+        )
+        return {
+          ...step,
+          bodyNodeIds: [...(step.bodyNodeIds ?? []), inserted.id],
+          subgraph: { nodes: next },
+        }
+      }),
+    }))
+    onSelectNode({ type: 'loopBody', loopId, bodyId: bodyStep.id })
+  }
+
+  const toggleLoopBodyDependency = (loopId, targetBodyId, sourceBodyId) => {
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step => {
+        if (step.id !== loopId) return step
+        return {
+          ...step,
+          subgraph: {
+            nodes: (step.subgraph?.nodes ?? []).map(bodyStep =>
+              bodyStep.id === targetBodyId
+                ? {
+                    ...bodyStep,
+                    dependencies: bodyStep.dependencies.includes(sourceBodyId)
+                      ? bodyStep.dependencies.filter(id => id !== sourceBodyId)
+                      : [...bodyStep.dependencies, sourceBodyId],
+                    dependencyContext: bodyStep.dependencies.includes(sourceBodyId)
+                      ? Object.fromEntries(
+                          Object.entries(bodyStep.dependencyContext ?? {}).filter(
+                            ([id]) => id !== sourceBodyId
+                          )
+                        )
+                      : {
+                          ...(bodyStep.dependencyContext ?? {}),
+                          [sourceBodyId]: ['final_result', 'deliveries'],
+                        },
+                  }
+                : bodyStep
+            ),
+          },
+        }
+      }),
+    }))
+  }
+
+  const moveLoopBodyNode = (loopId, bodyId, x, y) => {
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step =>
+        step.id === loopId
+          ? {
+              ...step,
+              subgraph: {
+                nodes: (step.subgraph?.nodes ?? []).map(bodyStep =>
+                  bodyStep.id === bodyId ? { ...bodyStep, x, y } : bodyStep
+                ),
+              },
+            }
+          : step
+      ),
+    }))
+  }
+
+  const updateLoopBodyStep = (key, value) => {
+    if (selectedNode.type !== 'loopBody') return
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step =>
+        step.id === selectedNode.loopId
+          ? {
+              ...step,
+              subgraph: {
+                nodes: (step.subgraph?.nodes ?? []).map(bodyStep =>
+                  bodyStep.id === selectedNode.bodyId ? { ...bodyStep, [key]: value } : bodyStep
+                ),
+              },
+            }
+          : step
+      ),
+    }))
+  }
+
+  const removeLoopBodyStep = (loopId = selectedNode.loopId, bodyId = selectedNode.bodyId) => {
+    if (!loopId || !bodyId) return
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step => {
+        if (step.id !== loopId) return step
+        return {
+          ...step,
+          bodyNodeIds: (step.bodyNodeIds ?? []).filter(id => id !== bodyId),
+          subgraph: {
+            nodes: (step.subgraph?.nodes ?? [])
+              .filter(bodyStep => bodyStep.id !== bodyId)
+              .map(bodyStep => ({
+                ...bodyStep,
+                dependencies: bodyStep.dependencies.filter(id => id !== bodyId),
+                dependencyContext: Object.fromEntries(
+                  Object.entries(bodyStep.dependencyContext ?? {}).filter(([id]) => id !== bodyId)
+                ),
+                branchConditions: (bodyStep.branchConditions ?? []).map(condition => ({
+                  ...condition,
+                  handlerNodeIds: condition.handlerNodeIds.filter(id => id !== bodyId),
+                })),
+              })),
+          },
+        }
+      }),
+    }))
+    onSelectNode({ type: 'none' })
+  }
+
+  const deleteCanvasNode = node => {
+    if (node.type === 'dagStage') {
+      const [, stepId, stageId] = node.id.split(':')
+      removeDagStage(stepId, stageId)
+      return
+    }
+    if (node.type === 'loopBody' || node.type === 'loopBranch' || node.type === 'loopMarker') {
+      const [, loopId, bodyId] = node.id.split(':')
+      removeLoopBodyStep(loopId, bodyId)
+      return
+    }
+    onRemoveStep(node.id)
+  }
+
   const toggleStepDependency = (targetId, dependencyId) => {
     onDraftChange(current => ({
       ...current,
@@ -1799,6 +2686,87 @@ function WorkflowEditor({
     }))
   }
 
+  const addBranchHandler = (branchId, { kind = 'task', select = 'branch' }) => {
+    const branchOwner = findBranchOwner(draft.steps, branchId)
+    if (!branchOwner) return
+    const currentConditions = branchOwner.step.branchConditions ?? []
+    const usedKeys = new Set(
+      currentConditions.map(
+        condition => `${condition.sourceType ?? 'github'}:${condition.eventType ?? ''}`
+      )
+    )
+    const defaultCondition = branchConditionCatalog.flatMap(source =>
+      source.eventTypes
+        .filter(eventType => !usedKeys.has(`${source.sourceType}:${eventType}`))
+        .map(eventType => ({ sourceType: source.sourceType, eventType }))
+    )[0] ?? { sourceType: 'github', eventType: '' }
+
+    let handlerNode
+    let handlerId
+    if (branchOwner.type === 'top') {
+      handlerId = `step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      handlerNode = createBranchHandlerNode(executionCatalog, kind, handlerId)
+    } else {
+      handlerNode = createLoopBranchHandlerNode(executionCatalog, branchOwner.step.id, kind)
+      handlerId = handlerNode.id
+    }
+
+    if (branchOwner.type === 'top') {
+      onDraftChange(current => {
+        const result = insertStepAfter(current.steps, branchId, handlerNode, {
+          gap: BRANCH_HANDLER_COLUMN_GAP,
+          condition: defaultCondition,
+          stack: true,
+        })
+        if (!result) return current
+        return { ...current, steps: result.container }
+      })
+    } else {
+      onDraftChange(current => ({
+        ...current,
+        steps: current.steps.map(step => {
+          if (step.id !== branchOwner.step.id) return step
+          const result = insertStepAfter(step.subgraph?.nodes ?? [], branchId, handlerNode, {
+            gap: LOOP_BODY_HANDLER_COLUMN_GAP,
+            condition: defaultCondition,
+            stack: true,
+            nodeSize: loopBodyNodeSize,
+          })
+          if (!result) return step
+          return {
+            ...step,
+            bodyNodeIds: [...(step.bodyNodeIds ?? []), result.nodeId],
+            subgraph: { nodes: result.container },
+          }
+        }),
+      }))
+    }
+
+    if (select === 'handler') {
+      if (branchOwner.type === 'top') onSelectNode({ type: 'step', id: handlerId })
+      else onSelectNode({ type: 'loopBody', loopId: branchOwner.step.id, bodyId: handlerId })
+    } else {
+      if (branchOwner.type === 'top') onSelectNode({ type: 'step', id: branchId })
+      else onSelectNode({ type: 'loopBody', loopId: branchOwner.step.id, bodyId: branchId })
+    }
+  }
+
+  const addBranchContinuation = (branchId, kind = 'task') => {
+    const branchOwner = findBranchOwner(draft.steps, branchId)
+    if (!branchOwner || branchOwner.type !== 'top') return
+
+    const nodeId = `step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const continuationNode = createBranchHandlerNode(executionCatalog, kind, nodeId)
+    onDraftChange(current => {
+      const result = insertStepAfter(current.steps, branchId, continuationNode, {
+        gap: BRANCH_HANDLER_COLUMN_GAP,
+      })
+      if (!result) return current
+      return { ...current, steps: result.container }
+    })
+    onSelectNode({ type: 'step', id: nodeId })
+  }
+
   const insertNode = (anchorStepId, placement, kind) => {
     onAddStep(anchorStepId, placement, kind)
   }
@@ -1808,23 +2776,39 @@ function WorkflowEditor({
       className={automationClass('editor-global-actions')}
       data-testid="automation-editor-global-actions"
     >
-      <span
-        className={automationClass(
-          `editor-save-state ${saving ? 'saving' : needsSave ? 'dirty' : 'saved'}`
-        )}
-      >
-        <i />
-        {saving ? '保存中' : dirty ? '有未保存更改' : !draft.persisted ? '待保存' : '已保存'}
-      </span>
-      {needsSave ? (
+      {saveState === 'error' ? (
+        <button
+          type="button"
+          className={automationClass('editor-save-state error')}
+          data-testid="automation-save-retry"
+          title={saveError}
+          onClick={onRetrySave}
+        >
+          <i />
+          保存失败，点击重试
+        </button>
+      ) : (
+        <span className={automationClass(`editor-save-state ${saveState}`)} title={saveError}>
+          <i />
+          {saveState === 'saving'
+            ? '保存中'
+            : saveState === 'invalid'
+              ? '等待补全'
+              : saveState === 'pending' || needsSave
+                ? '待保存'
+                : '已保存'}
+        </span>
+      )}
+      {draft.trigger.type === 'schedule' ? (
         <button
           className={automationClass('dark-secondary')}
-          data-testid="automation-save"
-          onClick={onSave}
-          disabled={saving}
+          data-testid="automation-run"
+          disabled={!canRun || needsSave || saveState !== 'saved' || running}
+          title={needsSave ? t('workbench.board_automation_save_first') : undefined}
+          onClick={onRun}
         >
-          <Check size={15} />
-          保存
+          <Play size={16} />
+          {t(running ? 'workbench.board_automation_running' : 'workbench.board_automation_run')}
         </button>
       ) : null}
     </div>
@@ -1835,9 +2819,11 @@ function WorkflowEditor({
       className={automationClass('editor-shell')}
       data-testid="automation-rule-editor"
       style={{
-        '--automation-panel-gap': '12px',
-        '--automation-right-panel-width': showRightPanel ? '400px' : '0px',
-        '--automation-right-panel-top': '64px',
+        '--automation-panel-gap': `${AUTOMATION_PANEL_GAP}px`,
+        '--automation-right-panel-width': showRightPanel
+          ? `${AUTOMATION_RIGHT_PANEL_WIDTH}px`
+          : '0px',
+        '--automation-right-panel-top': `${AUTOMATION_RIGHT_PANEL_TOP}px`,
       }}
     >
       <div className={automationClass('editor-body')}>
@@ -1845,69 +2831,87 @@ function WorkflowEditor({
           className={automationClass('editor-navigation-actions')}
           data-testid="automation-editor-navigation"
         >
-          <button
-            className={automationClass('floating-icon-button')}
-            data-testid="automation-editor-back"
-            onClick={onBack}
-            aria-label="返回"
+          <div
+            className={automationClass('editor-object-bar')}
+            data-testid="automation-editor-object-bar"
           >
-            <ArrowLeft size={17} />
-          </button>
-          <PopupMenu
-            testId="automation-editor-section-menu"
-            keepOpen
-            menuWidth={220}
-            trigger={
-              <span className={automationClass('editor-section-trigger')}>
-                {editorSection === 'workflow' ? <GitBranch size={16} /> : <History size={16} />}
-                <span>{editorSection === 'workflow' ? '编排' : '运行记录'}</span>
-                <ChevronDown size={14} />
-              </span>
-            }
-          >
-            {close => (
-              <div className={automationClass('editor-section-menu')}>
-                <label>
-                  <span>自动化名称</span>
-                  <input
-                    value={draft.name}
-                    onChange={event =>
-                      onDraftChange(current => ({ ...current, name: event.target.value }))
-                    }
-                    aria-label="自动化名称"
-                  />
-                </label>
-                <div>
-                  <button
-                    type="button"
-                    className={editorSection === 'workflow' ? 'active' : ''}
-                    data-testid="editor-nav-workflow"
-                    onClick={() => {
-                      onEditorSectionChange('workflow')
-                      close()
-                    }}
-                  >
-                    <GitBranch size={16} />
-                    <span>编排</span>
-                    {editorSection === 'workflow' ? <Check size={15} /> : null}
-                  </button>
-                  <button
-                    type="button"
-                    className={editorSection === 'runs' ? 'active' : ''}
-                    data-testid="open-current-automation-runs"
-                    onClick={() => {
-                      onEditorSectionChange('runs')
-                      close()
-                    }}
-                  >
-                    <History size={16} />
-                    <span>运行记录</span>
-                    {editorSection === 'runs' ? <Check size={15} /> : null}
-                  </button>
-                </div>
-              </div>
+            <button
+              className={automationClass('editor-back-button')}
+              data-testid="automation-editor-back"
+              onClick={onBack}
+              aria-label="返回"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <span className={automationClass('editor-object-divider')} />
+            {renaming ? (
+              <input
+                ref={renameInputRef}
+                className={automationClass('editor-name-input')}
+                data-testid="automation-editor-name-input"
+                value={renameValue}
+                onChange={event => setRenameValue(event.target.value)}
+                onBlur={commitRename}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    commitRename()
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelRename()
+                  }
+                }}
+                aria-label="自动化名称"
+                spellCheck={false}
+              />
+            ) : (
+              <button
+                type="button"
+                className={automationClass('editor-name-button')}
+                data-testid="automation-editor-name"
+                title={draft.name}
+                aria-label={`重命名自动化：${draft.name}`}
+                onClick={startRenaming}
+              >
+                <span>{draft.name}</span>
+                <Pencil size={16} />
+              </button>
             )}
-          </PopupMenu>
+          </div>
+
+          <div
+            className={automationClass('editor-view-tabs')}
+            data-testid="automation-editor-section-menu"
+            role="tablist"
+            aria-label="自动化视图"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={editorSection === 'workflow'}
+              className={automationClass(
+                'editor-view-tab',
+                editorSection === 'workflow' && 'active'
+              )}
+              data-testid="editor-nav-workflow"
+              onClick={() => onEditorSectionChange('workflow')}
+            >
+              <GitBranch size={16} />
+              <span>编排</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={editorSection === 'runs'}
+              className={automationClass('editor-view-tab', editorSection === 'runs' && 'active')}
+              data-testid="open-current-automation-runs"
+              onClick={() => onEditorSectionChange('runs')}
+            >
+              <History size={16} />
+              <span>运行记录</span>
+            </button>
+          </div>
         </div>
 
         {editorSection === 'workflow' ? (
@@ -1916,13 +2920,22 @@ function WorkflowEditor({
               draft={draft}
               trigger={trigger}
               selectedNode={selectedNode}
+              rightPanelInset={
+                showRightPanel ? AUTOMATION_RIGHT_PANEL_WIDTH + AUTOMATION_PANEL_GAP : 0
+              }
               onSelectNode={onSelectNode}
               onInsertNode={insertNode}
+              onAddBranchHandler={addBranchHandler}
+              onAddBranchContinuation={addBranchContinuation}
               onAddDagStage={addDagStage}
               onToggleDagDependency={toggleDagDependency}
               onMoveDagStage={moveDagStage}
               onToggleStepDependency={toggleStepDependency}
               onMoveStep={moveStep}
+              onInsertLoopBodyNode={insertLoopBodyNode}
+              onToggleLoopBodyDependency={toggleLoopBodyDependency}
+              onMoveLoopBodyNode={moveLoopBodyNode}
+              onDeleteNode={deleteCanvasNode}
             />
           </main>
         ) : (
@@ -1949,7 +2962,11 @@ function WorkflowEditor({
                   <span
                     className={automationClass(
                       `node-icon ${
-                        selectedStep?.kind === 'dynamic' ? 'coordinator' : selectedNode.type
+                        selectedStep?.kind === 'branch' || selectedLoopBody?.nodeType === 'branch'
+                          ? 'branch'
+                          : selectedStep?.kind === 'dynamic' || selectedStep?.kind === 'loop'
+                            ? 'coordinator'
+                            : selectedNode.type
                       }`
                     )}
                   >
@@ -1957,6 +2974,16 @@ function WorkflowEditor({
                       <TriggerIcon size={17} />
                     ) : selectedStep?.kind === 'dynamic' ? (
                       <Sparkles size={17} />
+                    ) : selectedStep?.kind === 'loop' ? (
+                      <Repeat size={17} />
+                    ) : selectedStep?.kind === 'branch' ? (
+                      <Webhook size={17} />
+                    ) : selectedLoopBody?.nodeType === 'branch' ? (
+                      <Webhook size={17} />
+                    ) : selectedLoopBody?.nodeType === 'loopStart' ? (
+                      <CircleDot size={17} />
+                    ) : selectedLoopBody?.nodeType === 'loopEnd' ? (
+                      <Flag size={17} />
                     ) : (
                       <Box size={17} />
                     )}
@@ -1969,7 +2996,19 @@ function WorkflowEditor({
                           ? selectedDagStage.name
                           : selectedStep?.kind === 'dynamic'
                             ? 'AI 动态分配'
-                            : selectedStep?.name || '未命名执行节点'}
+                            : selectedStep?.kind === 'loop'
+                              ? selectedStep?.name || '未命名循环'
+                              : selectedStep?.kind === 'branch'
+                                ? selectedStep?.name || '分支'
+                                : selectedLoopBody?.nodeType === 'branch'
+                                  ? selectedLoopBody.name || '分支'
+                                  : selectedLoopBody?.nodeType === 'loopStart'
+                                    ? selectedLoopBody.name || '循环开始'
+                                    : selectedLoopBody?.nodeType === 'loopEnd'
+                                      ? selectedLoopBody.name || '循环结束'
+                                      : selectedLoopBody
+                                        ? selectedLoopBody.name || '循环体内执行节点'
+                                        : selectedStep?.name || '未命名执行节点'}
                     </strong>
                     <small>
                       {selectedNode.type === 'trigger'
@@ -1978,7 +3017,19 @@ function WorkflowEditor({
                           ? 'DAG 子图执行节点'
                           : selectedStep?.kind === 'dynamic'
                             ? '运行时拆解并分配具体任务'
-                            : '执行节点设置'}
+                            : selectedStep?.kind === 'loop'
+                              ? '循环等待事件并反复处理'
+                              : selectedStep?.kind === 'branch'
+                                ? '等待事件并按条件路由'
+                                : selectedLoopBody?.nodeType === 'branch'
+                                  ? '等待事件并按条件路由'
+                                  : selectedLoopBody?.nodeType === 'loopStart'
+                                    ? '循环体入口'
+                                    : selectedLoopBody?.nodeType === 'loopEnd'
+                                      ? '执行到这里跳出循环'
+                                      : selectedLoopBody
+                                        ? '循环体内的执行节点'
+                                        : '执行节点设置'}
                     </small>
                   </div>
                   <button
@@ -2043,8 +3094,13 @@ function WorkflowEditor({
                       <TriggerSettings
                         draft={draft}
                         projectTags={projectTags}
+                        eventSourceCatalog={eventSourceCatalog}
+                        projectIncomingHookApi={projectIncomingHookApi}
+                        projectId={projectId}
+                        canManage={canManage}
                         onChange={updateTrigger}
                         onRuleChange={updateRule}
+                        onCollectionModeChange={onTriggerCollectionModeChange}
                       />
                     ) : selectedDagStage ? (
                       <>
@@ -2052,7 +3108,8 @@ function WorkflowEditor({
                           step={selectedDagStage}
                           executionCatalog={executionCatalog}
                           onChange={updateDagStage}
-                          onDelete={removeDagStage}
+                          onDelete={() => removeDagStage()}
+                          deleteButtonRef={deleteButtonRef}
                           onOpenPluginMenu={onOpenPluginMenu}
                           constraint
                           supplemental={
@@ -2069,7 +3126,80 @@ function WorkflowEditor({
                         coordinator={selectedStep}
                         executionCatalog={executionCatalog}
                         onChange={updateStep}
-                        onDelete={onRemoveStep}
+                        onDelete={() => onRemoveStep()}
+                        deleteButtonRef={deleteButtonRef}
+                        onOpenPluginMenu={onOpenPluginMenu}
+                      />
+                    ) : selectedStep?.kind === 'loop' ? (
+                      <LoopSettings
+                        step={selectedStep}
+                        onChange={updateStep}
+                        onDelete={() => onRemoveStep()}
+                      />
+                    ) : selectedStep?.kind === 'branch' ? (
+                      <BranchSettings
+                        step={selectedStep}
+                        bodyNodes={draft.steps}
+                        eventTypeOptions={eventTypeOptions}
+                        eventSourceCatalog={eventSourceCatalog}
+                        projectIncomingHookApi={projectIncomingHookApi}
+                        projectId={projectId}
+                        canManage={canManage}
+                        onChange={updateStep}
+                        onDelete={() => onRemoveStep()}
+                      />
+                    ) : selectedLoopBody?.nodeType === 'branch' ? (
+                      <BranchSettings
+                        step={selectedLoopBody}
+                        bodyNodes={selectedLoopParent?.subgraph?.nodes ?? []}
+                        eventTypeOptions={eventTypeOptions}
+                        eventSourceCatalog={eventSourceCatalog}
+                        projectIncomingHookApi={projectIncomingHookApi}
+                        projectId={projectId}
+                        canManage={canManage}
+                        onChange={updateLoopBodyStep}
+                        onDelete={() => removeLoopBodyStep()}
+                      />
+                    ) : selectedLoopBody?.nodeType === 'loopStart' ? (
+                      <div className={automationClass('panel-settings')}>
+                        <p className={automationClass('execution-hint')}>
+                          循环开始是循环体的入口节点。循环每次回到这里开始新一轮等待与处理，不可删除。
+                        </p>
+                      </div>
+                    ) : selectedLoopBody?.nodeType === 'loopEnd' ? (
+                      <div className={automationClass('panel-settings')}>
+                        <label className={automationClass('panel-field')}>
+                          <span>
+                            <Flag size={14} />
+                            节点名称
+                          </span>
+                          <input
+                            data-testid="loop-end-node-name"
+                            value={selectedLoopBody.name}
+                            onChange={event => updateLoopBodyStep('name', event.target.value)}
+                          />
+                        </label>
+                        <p className={automationClass('execution-hint')}>
+                          执行到这里会跳出整个循环，继续循环节点之后的工作流。
+                        </p>
+                        <div className={automationClass('panel-danger-zone compact')}>
+                          <button
+                            type="button"
+                            className={automationClass('delete-step')}
+                            data-testid="loop-end-node-delete"
+                            onClick={removeLoopBodyStep}
+                          >
+                            <Trash2 size={14} />
+                            删除循环结束
+                          </button>
+                        </div>
+                      </div>
+                    ) : selectedLoopBody ? (
+                      <StepSettings
+                        step={selectedLoopBody}
+                        executionCatalog={executionCatalog}
+                        onChange={updateLoopBodyStep}
+                        onDelete={() => removeLoopBodyStep()}
                         onOpenPluginMenu={onOpenPluginMenu}
                       />
                     ) : (
@@ -2077,7 +3207,8 @@ function WorkflowEditor({
                         step={selectedStep}
                         executionCatalog={executionCatalog}
                         onChange={updateStep}
-                        onDelete={onRemoveStep}
+                        onDelete={() => onRemoveStep()}
+                        deleteButtonRef={deleteButtonRef}
                         onOpenPluginMenu={onOpenPluginMenu}
                       />
                     )}
@@ -2242,12 +3373,93 @@ function RunStatus({ status }) {
   )
 }
 
-function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
+function PollIntervalField({ testId, value, onChange, index }) {
+  const minutes = Math.max(1, Math.round((value ?? 300) / 60))
+  const suggestionsId = `${testId}-suggestions`
+  return (
+    <label className={automationClass('panel-field')}>
+      <span>
+        {index ? <i className={automationClass('cascade-index')}>{index}</i> : null}
+        轮询间隔
+      </span>
+      <div className={automationClass('poll-interval-control')}>
+        <input
+          data-testid={testId}
+          type="number"
+          min={1}
+          max={1440}
+          step={1}
+          list={suggestionsId}
+          value={minutes}
+          onChange={event => onChange(Math.max(1, Number(event.target.value) || 1) * 60)}
+        />
+        <span>分钟</span>
+        <datalist id={suggestionsId}>
+          <option value="1" />
+          <option value="3" />
+          <option value="5" />
+          <option value="10" />
+          <option value="30" />
+        </datalist>
+      </div>
+      <small className={automationClass('panel-field-hint')}>
+        常用 1、3、5、10 分钟，也可输入任意整数
+      </small>
+    </label>
+  )
+}
+
+function TriggerSettings({
+  draft,
+  projectTags,
+  eventSourceCatalog,
+  projectIncomingHookApi,
+  projectId,
+  canManage,
+  onChange,
+  onRuleChange,
+  onCollectionModeChange,
+}) {
+  const { t } = useTranslation('common')
   const trigger = draft.trigger
-  const presentation = triggerPresentation(trigger)
+  const presentation = triggerPresentation(trigger, t)
   const TriggerIcon = trigger.type === 'schedule' ? Clock3 : Webhook
   const startMode = trigger.startMode ?? 'immediate'
-
+  const isSchedule = trigger.type === 'schedule'
+  const isWework = trigger.source === 'wework'
+  const isGeneric = trigger.source === 'generic'
+  const collectionMode = trigger.collectionMode ?? 'webhook'
+  const triggerKind = isSchedule
+    ? 'schedule'
+    : isWework
+      ? 'wework'
+      : isGeneric
+        ? 'generic'
+        : collectionMode
+  const selectedSource = eventSourceCatalog.find(source => source.sourceType === trigger.source)
+  const platformSources = mode =>
+    eventSourceCatalog.filter(
+      item =>
+        item.sourceType !== 'wework' &&
+        item.sourceType !== 'generic' &&
+        (item.collectionModes ?? []).includes(mode)
+    )
+  const candidatePlatforms = platformSources(triggerKind)
+  const hasPlatformStep =
+    (triggerKind === 'webhook' || triggerKind === 'poll') && candidatePlatforms.length > 0
+  const selectedPlatforms = hasPlatformStep ? candidatePlatforms : []
+  const sourceLabel = sourceType => {
+    const labels = {
+      schedule: t('todo.automation_trigger_schedule_label'),
+      wework: t('todo.automation_trigger_wework_label'),
+      webhook: t('todo.automation_trigger_webhook_label'),
+      poll: t('todo.automation_trigger_poll_label'),
+      github: t('todo.automation_trigger_github_label'),
+      gitlab: t('todo.automation_trigger_gitlab_label'),
+      generic: t('todo.automation_trigger_generic_label'),
+    }
+    return labels[sourceType] ?? sourceType
+  }
   const toggleTag = tag => {
     onChange(
       'tags',
@@ -2261,10 +3473,64 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
     onChange('schedule', { ...trigger.schedule, [key]: value })
   }
 
+  const handleSubscriptionChange = subscriptionId => {
+    onChange('subscriptionId', subscriptionId)
+    onChange('event', selectedSource?.eventTypes[0] ?? 'change_request.checks_failed')
+  }
+
+  const handlePollIntervalChange = value => {
+    onChange('pollIntervalSeconds', value)
+    const subscriptionId = trigger.subscriptionId
+    if (!subscriptionId || !projectIncomingHookApi || !projectId) return
+    const subscription = pollingSubscriptionRef.current
+    if (!subscription || subscription.id !== subscriptionId) return
+    void projectIncomingHookApi
+      .update(projectId, subscriptionId, {
+        version: subscription.version,
+        pollIntervalSeconds: value,
+      })
+      .then(updated => {
+        pollingSubscriptionRef.current = updated
+      })
+      .catch(() => undefined)
+  }
+
+  const applyPlatform = sourceType => {
+    const source = eventSourceCatalog.find(item => item.sourceType === sourceType)
+    onChange('source', sourceType)
+    onChange('subscriptionId', null)
+    onChange('event', source?.eventTypes[0] ?? 'change_request.checks_failed')
+  }
+
+  const handleTriggerKindChange = value => {
+    if (value === 'schedule') {
+      onChange('type', 'schedule')
+      return
+    }
+    onChange('type', 'event')
+    if (value === 'wework') {
+      onChange('source', 'wework')
+      onChange('collectionMode', null)
+      onChange('subscriptionId', null)
+      onChange('event', trigger.startMode === 'status' ? 'status_changed' : 'created')
+      return
+    }
+    // Webhook and polling are collection mechanisms; keep the current platform
+    // when it supports the new mechanism and fall back to the first one otherwise.
+    const platforms = platformSources(value)
+    const nextSource =
+      selectedSource && platforms.some(item => item.sourceType === selectedSource.sourceType)
+        ? selectedSource.sourceType
+        : (platforms[0]?.sourceType ?? 'github')
+    onChange('collectionMode', value)
+    applyPlatform(nextSource)
+    onCollectionModeChange?.()
+  }
+
   return (
     <div className={automationClass('panel-settings')}>
       <label className={automationClass('panel-field')}>
-        <span>自动化说明</span>
+        <span>自动化说明（可选）</span>
         <textarea
           data-testid="automation-rule-description"
           value={draft.description}
@@ -2282,15 +3548,22 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
       <label className={automationClass('panel-field')}>
         <span>
           <i className={automationClass('cascade-index')}>1</i>
-          触发来源
+          事件源
         </span>
         <select
           data-testid="automation-trigger-type"
-          value={trigger.type}
-          onChange={event => onChange('type', event.target.value)}
+          value={triggerKind}
+          onChange={event => handleTriggerKindChange(event.target.value)}
         >
-          <option value="schedule">按计划执行</option>
-          <option value="event">Issue 触发</option>
+          <option value="schedule">{t('todo.automation_trigger_schedule_label')}</option>
+          <option value="wework">{t('todo.automation_trigger_wework_label')}</option>
+          <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
+          <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
+          {isGeneric ? (
+            <option value="generic" disabled>
+              {t('todo.automation_trigger_generic_label')}
+            </option>
+          ) : null}
         </select>
       </label>
       {trigger.type === 'schedule' ? (
@@ -2305,6 +3578,7 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
               value={trigger.schedule.frequency}
               onChange={event => updateSchedule('frequency', event.target.value)}
             >
+              <option value="hourly">{t('workbench.board_automation_hourly')}</option>
               <option value="daily">每天</option>
               <option value="weekdays">工作日</option>
               <option value="weekly">每周</option>
@@ -2334,14 +3608,32 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
               <i className={automationClass('cascade-index')}>
                 {trigger.schedule.frequency === 'weekly' ? '4' : '3'}
               </i>
-              执行时间
+              {trigger.schedule.frequency === 'hourly'
+                ? t('workbench.board_automation_minute')
+                : '执行时间'}
             </span>
-            <input
-              type="time"
-              data-testid="automation-trigger-time"
-              value={trigger.schedule.time}
-              onChange={event => updateSchedule('time', event.target.value)}
-            />
+            {trigger.schedule.frequency === 'hourly' ? (
+              <select
+                data-testid="automation-trigger-minute"
+                value={Number(trigger.schedule.time.split(':')[1])}
+                onChange={event =>
+                  updateSchedule('time', `00:${event.target.value.padStart(2, '0')}`)
+                }
+              >
+                {Array.from({ length: 60 }, (_, minute) => (
+                  <option key={minute} value={minute}>
+                    {String(minute).padStart(2, '0')}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="time"
+                data-testid="automation-trigger-time"
+                value={trigger.schedule.time}
+                onChange={event => updateSchedule('time', event.target.value)}
+              />
+            )}
           </label>
           <label className={automationClass('panel-field')}>
             <span>
@@ -2360,6 +3652,105 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
               <option value="UTC">UTC</option>
             </select>
           </label>
+        </section>
+      ) : trigger.source !== 'wework' ? (
+        <section className={automationClass('event-source-settings')}>
+          <div className={automationClass('event-source-heading')}>
+            <div>
+              <strong>外部事件源</strong>
+              <span>选择接收方式与代码托管平台</span>
+            </div>
+            <small>{sourceLabel(collectionMode)}</small>
+          </div>
+          {selectedPlatforms.length ? (
+            <label className={automationClass('panel-field')}>
+              <span>
+                <i className={automationClass('cascade-index')}>2</i>
+                {t('todo.automation_trigger_platform')}
+              </span>
+              <select
+                data-testid="automation-trigger-platform"
+                value={trigger.source}
+                onChange={event => applyPlatform(event.target.value)}
+              >
+                {selectedPlatforms.map(item => (
+                  <option key={item.sourceType} value={item.sourceType}>
+                    {sourceLabel(item.sourceType)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {collectionMode === 'poll' ? (
+            <PollIntervalField
+              testId="automation-trigger-poll-interval"
+              value={trigger.pollIntervalSeconds}
+              index={hasPlatformStep ? 3 : 2}
+              onChange={handlePollIntervalChange}
+            />
+          ) : null}
+          {collectionMode === 'webhook' ? (
+            <EventSubscriptionPicker
+              key={`${collectionMode}:${trigger.source}`}
+              api={projectIncomingHookApi}
+              projectId={projectId}
+              catalog={eventSourceCatalog}
+              sourceTypes={[trigger.source]}
+              collectionMode="webhook"
+              cascadeIndex={hasPlatformStep ? 3 : 2}
+              canManage={canManage}
+              value={trigger.subscriptionId}
+              onChange={handleSubscriptionChange}
+            />
+          ) : null}
+          <label className={automationClass('panel-field')}>
+            <span>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 4 : 3}</i>
+              {t('todo.automation_target_branches')}
+            </span>
+            <input
+              data-testid="automation-target-branches"
+              value={(trigger.targetBranches ?? []).join(', ')}
+              onChange={event =>
+                onChange(
+                  'targetBranches',
+                  event.target.value
+                    .split(',')
+                    .map(value => value.trim())
+                    .filter(Boolean)
+                )
+              }
+              placeholder="main, release"
+            />
+          </label>
+          <label className={automationClass('panel-field')}>
+            <span>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 5 : 4}</i>
+              {t('todo.automation_event_type')}
+            </span>
+            <select
+              data-testid="automation-external-event-type"
+              value={trigger.event}
+              onChange={event => onChange('event', event.target.value)}
+            >
+              {(selectedSource?.eventTypes ?? []).map(eventType => (
+                <option key={eventType} value={eventType}>
+                  {eventTypeLabel(eventType, t)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {trigger.event === 'change_request.comment_created' ? (
+            <p
+              className={automationClass('execution-hint')}
+              data-testid="automation-event-comment-loop-hint"
+            >
+              {t('todo.automation_event_comment_loop_hint')}
+            </p>
+          ) : null}
+          <p className={automationClass('execution-hint')}>
+            收到事件后会新建一个 Issue，并只沿当前自动化的后续节点执行。
+          </p>
         </section>
       ) : (
         <>
@@ -2529,6 +3920,7 @@ function CoordinatorSettings({
   executionCatalog,
   onChange,
   onDelete,
+  deleteButtonRef,
   onOpenPluginMenu,
 }) {
   const environmentOptions = executionCatalog.environments.some(
@@ -2703,6 +4095,7 @@ function CoordinatorSettings({
       </p>
       <div className={automationClass('panel-danger-zone compact')}>
         <button
+          ref={deleteButtonRef}
           type="button"
           className={automationClass('delete-step')}
           data-testid="ai-coordinator-delete"
@@ -2710,6 +4103,399 @@ function CoordinatorSettings({
         >
           <Trash2 size={14} />
           删除 AI 动态分配节点
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function LoopSettings({ step, onChange, onDelete }) {
+  const loopConfig = normalizeLoopConfig(step.loopConfig)
+  const updateLoopConfig = next => onChange('loopConfig', next)
+  return (
+    <div className={automationClass('panel-settings')}>
+      <label className={automationClass('panel-field')}>
+        <span>
+          <Repeat size={14} />
+          循环名称
+        </span>
+        <input
+          data-testid="loop-node-name"
+          value={step.name}
+          placeholder="例如：修复 CI 直到合入"
+          onChange={event => onChange('name', event.target.value)}
+        />
+      </label>
+
+      <div className={automationClass('node-model-settings')}>
+        <label className={automationClass('panel-field')}>
+          <span>
+            <Repeat size={14} />
+            最大循环次数（0 = 无限）
+          </span>
+          <input
+            data-testid="loop-max-attempts"
+            type="number"
+            min={0}
+            value={loopConfig.maxAttempts}
+            onChange={event =>
+              updateLoopConfig({
+                ...loopConfig,
+                maxAttempts: Math.max(0, Number(event.target.value) || 0),
+              })
+            }
+          />
+        </label>
+        <label className={automationClass('panel-field')}>
+          <span>
+            <Clock3 size={14} />
+            超时秒数（留空关闭）
+          </span>
+          <input
+            data-testid="loop-timeout-seconds"
+            type="number"
+            min={1}
+            value={loopConfig.timeoutSeconds ?? ''}
+            placeholder="关闭"
+            onChange={event =>
+              updateLoopConfig({
+                ...loopConfig,
+                timeoutSeconds:
+                  event.target.value === '' ? null : Math.max(1, Number(event.target.value) || 1),
+              })
+            }
+          />
+        </label>
+      </div>
+      <p className={automationClass('execution-hint')}>
+        循环从「循环开始」进入；执行到「循环结束」、达到最大循环次数或超时即退出；也可用强行推进人工跳出。
+      </p>
+      <div className={automationClass('panel-danger-zone compact')}>
+        <button
+          type="button"
+          className={automationClass('delete-step')}
+          data-testid="loop-node-delete"
+          onClick={onDelete}
+        >
+          <Trash2 size={14} />
+          删除循环
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const branchHandlerPresentation = {
+  task: { label: '执行任务', Icon: Box },
+  dynamic: { label: 'AI 动态分配', Icon: Sparkles },
+  loop: { label: '循环', Icon: Repeat },
+  branch: { label: '分支', Icon: Webhook },
+}
+
+function normalizeLoopConfig(config) {
+  return {
+    maxAttempts: Number.isFinite(config?.maxAttempts) ? config.maxAttempts : 5,
+    timeoutSeconds: config?.timeoutSeconds ?? null,
+  }
+}
+
+function BranchSettings({
+  step,
+  bodyNodes,
+  eventTypeOptions,
+  eventSourceCatalog = [],
+  projectIncomingHookApi,
+  projectId,
+  canManage,
+  onChange,
+  onDelete,
+}) {
+  const { t } = useTranslation('common')
+  const conditions = step.branchConditions ?? []
+  const eventWait = step.eventWait ?? {
+    collectionMode: 'poll',
+    subscriptionId: null,
+    pollIntervalSeconds: 300,
+  }
+  const platformSources = eventSourceCatalog.filter(
+    source => source.sourceType === 'github' || source.sourceType === 'gitlab'
+  )
+  const eventTypesBySource = new Map(
+    platformSources.map(source => [
+      source.sourceType,
+      (source.eventTypes?.length ? source.eventTypes : eventTypeOptions).filter(eventType =>
+        eventType.startsWith('change_request.')
+      ),
+    ])
+  )
+  const updateCondition = (index, key, value) => {
+    onChange(
+      'branchConditions',
+      conditions.map((condition, candidate) =>
+        candidate === index ? { ...condition, [key]: value } : condition
+      )
+    )
+  }
+  const removeHandler = (index, handlerId) => {
+    const condition = conditions[index]
+    updateCondition(
+      index,
+      'handlerNodeIds',
+      condition.handlerNodeIds.filter(id => id !== handlerId)
+    )
+  }
+  const changeCollectionMode = mode => {
+    onChange('eventWait', {
+      ...eventWait,
+      collectionMode: mode,
+      subscriptionId: mode === 'webhook' ? (eventWait.subscriptionId ?? null) : null,
+      pollIntervalSeconds: mode === 'poll' ? (eventWait.pollIntervalSeconds ?? 300) : null,
+    })
+  }
+  const changeConditionSource = (index, sourceType) => {
+    const supportedEvents = eventTypesBySource.get(sourceType) ?? []
+    const current = conditions[index]
+    const nextEventType = supportedEvents.includes(current.eventType)
+      ? current.eventType
+      : (supportedEvents[0] ?? '')
+    onChange(
+      'branchConditions',
+      conditions.map((condition, candidate) =>
+        candidate === index ? { ...condition, sourceType, eventType: nextEventType } : condition
+      )
+    )
+  }
+  return (
+    <div className={automationClass('panel-settings')}>
+      <label className={automationClass('panel-field')}>
+        <span>
+          <Webhook size={14} />
+          分支名称
+        </span>
+        <input
+          data-testid="branch-node-name"
+          value={step.name}
+          onChange={event => onChange('name', event.target.value)}
+        />
+      </label>
+      <p className={automationClass('execution-hint')}>
+        分支节点监听当前 Issue 上游交付的
+        PR/MR；仓库、编号和平台会从交付物自动识别。命中条件后路由到对应处理节点。
+      </p>
+      <section className={automationClass('event-source-settings')}>
+        <div className={automationClass('event-source-heading')}>
+          <div>
+            <strong>事件源</strong>
+            <span>运行时从当前 Issue 的前序节点交付物中识别 PR/MR</span>
+          </div>
+          <small>
+            {[...new Set(conditions.map(condition => condition.sourceType))]
+              .map(sourceType => (sourceType === 'gitlab' ? 'GitLab' : 'GitHub'))
+              .join(' / ')}
+          </small>
+        </div>
+        {eventWait.collectionMode === 'poll' ? (
+          <p className={automationClass('execution-hint')} data-testid="branch-event-sources-hint">
+            分支条件可分别选择 GitHub/GitLab；运行时会为绑定的各平台 PR/MR 建立对应采集器。
+          </p>
+        ) : null}
+        <label className={automationClass('panel-field')}>
+          <span>
+            <i className={automationClass('cascade-index')}>2</i>
+            接收方式
+          </span>
+          <select
+            data-testid="branch-event-wait-mode"
+            value={eventWait.collectionMode}
+            onChange={event => changeCollectionMode(event.target.value)}
+          >
+            <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
+            <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
+          </select>
+        </label>
+        {eventWait.collectionMode === 'webhook' ? (
+          <EventSubscriptionPicker
+            api={projectIncomingHookApi}
+            projectId={projectId}
+            catalog={eventSourceCatalog}
+            sourceTypes={[...new Set(conditions.map(condition => condition.sourceType))]}
+            collectionMode="webhook"
+            cascadeIndex={3}
+            testIdPrefix="branch"
+            canManage={canManage}
+            value={eventWait.subscriptionId ?? null}
+            onChange={subscriptionId => onChange('eventWait', { ...eventWait, subscriptionId })}
+          />
+        ) : (
+          <PollIntervalField
+            testId="branch-event-wait-poll-interval"
+            value={eventWait.pollIntervalSeconds}
+            index={3}
+            onChange={pollIntervalSeconds =>
+              onChange('eventWait', { ...eventWait, pollIntervalSeconds })
+            }
+          />
+        )}
+        {eventWait.collectionMode === 'poll' ? (
+          <p
+            className={automationClass('execution-hint')}
+            data-testid="branch-event-wait-poll-hint"
+          >
+            {t('todo.workflow_branch_collector_poll_hint')}
+          </p>
+        ) : (
+          <p
+            className={automationClass('execution-hint')}
+            data-testid="branch-event-wait-webhook-hint"
+          >
+            {t('todo.workflow_branch_collector_webhook_hint')}
+          </p>
+        )}
+      </section>
+      <div className={automationClass('branch-conditions')}>
+        <span className={automationClass('branch-conditions-heading')}>分支条件</span>
+        {conditions.length === 0 ? (
+          <div className={automationClass('branch-conditions-empty')}>
+            还没有分支，可通过分支节点右侧的加号添加。
+          </div>
+        ) : (
+          conditions.map((condition, index) => {
+            const handlerNodes = (condition.handlerNodeIds ?? [])
+              .map(handlerId => bodyNodes.find(candidate => candidate.id === handlerId))
+              .filter(Boolean)
+            const candidateNodes = bodyNodes.filter(
+              candidate =>
+                candidate.id !== step.id &&
+                candidate.kind === 'task' &&
+                (!candidate.nodeType || candidate.nodeType === 'task') &&
+                !condition.handlerNodeIds.includes(candidate.id)
+            )
+            return (
+              <div className={automationClass('branch-condition-card')} key={`condition-${index}`}>
+                <div className={automationClass('branch-condition-head')}>
+                  <em>分支 {index + 1}</em>
+                  <button
+                    type="button"
+                    className={automationClass('branch-condition-remove')}
+                    data-testid={`branch-condition-remove-${index}`}
+                    aria-label={`移除分支 ${index + 1}`}
+                    onClick={() =>
+                      onChange(
+                        'branchConditions',
+                        conditions.filter((_, candidate) => candidate !== index)
+                      )
+                    }
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <div className={automationClass('branch-condition-source')}>
+                  <label className={automationClass('panel-field')}>
+                    <span>事件平台</span>
+                    <select
+                      data-testid={`branch-condition-source-${index}`}
+                      value={condition.sourceType}
+                      onChange={event => changeConditionSource(index, event.target.value)}
+                    >
+                      {platformSources.map(source => (
+                        <option key={source.sourceType} value={source.sourceType}>
+                          {source.sourceType === 'gitlab' ? 'GitLab' : 'GitHub'}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className={automationClass('panel-field')}>
+                    <span>事件类型</span>
+                    <select
+                      data-testid={`branch-condition-event-${index}`}
+                      value={condition.eventType}
+                      onChange={event => updateCondition(index, 'eventType', event.target.value)}
+                    >
+                      <option value="">选择事件</option>
+                      {(eventTypesBySource.get(condition.sourceType) ?? []).map(eventType => (
+                        <option key={eventType} value={eventType}>
+                          {eventTypeLabel(eventType, t)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className={automationClass('branch-condition-handlers')}>
+                  <span>处理节点</span>
+                  <div className={automationClass('branch-handler-chips')}>
+                    {handlerNodes.length === 0 ? (
+                      <small className={automationClass('branch-handler-empty')}>
+                        尚未指定处理节点
+                      </small>
+                    ) : (
+                      handlerNodes.map(handler => {
+                        const { Icon } =
+                          branchHandlerPresentation[handler.kind] ?? branchHandlerPresentation.task
+                        return (
+                          <span className={automationClass('branch-handler-chip')} key={handler.id}>
+                            <Icon size={12} />
+                            <em>{handler.name || '未命名节点'}</em>
+                            <button
+                              type="button"
+                              aria-label={`移除处理节点 ${handler.name || '未命名节点'}`}
+                              onClick={() => removeHandler(index, handler.id)}
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        )
+                      })
+                    )}
+                  </div>
+                  {candidateNodes.length > 0 ? (
+                    <PopupMenu
+                      testId={`branch-add-handler-${index}`}
+                      trigger={
+                        <span className={automationClass('branch-add-handler')}>
+                          <Plus size={13} />
+                          指定已有节点
+                        </span>
+                      }
+                    >
+                      {close => (
+                        <>
+                          {candidateNodes.map(candidate => (
+                            <button
+                              type="button"
+                              key={candidate.id}
+                              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+                              data-testid={`branch-add-handler-${index}-${candidate.id}`}
+                              onClick={() => {
+                                updateCondition(index, 'handlerNodeIds', [
+                                  ...condition.handlerNodeIds,
+                                  candidate.id,
+                                ])
+                                close()
+                              }}
+                            >
+                              <Box size={14} />
+                              {candidate.name || '未命名节点'}
+                            </button>
+                          ))}
+                        </>
+                      )}
+                    </PopupMenu>
+                  ) : null}
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+      <div className={automationClass('panel-danger-zone compact')}>
+        <button
+          type="button"
+          className={automationClass('delete-step')}
+          data-testid="branch-node-delete"
+          onClick={onDelete}
+        >
+          <Trash2 size={14} />
+          删除分支节点
         </button>
       </div>
     </div>
@@ -2777,6 +4563,7 @@ function StepSettings({
   executionCatalog,
   onChange,
   onDelete,
+  deleteButtonRef,
   onOpenPluginMenu,
   supplemental,
   constraint = false,
@@ -3134,6 +4921,7 @@ function StepSettings({
       ) : null}
       <section className={automationClass('panel-danger-zone')}>
         <button
+          ref={deleteButtonRef}
           className={automationClass('delete-step')}
           data-testid={`execution-node-delete-${step.id}`}
           onClick={onDelete}

@@ -362,6 +362,15 @@ protocol characters must never appear as ordinary response text. They may be
 converted into visible citations only after the matching metadata and
 interaction component are available.
 
+Assistant Markdown images in Electron chat may reference a local absolute path
+or a `file://` URL. The renderer must read the file through the Electron file
+bridge and display it through a Blob URL; an HTTP page must not load the
+`file://` resource directly. The image file must still exist when the message
+is rendered, and read failures show an explicit image error placeholder. After
+changing this path, run the CI-covered desktop `rendering-extensions`
+checkpoint, which reads a real PNG from the system temporary directory and
+asserts that the final image uses a Blob URL.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:

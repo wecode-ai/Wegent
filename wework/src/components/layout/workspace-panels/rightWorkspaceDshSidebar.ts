@@ -34,7 +34,14 @@ export interface WeworkWorkspaceSidebarTabComponentProps {
 export interface WeworkWorkspaceSidebarTabDescriptor {
   id: string
   title: string
+  titleKey?: string
+  mode?: 'component' | 'iframe'
   order?: number
+  url?: string
+  when?: {
+    projectKinds?: readonly ('standard' | 'wework-core-dsh-plugin')[]
+    codexPluginKeys?: readonly string[]
+  }
 }
 
 export interface WeworkWorkspaceSidebarOpenTabSeed {
@@ -103,9 +110,36 @@ function notifyState() {
 }
 
 export function titleOfWeworkWorkspaceSidebarTab(
-  descriptor: WeworkWorkspaceSidebarTabDescriptor
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
+  translate?: (key: string, fallback: string) => string
 ): string {
+  if (descriptor.titleKey && translate) {
+    return translate(descriptor.titleKey, descriptor.title)
+  }
   return descriptor.title
+}
+
+export function isWeworkWorkspaceSidebarTabAvailable(
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
+  projectKind: 'standard' | 'wework-core-dsh-plugin' | 'unresolved',
+  isPluginInstalled: (pluginKey: string) => boolean = () => true
+): boolean {
+  const projectKinds = descriptor.when?.projectKinds
+  const codexPluginKeys = descriptor.when?.codexPluginKeys
+  return (
+    (!projectKinds?.length ||
+      (projectKind !== 'unresolved' && projectKinds.includes(projectKind))) &&
+    (!codexPluginKeys?.length || codexPluginKeys.every(isPluginInstalled))
+  )
+}
+
+export function shouldCloseUnavailableWeworkWorkspaceSidebarTab(
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
+  projectKind: 'standard' | 'wework-core-dsh-plugin' | 'unresolved',
+  available: boolean
+): boolean {
+  if (available) return false
+  return projectKind !== 'unresolved' || !descriptor.when?.projectKinds?.length
 }
 
 export const rightWorkspaceDshSidebar: RightWorkspaceSidebarService = {
@@ -117,11 +151,44 @@ export const rightWorkspaceDshSidebar: RightWorkspaceSidebarService = {
       cachedDshTabs = EMPTY_SIDEBAR_TABS
       return cachedDshTabs
     }
-    cachedDshTabs = entries.map(entry => ({
-      id: entry.id,
-      title: entry.label ?? entry.id,
-      order: entry.order,
-    }))
+    cachedDshTabs = entries
+      .filter(
+        entry =>
+          entry.mode !== 'iframe' || (typeof entry.url === 'string' && entry.url.trim().length > 0)
+      )
+      .map(entry => {
+        const when =
+          entry.when && typeof entry.when === 'object'
+            ? (entry.when as {
+                projectKinds?: unknown
+                codexPluginKeys?: unknown
+              })
+            : null
+        const projectKinds = Array.isArray(when?.projectKinds)
+          ? (when.projectKinds as Array<'standard' | 'wework-core-dsh-plugin'>)
+          : undefined
+        const codexPluginKeys = Array.isArray(when?.codexPluginKeys)
+          ? (when.codexPluginKeys as string[])
+          : undefined
+        const titleKey = typeof entry.labelKey === 'string' ? entry.labelKey : undefined
+        const mode = entry.mode === 'iframe' ? 'iframe' : undefined
+        const url = typeof entry.url === 'string' ? entry.url.trim() : undefined
+        return {
+          id: entry.id,
+          title: entry.label ?? entry.id,
+          titleKey,
+          mode,
+          order: entry.order,
+          url,
+          when:
+            projectKinds || codexPluginKeys
+              ? {
+                  projectKinds,
+                  codexPluginKeys,
+                }
+              : undefined,
+        }
+      })
     return cachedDshTabs
   },
   getTab(id) {

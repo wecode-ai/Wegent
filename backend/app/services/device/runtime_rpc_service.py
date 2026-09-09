@@ -19,6 +19,10 @@ from socketio.exceptions import TimeoutError as SocketTimeoutError
 from app.core.socketio import get_sio
 from app.db.session import get_db_session
 from app.schemas.device import DeviceType
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    remote_control_is_enabled,
+)
 from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
@@ -61,6 +65,7 @@ RUNTIME_MODEL_CONFIG_METHODS = frozenset(
     }
 )
 RUNTIME_MODEL_CONFIG_KEYS = frozenset({"model_config", "modelConfig"})
+APP_DEVICE_TASK_MESSAGE_METHODS = frozenset({"runtime.tasks.send"})
 
 
 def _load_remote_runtime_proxy_url(user_id: int) -> str:
@@ -177,6 +182,7 @@ class RuntimeRpcService:
         method: str,
         payload: dict[str, Any],
         timeout_seconds: int = DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
+        allow_app_device_task_messaging: bool = False,
     ) -> dict[str, Any]:
         """Call `runtime:rpc` on an online local executor and return its result."""
 
@@ -193,6 +199,22 @@ class RuntimeRpcService:
                 retryable=exc.retryable,
                 details=exc.details,
             ) from exc
+
+        app_task_messaging_allowed = (
+            allow_app_device_task_messaging
+            and route.device_type == DeviceType.APP
+            and method in APP_DEVICE_TASK_MESSAGE_METHODS
+        )
+        if (
+            not remote_control_is_enabled(route.device_type)
+            and not app_task_messaging_allowed
+        ):
+            raise RuntimeRpcError(
+                REMOTE_CONTROL_DISABLED_MESSAGE,
+                code="remote_control_disabled",
+                retryable=False,
+                details={"deviceId": route.logical_device_id},
+            )
 
         if method == "runtime.tasks.create":
             try:

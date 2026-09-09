@@ -470,6 +470,9 @@ describe('ProjectQueueView', () => {
     )
 
     await waitFor(() => expect(screen.getByText('Running task')).toBeInTheDocument())
-    expect(container.querySelector('svg.animate-spin')).not.toBeNull()
+    const spinner = container.querySelector('.animate-spin')
+    expect(spinner).toBeInstanceOf(HTMLSpanElement)
+    expect(spinner).toHaveClass('will-change-transform')
+    expect(spinner?.querySelector('svg')).not.toHaveClass('animate-spin')
   })
 })

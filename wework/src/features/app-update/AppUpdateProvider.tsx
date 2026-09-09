@@ -18,6 +18,7 @@ import {
   writePendingWeworkReleaseNotes,
   type WeworkInstalledReleaseNotes,
 } from './app-release-notes'
+import { createAppUpdateError, type AppUpdateError } from './app-update-error'
 import { formatAppUpdateVersion } from './app-update-format'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
@@ -43,7 +44,7 @@ const SIMULATED_RELEASE_NOTES = `## Changes
 
 interface UpdateCheckResult {
   update: WeworkUpdateInfo | null
-  error: string | null
+  error: AppUpdateError | null
 }
 
 function readUpdateChannel(): WeworkUpdateChannel {
@@ -74,12 +75,6 @@ function shouldAutoCheck(channel: WeworkUpdateChannel, now: number): boolean {
   return now - readLastAutoCheckAt(channel) >= APP_UPDATE_AUTO_CHECK_MIN_AGE_MS
 }
 
-function messageFor(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  return 'Failed to check for updates'
-}
-
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation('common')
   const appVersion = useAppVersion()
@@ -92,8 +87,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [downloadProgress, setDownloadProgress] = useState<WeworkUpdateDownloadProgress | null>(
     null
   )
-  const [message, setMessage] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<AppUpdateError | null>(null)
   const [restartConfirmationOpen, setRestartConfirmationOpen] = useState(false)
   const [downloadedUpdateVersion, setDownloadedUpdateVersion] = useState<string | null>(null)
   const updateChannelRef = useRef(updateChannel)
@@ -106,6 +100,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const activeDownloadRef = useRef<{
     version: string
     promise: Promise<void>
+    progressListeners: Set<(progress: WeworkUpdateDownloadProgress) => void>
   } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
   const installedReleaseNotes =
@@ -124,34 +119,56 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       update: WeworkUpdateInfo,
       onProgress?: (progress: WeworkUpdateDownloadProgress) => void
     ): Promise<void> => {
-      if (activeDownloadRef.current?.version === update.version) {
-        return activeDownloadRef.current.promise
+      const activeDownload = activeDownloadRef.current
+      if (activeDownload?.version === update.version) {
+        if (!onProgress) return activeDownload.promise
+
+        activeDownload.progressListeners.add(onProgress)
+        return activeDownload.promise.finally(() => {
+          activeDownload.progressListeners.delete(onProgress)
+        })
       }
 
-      const promise = onProgress
-        ? downloadPendingWeworkUpdate(onProgress)
-        : downloadPendingWeworkUpdate()
-      activeDownloadRef.current = { version: update.version, promise }
+      const progressListeners = new Set<(progress: WeworkUpdateDownloadProgress) => void>()
+      if (onProgress) progressListeners.add(onProgress)
+      const promise = downloadPendingWeworkUpdate(progress => {
+        progressListeners.forEach(listener => listener(progress))
+      })
+      activeDownloadRef.current = { version: update.version, promise, progressListeners }
       const clearActiveDownload = () => {
         if (activeDownloadRef.current?.promise === promise) {
           activeDownloadRef.current = null
         }
       }
       void promise.then(clearActiveDownload, clearActiveDownload)
-      return promise
+      if (!onProgress) return promise
+
+      return promise.finally(() => {
+        progressListeners.delete(onProgress)
+      })
     },
     []
   )
 
   const startBackgroundDownload = useCallback(
     (update: WeworkUpdateInfo, channel: WeworkUpdateChannel) => {
-      void downloadUpdate(update)
+      setError(null)
+      setStatus('downloading')
+      setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
+      void downloadUpdate(update, setDownloadProgress)
         .then(() => {
           if (updateChannelRef.current === channel) {
             setDownloadedUpdateVersion(update.version)
+            setStatus('available')
+            setDownloadProgress(null)
           }
         })
-        .catch(() => undefined)
+        .catch(caughtError => {
+          if (updateChannelRef.current === channel) {
+            setStatus('error')
+            setError(createAppUpdateError(caughtError, 'download'))
+          }
+        })
     },
     [downloadUpdate]
   )
@@ -179,7 +196,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       if (activeCheck?.channel === channel) {
         if (!silent && channel === updateChannelRef.current) {
           setStatus('checking')
-          setMessage(null)
           setError(null)
         }
 
@@ -188,15 +204,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           setAvailableUpdate(result.update)
           if (result.error) {
             setStatus('error')
-            setMessage(null)
             setError(result.error)
           } else if (result.update) {
             setStatus('available')
-            setMessage(null)
             setError(null)
           } else {
             setStatus('upToDate')
-            setMessage('upToDate')
             setError(null)
           }
         }
@@ -209,7 +222,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       const promise = (async (): Promise<UpdateCheckResult> => {
         if (!silent && channel === updateChannelRef.current) {
           setStatus('checking')
-          setMessage(null)
           setError(null)
         }
 
@@ -224,23 +236,20 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
           if (update) {
             setStatus('available')
-            setMessage(null)
             setError(null)
             if (autoUpdateEnabledRef.current) {
               startBackgroundDownload(update, channel)
             }
           } else if (!silent) {
             setStatus('upToDate')
-            setMessage('upToDate')
             setError(null)
           }
 
           return { update, error: null }
         } catch (caughtError) {
-          const checkError = messageFor(caughtError)
+          const checkError = createAppUpdateError(caughtError, 'check')
           if (!silent && channel === updateChannelRef.current) {
             setStatus('error')
-            setMessage(null)
             setError(checkError)
           }
           return { update: null, error: checkError }
@@ -264,7 +273,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const startSimulatedDownload = useCallback(() => {
     setStatus('downloading')
     setDownloadProgress({ downloadedBytes: 0, totalBytes: SIMULATED_DOWNLOAD_TOTAL_BYTES })
-    setMessage(null)
     setError(null)
 
     let downloadedBytes = 0
@@ -301,7 +309,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       writePendingWeworkReleaseNotes(releaseNotes)
       setPendingReleaseNotes(releaseNotes)
       setStatus('upToDate')
-      setMessage('upToDate')
       return
     }
 
@@ -317,13 +324,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
     setStatus('installing')
     setDownloadProgress(null)
-    setMessage(null)
     setError(null)
 
     try {
       await installDownloadedWeworkUpdate()
     } catch (caughtError) {
-      const installError = messageFor(caughtError)
+      const installError = createAppUpdateError(caughtError, 'install')
       clearPendingWeworkReleaseNotes(availableUpdate.version)
       setDownloadedUpdateVersion(null)
       setDownloadProgress(null)
@@ -340,7 +346,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [appVersion, availableUpdate, status, updateChannel])
 
   const installUpdate = useCallback(async () => {
-    if (!availableUpdate || isUpdateBusy) return
+    if (!availableUpdate || status === 'installing') return
     if (downloadedUpdateVersion === availableUpdate.version) {
       setRestartConfirmationOpen(true)
       return
@@ -352,7 +358,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
     setStatus('downloading')
     setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
-    setMessage(null)
     setError(null)
 
     try {
@@ -364,15 +369,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     } catch (caughtError) {
       setDownloadProgress(null)
       setStatus('error')
-      setError(messageFor(caughtError))
+      setError(createAppUpdateError(caughtError, 'download'))
     }
-  }, [
-    availableUpdate,
-    downloadedUpdateVersion,
-    downloadUpdate,
-    isUpdateBusy,
-    startSimulatedDownload,
-  ])
+  }, [availableUpdate, downloadedUpdateVersion, downloadUpdate, startSimulatedDownload, status])
 
   const dismissInstalledReleaseNotes = useCallback(() => {
     if (installedReleaseNotes) {
@@ -404,7 +403,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setAvailableUpdate(null)
       resetDownloadedUpdate()
       setDownloadProgress(null)
-      setMessage(null)
       setError(null)
       await runCheck({ silent: false, channel })
     },
@@ -422,7 +420,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     })
     setStatus('available')
     setDownloadProgress(null)
-    setMessage(null)
     setError(null)
   }, [appVersion, clearSimulationTimer, resetDownloadedUpdate])
 
@@ -471,7 +468,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       installedReleaseNotes,
       status,
       downloadProgress,
-      message,
       error,
       checkNow,
       installUpdate,
@@ -488,7 +484,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       error,
       installUpdate,
       installedReleaseNotes,
-      message,
       setUpdateChannel,
       setAutoUpdateEnabled,
       status,

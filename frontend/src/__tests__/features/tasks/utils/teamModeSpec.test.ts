@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  getVideoParamVisibility,
   teamHidesVideoParam,
   teamUsesModeSpecCategory,
   usesVideoReferenceStorage,
@@ -14,7 +15,7 @@ const minuteVideoTeam = {
   name: 'workflow-video-team',
   mode_spec: {
     allowedModelCategories: ['video'],
-    hiddenVideoParams: ['duration'],
+    hiddenVideoParams: ['duration', 'generation_mode'],
   },
 } as unknown as Team
 
@@ -25,10 +26,29 @@ describe('teamModeSpec', () => {
     expect(teamUsesModeSpecCategory(minuteVideoTeam, 'image')).toBe(false)
   })
 
-  it('hides only the workflow-owned duration parameter', () => {
+  it('hides configured workflow-owned video controls', () => {
     expect(teamHidesVideoParam(minuteVideoTeam, 'duration')).toBe(true)
+    expect(teamHidesVideoParam(minuteVideoTeam, 'generation_mode')).toBe(true)
     expect(teamHidesVideoParam(minuteVideoTeam, 'ratio')).toBe(false)
     expect(teamHidesVideoParam(minuteVideoTeam, 'resolution')).toBe(false)
+  })
+
+  it('resolves workflow-owned video control visibility', () => {
+    expect(getVideoParamVisibility(['duration', 'model', 'ratio'])).toEqual({
+      showModel: false,
+      showRatio: false,
+      showDuration: false,
+      showResolution: true,
+      showSettings: true,
+    })
+    expect(getVideoParamVisibility(['duration', 'ratio', 'resolution'])).toMatchObject({
+      showModel: true,
+      showSettings: false,
+    })
+    expect(getVideoParamVisibility([], false)).toMatchObject({
+      showDuration: false,
+      showSettings: true,
+    })
   })
 
   it('uses video reference storage for video-capable chat teams', () => {

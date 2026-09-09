@@ -146,6 +146,56 @@ describe('runtimeConversationCache', () => {
     )
   })
 
+  test('reconciles buffered completion with the canonical hydration snapshot', () => {
+    const hydrationToken = beginRuntimeConversationHydration(address)
+    const content = 'Completed while the transcript was loading'
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'live-assistant-item',
+      content,
+      contentMode: 'snapshot',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-1',
+    })
+
+    completeRuntimeConversationHydration(address, hydrationToken, [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'canonical-assistant-item',
+            type: 'assistant_text',
+            content,
+          },
+        ],
+        status: 'done',
+      },
+    ])
+
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      {
+        content,
+        status: 'done',
+        runtimeDisplayItems: [
+          {
+            id: 'canonical-assistant-item',
+            type: 'assistant_text',
+            content,
+          },
+        ],
+      },
+    ])
+  })
+
   test('notifies conversation subscribers when the follow-up queue pause changes', () => {
     let notifications = 0
     const unsubscribe = subscribeRuntimeConversation(address, () => {

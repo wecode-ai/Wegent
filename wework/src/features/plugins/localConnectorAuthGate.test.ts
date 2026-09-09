@@ -66,6 +66,17 @@ function pluginWithLocalQr(overrides?: Partial<InstalledPlugin>): InstalledPlugi
 }
 
 describe('localConnectorAuthGate', () => {
+  test('does not start local login preflight for an account-managed connector', () => {
+    const plugin = pluginWithLocalQr()
+    plugin.spec.components.connectors![0].accountAuth = {
+      protocolVersion: 1,
+      credentialType: 'oauth2',
+      adapter: 'scripts/account-auth.py',
+    }
+    expect(listLocalConnectors([plugin])).toEqual([])
+    expect(findLocalConnectorsForMessage('plugin://weibo-api-wiki@wegent', [plugin])).toEqual([])
+  })
+
   test('lists local qr connectors', () => {
     const items = listLocalConnectors([pluginWithLocalQr()])
     expect(items).toHaveLength(1)
@@ -81,7 +92,7 @@ describe('localConnectorAuthGate', () => {
     expect(items[0]?.pluginKey).toBe('weibo-api-wiki')
   })
 
-  test('only preflights explicit plugin or connector auth messages', () => {
+  test('only preflights explicit plugin mentions', () => {
     expect(messageNeedsConnectorPreflight('继续分析这个问题')).toBe(false)
     expect(
       messageNeedsConnectorPreflight(
@@ -96,7 +107,12 @@ describe('localConnectorAuthGate', () => {
           connectorSlug: 'weibo-wiki',
         })
       )
-    ).toBe(true)
+    ).toBe(false)
+    expect(
+      messageNeedsConnectorPreflight(
+        'Investigate why the online Connector authentication fails before creating a task.'
+      )
+    ).toBe(false)
   })
 
   test('detects connector_auth_required payloads', () => {

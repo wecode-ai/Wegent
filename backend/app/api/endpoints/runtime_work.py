@@ -41,6 +41,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskMaterializeRequest,
+    RuntimeTaskMaterializeResponse,
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
@@ -810,6 +812,7 @@ async def delete_archived_conversations_bulk_endpoint(
     response_model=RuntimeTaskCreateResponse,
     response_model_by_alias=True,
 )
+@trace_async("runtime_work.create", "runtime_work.api")
 async def create_runtime_task_endpoint(
     request: RuntimeTaskCreateRequest,
     db: Session = Depends(get_db),
@@ -824,17 +827,45 @@ async def create_runtime_task_endpoint(
     )
 
 
+@router.post(
+    "/materialize",
+    response_model=RuntimeTaskMaterializeResponse,
+    response_model_by_alias=True,
+)
+@trace_async("runtime_work.materialize", "runtime_work.api")
+async def materialize_runtime_task_endpoint(
+    request: RuntimeTaskMaterializeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Compile a Team task for direct dispatch by a local runtime."""
+
+    compiled = runtime_work_service.materialize_runtime_task_create(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+    return RuntimeTaskMaterializeResponse(
+        payload=compiled.payload,
+        runtimeHandle={"wegentTeam": {"id": compiled.team_id}},
+    )
+
+
 @router.post("/llm-responses-proxy/responses")
+@router.post("/llm-responses-proxy/chat/completions")
+@router.post("/llm-responses-proxy/messages")
+@trace_async("runtime_work.llm_proxy", "runtime_work.api")
 async def llm_responses_proxy_endpoint(
     fastapi_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Proxy an LLM responses request to the real provider without exposing api_key.
+    """Proxy a native LLM request without exposing provider credentials.
 
     The Wework local executor authenticates with the user's backend token. The
-    backend resolves the selected Model CRD, attaches its provider credentials,
-    and forwards the request without exposing those credentials to Wework.
+    Runtime converts requests and responses using the Model CRD wire protocol.
+    The backend resolves the same protocol, attaches provider credentials, and
+    forwards the native request and response without further conversion.
     """
     from app.services.llm_proxy_service import proxy_llm_responses
 

@@ -38,6 +38,7 @@ import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
+  isDeviceInteractiveSessionEnabled,
   isRemoteDevice,
   supportsCloudLifecycleActions,
   supportsCloudSessions,
@@ -65,8 +66,10 @@ import {
   resolveDshSettingsPath,
   type WeworkDshSettingsPage,
 } from '@/features/dsh-runtime/dshSettings'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
 import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
@@ -80,7 +83,7 @@ interface ConnectionsSettingsPageProps {
   services?: WorkbenchServices
   devices?: RuntimeDeviceInfo[]
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
-  onRefreshWorkLists?: () => Promise<void>
+  onRefreshWorkLists?: RefreshWorkLists
 }
 
 function getSettingsNavFromPath(
@@ -445,8 +448,16 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     }
   }, [cloudConnection, device])
 
+  const isOnline = device.status === 'online'
+  const isRemote = isRemoteDevice(device)
+  const canUseCloudSessions = supportsCloudSessions(device)
+  const canUseRemoteSessions = supportsRemoteSessions(device)
+  const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
+  const terminalSessionEnabled = isDeviceInteractiveSessionEnabled(device, 'terminal')
+  const codeServerSessionEnabled = isDeviceInteractiveSessionEnabled(device, 'codeServer')
+
   const handleStartTerminal = useCallback(async () => {
-    if (device.status !== 'online') return
+    if (!isOnline || !terminalSessionEnabled) return
     setSessionLoading('terminal')
     setSessionError(null)
     try {
@@ -467,11 +478,12 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, device, remoteTerminalClientFactory, t])
+  }, [cloudConnection, device, isOnline, remoteTerminalClientFactory, t, terminalSessionEnabled])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
-      if (device.status !== 'online') return
+      const sessionEnabled = type === 'terminal' ? terminalSessionEnabled : codeServerSessionEnabled
+      if (!isOnline || !sessionEnabled) return
       setSessionLoading(type)
       setSessionError(null)
       try {
@@ -496,7 +508,14 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
         setSessionLoading(null)
       }
     },
-    [cloudConnection, device.device_id, device.status, t]
+    [
+      cloudConnection,
+      codeServerSessionEnabled,
+      device.device_id,
+      isOnline,
+      t,
+      terminalSessionEnabled,
+    ]
   )
 
   const handleOpenPendingIde = useCallback(async () => {
@@ -604,16 +623,11 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     setConnectionInfoOpen(true)
   }
 
-  const isOnline = device.status === 'online'
   const metrics =
     device.status !== 'offline' && metricsState?.deviceId === device.device_id
       ? metricsState.value
       : null
-  const isRemote = isRemoteDevice(device)
   const displayName = deviceDisplayName(device)
-  const canUseCloudSessions = supportsCloudSessions(device)
-  const canUseRemoteSessions = supportsRemoteSessions(device)
-  const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
   const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
   const canDeleteOfflineRemoteDevice = isRemote && device.status === 'offline'
 
@@ -687,7 +701,12 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                 icon={Terminal}
                 label="终端"
                 onClick={handleStartTerminal}
-                disabled={!isOnline || sessionLoading === 'terminal'}
+                disabled={!isOnline || !terminalSessionEnabled || sessionLoading === 'terminal'}
+                title={
+                  !terminalSessionEnabled
+                    ? t('workbench.project_terminal_unavailable_tooltip')
+                    : undefined
+                }
               />
             )}
             {canUseDeviceSessions && (
@@ -697,7 +716,14 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   icon={Code2}
                   label="IDE"
                   onClick={() => handleStartCloudSession('code-server')}
-                  disabled={!isOnline || sessionLoading === 'code-server'}
+                  disabled={
+                    !isOnline || !codeServerSessionEnabled || sessionLoading === 'code-server'
+                  }
+                  title={
+                    !codeServerSessionEnabled
+                      ? t('workbench.project_ide_unavailable_tooltip')
+                      : undefined
+                  }
                 />
                 {canUseCloudSessions && cloudDesktopExtension.available && (
                   <CloudDesktopDeviceAction
@@ -1140,6 +1166,8 @@ export function ConnectionsDeviceSettingsPage({
               </button>
             </div>
           </section>
+
+          <DshSettingsSectionSurface page="connections" />
         </SettingsPage>
 
         {connectDialogOpen && (
@@ -1208,6 +1236,8 @@ export function ConnectionsDeviceSettingsPage({
         </section>
 
         <section className="mt-6 space-y-5">
+          <DshSettingsSectionSurface page="connections" />
+
           <CloudModelsSection cloudConnection={cloudConnection} />
 
           <div className="rounded-lg border border-border bg-background p-5">
@@ -1305,10 +1335,24 @@ export function ConnectionsSettingsPage({
   const settingsContributions = useDshSlotEntries<WeworkDshSettingsPage>(
     WEWORK_DSH_SLOTS.settingsPage
   )
-  const visibleSettingsNavItems = settingsContributions.filter(
-    item =>
-      (!item.experimental || experimentalFeaturesEnabled) && (!item.desktopOnly || isDesktopRuntime)
-  )
+  const visibleSettingsNavItems = useMemo(() => {
+    const visible = settingsContributions.filter(
+      item =>
+        (!item.experimental || experimentalFeaturesEnabled) &&
+        (!item.desktopOnly || isDesktopRuntime)
+    )
+    const categoryOrder: string[] = []
+    const categoryItems = new Map<string, WeworkDshSettingsPage[]>()
+    for (const item of visible) {
+      const category = item.category ?? ''
+      if (!categoryItems.has(category)) {
+        categoryOrder.push(category)
+        categoryItems.set(category, [])
+      }
+      categoryItems.get(category)?.push(item)
+    }
+    return categoryOrder.flatMap(category => categoryItems.get(category) ?? [])
+  }, [experimentalFeaturesEnabled, isDesktopRuntime, settingsContributions])
   const shouldAutoOpenAddCloudDeviceDialog =
     autoOpenAddCloudDeviceDialog ||
     new URLSearchParams(window.location.search).get('addDevice') === '1'

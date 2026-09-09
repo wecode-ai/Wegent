@@ -34,6 +34,10 @@ from app.services.device.command_service import (
     DeviceCommandError,
     local_device_command_service,
 )
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    remote_control_is_enabled,
+)
 from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
@@ -64,12 +68,65 @@ PROJECT_CHAT_AGENT_FAILED_EVENT = "wework:project_chat:agent:failed"
 PROJECT_CHAT_WEGENT_CONTINUE_EVENT = "wework:project_chat:wegent:continue"
 PROJECT_CHAT_PROJECT_ROOM_PREFIX = "wework-project-chat:project:"
 PROJECT_CHAT_TASK_ROOM_PREFIX = "wework-project-chat:task:"
+RUNTIME_EXECUTION_REQUEST_KEYS = (
+    "executionRequest",
+    "execution_request",
+    "friendlyTitleExecutionRequest",
+    "friendly_title_execution_request",
+)
 
 
 def wework_runtime_user_room(user_id: int) -> str:
     """Return the Wework runtime relay room for one user."""
 
     return f"{WEWORK_RUNTIME_USER_ROOM_PREFIX}{user_id}"
+
+
+def has_runtime_execution_request(params: dict[str, Any]) -> bool:
+    """Return whether runtime IPC params contain an execution identity."""
+
+    return any(
+        isinstance(params.get(request_key), dict)
+        for request_key in RUNTIME_EXECUTION_REQUEST_KEYS
+    )
+
+
+def bind_authenticated_runtime_identity(
+    params: dict[str, Any],
+    *,
+    user_id: int,
+    user_name: str,
+    user_email: str,
+) -> dict[str, Any]:
+    """Bind runtime execution requests to the authenticated Wework user."""
+
+    bound_params = dict(params)
+    for request_key in RUNTIME_EXECUTION_REQUEST_KEYS:
+        raw_execution_request = params.get(request_key)
+        if not isinstance(raw_execution_request, dict):
+            continue
+
+        execution_request = dict(raw_execution_request)
+        raw_user = execution_request.get("user")
+        user = dict(raw_user) if isinstance(raw_user, dict) else {}
+        user.update(
+            {
+                "id": user_id,
+                "name": user_name,
+                "user_name": user_name,
+                "email": user_email,
+            }
+        )
+        execution_request.update(
+            {
+                "user": user,
+                "user_id": user_id,
+                "user_name": user_name,
+            }
+        )
+        bound_params[request_key] = execution_request
+
+    return bound_params
 
 
 class WeworkRuntimeNamespace(socketio.AsyncNamespace):
@@ -129,6 +186,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             session_data={
                 "user_id": user.id,
                 "user_name": user.user_name,
+                "user_email": user.email or "",
                 "request_id": request_id,
                 "token_exp": get_token_expiry(token),
                 "auth_token": token,
@@ -155,6 +213,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             return ipc_error(data, "unauthorized", "Not authenticated")
 
         request_id = request_id_from(data)
+        set_request_context(request_id)
         method = string_field(data, "method")
         device_id = string_field(data, "device_id") or string_field(data, "deviceId")
         params = data.get("params")
@@ -168,6 +227,21 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         if not isinstance(params, dict):
             return ipc_error(
                 data, "bad_request", "params must be an object", request_id
+            )
+        if has_runtime_execution_request(params):
+            user_name = string_field(session, "user_name")
+            if not user_name:
+                return ipc_error(
+                    data,
+                    "unauthorized",
+                    "Authenticated runtime user identity is incomplete",
+                    request_id,
+                )
+            params = bind_authenticated_runtime_identity(
+                params,
+                user_id=int(user_id),
+                user_name=user_name,
+                user_email=string_field(session, "user_email") or "",
             )
 
         try:
@@ -411,6 +485,13 @@ async def relay_ipc_request(
                 retryable=exc.retryable,
                 details=exc.details,
             ) from exc
+        if not remote_control_is_enabled(route.device_type):
+            raise RuntimeRpcError(
+                REMOTE_CONTROL_DISABLED_MESSAGE,
+                code="remote_control_disabled",
+                retryable=False,
+                details={"deviceId": route.logical_device_id},
+            )
         return await local_device_command_service.execute_command(
             user_id=user_id,
             device_id=route.runtime_device_id,

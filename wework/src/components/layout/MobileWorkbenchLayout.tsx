@@ -604,6 +604,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 <h1 className="heading-lg text-center tracking-normal">{emptyTitle}</h1>
                 <ProjectWorkBar
                   {...effectiveProjectWork}
+                  extensionContext={effectiveProjectWork}
                   className="min-h-0 flex-col justify-center gap-1 px-0"
                   buttonClassName="bg-surface px-4 text-text-primary"
                   menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"

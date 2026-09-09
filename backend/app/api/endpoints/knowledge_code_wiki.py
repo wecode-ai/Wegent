@@ -36,9 +36,12 @@ from app.core import security
 from app.core.wiki_config import wiki_settings
 from app.models.kind import Kind
 from app.models.user import User
+from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import (
     CodeWikiCreate,
     CodeWikiExisting,
+    CodeWikiGenerationStrategyCapabilities,
+    CodeWikiGenerationStrategyOption,
     CodeWikiListItem,
     CodeWikiListResponse,
     CodeWikiPageNode,
@@ -47,6 +50,7 @@ from app.schemas.knowledge import (
     CodeWikiResolveResponse,
     CodeWikiRunCreate,
     CodeWikiRunHistory,
+    CodeWikiRunProgress,
     CodeWikiRunRecord,
     CodeWikiRunResponse,
     CodeWikiRunStatus,
@@ -54,18 +58,27 @@ from app.schemas.knowledge import (
     KnowledgeBaseType,
     ResourceScope,
 )
+from app.services.adapters.task_kinds import task_kinds_service
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.diagnostics import diagnose
 from app.services.knowledge.code_wiki.generation import (
+    FailureCode,
     GenerationInFlight,
     GenerationWikiNotFound,
     current_run_state,
     run_history,
 )
+from app.services.knowledge.code_wiki.generation_policy import (
+    ready_selectable_strategies,
+)
+from app.services.knowledge.code_wiki.generation_strategy import (
+    configured_policy,
+)
 from app.services.knowledge.code_wiki.navigation import page_tree
 from app.services.knowledge.code_wiki.publisher import (
     PUBLISHED_AT_KEY,
     PUBLISHED_COMMIT_KEY,
+    published_generation_id,
 )
 from app.services.knowledge.code_wiki.registry import (
     CODE_WIKI_NAMESPACE,
@@ -76,6 +89,7 @@ from app.services.knowledge.code_wiki.resolution import resolve_repository
 from app.services.knowledge.code_wiki.run_mode import ChangedPath
 from app.services.knowledge.code_wiki.runner import (
     CodeWikiRunError,
+    finish_run,
     republish_generation,
     start_first_run,
     start_run,
@@ -86,11 +100,57 @@ from app.services.knowledge.code_wiki.source import (
     assert_user_can_read_source,
 )
 from app.services.knowledge.orchestrator import knowledge_orchestrator
-from shared.telemetry.decorators import add_span_event, trace_sync
+from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get(
+    "/code-wikis/generation-strategies",
+    response_model=CodeWikiGenerationStrategyCapabilities,
+)
+@trace_sync("get_code_wiki_generation_strategies", "knowledge.api")
+def get_code_wiki_generation_strategies(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> CodeWikiGenerationStrategyCapabilities:
+    """Choices enabled by deployment policy and runnable by this caller.
+
+    Team names are intentionally not returned. They are deployment wiring, while this
+    small interface is all a create or settings form needs to render a safe choice.
+    """
+    strategies, readiness = ready_selectable_strategies(db, user=current_user)
+    options = []
+    for strategy in strategies:
+        reason = readiness[strategy.strategy_id]
+        if reason:
+            logger.warning(
+                "[code_wiki] hiding unavailable generation strategy %s for user %s: %s",
+                strategy.strategy_id,
+                current_user.id,
+                reason,
+            )
+            continue
+        options.append(
+            CodeWikiGenerationStrategyOption(
+                id=strategy.strategy_id,
+                revision=strategy.revision,
+                display_name=strategy.definition.display_name,
+                description=strategy.definition.description,
+            )
+        )
+
+    default_strategy = configured_policy(db).default_strategy
+    return CodeWikiGenerationStrategyCapabilities(
+        default_strategy=(
+            default_strategy
+            if any(option.id == default_strategy for option in options)
+            else None
+        ),
+        strategies=options,
+    )
 
 
 @router.post("/code-wikis/resolve", response_model=CodeWikiResolveResponse)
@@ -279,11 +339,13 @@ def create_code_wiki(
             namespace=data.namespace or CODE_WIKI_NAMESPACE,
             language=data.language,
             show_generation_task=data.show_generation_task,
+            generation_strategy=data.generation_strategy,
             # A code wiki is an ordinary knowledge base with a repository attached,
             # so every one of these applies to it. Listing only the ones it "needs"
             # is what silently dropped the summary settings and left the retrieval
             # config to be auto-resolved rather than taken from the form.
             direct_access_requirement=data.direct_access_requirement,
+            allow_document_download=data.allow_document_download,
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
             execution_model_ref=data.execution_model_ref,
@@ -348,6 +410,7 @@ def create_code_wiki(
 @trace_sync("get_code_wiki_pages", "knowledge.api")
 def get_code_wiki_pages(
     knowledge_base_id: int,
+    response: Response,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -357,8 +420,13 @@ def get_code_wiki_pages(
     wiki account, so its ACL grants nobody else anything.
     """
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    # This is the one read the reader repeats immediately after a generation
+    # publishes. Serving its pre-publication tree from a browser or proxy cache
+    # leaves a completed version looking empty until a manual reload.
+    response.headers["Cache-Control"] = "no-store"
     return CodeWikiPageTree(
-        pages=[_as_page_node(node) for node in page_tree(db, knowledge_base)]
+        pages=[_as_page_node(node) for node in page_tree(db, knowledge_base)],
+        published_generation_id=published_generation_id(knowledge_base),
     )
 
 
@@ -389,7 +457,7 @@ def _readable_code_wiki(db: Session, user: User, knowledge_base_id: int) -> Kind
     return knowledge_base
 
 
-def _assert_caller_may_regenerate(
+def _assert_caller_may_manage_generation(
     db: Session, user: User, knowledge_base: Kind
 ) -> None:
     """Refuse a caller who may read the wiki but cannot manage it.
@@ -403,7 +471,7 @@ def _assert_caller_may_regenerate(
     if not KnowledgeService.can_manage_knowledge_base(db, knowledge_base.id, user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Knowledge Base manage permission is required to regenerate",
+            detail="Knowledge Base manage permission is required to manage generations",
         )
 
 
@@ -423,6 +491,7 @@ def get_code_wiki_status(
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     state = current_run_state(db, knowledge_base)
     spec = (knowledge_base.json or {}).get("spec", {})
+    progress = state.progress
     return CodeWikiRunStatus(
         status=state.status,
         generation_id=state.generation_id,
@@ -430,9 +499,73 @@ def get_code_wiki_status(
         error_message=state.error_message,
         failure_code=state.failure_code,
         is_stale=state.is_stale,
+        progress=(
+            CodeWikiRunProgress(
+                stage=progress.stage,
+                current_step=progress.current_step,
+                total_steps=progress.total_steps,
+                pages_written=progress.pages_written,
+                pages_total=progress.pages_total,
+            )
+            if progress
+            else None
+        ),
         last_published_at=spec.get(PUBLISHED_AT_KEY),
         last_published_commit=str(spec.get(PUBLISHED_COMMIT_KEY, "") or ""),
     )
+
+
+@router.post(
+    "/{knowledge_base_id}/code-wiki/generations/{generation_id}/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@trace_async("cancel_code_wiki_generation", "knowledge.api")
+async def cancel_code_wiki_generation(
+    knowledge_base_id: int,
+    generation_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Stop the current generation and immediately settle its wiki state.
+
+    The generation task is intentionally hidden from many conversation lists, so the
+    wiki owns this action instead of making the reader discover a task id. The task
+    service itself authorizes by task owner; a knowledge-base maintainer is also
+    allowed to stop a run, so this route authorizes that first and invokes the task
+    service as the generation owner.
+    """
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    _assert_caller_may_manage_generation(db, current_user, knowledge_base)
+    generation = db.get(WikiGeneration, generation_id)
+    if (
+        generation is None
+        or generation.kind_id != knowledge_base.id
+        or generation.status != WikiGenerationStatus.RUNNING
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Code wiki generation is no longer running",
+        )
+    if not generation.task_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Code wiki generation has no task to cancel",
+        )
+
+    await task_kinds_service.cancel_task(
+        db=db,
+        task_id=generation.task_id,
+        user_id=generation.user_id,
+        background_task_runner=background_tasks.add_task,
+    )
+    finish_run(
+        db,
+        generation=generation,
+        succeeded=False,
+        failure_code=FailureCode.CANCELLED_BY_USER,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -469,6 +602,8 @@ def get_code_wiki_history(
                 published=record.published,
                 task_id=record.task_id,
                 task_status=record.task_status,
+                strategy_id=record.strategy_id,
+                strategy_revision=record.strategy_revision,
             )
             for record in run_history(db, knowledge_base)
         ]
@@ -496,7 +631,7 @@ def republish_code_wiki_version(
     repaired by coming back.
     """
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
-    _assert_caller_may_regenerate(db, current_user, knowledge_base)
+    _assert_caller_may_manage_generation(db, current_user, knowledge_base)
 
     try:
         result = republish_generation(
@@ -547,7 +682,7 @@ def start_code_wiki_run(
     which it was.
     """
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
-    _assert_caller_may_regenerate(db, current_user, knowledge_base)
+    _assert_caller_may_manage_generation(db, current_user, knowledge_base)
 
     try:
         started = start_run(
@@ -589,4 +724,6 @@ def start_code_wiki_run(
         reason=started.reason,
         generation_id=started.generation.id if started.generation else 0,
         task_id=started.task_id,
+        strategy_id=started.strategy_id,
+        strategy_revision=started.strategy_revision,
     )

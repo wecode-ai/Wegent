@@ -45,4 +45,24 @@ describe('DeletePersonalPluginDialog', () => {
     expect(screen.getByText(/当前有 2 位其他用户安装/)).toHaveTextContent('4 个对象')
     expect(screen.getByTestId('plugin-delete-confirm-button')).toHaveTextContent('停用并删除')
   })
+
+  test('explains that an active publication is withdrawn before deletion', () => {
+    render(
+      <DeletePersonalPluginDialog
+        pluginName="Dev Tools"
+        installed
+        published={false}
+        publicationActive
+        impact={null}
+        deleting={false}
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText(/仍有进行中的企业全员发布申请/)).toHaveTextContent(
+      '只有撤回成功才会继续删除个人插件'
+    )
+    expect(screen.getByTestId('plugin-delete-confirm-button')).toHaveTextContent('撤回申请并删除')
+  })
 })
