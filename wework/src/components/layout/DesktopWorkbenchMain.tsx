@@ -54,7 +54,11 @@ import {
   isCloudDevice,
   isRemoteDevice,
 } from '@/lib/device-capabilities'
-import type { EnvironmentDiffMode } from '@/api/environment'
+import {
+  applyProjectEnvironmentPatch,
+  type EnvironmentDiffMode,
+  type GitPatchAction,
+} from '@/api/environment'
 import type {
   WorkspaceFileOpenOptions,
   WorkspaceFileOpenRequest,
@@ -1010,6 +1014,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     startNewChat,
   } = useWorkbenchPaneContext()
   const { services, openRuntimeTask, workspaceTabId } = useWorkbench()
+  const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
@@ -4041,6 +4046,49 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [devices, openRightPanelTab, setOpenFileRequest]
   )
 
+  const applyReviewPatch = useCallback(
+    async (action: GitPatchAction, patch: string) => {
+      if (!deviceApi || !workspaceTarget) {
+        throw new Error(t('workbench.environment_review_unavailable'))
+      }
+      await applyProjectEnvironmentPatch(
+        deviceApi,
+        workspaceProject,
+        action,
+        patch,
+        workspaceTarget
+      )
+      if (reviewState.reloadDiff) {
+        await openReviewFromDiffLoader(reviewState.reloadDiff, {
+          reviewTitle: reviewState.reviewTitle,
+          reviewMode: reviewState.reviewMode,
+          defaultFileTreeVisible: reviewState.defaultFileTreeVisible,
+          branchName: reviewState.branchName,
+          targetBranchName: reviewState.targetBranchName,
+          focusFilePath: reviewState.focusFilePath,
+          sourceSubtaskId: reviewState.sourceSubtaskId,
+        })
+      }
+      await refreshEnvironmentInfo()
+    },
+    [
+      openReviewFromDiffLoader,
+      refreshEnvironmentInfo,
+      reviewState.branchName,
+      reviewState.defaultFileTreeVisible,
+      reviewState.focusFilePath,
+      reviewState.reloadDiff,
+      reviewState.reviewMode,
+      reviewState.reviewTitle,
+      reviewState.sourceSubtaskId,
+      reviewState.targetBranchName,
+      deviceApi,
+      t,
+      workspaceProject,
+      workspaceTarget,
+    ]
+  )
+
   const refreshReview = useCallback(() => {
     if (!reviewState.reloadDiff) return
 
@@ -5369,6 +5417,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onCloseTab={closeRightPanelTab}
               onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+              onOpenReviewSourceFile={(path, lineStart, lineEnd) =>
+                void openWorkspaceFileFromMessage(path, { lineStart, lineEnd })
+              }
+              onApplyReviewPatch={
+                reviewState.reviewMode === 'unstaged' || reviewState.reviewMode === 'staged'
+                  ? applyReviewPatch
+                  : undefined
+              }
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
               getChatInitialAddress={tab => temporaryChatAddresses[tab]}

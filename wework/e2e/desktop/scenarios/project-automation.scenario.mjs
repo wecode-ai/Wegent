@@ -2101,7 +2101,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
     const executionPrompt = '[data-testid^="execution-node-prompt-"]'
     const unsavedPrompt = '尚未保存的自动化输入必须保留。'
-    await control.command('click', '[data-testid^="execution-node-step-"]', {
+    await control.command('clickElementWithText', '[data-testid^="execution-node-step-"]', {
+      text: '实现与验证',
       visible: true,
     })
     await control.command('fill', executionPrompt, { value: unsavedPrompt })

@@ -117,6 +117,8 @@ When no task is running, the Wework Popout Window uses a compact composer with a
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
+Selecting a writable text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
+
 Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
@@ -157,7 +159,13 @@ Process text shown above tool calls while a task is running is also selectable r
 
 ## Review and undo changes
 
-Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the full diff, filter files, change wrapping, or copy a `git apply` command. The original execution device must be online.
+Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the complete diff in the right workspace. Normal review mode keeps every file diff rendered. Selecting a file in the tree, or opening a specific changed file from an assistant message, scrolls the content to that file instead of hiding the other files. The original execution device must be online.
+
+The review toolbar supports unified and split layouts. The file tree can be shown or hidden; showing it again preserves its filter, selected file, and scroll position. Selecting a file name in a diff heading opens the right-side **Files** tab at that file's first changed line. Selecting an additions-side line number that maps to the current file opens the corresponding source line. Deletion-side line numbers do not map to the current file and therefore do not navigate.
+
+For unstaged changes, use **Stage** or **Revert** on an individual file or hunk. For staged changes, use **Unstage** on an individual file or hunk. These actions affect only the selected file or hunk and leave the other changes from the turn untouched.
+
+Select a code range in the diff to add a comment. The comment returns to the current conversation composer as code context, supporting a review, feedback, AI revision, and re-review loop.
 
 Select **Undo** to reverse only that turn. Wework checks the reverse patch first and will not overwrite conflicting later changes.
 
