@@ -69,7 +69,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
 
       const readmeSelector = await findTreeItem(control, 'README.md', uiTimeoutMs)
       await control.command('click', readmeSelector)
-      await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
+      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         text: 'Desktop E2E workspace',
         timeoutMs: uiTimeoutMs,
       })
@@ -92,20 +92,14 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'Switching local files cleared the current preview before the next file loaded'
       )
 
-      await control.command(
-        'waitFor',
-        '[data-testid="workspace-file-preview-code-view"][data-theme="dark"]',
-        { timeoutMs: uiTimeoutMs }
-      )
+      await control.command('waitFor', '[data-testid="workspace-file-editor"][data-theme="dark"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, 'auth.ts'),
         'The second local file did not replace the retained preview after loading'
       )
-      await control.command('click', '[data-testid="workspace-file-edit-button"]')
-      await control.command('waitFor', '[data-testid="workspace-file-editor"][data-theme="dark"]', {
-        timeoutMs: uiTimeoutMs,
-      })
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')
       await control.command('fill', '[data-testid="workspace-file-editor"] .cm-content', {
         value: 'export const authenticated = false\n',
@@ -133,7 +127,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         '[data-testid="workspace-file-preview-loading-indicator"]',
         uiTimeoutMs
       )
-      await control.command('click', '[data-testid="workspace-file-edit-button"]')
       await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
         timeoutMs: uiTimeoutMs,
       })

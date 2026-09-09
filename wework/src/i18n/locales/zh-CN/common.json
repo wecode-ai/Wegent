@@ -707,7 +707,6 @@
     "workspace_file_show_tree": "显示目录树",
     "workspace_file_reveal_location": "打开位置",
     "workspace_file_open": "打开",
-    "workspace_file_edit": "编辑",
     "workspace_file_preview": "预览",
     "workspace_file_source": "源码",
     "workspace_file_show_preview": "显示 Markdown 预览",

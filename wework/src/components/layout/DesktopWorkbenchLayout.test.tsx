@@ -9361,6 +9361,7 @@ describe('DesktopWorkbenchLayout', () => {
         size: 25,
       })
     })
+    const writeWorkspaceTextFile = vi.fn()
 
     render(
       <FileWorkspacePanel
@@ -9370,23 +9371,25 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
           workspaceSource: 'remote',
         }}
-        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          writeWorkspaceTextFile,
+        }}
         onAddCodeComment={vi.fn()}
       />
     )
 
     await user.click(await screen.findByText('first.ts'))
     await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
-        'data-file-path',
-        '/workspace/project/first.ts'
+      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
+        'export const first = true'
       )
     )
     await user.click(screen.getByText('second.ts'))
 
-    expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
-      'data-file-path',
-      '/workspace/project/first.ts'
+    expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
+      'export const first = true'
     )
     expect(screen.getByTestId('workspace-file-preview-loading-indicator')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
@@ -9404,9 +9407,8 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
-        'data-file-path',
-        '/workspace/project/second.ts'
+      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(
+        'export const second = true'
       )
     )
     expect(screen.queryByTestId('workspace-file-preview-loading-indicator')).not.toBeInTheDocument()
@@ -9465,12 +9467,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
-    )
-
-    await user.click(screen.getByTestId('workspace-file-edit-button'))
-    const editor = screen.getByTestId('workspace-file-editor')
+    const editor = await screen.findByTestId('workspace-file-editor')
+    expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
     const codeMirrorContent = editor.querySelector('.cm-content')
     expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
 
@@ -9487,10 +9485,9 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     await waitFor(() => {
-      expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
-      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
-      expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('hello world')
+      expect(screen.getByTestId('workspace-file-editor')).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-file-save-button')).toBeDisabled()
+      expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
     })
   })
 

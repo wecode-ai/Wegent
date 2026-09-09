@@ -115,6 +115,8 @@ When no task is running, the Wework Popout Window uses a compact composer with a
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
+Selecting a writable text file opens it directly in the editor without a separate **Edit** action. The editor remains open after saving, and unsaved changes can be saved or discarded in place. Markdown files can switch between the editor and rendered preview, while read-only text and binary files remain in preview mode.
+
 Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.

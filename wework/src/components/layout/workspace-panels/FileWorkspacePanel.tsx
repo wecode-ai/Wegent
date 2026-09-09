@@ -8,7 +8,6 @@ import {
   Folder,
   Folders,
   Loader2,
-  Pencil,
   Save,
   X,
 } from 'lucide-react'
@@ -28,6 +27,7 @@ import {
   logFilePreviewDiagnostic,
   scheduleFilePreviewMainThreadProbe,
 } from '@/lib/file-preview-diagnostics'
+import { publishSelectedTextSelection } from '@/lib/selected-text-drag'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import {
@@ -248,9 +248,14 @@ export function FileWorkspacePanel({
   const latestTreeRequestByPath = useRef(new Map<string, number>())
   const directoryLoadedAtByPath = useRef(new Map<string, number>())
   const fileRequestSequence = useRef(0)
+  const previewPathRef = useRef<string | null>(null)
   const fileOpenerRequestSequence = useRef(0)
   const fileOpenerMenuRef = useRef<HTMLDivElement>(null)
   const workspaceTargetMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    previewPathRef.current = preview?.path ?? null
+  }, [preview?.path])
 
   const warmFileOpenerIcons = useCallback(async (openers: LocalFileOpener[]) => {
     for (const opener of openers) {
@@ -366,6 +371,11 @@ export function FileWorkspacePanel({
         requestId,
         workspaceSource: stableTarget.workspaceSource ?? null,
       })
+      const previousPreviewPath = previewPathRef.current
+      if (previousPreviewPath && previousPreviewPath !== entry.path) {
+        publishSelectedTextSelection(`workspace-editor:${previousPreviewPath}`, null)
+        publishSelectedTextSelection(`workspace-preview:${previousPreviewPath}`, null)
+      }
       flushSync(() => setPreviewTransitionVisible(true))
       setSelectedFilePath(entry.path)
       onSelectionChange?.({ path: entry.path, isDirectory: false })
@@ -378,8 +388,6 @@ export function FileWorkspacePanel({
       scheduleFilePreviewMainThreadProbe(traceId, 'preview_loading_set')
       setPreviewLoadingProgress(null)
       setPreviewError(null)
-      setEditing(false)
-      setEditedContent('')
       setSaveError(null)
       if (stableTarget.workspaceSource !== 'remote') {
         void loadFileOpeners(entry.path)
@@ -414,6 +422,10 @@ export function FileWorkspacePanel({
           if (fileRequestSequence.current !== requestId) return
           setBinaryPreview(null)
           setPreview(file)
+          setEditedContent(file.content)
+          const editable = Boolean(file.editable && writeWorkspaceTextFile)
+          setEditing(editable)
+          setMarkdownMode(editable && isMarkdownFile(file.name) ? 'source' : 'preview')
           return
         }
         if (!readWorkspaceFileChunk) {
@@ -484,6 +496,8 @@ export function FileWorkspacePanel({
           chunkCount: chunks.length,
         })
         setPreview(null)
+        setEditing(false)
+        setEditedContent('')
         setBinaryPreview({
           path: chunk.path,
           name: chunk.name,
@@ -533,6 +547,7 @@ export function FileWorkspacePanel({
       readWorkspaceTextFile,
       stableTarget,
       t,
+      writeWorkspaceTextFile,
     ]
   )
 
@@ -634,7 +649,8 @@ export function FileWorkspacePanel({
     [listWorkspaceEntries, loadTree, onSelectionChange, openFile, stableTarget]
   )
 
-  const dirty = editing && preview !== null && editedContent !== preview.content
+  const canEditPreview = Boolean(preview?.editable && writeWorkspaceTextFile)
+  const dirty = canEditPreview && preview !== null && editedContent !== preview.content
 
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -660,7 +676,10 @@ export function FileWorkspacePanel({
       )
       setPreview(saved)
       setEditedContent(saved.content)
-      setEditing(false)
+      setEditing(Boolean(saved.editable))
+      if (saved.editable && isMarkdownFile(saved.name)) {
+        setMarkdownMode('source')
+      }
       track('feature_action_completed', { domain: 'workspace_file', action: 'update' })
       return true
     } catch (error) {
@@ -885,6 +904,8 @@ export function FileWorkspacePanel({
     retainedPreview !== null &&
     selectedFilePath !== null &&
     retainedPreview.path !== selectedFilePath
+  const displayedPreview =
+    preview && canEditPreview && !editing ? { ...preview, content: editedContent } : preview
 
   const toggleFileOpenerMenu = async () => {
     if (fileOpenerMenuOpen) {
@@ -978,74 +999,60 @@ export function FileWorkspacePanel({
               )}
             </div>
           )}
-          {preview?.editable && writeWorkspaceTextFile && !editing && (
-            <button
-              type="button"
-              data-testid="workspace-file-edit-button"
-              onClick={() => {
-                setEditedContent(preview.content)
-                setSaveError(null)
-                setEditing(true)
-              }}
-              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-            >
-              <Pencil className="h-4 w-4" />
-              {t('workbench.workspace_file_edit')}
-            </button>
-          )}
-          {preview && isMarkdownFile(preview.name) && !editing && (
+          {preview && isMarkdownFile(preview.name) && (
             <button
               type="button"
               data-testid="workspace-file-markdown-mode-button"
-              onClick={() => setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))}
+              onClick={() => {
+                if (canEditPreview) {
+                  setEditing(current => !current)
+                  setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))
+                  return
+                }
+                setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))
+              }}
               className="flex h-11 min-w-11 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:min-w-0"
               aria-label={
-                markdownMode === 'preview'
-                  ? t('workbench.workspace_file_show_source')
-                  : t('workbench.workspace_file_show_preview')
+                editing || markdownMode === 'source'
+                  ? t('workbench.workspace_file_show_preview')
+                  : t('workbench.workspace_file_show_source')
               }
             >
-              {markdownMode === 'preview' ? (
-                <Code2 className="h-4 w-4" />
-              ) : (
+              {editing || markdownMode === 'source' ? (
                 <Eye className="h-4 w-4" />
+              ) : (
+                <Code2 className="h-4 w-4" />
               )}
-              {markdownMode === 'preview'
-                ? t('workbench.workspace_file_source')
-                : t('workbench.workspace_file_preview')}
+              {editing || markdownMode === 'source'
+                ? t('workbench.workspace_file_preview')
+                : t('workbench.workspace_file_source')}
             </button>
           )}
-          {editing && (
-            <>
-              <button
-                type="button"
-                data-testid="workspace-file-cancel-edit-button"
-                onClick={() =>
-                  navigateWithDirtyGuard(() => {
-                    setEditing(false)
-                    setEditedContent(preview?.content ?? '')
-                  })
-                }
-                className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted"
-              >
-                <X className="h-4 w-4" />
-                {t('workbench.cancel')}
-              </button>
-              <button
-                type="button"
-                data-testid="workspace-file-save-button"
-                disabled={!dirty || saving}
-                onClick={() => void saveFile()}
-                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-primary-contrast disabled:opacity-50"
-              >
-                {saving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {t('workbench.workspace_file_save')}
-              </button>
-            </>
+          {canEditPreview && dirty && (
+            <button
+              type="button"
+              data-testid="workspace-file-cancel-edit-button"
+              onClick={() => {
+                setEditedContent(preview?.content ?? '')
+                setSaveError(null)
+              }}
+              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted"
+            >
+              <X className="h-4 w-4" />
+              {t('workbench.workspace_file_discard')}
+            </button>
+          )}
+          {canEditPreview && (
+            <button
+              type="button"
+              data-testid="workspace-file-save-button"
+              disabled={!dirty || saving}
+              onClick={() => void saveFile()}
+              className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-primary-contrast disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {t('workbench.workspace_file_save')}
+            </button>
           )}
           {canOpenFile && (
             <div
@@ -1133,7 +1140,7 @@ export function FileWorkspacePanel({
       </header>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <WorkspaceFilePreview
-          file={preview}
+          file={displayedPreview}
           binaryFile={binaryPreview}
           loading={previewLoading}
           loadingProgress={previewLoadingProgress}
