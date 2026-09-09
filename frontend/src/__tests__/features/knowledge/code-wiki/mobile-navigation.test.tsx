@@ -69,6 +69,7 @@ jest.mock('@/apis/code-wiki', () => ({
     pages: jest.fn(),
     cancel: jest.fn(),
     strategies: jest.fn().mockResolvedValue({ default_strategy: null, strategies: [] }),
+    automaticUpdate: jest.fn().mockResolvedValue({ enabled: false }),
   },
 }))
 

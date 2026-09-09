@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, PanelLeft, RefreshCw, Settings } from 'lucide-react'
+import { ArrowLeft, CalendarClock, PanelLeft, RefreshCw, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
@@ -38,12 +38,17 @@ import { getFirstSearchParam } from '@/lib/search-params'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { knowledgeCapableTeams } from '@/features/knowledge/document/utils/knowledgeTeams'
 import { useCodeWikiRunStatus } from './useCodeWikiRunStatus'
-import type { CodeWikiPageNode, CodeWikiRunStatus } from '@/types/code-wiki'
+import type {
+  CodeWikiScheduledUpdate,
+  CodeWikiPageNode,
+  CodeWikiRunStatus,
+} from '@/types/code-wiki'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { PageOutline } from './PageOutline'
 import { RunHistory } from './RunHistory'
 import { failureText } from './failureText'
 import { GenerationProgress } from './GenerationProgress'
+import { ScheduledUpdateDialog } from './ScheduledUpdateDialog'
 import { WikiNavigation } from './WikiNavigation'
 import { WikiPageContent } from './WikiPageContent'
 
@@ -189,6 +194,9 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false)
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const [updateMode, setUpdateMode] = useState<'check' | 'full'>('check')
+  const [scheduledUpdateOpen, setScheduledUpdateOpen] = useState(false)
+  const [scheduledUpdate, setScheduledUpdate] = useState<CodeWikiScheduledUpdate | null>(null)
+  const [scheduledUpdateLoadFailed, setScheduledUpdateLoadFailed] = useState(false)
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null)
   // Whether the chat is still showing its empty state, reported by the page body as
   // it mounts and unmounts inside it. The chat replaces that state with the
@@ -220,6 +228,26 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const control = regenerateControl(runStatus.status, regenerating, t)
   const emptyState = emptyStateText(runStatus.status, t)
   const hasPublishedVersion = Boolean(runStatus.status?.last_published_at)
+  const scheduledCadence = scheduledUpdate
+    ? scheduledUpdate.cadence === 'custom'
+      ? t('codeWiki.scheduledUpdate.days', { days: scheduledUpdate.interval_days })
+      : t(`codeWiki.scheduledUpdate.${scheduledUpdate.cadence}`)
+    : ''
+
+  useEffect(() => {
+    if (!canConfigure) return
+    codeWikiApi
+      .scheduledUpdate(wiki.id)
+      .then(plan => {
+        setScheduledUpdate(plan)
+        setScheduledUpdateLoadFailed(false)
+      })
+      .catch(error => {
+        setScheduledUpdateLoadFailed(true)
+        toast.error(error instanceof Error ? error.message : String(error))
+      })
+  }, [canConfigure, wiki.id])
+
   const reloadPages = useCallback(
     async (showError = true, showLoading = true) => {
       const request = pagesRequest.current + 1
@@ -391,6 +419,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                     knowledgeBaseId={wiki.id}
                     status={runStatus.status}
                     onRepublished={handleRepublished}
+                    scheduledUpdateEnabled={scheduledUpdate?.enabled}
                   />
                 </div>
                 <WikiNavigation
@@ -416,18 +445,6 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           {projectName || wiki.name}
         </Button>
         <span className="flex-1" />
-        {canConfigure && onConfigure && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onConfigure}
-            aria-label={t('document.knowledgeBase.edit')}
-            data-testid="code-wiki-configure"
-            className="h-11 w-11 shrink-0"
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        )}
         {canConfigure && (
           <Button
             variant="outline"
@@ -440,6 +457,32 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           >
             <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
             {hasPublishedVersion ? t('codeWiki.reader.update') : control.label}
+          </Button>
+        )}
+        {(scheduledUpdate?.can_configure || scheduledUpdateLoadFailed) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setScheduledUpdateOpen(true)}
+            data-testid="code-wiki-scheduled-update"
+            className="h-11 sm:h-9"
+          >
+            <CalendarClock className="mr-1.5 h-4 w-4" />
+            {scheduledUpdate?.enabled
+              ? t('codeWiki.scheduledUpdate.enabledCadence', { cadence: scheduledCadence })
+              : t('codeWiki.scheduledUpdate.button')}
+          </Button>
+        )}
+        {canConfigure && onConfigure && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onConfigure}
+            aria-label={t('document.knowledgeBase.edit')}
+            data-testid="code-wiki-configure"
+            className="h-11 w-11 shrink-0"
+          >
+            <Settings className="h-4 w-4" />
           </Button>
         )}
       </div>
@@ -505,6 +548,18 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           </DialogContent>
         </Dialog>
       )}
+      {(scheduledUpdate?.can_configure || scheduledUpdateLoadFailed) && (
+        <ScheduledUpdateDialog
+          knowledgeBaseId={wiki.id}
+          open={scheduledUpdateOpen}
+          onOpenChange={setScheduledUpdateOpen}
+          onSaved={plan => {
+            setScheduledUpdate(plan)
+            setScheduledUpdateLoadFailed(false)
+          }}
+        />
+      )}
+
       {canConfigure && (
         <AlertDialog open={confirmingCancel} onOpenChange={setConfirmingCancel}>
           <AlertDialogContent data-testid="code-wiki-cancel-confirm">
@@ -541,6 +596,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
               knowledgeBaseId={wiki.id}
               status={runStatus.status}
               onRepublished={handleRepublished}
+              scheduledUpdateEnabled={scheduledUpdate?.enabled}
             />
           </div>
           {pages.length > 0 && (

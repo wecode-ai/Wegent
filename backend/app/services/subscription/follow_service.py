@@ -59,6 +59,14 @@ from app.services.subscription.helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _reject_code_wiki_plan(subscription: Kind) -> None:
+    if (subscription.json or {}).get("_internal", {}).get("code_wiki_id"):
+        raise HTTPException(
+            status_code=409,
+            detail="Code Wiki automatic updates cannot be shared",
+        )
+
+
 class SubscriptionFollowService:
     """Service class for subscription follow operations."""
 
@@ -459,6 +467,8 @@ class SubscriptionFollowService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
+        _reject_code_wiki_plan(subscription)
+
         if subscription.user_id != owner_user_id:
             raise HTTPException(
                 status_code=403, detail="Only the owner can send invitations"
@@ -570,6 +580,8 @@ class SubscriptionFollowService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+
+        _reject_code_wiki_plan(subscription)
 
         if subscription.user_id != owner_user_id:
             raise HTTPException(

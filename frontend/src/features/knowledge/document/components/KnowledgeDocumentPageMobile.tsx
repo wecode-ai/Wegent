@@ -278,7 +278,13 @@ export function KnowledgeDocumentPageMobile({
           setCreateGroupName(undefined)
           setCreateScope('personal')
           setCreateKbType('notebook')
-          toast.success(t('codeWiki.create.created'))
+          toast.success(
+            t(
+              data.generate_immediately
+                ? 'codeWiki.create.created'
+                : 'codeWiki.create.createdScheduled'
+            )
+          )
           return
         }
 

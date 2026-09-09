@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  CodeWikiAutomaticUpdate,
+  CodeWikiAutomaticUpdateRequest,
   CodeWikiCreateRequest,
   CodeWikiGenerationStrategyCapabilities,
   CodeWikiListResponse,
@@ -122,4 +124,18 @@ export const codeWikiApi = {
       {}
     )
   },
+
+  automaticUpdate: async (knowledgeBaseId: number): Promise<CodeWikiAutomaticUpdate> =>
+    client.get<CodeWikiAutomaticUpdate>(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/automatic-update`
+    ),
+
+  configureAutomaticUpdate: async (
+    knowledgeBaseId: number,
+    data: CodeWikiAutomaticUpdateRequest
+  ): Promise<CodeWikiAutomaticUpdate> =>
+    client.put<CodeWikiAutomaticUpdate>(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/automatic-update`,
+      data
+    ),
 }

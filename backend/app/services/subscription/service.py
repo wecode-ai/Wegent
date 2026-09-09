@@ -57,6 +57,14 @@ from app.stores.tasks import task_store
 logger = logging.getLogger(__name__)
 
 
+def _reject_code_wiki_plan(subscription: Kind) -> None:
+    if (subscription.json or {}).get("_internal", {}).get("code_wiki_id"):
+        raise HTTPException(
+            status_code=409,
+            detail="Code Wiki automatic updates must be managed from the Code Wiki",
+        )
+
+
 def generate_unique_subscription_name(
     db: Session,
     user_id: int,
@@ -503,6 +511,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_plan(subscription)
 
         # Validate subscription with legacy trigger compatibility
         subscription_crd = validate_subscription_for_read(subscription.json)
@@ -793,6 +802,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_plan(subscription)
 
         # Soft delete
         subscription.is_active = False
@@ -826,6 +836,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_plan(subscription)
 
         # Validate subscription with legacy trigger compatibility
         subscription_crd = validate_subscription_for_read(subscription.json)
@@ -879,6 +890,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_plan(subscription)
 
         # Create execution record
         execution = self.execution_manager.create_execution(
@@ -1275,6 +1287,7 @@ class SubscriptionService:
 
         return SubscriptionInDB(
             id=subscription.id,
+            code_wiki_id=internal.get("code_wiki_id"),
             user_id=subscription.user_id,
             name=subscription.name,
             namespace=subscription.namespace,

@@ -53,10 +53,14 @@ def build_projection_side_effects(
         return attachment.id
 
     def delete_attachment(attachment_id: int) -> None:
+        from app.models.subtask_context import SubtaskContext
+
+        attachment = db.get(SubtaskContext, attachment_id)
+        owner_id = attachment.user_id if attachment is not None else user.id
         context_service.delete_context(
             db=db,
             context_id=attachment_id,
-            user_id=user.id,
+            user_id=owner_id,
         )
 
     def delete_rag_document(document_id: int) -> None:

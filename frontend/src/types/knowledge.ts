@@ -445,6 +445,16 @@ export interface KnowledgeBaseCreate {
   execution_model_ref?: SummaryModelRef | null
   /** Only for `kb_type: 'code_wiki'` — leave unset to use the deployment default. */
   generation_strategy?: string
+  /** Initial Code Wiki behavior: immediate generation or wait for a periodic slot. */
+  generate_immediately?: boolean
+  automatic_update?: {
+    enabled: boolean
+    interval_days: number
+    weekday: number
+    hour: number
+    minute: number
+    timezone: string
+  } | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */

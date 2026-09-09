@@ -162,7 +162,13 @@ export function useKnowledgeBaseDialogs({
           })
           setShowCreateDialog(false)
           resetCreateDialogState()
-          toast.success(t('codeWiki.create.created'))
+          toast.success(
+            t(
+              data.generate_immediately !== false
+                ? 'codeWiki.create.created'
+                : 'codeWiki.create.createdScheduled'
+            )
+          )
           void sidebar.refreshAll()
           return
         }

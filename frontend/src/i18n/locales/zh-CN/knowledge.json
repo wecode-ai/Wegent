@@ -1160,7 +1160,12 @@
       "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
       "modelPlaceholder": "选择模型",
       "modelRequired": "请选择生成模型",
-      "created": "代码 Wiki 已创建，正在生成内容。"
+      "created": "代码 Wiki 已创建，正在生成内容。",
+      "createdScheduled": "代码 Wiki 已创建，将在下个计划时间检查并生成。",
+      "initialMode": "首次运行",
+      "initialModeHint": "立即生成，或等到下一个自动更新时间；已过的时间不会补跑。",
+      "generateImmediately": "创建后立即生成",
+      "scheduledUpdate": "按计划自动更新（默认每周一 09:00）"
     },
     "strategy": {
       "label": "生成策略",
@@ -1224,6 +1229,40 @@
       "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
       "emptyFailed": "上次生成没有完成",
       "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
+    },
+    "automatic": {
+      "title": "自动更新",
+      "button": "自动更新",
+      "description": "定期检查仓库；失败会记录原因并在下个周期继续尝试。关闭不会清除设置。",
+      "enabled": "启用自动更新",
+      "enabledCadence": "自动更新 · {{cadence}}",
+      "days": "每 {{days}} 天",
+      "cadence": "更新周期",
+      "customDays": "自定义周期天数（至少 7 天）",
+      "weekday": "星期",
+      "time": "时间",
+      "timezone": "时区",
+      "advanced": "高级设置",
+      "runner": "后续生成者",
+      "runnerHint": "留空则使用知识库 owner。只影响未来生成，不改变历史、当前文件或知识库所属。",
+      "runnerPlaceholder": "搜索用户；留空使用 owner",
+      "history": "最近检查记录",
+      "weekdays": {
+        "0": "星期一",
+        "1": "星期二",
+        "2": "星期三",
+        "3": "星期四",
+        "4": "星期五",
+        "5": "星期六",
+        "6": "星期日"
+      },
+      "weekly": "每周",
+      "biweekly": "每两周",
+      "monthly": "每四周",
+      "next": "下次检查：{{when}}",
+      "afterSave": "保存后计算",
+      "saved": "自动更新设置已保存",
+      "saving": "保存中…"
     },
     "progress": {
       "title": "生成中",
@@ -1292,6 +1331,7 @@
       "republishSyncingTitle": "正在恢复并同步版本",
       "republishSyncingBody": "正在写入页面、清理旧内容并刷新阅读视图。请保持此窗口打开。",
       "republishSyncing": "正在同步…",
+      "republishAutomaticWarning": "自动更新仍处于启用状态，未来运行可能再次覆盖这个版本；如需冻结，请先关闭自动更新。",
       "viewFailure": "查看完整错误",
       "failureDetailsTitle": "生成错误",
       "failureDetailsDescription": "本次生成的完整错误信息。"

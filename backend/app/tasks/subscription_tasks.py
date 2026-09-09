@@ -742,6 +742,23 @@ def _handle_execution_failure(
 SUBSCRIPTION_BATCH_SIZE = 100
 
 
+def _execute_code_wiki_plan_sync(subscription_id: int, execution_id: int) -> None:
+    """Run one Code Wiki plan with its own database session."""
+    from app.db.session import SessionLocal
+    from app.services.knowledge.code_wiki.automatic_update import execute_plan
+
+    db = SessionLocal()
+    try:
+        execute_plan(db, subscription_id=subscription_id, execution_id=execution_id)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.subscription_tasks.execute_code_wiki_plan")
+def execute_code_wiki_plan(subscription_id: int, execution_id: int) -> None:
+    _execute_code_wiki_plan_sync(subscription_id, execution_id)
+
+
 def _iter_active_subscription_id_batches(
     db: Session,
     batch_size: int = SUBSCRIPTION_BATCH_SIZE,
@@ -853,9 +870,18 @@ def _dispatch_due_subscription(
         )
 
         try:
-            _update_next_execution_time(
-                db, subscription, subscription_crd, trigger_type
+            from app.services.knowledge.code_wiki.automatic_update import (
+                advance_plan,
+                is_code_wiki_plan,
             )
+
+            if is_code_wiki_plan(subscription):
+                advance_plan(subscription)
+                db.commit()
+            else:
+                _update_next_execution_time(
+                    db, subscription, subscription_crd, trigger_type
+                )
         except Exception as exc:
             logger.error(
                 f"[subscription_tasks] Failed to update next execution time for subscription {subscription.id}: {exc}",
@@ -882,9 +908,21 @@ def _dispatch_due_subscription(
             return False
 
         try:
-            subscription_service.dispatch_background_execution(
-                subscription, execution, use_sync=use_sync
-            )
+            if is_code_wiki_plan(subscription):
+                if use_sync:
+                    import threading
+
+                    threading.Thread(
+                        target=_execute_code_wiki_plan_sync,
+                        args=(subscription.id, execution.id),
+                        daemon=True,
+                    ).start()
+                else:
+                    execute_code_wiki_plan.delay(subscription.id, execution.id)
+            else:
+                subscription_service.dispatch_background_execution(
+                    subscription, execution, use_sync=use_sync
+                )
         except Exception as exc:
             logger.error(
                 f"[subscription_tasks] Failed to dispatch execution {execution.id} "
@@ -1280,7 +1318,9 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     2. The executor/chat_shell never completed or failed to callback
     3. The execution is now stuck in RUNNING forever
 
-    Uses FLOW_STALE_RUNNING_HOURS from settings (default 3 hours).
+    Uses FLOW_STALE_RUNNING_HOURS from settings (default 3 hours). Code Wiki plans
+    follow the generation store's six-hour stale boundary so their execution record
+    cannot fail while the generation is still legitimately active.
 
     Args:
         db: Database session
@@ -1288,6 +1328,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     Returns:
         Number of cleaned up executions
     """
+    from app.models.kind import Kind
     from app.models.subscription import BackgroundExecution
     from app.schemas.subscription import BackgroundExecutionStatus
 
@@ -1322,11 +1363,24 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     - execution.started_at
                 )
                 running_hours = running_duration.total_seconds() / 3600
+                from app.services.knowledge.code_wiki.automatic_update import (
+                    is_code_wiki_plan,
+                )
+                from app.services.knowledge.code_wiki.version_store import (
+                    STALE_RUN_AFTER_HOURS,
+                )
+
+                subscription = db.get(Kind, execution.subscription_id)
+                threshold_hours = settings.FLOW_STALE_RUNNING_HOURS
+                if subscription is not None and is_code_wiki_plan(subscription):
+                    threshold_hours = STALE_RUN_AFTER_HOURS
+                    if running_hours <= threshold_hours:
+                        continue
 
                 execution.status = BackgroundExecutionStatus.FAILED.value
                 execution.error_message = (
                     f"Execution timed out after {running_hours:.1f} hour(s) "
-                    f"(stuck in RUNNING state, threshold: {settings.FLOW_STALE_RUNNING_HOURS}h)"
+                    f"(stuck in RUNNING state, threshold: {threshold_hours}h)"
                 )
                 execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1336,7 +1390,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     f"[subscription_tasks] Cleaned stale RUNNING execution {execution.id}: "
                     f"subscription_id={execution.subscription_id}, task_id={execution.task_id}, "
                     f"started_at={execution.started_at}, running_hours={running_hours:.1f}h, "
-                    f"reason=exceeded {settings.FLOW_STALE_RUNNING_HOURS}h threshold"
+                    f"reason=exceeded {threshold_hours}h threshold"
                 )
 
             except Exception as e:
