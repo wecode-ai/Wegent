@@ -2266,8 +2266,7 @@ export function CloudTodoWorkspace({
     if (
       !selectedItem?.is_unread ||
       !selectedItemApi ||
-      selectedItemProject?.location !== 'cloud' ||
-      selectedItemProject.task_provider !== 'local'
+      selectedItemProject?.task_provider !== 'local'
     ) {
       return
     }

@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
+import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -2543,6 +2544,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await verifyLocalBoardUnread(control, associatedTaskTabTestId)
         phase = 'project-space-default-issue-context-enriched'
         await enrichTrackedDefaultIssueTitle(
           control,
