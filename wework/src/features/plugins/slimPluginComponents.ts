@@ -38,6 +38,7 @@ export function slimPluginComponentsForCache(
       slug: connector.slug,
       authPolicy: connector.authPolicy,
       localAuth: connector.localAuth ?? null,
+      ...(connector.accountAuth ? { accountAuth: connector.accountAuth } : {}),
       description: connector.description ?? null,
     })),
   }

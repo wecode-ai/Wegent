@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.device import DeviceCapabilitySyncResponse
+from app.schemas.plugin_account_auth import PluginAccountAuthDefinition
 
 PluginInstallState = Literal[
     "not_installed",
@@ -86,6 +87,9 @@ class PluginConnectorComponent(BaseModel):
     localAuth: Optional[PluginLocalAuthDefinition] = Field(
         default=None,
         exclude_if=lambda value: value is None,
+    )
+    accountAuth: Optional[PluginAccountAuthDefinition] = Field(
+        default=None, exclude_if=lambda value: value is None
     )
 
 

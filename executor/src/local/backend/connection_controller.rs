@@ -53,6 +53,21 @@ struct LocalBackendConnectionProfile {
 }
 
 impl LocalBackendConnectionController {
+    async fn auth_transport(&self) -> Result<SocketIoTransport, AppIpcError> {
+        if !self.connection_status.load(Ordering::Acquire) {
+            return Err(AppIpcError::new(
+                "backend_connection_unavailable",
+                "Connect this device before using account authentication",
+            ));
+        }
+        self.state.lock().await.transport.clone().ok_or_else(|| {
+            AppIpcError::new(
+                "backend_connection_unavailable",
+                "Backend connection is unavailable",
+            )
+        })
+    }
+
     pub async fn start(config: DeviceConfig) -> Self {
         Self::start_internal(config, None, None, Arc::new(StdMutex::new(None))).await
     }
@@ -192,6 +207,51 @@ impl LocalBackendConnectionController {
 }
 
 impl BackendConnectionHandler for LocalBackendConnectionController {
+    fn execute_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let request = serde_json::from_value(params).map_err(|_| {
+                AppIpcError::new("plugin_auth_invalid_request", "Invalid execution request")
+            })?;
+            let transport = self.auth_transport().await?;
+            let output =
+                crate::plugin_account_auth::execute(transport, &auth_executor_home()?, request)
+                    .await
+                    .map_err(|error| AppIpcError::new(error.0, error.0))?;
+            Ok(json!({"stdout": output}))
+        })
+    }
+
+    fn migrate_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Request {
+                migration_id: String,
+            }
+            let request: Request = serde_json::from_value(params).map_err(|_| {
+                AppIpcError::new("plugin_auth_invalid_request", "Invalid migration request")
+            })?;
+            let transport = self.auth_transport().await?;
+            let home = auth_executor_home()?;
+            let connection =
+                crate::plugin_account_auth::migrate(transport, &home, &request.migration_id)
+                    .await
+                    .map_err(|error| AppIpcError::new(error.0, error.0))?;
+            serde_json::to_value(connection).map_err(|_| {
+                AppIpcError::new(
+                    "plugin_auth_invalid_response",
+                    "Invalid connection metadata",
+                )
+            })
+        })
+    }
+
     fn configure_backend<'a>(
         &'a self,
         params: Value,
@@ -379,6 +439,18 @@ fn optional_connection_field(
             format!("{name} must be a non-empty string or null"),
         )),
     }
+}
+
+fn auth_executor_home() -> Result<std::path::PathBuf, AppIpcError> {
+    std::env::var_os("WEGENT_EXECUTOR_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
+        .ok_or_else(|| {
+            AppIpcError::new(
+                "plugin_auth_package_missing",
+                "Executor home is unavailable",
+            )
+        })
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@ import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
+import { sendE2EKey } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
@@ -541,6 +542,16 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
+  router.register('e2e.pressKey', params => {
+    const label = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(label)
+    if (!contents) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+    }
+    return sendE2EKey(contents, stringParam(params, 'key'), () =>
+      label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)
+    )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())

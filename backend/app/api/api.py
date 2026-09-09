@@ -37,6 +37,7 @@ from app.api.endpoints import (
     oidc,
     openapi_responses,
     pet,
+    plugin_connections,
     plugin_publications,
     project_automations,
     project_incoming_hooks,
@@ -146,6 +147,9 @@ api_router.include_router(
 )
 api_router.include_router(
     connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
+)
+api_router.include_router(
+    plugin_connections.router, prefix="/plugin-connections", tags=["plugin-connections"]
 )
 api_router.include_router(
     connector_app_projection.router, prefix="/apps", tags=["apps"]

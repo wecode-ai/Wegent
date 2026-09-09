@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Native broker entry point. Never expose this script as a model tool."""
+
+import sys
+
+import auth_provider
+from wegent_plugin_auth import AccountAuthAdapter
+
+adapter = AccountAuthAdapter(
+    connector_slug="__CONNECTOR_SLUG__",
+    credential_type="__CREDENTIAL_TYPE__",
+    export=auth_provider.export_local,
+    account_id=auth_provider.account_id,
+    execute=auth_provider.execute,
+    validate=auth_provider.validate,
+    allowed_commands=auth_provider.ALLOWED_COMMANDS,
+__OAUTH_CALLBACKS__
+)
+
+if __name__ == "__main__":
+    raise SystemExit(adapter.main(sys.argv[1:]))

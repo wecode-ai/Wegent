@@ -10,6 +10,10 @@ use crate::{protocol::ExecutionRequest, runtime_work::runtime_task_title};
 pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "AUTH_TOKEN",
     "WEGENT_EXECUTOR_BINARY",
+    "WEGENT_EXECUTOR_HOME",
+    "WEGENT_PLUGIN_AUTH_BROKER",
+    "WEGENT_PLUGIN_AUTH_BROKER_TOKEN",
+    "WEGENT_PLUGIN_AUTH_MODE",
     "WEGENT_RUNTIME_AUTH_TOKEN",
     "WEGENT_SKILL_IDENTITY_TOKEN",
     "WEGENT_SKILL_USER_NAME",
@@ -20,6 +24,7 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
 
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
+    env.extend(crate::plugin_account_auth::broker::environment());
     let task_id = request
         .extra
         .get("runtimeLocalTaskId")

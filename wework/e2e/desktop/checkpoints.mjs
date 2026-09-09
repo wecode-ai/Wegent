@@ -15,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'core-dsh-plugin-management',
   'plugin-development',
   'plugin-auto-update',
+  'plugin-account-auth',
   'plugin-workspace-publication',
   'project-ai-settings',
   'model-routing',
