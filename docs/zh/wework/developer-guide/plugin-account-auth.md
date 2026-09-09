@@ -230,3 +230,17 @@ pnpm --filter wework e2e:desktop --cloud-only --segment plugin-account-auth
 
 本地构建与模拟 GitLab API 的回归验证不等于远程流水线已运行；真实 MR 合并后的
 市场发布仍需待代码推送、服务部署与发布环境验证。
+
+### 本机授权诊断流
+
+本机授权命令可通过 stderr 输出 `WEGENT_PLUGIN_AUTH_DIAGNOSTIC:` 前缀的 JSON 行。
+Executor 在命令退出前持续读取，筛选约定字段后写入现有 `executor.log`，复用统一反馈
+导出。stdout 仍只承载命令 JSON 结果；插件不应直接写 Executor 的日志文件。
+
+当前接入公司邮箱诊断：插件标识、阶段、状态、平台、32 位十六进制 `attempt_id`、
+固定原因和错误码、数字 `exit_code` / `system_code`。未知字段和非协议行不作为诊断
+记录。单条最多 4096 字节，每次调用最多记录 256 条；超限后仍排空管道，避免阻塞进程。
+命令 stdout 上限为 1 MiB。超时或取消前已接收的诊断保留在现有日志中。
+
+公司邮箱需配套升级到输出此协议且透传 Windows stderr 的版本；仅升级宿主无法恢复
+被插件启动器丢弃的输出。诊断不包含账号、密码、命令参数或原始异常。

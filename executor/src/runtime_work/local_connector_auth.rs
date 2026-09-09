@@ -22,6 +22,7 @@ use crate::local::app_ipc::AppIpcError;
 use super::util::string_field;
 use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
+mod diagnostics;
 mod tools;
 
 #[derive(Debug, Clone)]
@@ -747,7 +748,39 @@ async fn run_plugin_command(
     if let Some(tool) = tool {
         command.env("WEGENT_LOCAL_AUTH_TOOL", tool);
     }
-    let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), command.output())
+    let mut child = command
+        .spawn()
+        .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;
+    let mut stdout_pipe = child.stdout.take().expect("piped stdout");
+    let stderr_pipe = child.stderr.take().expect("piped stderr");
+    let collect = async {
+        use tokio::io::AsyncReadExt;
+        let stdout = async {
+            let mut bytes = Vec::new();
+            (&mut stdout_pipe)
+                .take(1024 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            if bytes.len() > 1024 * 1024 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "localAuth stdout exceeded limit",
+                ));
+            }
+            Ok(bytes)
+        };
+        let (stdout, stderr, status) = tokio::try_join!(
+            stdout,
+            diagnostics::read_stderr(stderr_pipe, diagnostics::log_event),
+            child.wait()
+        )?;
+        Ok::<_, std::io::Error>(std::process::Output {
+            stdout,
+            stderr,
+            status,
+        })
+    };
+    let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), collect)
         .await
         .map_err(|_| AppIpcError::new("local_auth_timeout", "localAuth command timed out"))?
         .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;

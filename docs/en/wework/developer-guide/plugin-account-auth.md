@@ -248,3 +248,22 @@ Source-only packages cannot be published as complete native plugins.
 Local build and mocked GitLab API regression checks do not prove a remote pipeline
 has executed. Actual merged-MR publication requires pushed code, deployed services
 and verification in the configured release environment.
+
+### Local authorization diagnostic stream
+
+Local authorization commands can emit JSON lines prefixed with
+`WEGENT_PLUGIN_AUTH_DIAGNOSTIC:` on stderr. The Executor consumes them before the
+command exits and records allowlisted fields in the existing `executor.log`,
+which is already included in unified feedback exports. Stdout remains the command
+JSON result; plugins must not write directly to the Executor log file.
+
+The initial company-email integration accepts the plugin, stage, status, platform,
+a 32-character hexadecimal `attempt_id`, fixed reasons and error codes, and numeric
+`exit_code` / `system_code`. Unknown fields and non-protocol lines are not logged
+as diagnostics. Lines are limited to 4096 bytes and each invocation to 256 events;
+the pipe continues draining after the limit. Command stdout is limited to 1 MiB.
+Events already received remain available if authorization times out or is cancelled.
+
+The email plugin must also emit this protocol and relay Windows stderr. Updating
+only the host cannot recover output discarded by the plugin launcher. Diagnostics
+do not include accounts, passwords, command arguments, or raw exception text.
