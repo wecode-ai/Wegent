@@ -49,6 +49,21 @@ def test_missing_setting_protects_organization_knowledge_base(
     assert allowed is False
 
 
+def test_null_setting_protects_organization_knowledge_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "wecode.service.knowledge.document_protection_policy.load_active_namespace_map",
+        lambda _db, _names: {"company": SimpleNamespace(level="organization")},
+    )
+
+    allowed = is_internal_original_download_allowed(
+        MagicMock(), _knowledge_base({"allowDocumentDownload": None})
+    )
+
+    assert allowed is False
+
+
 def test_missing_setting_allows_non_organization_knowledge_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
