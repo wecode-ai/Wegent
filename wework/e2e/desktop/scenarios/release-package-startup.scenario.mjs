@@ -20,7 +20,7 @@ async function writePlugin(profileRoot, name, manifest, files) {
   )
 }
 
-async function seedTauriProfile(userDataDirectory) {
+async function seedNativeDshProfile(userDataDirectory) {
   const profileRoot = join(userDataDirectory, 'dsh-core', 'profiles', PROFILE_NAME)
   await mkdir(profileRoot, { recursive: true })
   await writeFile(
@@ -224,7 +224,7 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   await assertReleasePackageResources()
-  await seedTauriProfile(electronUserDataDirectory)
+  await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
     'dsh-core',
@@ -278,7 +278,7 @@ export async function createDesktopScenario({
     diagnostics() {
       return {
         nativeDshPluginCompatibility: true,
-        seededTauriProfile: true,
+        seededNativeDshProfile: true,
       }
     },
   }

@@ -29,12 +29,11 @@ function errorMessage(error: unknown): string {
   return 'Unknown updater error'
 }
 
-export function getWeworkUpdateTarget(channel: WeworkUpdateChannel): string {
+function assertWeworkUpdaterSupported(): void {
   const platform = getPlatform()
   if (platform === 'linux') {
     throw new Error('Wework updater is not available on Linux.')
   }
-  return `${channel}-${platform === 'mac' ? 'darwin' : 'windows'}`
 }
 
 export async function checkForWeworkUpdate(
@@ -43,7 +42,7 @@ export async function checkForWeworkUpdate(
   if (!isElectronRuntime()) {
     throw new Error('Wework updater is only available in the desktop app.')
   }
-  getWeworkUpdateTarget(channel)
+  assertWeworkUpdaterSupported()
 
   try {
     const update = await invokeDesktopHost<WeworkUpdateInfo | null>('appUpdate.check', { channel })

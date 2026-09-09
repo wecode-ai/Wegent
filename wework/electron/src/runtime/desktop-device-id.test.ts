@@ -48,7 +48,7 @@ describe('desktop device identity', () => {
             deviceId: 'electron-other',
             updatedAt: 30,
           },
-          '/worktree/tauri': {
+          '/worktree/legacy': {
             deviceId: 'local-device',
             updatedAt: 40,
           },

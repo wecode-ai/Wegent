@@ -699,7 +699,7 @@ classify_wework_path() {
       ;;
 
     # Git hosting preferences and explicit device synchronization share one
-    # independently bootstrapped real-Tauri checkpoint.
+    # independently bootstrapped desktop checkpoint.
     wework/src/api/devices* | \
       wework/src/components/settings/GitHostingSettingsPage* | \
       wework/src/types/gitCredentials.ts | \

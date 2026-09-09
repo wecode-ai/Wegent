@@ -241,10 +241,6 @@ describe('bundled plugin resources', () => {
     ) as {
       scripts: Record<string, string>
     }
-    const installerHooks = readFileSync(
-      resolve(process.cwd(), 'electron/scripts/installer.nsh'),
-      'utf8'
-    )
     const builderConfig = readFileSync(
       resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
       'utf8'
@@ -272,7 +268,7 @@ describe('bundled plugin resources', () => {
     expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
     expect(workflow).toContain('CURRENT_SOURCE_REF')
     expect(workflow).toContain('RELEASE_KIND')
-    expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
+    expect(workflow).toContain('- name: Prepare desktop release assets')
     expect(workflow).toContain('release-manifests/*')
     expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
     expect(workflow).toContain('desktop-component-release.mjs release-assets version')
@@ -319,10 +315,6 @@ describe('bundled plugin resources', () => {
       workflow.indexOf('- name: Promote stable release to latest')
     )
     expect(workflow).toMatch(/gh release edit "\$RELEASE_TAG"[\s\S]*--target "\$RELEASE_SHA"/)
-    expect(installerHooks).toContain('Software\\you\\WeWork')
-    expect(installerHooks).toContain('InstallLocation')
-    expect(installerHooks).toContain('${GetOptions} $R0 "/P"')
-    expect(installerHooks).toContain('$R0\\${APP_EXECUTABLE_FILENAME}')
   })
 
   test('publishes packaged Electron artifacts for all desktop platforms', () => {
