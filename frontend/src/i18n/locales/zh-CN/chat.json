@@ -773,6 +773,7 @@
   },
   "image": {
     "title": "图片生成",
+    "settings_title": "图片设置",
     "model_selector": "选择图片模型",
     "search_model": "搜索图片模型...",
     "size_selector": "选择尺寸",
