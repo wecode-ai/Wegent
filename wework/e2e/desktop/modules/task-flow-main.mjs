@@ -3576,7 +3576,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
         {
           text: FILE_PREVIEW_RESTORE_MARKER,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3679,9 +3679,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The first task browser leaked into the second task'
       )
       assert.equal(
-        secondTaskWorkspaceSnapshot.testIds.includes('workspace-markdown-preview'),
+        secondTaskWorkspaceSnapshot.testIds.includes('workspace-file-editor'),
         false,
-        'The first task file preview leaked into the second task'
+        'The first task file editor leaked into the second task'
       )
       assert.equal(
         secondTaskWorkspaceSnapshot.testIds.includes('file-changes-review-panel'),
@@ -3749,7 +3749,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
       await control.command(
         'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
         {
           text: FILE_PREVIEW_RESTORE_MARKER,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

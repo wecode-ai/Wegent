@@ -9414,7 +9414,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-file-preview-loading-indicator')).not.toBeInTheDocument()
   })
 
-  test('workspace file panel edits and saves an editable text file', async () => {
+  test('workspace file panel directly edits and autosaves a writable text file', async () => {
     const user = userEvent.setup()
     const listWorkspaceEntries = vi.fn().mockResolvedValue({
       path: '/workspace/project',
@@ -9469,26 +9469,112 @@ describe('DesktopWorkbenchLayout', () => {
     await user.click(await screen.findByText('README.md'))
     const editor = await screen.findByTestId('workspace-file-editor')
     expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
     const codeMirrorContent = editor.querySelector('.cm-content')
     expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
 
     await user.click(codeMirrorContent as HTMLElement)
     await user.keyboard('{Control>}a{/Control}hello world')
-    await user.click(screen.getByTestId('workspace-file-save-button'))
+
+    await waitFor(
+      () =>
+        expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
+          'workspace-cloud-device',
+          '/workspace/project/README.md',
+          'hello world',
+          'sha256:old'
+        ),
+      { timeout: 5_000 }
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-file-editor')).toBeInTheDocument()
+      expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
+    })
+  })
+
+  test('workspace file panel saves pending edits before opening another file', async () => {
+    const user = userEvent.setup()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 5,
+          modifiedAt: null,
+        },
+        {
+          name: 'notes.txt',
+          path: '/workspace/project/notes.txt',
+          isDirectory: false,
+          size: 5,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockImplementation((_deviceId, path) =>
+      Promise.resolve({
+        path,
+        name: path.endsWith('README.md') ? 'README.md' : 'notes.txt',
+        content: path.endsWith('README.md') ? 'hello' : 'notes',
+        editable: true,
+        revision: path.endsWith('README.md') ? 'sha256:readme' : 'sha256:notes',
+        truncated: false,
+        size: 5,
+        modifiedAt: null,
+      })
+    )
+    const writeWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello world',
+      editable: true,
+      revision: 'sha256:saved',
+      truncated: false,
+      size: 11,
+      modifiedAt: null,
+    })
+
+    render(
+      <FileWorkspacePanel
+        target={{
+          deviceId: 'workspace-cloud-device',
+          path: '/workspace/project',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          writeWorkspaceTextFile,
+        }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await user.click(await screen.findByText('README.md'))
+    const codeMirrorContent = (await screen.findByTestId('workspace-file-editor')).querySelector(
+      '.cm-content'
+    )
+    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
+    await user.click(codeMirrorContent as HTMLElement)
+    await user.keyboard('{Control>}a{/Control}hello world')
+    await user.click(screen.getByText('notes.txt'))
 
     await waitFor(() =>
       expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
         'workspace-cloud-device',
         '/workspace/project/README.md',
         'hello world',
-        'sha256:old'
+        'sha256:readme'
       )
     )
-    await waitFor(() => {
-      expect(screen.getByTestId('workspace-file-editor')).toBeInTheDocument()
-      expect(screen.getByTestId('workspace-file-save-button')).toBeDisabled()
-      expect(screen.queryByTestId('workspace-file-edit-button')).not.toBeInTheDocument()
-    })
+    expect(await screen.findByTestId('workspace-file-path')).toHaveTextContent(
+      '/workspace/project/notes.txt'
+    )
+    expect(screen.queryByTestId('workspace-file-unsaved-dialog')).not.toBeInTheDocument()
   })
 
   test('workspace file preview renders file contents with Pierre file viewer', async () => {

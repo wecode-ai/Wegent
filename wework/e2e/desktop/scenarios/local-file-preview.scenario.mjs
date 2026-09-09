@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -45,6 +45,15 @@ async function waitForMissing(control, selector, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   throw new Error(`Timed out waiting for "${selector}" to disappear`)
+}
+
+async function waitForFileContent(filePath, expectedContent, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if ((await readFile(filePath, 'utf8')) === expectedContent) return
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`Timed out waiting for autosaved content in "${filePath}"`)
 }
 
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
@@ -101,47 +110,30 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         'The second local file did not replace the retained preview after loading'
       )
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="workspace-file-save-button"]')
+        ),
+        0,
+        'Writable text files exposed a manual save button instead of autosaving'
+      )
       await control.command('fill', '[data-testid="workspace-file-editor"] .cm-content', {
         value: 'export const authenticated = false\n',
       })
-      await writeFile(
+      await waitForFileContent(
         join(workspacePath, 'auth.ts'),
-        'export const authenticated = false\n// changed outside Wework\n'
-      )
-      await control.command('clickWhenEnabled', '[data-testid="workspace-file-save-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="workspace-file-save-error"]', {
-        text: 'changed on disk',
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="workspace-file-conflict-reload-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="workspace-file-conflict-reload-button"]')
-      await control.command('waitFor', '[data-testid="workspace-file-preview-loading-indicator"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await waitForMissing(
-        control,
-        '[data-testid="workspace-file-preview-loading-indicator"]',
+        'export const authenticated = false',
         uiTimeoutMs
       )
-      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.match(
-        await control.command('getText', '[data-testid="workspace-file-editor"] .cm-content'),
-        /export const authenticated = false\s*\/\/ changed outside Wework/,
-        'Reloading the conflicted file did not render the final on-disk contents'
-      )
+      await waitForMissing(control, '[data-testid="workspace-file-saving-status"]', uiTimeoutMs)
       assert.equal(
         Number(
           await control.command('getElementCount', '[data-testid="workspace-file-save-error"]')
         ),
         0,
-        'Reloading the conflicted file left the stale save error visible'
+        'Autosaving the edited file displayed an unexpected save error'
       )
+      await captureScreenshot(control, 'local-file-preview-02-dark-autosaved.png', 'body')
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
       await control.command('clickWhenEnabled', '[data-testid="right-workspace-review-option"]', {
         timeoutMs: uiTimeoutMs,
@@ -158,7 +150,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         '[data-testid="file-changes-review-file-diff-body"][data-theme="dark"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await captureScreenshot(control, 'local-file-preview-02-dark-review.png', 'body')
+      await captureScreenshot(control, 'local-file-preview-03-dark-review.png', 'body')
     },
   }
 }
