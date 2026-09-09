@@ -1671,7 +1671,7 @@ impl LocalTaskStore {
              WHERE id = (SELECT loop_item_id FROM loop_item_executions WHERE id = ?2)
                AND assignee_agent_id =
                    (SELECT agent_id FROM loop_item_executions WHERE id = ?2)
-               AND status NOT IN ('completed', 'in_review')",
+               AND status != 'completed'",
             params![timestamp, execution_id],
         )?;
         update_agent_comment(
@@ -4594,7 +4594,16 @@ mod tests {
         let updated = store.get_task(&project.id, &task.id).unwrap();
         assert_eq!(updated.status.as_deref(), Some("in_review"));
         assert_eq!(updated.execution_state.as_deref(), Some("succeeded"));
-        // A task that is already in review is not advanced again.
+        assert_eq!(updated.metadata["is_unread"], json!(true));
+        store.mark_task_read(&project.id, &task.id).unwrap();
+        store
+            .complete_execution(claimed.id, Some("duplicate"))
+            .unwrap();
+        assert_eq!(
+            store.get_task(&project.id, &task.id).unwrap().metadata["is_unread"],
+            json!(false)
+        );
+        // A new completion marks an already reviewed task unread again.
         let second = store
             .create_task(
                 &project.id,
@@ -4631,9 +4640,11 @@ mod tests {
             .claim_next_local_execution(&claim)
             .unwrap()
             .expect("second run must be claimable");
+        store.mark_task_read(&project.id, &second.id).unwrap();
         store.complete_execution(claimed_second.id, None).unwrap();
         let second_after = store.get_task(&project.id, &second.id).unwrap();
         assert_eq!(second_after.status.as_deref(), Some("in_review"));
+        assert_eq!(second_after.metadata["is_unread"], json!(true));
     }
 
     #[test]
