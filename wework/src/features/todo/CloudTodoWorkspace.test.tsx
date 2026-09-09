@@ -1191,7 +1191,7 @@ describe('CloudTodoWorkspace', () => {
     expect(focusView).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[480px]')
     expect(screen.getByTestId('cloud-todo-column-pending')).toHaveClass('w-[292px]')
-    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass('line-clamp-8')
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass('line-clamp-[8]')
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('line-clamp-3')
     expect(localStorage.getItem('wework-board-focus-running:v1:1:backend:11')).toBe('true')
 

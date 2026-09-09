@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { WorkbenchMessage } from '@/types/workbench'
 import {
+  EMPTY_RUNTIME_LIVE_ACTIVITY,
   getLatestRuntimeLiveActivity,
   runtimeLiveActivityFromSnapshot,
   runtimeLiveActivitySnapshot,
@@ -51,5 +52,25 @@ describe('runtimeThinking', () => {
     }
 
     expect(runtimeLiveActivityFromSnapshot(runtimeLiveActivitySnapshot(activity))).toEqual(activity)
+  })
+
+  test('falls back safely for malformed live-activity snapshots', () => {
+    expect(runtimeLiveActivityFromSnapshot('{invalid')).toEqual(EMPTY_RUNTIME_LIVE_ACTIVITY)
+    expect(runtimeLiveActivityFromSnapshot('null')).toEqual(EMPTY_RUNTIME_LIVE_ACTIVITY)
+    expect(
+      runtimeLiveActivityFromSnapshot(
+        JSON.stringify({
+          active: true,
+          processText: 42,
+          thinking: null,
+          tools: { id: 'not-an-array' },
+        })
+      )
+    ).toEqual({
+      active: true,
+      processText: '',
+      thinking: '',
+      tools: [],
+    })
   })
 })

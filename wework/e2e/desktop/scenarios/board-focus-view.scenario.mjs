@@ -393,7 +393,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const focusedProcessClass = await control.command('getAttribute', processSelector, {
         value: 'class',
       })
-      assert.ok(focusedProcessClass.includes('line-clamp-8'))
+      assert.ok(focusedProcessClass.includes('line-clamp-[8]'))
       await captureScreenshot(control, '04-running-card-focus-view.png', ACTIVE_BOARD)
 
       await control.command('click', '[data-testid="cloud-board-group-by"]')

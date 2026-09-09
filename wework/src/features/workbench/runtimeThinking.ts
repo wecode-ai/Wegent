@@ -64,12 +64,24 @@ export function runtimeLiveActivitySnapshot(activity: RuntimeLiveActivity): stri
 export function runtimeLiveActivityFromSnapshot(snapshot: string): RuntimeLiveActivity {
   if (!snapshot) return EMPTY_RUNTIME_LIVE_ACTIVITY
 
-  const activity = JSON.parse(snapshot) as Partial<RuntimeLiveActivity>
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(snapshot)
+  } catch {
+    return EMPTY_RUNTIME_LIVE_ACTIVITY
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return EMPTY_RUNTIME_LIVE_ACTIVITY
+  }
+
+  const activity = parsed as Record<string, unknown>
   return {
     active: activity.active === true,
-    processText: activity.processText ?? '',
-    thinking: activity.thinking ?? '',
-    tools: activity.tools ?? [],
+    processText: typeof activity.processText === 'string' ? activity.processText : '',
+    thinking: typeof activity.thinking === 'string' ? activity.thinking : '',
+    tools: Array.isArray(activity.tools)
+      ? (activity.tools as RuntimeLiveToolActivity[])
+      : EMPTY_RUNTIME_LIVE_ACTIVITY.tools,
   }
 }
 

@@ -559,7 +559,7 @@ function RuntimeTaskCompactActivity({
           data-testid={`cloud-todo-card-process-${itemId}`}
           className={cn(
             'whitespace-pre-wrap leading-5 text-text-secondary',
-            focused ? 'line-clamp-8' : 'line-clamp-3',
+            focused ? 'line-clamp-[8]' : 'line-clamp-3',
             reserveTrailingAction && 'pr-7'
           )}
         >
