@@ -77,7 +77,18 @@ export async function createDesktopScenario({
   await mkdir(join(fixtureRoot, 'scripts'), { recursive: true })
   await writeFile(
     join(fixtureRoot, 'scripts/legacy-auth.py'),
-    'import json, sys\nassert sys.argv[1:] == ["health"], "Legacy login must not run"\nprint(json.dumps({"status":"need_login"}))\n'
+    `import json, os, sys
+from pathlib import Path
+source = Path.home() / "account-auth-synthetic.json"
+assert os.environ.get("WEGENT_PLUGIN_AUTH_BROKER"), "Local auth did not receive the broker"
+if sys.argv[1:] == ["login"]:
+    source.write_text(json.dumps({"username":"alice@example.test","password":"${secret}-updated"}))
+elif sys.argv[1:] == ["logout"]:
+    source.unlink(missing_ok=True)
+else:
+    assert sys.argv[1:] == ["health"]
+print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() else "need_login"}))
+`
   )
   await writeFile(
     join(fixtureRoot, '.codex-plugin/plugin.json'),
@@ -95,8 +106,21 @@ export async function createDesktopScenario({
           authPolicy: 'on_install',
           localAuth: {
             kind: 'browser_oauth',
-            health: ['scripts/legacy-auth.py', 'health'],
-            start: ['scripts/legacy-auth.py', 'login'],
+            health: [
+              process.platform === 'win32' ? 'python' : 'python3',
+              'scripts/legacy-auth.py',
+              'health',
+            ],
+            start: [
+              process.platform === 'win32' ? 'python' : 'python3',
+              'scripts/legacy-auth.py',
+              'login',
+            ],
+            logout: [
+              process.platform === 'win32' ? 'python' : 'python3',
+              'scripts/legacy-auth.py',
+              'logout',
+            ],
           },
           accountAuth: {
             protocolVersion: 1,
@@ -565,6 +589,37 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         await readFile(join(resultDir, 'oauth-provider-revoked.marker'), 'utf8'),
         'revoked'
       )
+      const localAuth = async (action, sessionId) =>
+        JSON.parse(
+          await control.command('localConnectorAuth', 'body', {
+            value: JSON.stringify({ pluginKey: slug, connectorSlug: 'mail', action, sessionId }),
+          })
+        )
+      // The legacy source is gone. The original entry must show the managed account.
+      assert.equal((await localAuth('health')).status, 'ok')
+      assert.equal((await localAuth('logout')).status, 'ok')
+      assert.equal((await connectionFor('mail')).status, 'disconnected')
+      command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
+      await invokeCloud('plugin_auth_device_not_granted')
+      assert.equal((await localAuth('health')).status, 'need_login')
+      const login = await localAuth('start')
+      assert.ok(login.sessionId)
+      const loginResult = await waitForValue(
+        () => localAuth('poll', login.sessionId),
+        result => ['ok', 'error', 'expired'].includes(result.status),
+        workbenchReadyTimeoutMs,
+        'The original local login entry did not finish'
+      )
+      assert.equal(loginResult.status, 'ok')
+      await waitForValue(
+        () => connectionFor('mail'),
+        item => item?.status === 'connected' && item.device_ids.includes(CLOUD_DEVICE_ID),
+        workbenchReadyTimeoutMs,
+        'Fresh login did not resume cloud authentication'
+      )
+      await rm(sourceAuth)
+      assert.equal((await localAuth('health')).status, 'ok')
+      await invokeCloud('cloud-account-updated')
       await verifyDwsCloudAccount({
         cloud,
         resultDir,
@@ -618,6 +673,9 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
             exclusiveTransferCloudExecution: true,
             sourceOfflineOAuthRefresh: true,
             oauthProviderRevocation: true,
+            legacyManagedHealth: true,
+            localLogoutDisconnectsCloud: true,
+            originalLoginReconnectsCloud: true,
             dwsOfficialSourceStoreAutomaticMigration: true,
             dwsUnrelatedAccountPreserved: true,
             dwsCloudExecution: true,

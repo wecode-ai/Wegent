@@ -297,6 +297,7 @@ impl<T: LocalBackendTransport> NativeAuthGateway<T> {
                 Some("plugin_auth_package_sync_required") => "plugin_auth_package_sync_required",
                 Some("plugin_auth_revision_conflict") => "plugin_auth_revision_conflict",
                 Some("plugin_auth_migration_expired") => "plugin_auth_migration_expired",
+                Some("plugin_auth_transfer_pending") => "plugin_auth_transfer_pending",
                 Some("plugin_auth_source_changed") => "plugin_auth_source_changed",
                 Some("plugin_auth_keyring_unavailable") => "plugin_auth_keyring_unavailable",
                 _ => "plugin_auth_exchange_rejected",

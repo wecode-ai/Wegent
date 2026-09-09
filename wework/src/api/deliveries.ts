@@ -119,6 +119,7 @@ export interface CloudLoopItem {
   can_edit?: boolean
   detail_loaded?: boolean
   content_revision?: number
+  has_additional_context?: boolean
   is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
