@@ -2161,6 +2161,7 @@ class LoopItemExecutionService:
         runtime_device_id: str,
         runtime_task_id: str,
         owner_user_id: int | None = None,
+        include_queued: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Resolve the active execution owned by a Runtime task identity."""
 
@@ -2174,7 +2175,11 @@ class LoopItemExecutionService:
         query = db.query(LoopItemExecution).filter(
             LoopItemExecution.runtime_device_id.in_(device_ids),
             LoopItemExecution.runtime_task_id == runtime_task_id,
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.status.in_(
+                CAPACITY_STATUSES | {STATUS_QUEUED}
+                if include_queued
+                else CAPACITY_STATUSES
+            ),
         )
         if owner_user_id is not None:
             query = query.filter(

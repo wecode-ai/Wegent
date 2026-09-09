@@ -881,3 +881,132 @@ async def test_managed_coordinator_stop_pauses_before_backend_task_cancellation(
     )
     cancel.assert_awaited_once()
     assert issue.metadata_json["workflow"]["orchestration_status"] == "paused"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["http", "websocket"])
+@pytest.mark.parametrize("outcome", ["incomplete", "timeout"])
+async def test_task_conversation_stop_prevents_retry_before_runtime_ack(
+    test_db, test_user, stoppable_assignment, monkeypatch, transport, outcome
+):
+    from contextlib import nullcontext
+
+    from fastapi import HTTPException
+
+    from app.api.ws import wework_runtime_namespace
+    from app.models.kind import Kind
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+    from app.services.issue_assignments import assignment_callback_intent
+
+    issue, worker, execution = stoppable_assignment
+    execution.max_retries = 3
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="stop-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={"spec": {"deviceId": "stop-device", "appDeviceId": "app-stop"}},
+        )
+    )
+    test_db.commit()
+    initial_count = test_db.query(LoopItemExecution).count()
+    monkeypatch.setattr(
+        wework_runtime_namespace, "get_db_session", lambda: nullcontext(test_db)
+    )
+
+    async def run_in_test_session(fn):
+        return fn()
+
+    monkeypatch.setattr(
+        wework_runtime_namespace, "run_sync_in_executor", run_in_test_session
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda *_: object(),
+    )
+
+    async def runtime_reply(**kwargs):
+        test_db.expire_all()
+        assert execution.status == "cancel_requested"
+        assert issue.metadata_json["workflow"]["orchestration_status"] == "paused"
+        if outcome == "timeout":
+            raise runtime_work_service.RuntimeRpcError("Device disconnected")
+        stopped = loop_item_execution_service.handle_runtime_event(
+            test_db,
+            device_id="stop-device",
+            runtime_task_id="stop-task",
+            owner_user_id=test_user.id,
+            event_name="response.incomplete",
+            payload={"eventSeq": 1, "error": "Task interrupted"},
+        )
+        assert stopped.id == execution.id
+        assert stopped.status == "cancelled"
+        assert assignment_callback_intent(test_db, stopped, "failed") is None
+        return {"accepted": True, "success": True, "taskId": "stop-task"}
+
+    rpc = AsyncMock(side_effect=runtime_reply)
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    async def stop():
+        if transport == "websocket":
+            return await wework_runtime_namespace.relay_ipc_request(
+                user_id=test_user.id,
+                device_id="app-stop",
+                method="runtime.tasks.cancel",
+                params={"taskId": "stop-task"},
+                timeout_seconds=30,
+            )
+        return await runtime_work_service.cancel_runtime_task(
+            db=test_db,
+            user_id=test_user.id,
+            address=RuntimeTaskAddress(deviceId="app-stop", localTaskId="stop-task"),
+        )
+
+    if outcome == "timeout":
+        with pytest.raises((HTTPException, runtime_work_service.RuntimeRpcError)):
+            await stop()
+    else:
+        await stop()
+    rpc.assert_awaited_once()
+    assert test_db.query(LoopItemExecution).count() == initial_count
+    assert issue.metadata_json["workflow"]["orchestration_status"] == "paused"
+    assert issue.metadata_json["workflow"]["assignment_version"] == 1
+
+
+@pytest.mark.parametrize("execution_status", ["queued", "running"])
+def test_runtime_stop_does_not_affect_another_owners_task(
+    test_db, test_user, stoppable_assignment, execution_status
+):
+    from app.services.runtime_task_stop import record_runtime_task_user_stop
+
+    issue, worker, execution = stoppable_assignment
+    execution.status = execution_status
+    test_db.commit()
+    record_runtime_task_user_stop(
+        test_db,
+        user_id=test_user.id + 1000,
+        device_id="stop-device",
+        task_id="stop-task",
+    )
+    assert execution.status == execution_status
+    assert issue.metadata_json["workflow"]["orchestration_status"] == "running"
+
+
+def test_runtime_stop_cancels_a_queued_task_without_retry(
+    test_db, test_user, stoppable_assignment
+):
+    from app.services.runtime_task_stop import record_runtime_task_user_stop
+
+    issue, worker, execution = stoppable_assignment
+    execution.status = "queued"
+    test_db.commit()
+    record_runtime_task_user_stop(
+        test_db, user_id=test_user.id, device_id="stop-device", task_id="stop-task"
+    )
+    assert execution.status == "cancelled"
+    assert issue.metadata_json["workflow"]["orchestration_status"] == "paused"

@@ -186,6 +186,10 @@ export async function eventCenterModelResponse(payload, responseId, request) {
   if (serialized.includes('Read the Issue and verify its requested result.')) {
     const issueId = serialized.match(/task_id: ([A-Za-z0-9_-]+)/)?.[1]
     const issue = await request(`/api/v1/loop-items/${issueId}`)
+    if (issue.workflow.assignment_version === 2) {
+      // Hold this real worker turn so the user can stop it from its conversation.
+      await new Promise(resolve => setTimeout(resolve, 45000))
+    }
     if (issue.workflow.assignment?.decision.reason === 'CALLBACK_INITIAL_ASSIGNMENT') {
       const failure = responseFailed(responseId, 'CALLBACK_WORKER_FAILED')
       failure.response.error.code = 'invalid_request_error'
@@ -289,13 +293,32 @@ export async function verifyEventCenter({
     'Failure callback did not start a new coordinator turn and reassign work',
     timeoutMs
   )
-  const executions = await request(`${base}/executions`)
-  const stoppedExecution = executions.items.find(
-    execution =>
-      String(execution.automationRunId) === String(reassigned.workflow.assignment.automation_run_id)
+  const stoppedExecution = await waitForValue(
+    async () => {
+      const executions = await request(`${base}/executions`)
+      return executions.items.find(
+        execution =>
+          String(execution.automationRunId) ===
+          String(reassigned.workflow.assignment.automation_run_id)
+      )
+    },
+    execution => execution?.status === 'running' && Boolean(execution.runtimeTaskId),
+    'Reassigned worker did not start before the conversation stop',
+    timeoutMs
   )
-  assert.ok(stoppedExecution, 'Reassigned work has no execution to stop')
-  await request(`${base}/executions/${stoppedExecution.id}/stop`, { method: 'POST' })
+  const bindings = await request(`/api/v1/loop-items/${issueId}/tasks`)
+  const binding = bindings.find(task => task.task_id === stoppedExecution.runtimeTaskId)
+  assert.ok(binding, 'Running worker has no task conversation binding')
+  await control.command('click', '[data-testid="event-center-open-issue"]', { visible: true })
+  await control.command('click', '[data-testid="cloud-todo-workflow-node-role_1"]', {
+    visible: true,
+  })
+  const taskSelector = `[data-testid="cloud-todo-open-workflow-task-role_1-${binding.id}"]`
+  await control.command('scrollIntoView', taskSelector)
+  await control.command('click', taskSelector, { visible: true })
+  await control.command('waitFor', '[data-testid="pause-response-button"]', { visible: true })
+  await captureScreenshot(control, 'event-center-conversation-before-stop.png')
+  await control.command('click', '[data-testid="pause-response-button"]', { visible: true })
   const stopped = await waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
     issue => issue.workflow.assignment?.execution_status === 'cancelled',
@@ -305,6 +328,16 @@ export async function verifyEventCenter({
   assert.equal(stopped.workflow.orchestration_status, 'paused', 'User stop restarted AI assignment')
   assert.equal(stopped.workflow.assignment_version, initialVersion + 1)
   await captureScreenshot(control, 'event-center-user-stopped.png')
+  const executionCount = (await request(`${base}/executions`)).total
+  // Observe a full queue claim window: neither a retry nor a coordinator may start.
+  await new Promise(resolve => setTimeout(resolve, 35000))
+  assert.equal((await request(`${base}/executions`)).total, executionCount)
+  assert.equal(
+    (await request(`/api/v1/loop-items/${issueId}`)).workflow.orchestration_status,
+    'paused'
+  )
+  await control.command('click', '[data-testid^="workbench-close-pane-"]', { visible: true })
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
   await request(`/api/v1/loop-items/${issueId}/workflow-plan/resume`, { method: 'POST' })
   await waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),

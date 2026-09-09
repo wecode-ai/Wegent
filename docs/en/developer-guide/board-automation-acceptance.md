@@ -293,3 +293,20 @@ The final event-center checkpoint passed in 7m 1s; evidence:
 The independent ai-verify Electron journey passed; evidence:
 `wework/test-results/desktop-e2e/2026-09-09T12-27-51-934Z-48048/`.
 Reviewed the waiting-human and continued screenshots and asserted completion of both the Issue and its role node. Completing two tasks, receiving an external event, and drafting a result all preserve human control. Isolated applications and backends were cleaned up.
+
+## 2026-09-09 Prevent retries after conversation Stop
+
+Deployment logs show WebSocket `runtime.tasks.cancel` succeeding at 21:40:11, followed by execution 529 at 21:40:14 and coordinator execution 530 at 21:40:15. The desktop WebSocket relay bypassed the HTTP user-stop recording path, allowing an interruption to trigger failure retries.
+
+```mermaid
+flowchart LR
+  A[HTTP / WebSocket user Stop] --> B[Resolve execution by owner and device identity]
+  B --> C[Record cancellation request and Issue pause]
+  C --> D[Commit transaction]
+  D --> E[Send Runtime stop command]
+  E --> F[Settle callbacks without retry or reassignment]
+```
+
+Both entry points now share stop recording and reuse the execution cancellation state machine, including device aliases and queued executions. Transport failures preserve committed stop intent. Internal cancellation remains distinct from user Stop.
+
+Regression coverage includes both transports, device aliases, RPC timeout, interrupted callbacks with retries remaining, queued cancellation, and ownership isolation. All 253 backend tests passed. Desktop coverage now clicks Stop in the actual task conversation and observes a complete queue claim window without new executions. At the user's request the running desktop verification was stopped and acceptance was handed to the user in Test-Wegent; the desktop case is not reported as passed.

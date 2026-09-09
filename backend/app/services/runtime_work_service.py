@@ -1137,27 +1137,14 @@ async def _call_runtime_task_control(
     payload = _runtime_task_address_payload(normalized_address)
     payload.update(payload_patch or {})
     if method == "runtime.tasks.cancel":
-        from app.models.loop_item_execution import LoopItemExecution
-        from app.services.issue_assignments import pause_assignment_for_user_stop
+        from app.services.runtime_task_stop import record_runtime_task_user_stop
 
-        execution = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.executor_owner_user_id == user_id,
-                LoopItemExecution.runtime_device_id == normalized_address.device_id,
-                LoopItemExecution.runtime_task_id == normalized_address.local_task_id,
-                LoopItemExecution.status.in_(
-                    ["queued", "claimed", "running", "cancel_requested"]
-                ),
-            )
-            .order_by(LoopItemExecution.id.desc())
-            .populate_existing()
-            .with_for_update()
-            .first()
+        record_runtime_task_user_stop(
+            db,
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            task_id=normalized_address.local_task_id,
         )
-        if execution is not None:
-            pause_assignment_for_user_stop(db, execution.automation_run_id)
-        db.commit()
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
