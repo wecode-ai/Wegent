@@ -337,16 +337,19 @@ describe('bundled plugin resources', () => {
 
     expect(workflow).toMatch(/name: macOS arm64\s+runner: macos-14\s+platform: macos\s+arch: arm64/)
     expect(workflow).toMatch(
-      /name: macOS x64\s+runner: macos-15-intel\s+platform: macos\s+arch: x64/
+      /name: macOS x64\s+runner: macos-14\s+platform: macos\s+arch: x64\s+node_arch: x64/
     )
+    expect(workflow).toContain('- name: Install Rosetta 2')
+    expect(workflow).toContain('architecture: ${{ matrix.node_arch }}')
     expect(workflow.indexOf('- name: Verify native build architecture')).toBeGreaterThan(
       workflow.indexOf('- name: Set up Node.js')
     )
     expect(workflow.indexOf('- name: Verify native build architecture')).toBeLessThan(
       workflow.indexOf('- name: Install workspace dependencies')
     )
-    expect(workflow).not.toContain('Install Rosetta 2')
-    expect(workflow).not.toContain('node_arch')
+    expect(workflow).toContain('- name: Upload formal release verification diagnostics')
+    expect(workflow).toContain('if: failure() && matrix.platform ==')
+    expect(workflow).toContain('wework/test-results/desktop-e2e/')
     expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
     expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"')
     expect(workflow).toContain(

@@ -185,24 +185,28 @@ jobs:
             runner: macos-14
             platform: macos
             arch: arm64
+            node_arch: arm64
             cargo_target: aarch64-apple-darwin
             codex_target: aarch64-apple-darwin
           - name: macOS x64
-            runner: macos-15-intel
+            runner: macos-14
             platform: macos
             arch: x64
+            node_arch: x64
             cargo_target: x86_64-apple-darwin
             codex_target: x86_64-apple-darwin
           - name: Windows x64
             runner: windows-latest
             platform: windows
             arch: x64
+            node_arch: x64
             cargo_target: x86_64-pc-windows-msvc
             codex_target: x86_64-pc-windows-msvc
           - name: Linux x64
             runner: ubuntu-latest
             platform: linux
             arch: x64
+            node_arch: x64
             cargo_target: x86_64-unknown-linux-gnu
             codex_target: x86_64-unknown-linux-gnu
 
@@ -225,10 +229,19 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
+      - name: Install Rosetta 2
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        run: |
+          if ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true
+
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24"
+          architecture: ${{ matrix.node_arch }}
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
@@ -352,6 +365,29 @@ jobs:
           pnpm --filter wework e2e:desktop -- \
             --parallel-segments release-package-startup,component-update,app-update-differential
           pnpm --filter wework e2e:desktop -- --segment app-update-baseline
+
+      - name: Prune formal release verification diagnostics
+        if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Upload formal release verification diagnostics
+        if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-formal-release-e2e-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-runtime/**
+            !wework/test-results/desktop-e2e/**/node-runtime/**
+            !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
 
       - name: Prepare desktop release assets
         shell: bash
