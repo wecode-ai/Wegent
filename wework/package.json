@@ -25,6 +25,8 @@
     "lint:telemetry-boundary": "node scripts/check-telemetry-boundary.mjs",
     "telemetry:catalog": "node scripts/generate-telemetry-catalog.mjs",
     "telemetry:catalog:check": "node scripts/generate-telemetry-catalog.mjs --check",
+    "telemetry:posthog:dry-run": "node scripts/sync-posthog-event-definitions.mjs --dry-run",
+    "telemetry:posthog:sync": "node scripts/sync-posthog-event-definitions.mjs",
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "test": "node scripts/run-vitest.mjs",

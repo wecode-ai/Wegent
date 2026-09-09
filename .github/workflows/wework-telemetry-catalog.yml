@@ -1,0 +1,66 @@
+name: Wework Telemetry Catalog
+
+on:
+  pull_request:
+    paths:
+      - "wework/src/telemetry/**"
+      - "wework/scripts/generate-telemetry-catalog*"
+      - "wework/scripts/sync-posthog-event-definitions*"
+      - "wework/telemetry/catalog/**"
+      - ".github/workflows/wework-telemetry-catalog.yml"
+  push:
+    branches: [main]
+    paths:
+      - "wework/src/telemetry/**"
+      - "wework/scripts/generate-telemetry-catalog*"
+      - "wework/scripts/sync-posthog-event-definitions*"
+      - "wework/telemetry/catalog/**"
+      - ".github/workflows/wework-telemetry-catalog.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wework
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/generate-telemetry-catalog.test.mjs scripts/sync-posthog-event-definitions.test.mjs
+      - run: pnpm telemetry:catalog:check
+
+  sync-posthog:
+    if: github.event_name == 'push' && vars.POSTHOG_TELEMETRY_SYNC_ENABLED == 'true'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: telemetry-production
+    defaults:
+      run:
+        working-directory: wework
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm telemetry:posthog:sync
+        env:
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+          POSTHOG_PROJECT_ID: ${{ secrets.POSTHOG_PROJECT_ID }}
+          POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
