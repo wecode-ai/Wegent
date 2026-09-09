@@ -71,7 +71,7 @@ import {
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
-import { createTrayBootstrapIcon, createTrayIcon } from './host/tray-icon.js'
+import { createTrayIcon } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
@@ -1046,7 +1046,6 @@ async function hideMainWindowToBackground(): Promise<void> {
     app.hide()
     await setDockVisible(false)
   }
-  primaryDshLoaded = false
 }
 
 async function closeMainWindowToTray(): Promise<void> {
@@ -1092,7 +1091,7 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayBootstrapIcon(nativeImage, iconPath), trayGuid),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -1216,8 +1215,8 @@ async function shutdown(): Promise<void> {
   systemSleep.stop()
   trayNativeStatus?.stop()
   trayNativeStatus = null
-  trayManager?.destroy()
-  trayManager = null
+  // Keep the tray alive until process exit. Explicit destruction removes the
+  // macOS status item's saved position, undoing menu bar manager placement.
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }

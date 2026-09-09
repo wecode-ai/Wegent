@@ -554,6 +554,16 @@ wework_desktop_other_e2e_matrix={"include":[]}
 wework_desktop_macos_inspector_e2e=true' \
   "wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs"
 
+assert_desktop_case "native tray files select Core and macOS restart coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"tray-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=true' \
+  "wework/electron/src/host/tray-manager.ts" \
+  "wework/e2e/desktop/scenarios/tray-position.mjs"
+
 assert_desktop_case "local harness files select local harness coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

@@ -59,11 +59,15 @@ instances from the release app and other worktrees. Do not change the UUID
 namespace or replace it with a random GUID because doing so resets users' menu
 bar visibility rules again.
 
-Electron creates the macOS `NSStatusItem` before assigning its `autosaveName`.
-The tray must therefore be constructed with an empty image and receive its real
-icon afterward. This prevents iBar from observing the temporary `Item-0`
-identity and applying an unrelated hidden rule. Do not move the real image back
-into the `Tray` constructor.
+Keep the tray alive until process exit. Do not call `Tray.destroy()` during
+shutdown or release its manager: the underlying `NSStatusBar.removeStatusItem`
+deletes `NSStatusItem Preferred Position <GUID>`. Relaunching then places the
+item at the left edge of the menu bar, inside iBar's hidden section, even when
+the GUID and always-show rule remain unchanged. An empty image neither makes
+the native item invisible nor protects its saved position, so create the tray
+with its real icon. The macOS `tray-lifecycle` regression seeds a position in
+an isolated application domain, checks that exit preserves it, and checks the
+GUID and position after relaunch. Checking only the GUID misses this failure.
 
 The script also exports these values as `VITE_WEWORK_*` so the frontend can display them at runtime.
 

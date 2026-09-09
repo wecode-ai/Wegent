@@ -1070,9 +1070,11 @@ async function main() {
     cwd: workspacePath,
   })
 
+  const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
   const desktopScenario = await loadDesktopScenario(
     process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
     {
+      appIdentifier,
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       codexSqliteHome,
@@ -1111,7 +1113,6 @@ async function main() {
     const codexVersion = commandOutput(codexBinary, ['--version'])
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
-    const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
     if (

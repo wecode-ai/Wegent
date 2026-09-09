@@ -422,6 +422,14 @@ classify_wework_path() {
       return
       ;;
 
+    # Native tray placement must survive process exit on macOS.
+    wework/electron/src/host/tray* | \
+      wework/e2e/desktop/scenarios/tray-*)
+      select_target "core:tray-lifecycle"
+      macos_inspector_e2e=true
+      return
+      ;;
+
     # Window and native lifecycle behavior.
     wework/src/desktop/tray* | \
       wework/src/desktop/runtimeTaskCloseGuard* | \
