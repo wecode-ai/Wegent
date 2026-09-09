@@ -27,13 +27,11 @@
     "client.js",
     "cordis.patch.yml",
     "index.js",
+    "zipArchive.js",
     "web"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2"
-  },
-  "dependencies": {
-    "archiver": "8.0.0"
   }
 }

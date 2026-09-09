@@ -1,11 +1,26 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
+import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
 
 import { apply } from './index.js'
+
+test('loads after packaging without workspace dependencies', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-isolated-'))
+  const plugin = join(root, 'plugin')
+  await mkdir(plugin)
+  for (const filename of ['index.js', 'zipArchive.js', 'package.json']) {
+    await cp(new URL(filename, import.meta.url), join(plugin, filename))
+  }
+
+  const packaged = await import(pathToFileURL(join(plugin, 'index.js')).href)
+
+  assert.equal(packaged.name, 'wework-conversation-export')
+  await rm(root, { recursive: true, force: true })
+})
 
 test('writes and overwrites an export through a polled backend task', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-'))

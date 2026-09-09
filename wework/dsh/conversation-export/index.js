@@ -1,8 +1,8 @@
-import { ZipArchive } from 'archiver'
 import { randomUUID } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
 import { open, rename, rm, stat } from 'node:fs/promises'
 import { extname, isAbsolute, posix, resolve } from 'node:path'
+
+import { writeZipArchive } from './zipArchive.js'
 
 export const name = 'wework-conversation-export'
 export const inject = ['weworkPluginRuntime']
@@ -358,26 +358,11 @@ function isActive(state) {
 }
 
 async function writeArchive(task) {
-  const output = createWriteStream(task.temporaryPath, { flags: 'wx', mode: 0o600 })
-  const archive = new ZipArchive({ zlib: { level: 6 } })
-  const completed = new Promise((resolveArchive, rejectArchive) => {
-    output.once('close', resolveArchive)
-    output.once('error', rejectArchive)
-    archive.once('error', rejectArchive)
-  })
-  archive.pipe(output)
-  archive.file(task.documentPath, { name: task.documentName })
+  const entries = [{ name: task.documentName, path: task.documentPath }]
   for (const [archivePath, asset] of task.assets) {
-    archive.file(asset.path, { name: archivePath })
+    entries.push({ name: archivePath, path: asset.path })
   }
-  try {
-    await archive.finalize()
-    await completed
-  } catch (error) {
-    archive.abort()
-    output.destroy()
-    throw error
-  }
+  await writeZipArchive(task.temporaryPath, entries)
 }
 
 async function cleanupTaskFiles(task) {
