@@ -9,7 +9,6 @@ import {
   useState,
 } from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
-import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { ComposerLinkChip } from './ComposerLinkChip'
@@ -376,7 +375,9 @@ function estimateMarkdownChunkHeight(content: string): number {
 }
 
 type MarkdownCodeProps = {
-  node?: HastElement
+  node?: {
+    properties?: unknown
+  }
   compact?: boolean
 } & HTMLAttributes<HTMLElement>
 
@@ -384,9 +385,14 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
   const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
+  const nodeDataBlock =
+    typeof node?.properties === 'object' &&
+    node.properties !== null &&
+    'dataBlock' in node.properties &&
+    node.properties.dataBlock === 'true'
   const isBlock =
     ('data-block' in props && Boolean(props['data-block'])) ||
-    node?.properties?.dataBlock === 'true' ||
+    nodeDataBlock ||
     Boolean(match) ||
     text.includes('\n')
   if (isBlock) {

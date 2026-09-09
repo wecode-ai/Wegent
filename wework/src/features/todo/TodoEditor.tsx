@@ -1,3 +1,4 @@
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   useCallback,
   useEffect,
@@ -628,6 +629,8 @@ export function TodoEditor(props: TodoEditorProps) {
     item?.parent_id ?? draft?.parentId ?? createProps?.initialParent?.id ?? ''
   )
   const [dueDate, setDueDate] = useState(item?.due_at?.slice(0, 10) ?? draft?.dueDate ?? '')
+  const [notifyAssignee, setNotifyAssignee] = useState(true)
+  const [notificationChoiceOpen, setNotificationChoiceOpen] = useState(false)
   const [assigneeTarget, setAssigneeTarget] = useState(
     item?.assignee_team_id
       ? `team:${item.assignee_team_id}`
@@ -1095,6 +1098,7 @@ export function TodoEditor(props: TodoEditorProps) {
             version: created.version,
             assigneeType: assigneeTarget.split(':', 1)[0] as 'user' | 'agent' | 'team',
             assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(':') + 1),
+            ...(assigneeTarget.startsWith('user:') ? { notifyAssignee } : {}),
           })
         } else {
           created = await api.updateLoopItem(created.id, {
@@ -1176,6 +1180,7 @@ export function TodoEditor(props: TodoEditorProps) {
             version: updated.version,
             assigneeType: assigneeTarget.split(':', 1)[0] as 'user' | 'agent' | 'team',
             assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(':') + 1),
+            ...(assigneeTarget.startsWith('user:') ? { notifyAssignee } : {}),
           })
         } else {
           updated = await api.updateLoopItem(current.id, {
@@ -1462,41 +1467,70 @@ export function TodoEditor(props: TodoEditorProps) {
     </select>
   )
   const assigneeSelect = (
-    <select
-      data-testid={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
-      aria-label="负责人"
-      value={assigneeTarget}
-      onChange={event => setAssigneeTarget(event.target.value)}
-      disabled={!canAssign}
-      className={overlayControlClass}
-    >
-      <option value="">添加负责人</option>
-      <optgroup label="成员">
-        {projectMembers.map(member => (
-          <option key={member.user_id} value={`user:${member.user_id}`}>
-            {member.user_name}
-          </option>
-        ))}
-      </optgroup>
-      {projectAgents.length ? (
-        <optgroup label="机器人">
-          {projectAgents.map(agent => (
-            <option key={agent.id} value={`agent:${agent.id}`}>
-              {agent.name}
+    <>
+      <ConfirmDialog
+        open={notificationChoiceOpen}
+        title={t('notifications.ask_title')}
+        description={t('notifications.ask_body')}
+        cancelLabel={t('notifications.without_notification')}
+        confirmLabel={t('notifications.with_notification')}
+        confirmTestId="wework-assignment-notify-confirm"
+        onClose={() => {
+          setNotifyAssignee(false)
+          setNotificationChoiceOpen(false)
+        }}
+        onConfirm={() => {
+          setNotifyAssignee(true)
+          setNotificationChoiceOpen(false)
+        }}
+      />
+      <select
+        data-testid={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
+        aria-label="负责人"
+        value={assigneeTarget}
+        onChange={event => {
+          const target = event.target.value
+          setAssigneeTarget(target)
+          setNotifyAssignee(true)
+          if (
+            target.startsWith('user:') &&
+            target !== `user:${project?.current_user_id}` &&
+            supportsAssignApi(api)
+          ) {
+            setNotificationChoiceOpen(true)
+          }
+        }}
+        disabled={!canAssign}
+        className={overlayControlClass}
+      >
+        <option value="">添加负责人</option>
+        <optgroup label="成员">
+          {projectMembers.map(member => (
+            <option key={member.user_id} value={`user:${member.user_id}`}>
+              {member.user_name}
             </option>
           ))}
         </optgroup>
-      ) : null}
-      {wegentTeams.length ? (
-        <optgroup label="Wegent 智能体">
-          {wegentTeams.map(team => (
-            <option key={team.id} value={`team:${team.id}`}>
-              {team.displayName || team.name}
-            </option>
-          ))}
-        </optgroup>
-      ) : null}
-    </select>
+        {projectAgents.length ? (
+          <optgroup label="机器人">
+            {projectAgents.map(agent => (
+              <option key={agent.id} value={`agent:${agent.id}`}>
+                {agent.name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {wegentTeams.length ? (
+          <optgroup label="Wegent 智能体">
+            {wegentTeams.map(team => (
+              <option key={team.id} value={`team:${team.id}`}>
+                {team.displayName || team.name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+      </select>
+    </>
   )
   const parentSelect = (
     <select

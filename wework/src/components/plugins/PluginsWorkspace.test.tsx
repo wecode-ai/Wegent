@@ -490,6 +490,7 @@ function mockSystemSkillsFetch(
     marketplaceCount: number
     marketplaceConnectorSlug: string
     marketplaceConnectorLocal: boolean
+    marketplaceConnectorAccountAuth: boolean
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
     marketplaceSourceProvider: 'codex' | 'wegent'
@@ -764,6 +765,15 @@ function mockSystemSkillsFetch(
             {
               slug: overrides.marketplaceConnectorSlug,
               authPolicy: 'on_install',
+              ...(overrides.marketplaceConnectorAccountAuth
+                ? {
+                    accountAuth: {
+                      protocolVersion: 1,
+                      credentialType: 'oauth2',
+                      adapter: 'scripts/account-auth.py',
+                    },
+                  }
+                : {}),
               ...(overrides.marketplaceConnectorLocal
                 ? {
                     localAuth: {
@@ -2882,6 +2892,32 @@ describe('PluginsWorkspace', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', { source: 'cloud' })
+  })
+
+  test('installs an account-managed plugin without opening a second local login', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceName: 'dingtalk',
+      marketplaceDisplayName: '钉钉',
+      marketplaceConnectorSlug: 'dingtalk',
+      marketplaceConnectorLocal: true,
+      marketplaceConnectorAccountAuth: true,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      localConnectorAuthHealth: () => Promise.resolve({ status: 'need_login' }),
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('钉钉 已安装')
+    )
+    expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+    expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+      'runtime.local_connector_auth.start',
+      expect.anything()
+    )
   })
 
   test('waits for a cloud plugin to reach the local executor before starting local auth', async () => {

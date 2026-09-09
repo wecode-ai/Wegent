@@ -452,6 +452,7 @@ class ResponsesAPIEventParser:
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content=reasoning_content,
+                    data={"thinking_kind": "reasoning_summary"},
                     message_id=message_id,
                 )
             return None

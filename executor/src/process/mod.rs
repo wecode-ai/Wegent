@@ -483,9 +483,35 @@ impl AgentEngine for StreamProcessEngine {
                         summary.outcome
                     }
                 }
-                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
-                    message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-                },
+                CommandOutcome::Failure { stderr, stdout, .. } => {
+                    let stderr_text = decode_output(stderr.clone().into_bytes());
+                    let stdout_text = decode_output(stdout.clone().into_bytes());
+                    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        claude_session::delete_saved_session_files(&request);
+                        let retry_spec = claude_spec_without_resume(&spec);
+                        match run_command_output(retry_spec, timeout_seconds).await {
+                            CommandOutcome::Success { stdout } => {
+                                let summary = collect_claude_stream_summary(&stdout);
+                                if let Some(session_id) = &summary.session_id {
+                                    claude_session::save_session_id(&request, session_id);
+                                }
+                                summary.outcome
+                            }
+                            CommandOutcome::Failure { stderr, stdout, .. } => {
+                                ExecutionOutcome::Failed {
+                                    message: failure_message(
+                                        stderr.into_bytes(),
+                                        stdout.into_bytes(),
+                                    ),
+                                }
+                            }
+                        }
+                    } else {
+                        ExecutionOutcome::Failed {
+                            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                        }
+                    }
+                }
             }
         })
     }
@@ -544,9 +570,60 @@ impl AgentEngine for StreamProcessEngine {
                         summary.outcome
                     }
                 }
-                CommandOutcome::Failure { stderr, stdout, .. } => ExecutionOutcome::Failed {
-                    message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
-                },
+                CommandOutcome::Failure { stderr, stdout, .. } => {
+                    let stderr_text = decode_output(stderr.clone().into_bytes());
+                    let stdout_text = decode_output(stdout.clone().into_bytes());
+                    if is_stale_claude_session_failure(&stderr_text, &stdout_text) {
+                        claude_session::delete_saved_session_files(&request);
+                        let retry_spec = claude_spec_without_resume(&spec);
+                        let runner = FollowUpCommandRunner::Streaming {
+                            sink: sink.clone(),
+                            builder: Box::new(builder.clone()),
+                            task_id: request.task_id.clone(),
+                            subtask_id: request.subtask_id.clone(),
+                        };
+                        match runner.run(retry_spec, timeout_seconds).await {
+                            CommandOutcome::Success { stdout } => {
+                                let summary = collect_claude_stream_summary(&stdout);
+                                if let Some(session_id) = &summary.session_id {
+                                    claude_session::save_session_id(&request, session_id);
+                                }
+                                let summary = handle_retryable_api_errors(
+                                    spec.clone(),
+                                    &request,
+                                    summary,
+                                    timeout_seconds,
+                                    runner.clone(),
+                                )
+                                .await;
+                                if summary.deferred_tool_use.is_some() {
+                                    handle_deferred_mcp_loop(
+                                        spec,
+                                        request,
+                                        summary,
+                                        timeout_seconds,
+                                        runner,
+                                    )
+                                    .await
+                                } else {
+                                    summary.outcome
+                                }
+                            }
+                            CommandOutcome::Failure { stderr, stdout, .. } => {
+                                ExecutionOutcome::Failed {
+                                    message: failure_message(
+                                        stderr.into_bytes(),
+                                        stdout.into_bytes(),
+                                    ),
+                                }
+                            }
+                        }
+                    } else {
+                        ExecutionOutcome::Failed {
+                            message: failure_message(stderr.into_bytes(), stdout.into_bytes()),
+                        }
+                    }
+                }
             }
         })
     }
@@ -777,6 +854,39 @@ fn claude_follow_up_resume_spec(
     spec
 }
 
+/// Build a copy of the Claude command spec without `--resume` and `--input-format`.
+///
+/// Used when the saved Claude session is no longer present in the sandbox and the
+/// initial `--resume` execution fails with "No conversation found with session ID".
+fn claude_spec_without_resume(base_spec: &CommandSpec) -> CommandSpec {
+    let mut spec = CommandSpec::new(base_spec.program.clone());
+    spec.env = base_spec.env.clone();
+    spec.cwd = base_spec.cwd.clone();
+    spec.stdin = base_spec.stdin.clone();
+    let mut skip_next = false;
+    for arg in &base_spec.args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--resume" || arg == "--input-format" {
+            skip_next = true;
+            continue;
+        }
+        spec.args.push(arg.clone());
+    }
+    spec
+}
+
+/// Check whether the process failure is caused by a missing Claude session.
+///
+/// Claude Code exits with `No conversation found with session ID` when `--resume`
+/// references a session that does not exist in the current sandbox.
+fn is_stale_claude_session_failure(stderr: &str, stdout: &str) -> bool {
+    stderr.contains("No conversation found with session ID")
+        || stdout.contains("No conversation found with session ID")
+}
+
 fn mcp_servers_from_spec(spec: &CommandSpec) -> Option<Value> {
     if let Some(path) = spec.env.get("WEGENT_MCP_CONFIG_PATH") {
         return read_json_file(path);
@@ -821,13 +931,13 @@ enum StreamingStdoutOutcome {
     },
 }
 
-struct ProcessTreeGuard {
+pub(crate) struct ProcessTreeGuard {
     #[cfg(windows)]
     pid: Option<u32>,
 }
 
 impl ProcessTreeGuard {
-    fn new(pid: Option<u32>) -> Self {
+    pub(crate) fn new(pid: Option<u32>) -> Self {
         #[cfg(not(windows))]
         let _ = pid;
         Self {
@@ -836,20 +946,24 @@ impl ProcessTreeGuard {
         }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         #[cfg(windows)]
         {
             self.pid = None;
+        }
+    }
+
+    pub(crate) fn terminate(&mut self) {
+        #[cfg(windows)]
+        if let Some(pid) = self.pid.take() {
+            kill_windows_process_tree(pid);
         }
     }
 }
 
 impl Drop for ProcessTreeGuard {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        if let Some(pid) = self.pid.take() {
-            kill_windows_process_tree(pid);
-        }
+        self.terminate();
     }
 }
 

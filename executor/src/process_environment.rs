@@ -66,6 +66,7 @@ pub struct ShellEnvironmentLoad {
 pub fn process_env(extra_env: &[(String, String)]) -> HashMap<String, String> {
     let mut values = env::vars().collect::<HashMap<_, _>>();
     values.extend(extra_env.iter().cloned());
+    values.extend(crate::plugin_account_auth::broker::environment());
     let current_path = values.get("PATH").map(String::as_str).unwrap_or_default();
     let runtime_bin = values.get("WEWORK_RUNTIME_BIN").map(String::as_str);
     let extra_paths = values.get("WEGENT_EXTRA_PATHS").map(String::as_str);

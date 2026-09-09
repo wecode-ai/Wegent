@@ -170,6 +170,33 @@ class SystemConfigResponse(BaseModel):
     version: int
     teams: List[int]
 
+
+class CodeWikiGenerationStrategyPolicyItem(BaseModel):
+    """One selectable Code Wiki strategy as an administrator configures it."""
+
+    id: str = Field(..., min_length=1, max_length=64)
+    enabled: bool
+    team_name: str = Field(..., min_length=1, max_length=100)
+    team_namespace: str = Field("default", min_length=1, max_length=100)
+    display_name: str = ""
+    description: str = ""
+
+
+class CodeWikiGenerationPolicyConfigResponse(BaseModel):
+    """Administrator-visible policy and the version used for audit/debugging."""
+
+    version: int
+    configured: bool
+    default_strategy: str
+    strategies: List[CodeWikiGenerationStrategyPolicyItem]
+
+
+class CodeWikiGenerationPolicyConfigUpdate(BaseModel):
+    """Replace the selectable portion of the Code Wiki generation policy."""
+
+    default_strategy: str = Field(..., min_length=1, max_length=64)
+    strategies: List[CodeWikiGenerationStrategyPolicyItem] = Field(..., min_length=1)
+
     class Config:
         from_attributes = True
 

@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 from typing import Any, Dict, Iterable
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.schemas.installed_plugin import (
     InstalledPluginComponents,
@@ -27,6 +28,7 @@ from app.schemas.installed_plugin import (
     WorkbenchFrontendModule,
     WorkbenchPluginComponent,
 )
+from app.schemas.plugin_account_auth import PluginAccountAuthDefinition
 
 MAX_PLUGIN_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
 MAX_INLINE_INTERFACE_ASSET_BYTES = 512 * 1024
@@ -97,6 +99,14 @@ class PluginPackageParser:
                     manifest,
                     workbench_manifest,
                 )
+                for connector in components.connectors:
+                    if connector.accountAuth is not None:
+                        adapter = str(PurePosixPath(connector.accountAuth.adapter))
+                        if f"{root}{adapter}" not in archive.namelist():
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Account auth adapter is missing from plugin package",
+                            )
                 interface = self._inline_interface_assets(
                     archive,
                     root,
@@ -795,12 +805,23 @@ class PluginPackageParser:
             if auth_policy not in {"on_install", "on_use", "optional"}:
                 continue
             local_auth = self._parse_local_auth(item.get("localAuth"))
+            account_auth = None
+            if "accountAuth" in item:
+                try:
+                    account_auth = PluginAccountAuthDefinition.model_validate(
+                        item["accountAuth"]
+                    )
+                except ValidationError:
+                    raise HTTPException(
+                        status_code=400, detail="Invalid plugin accountAuth declaration"
+                    ) from None
             seen.add(slug)
             connectors.append(
                 PluginConnectorComponent(
                     slug=slug,
                     authPolicy=auth_policy,
                     localAuth=local_auth,
+                    accountAuth=account_auth,
                 )
             )
         return connectors

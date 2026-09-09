@@ -27,6 +27,10 @@ from app.services.knowledge.code_wiki.generation import (
     published_commit,
     start_generation,
 )
+from app.services.knowledge.code_wiki.generation_strategy import (
+    COORDINATOR_ADAPTIVE,
+    GENERATION_STRATEGY_EXT_KEY,
+)
 from app.services.knowledge.code_wiki.projection import ProjectionSideEffects
 from app.services.knowledge.code_wiki.publisher import published_generation_id
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
@@ -601,6 +605,70 @@ def test_coordinate_progress_is_derived_from_review_evidence(
     )
     progress = current_run_state(test_db, knowledge_base, now=NOW).progress
     assert progress and progress.stage == "publishing"
+
+
+def test_no_review_progress_uses_the_persisted_page_plan(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    generation.ext = {
+        GENERATION_STRATEGY_EXT_KEY: {"id": COORDINATOR_ADAPTIVE, "revision": 1}
+    }
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+    ) == (
+        "planning",
+        1,
+        3,
+    )
+    assert not progress.review_required
+
+    generation.ext = {
+        GENERATION_STRATEGY_EXT_KEY: {"id": COORDINATOR_ADAPTIVE, "revision": 1},
+        "content_write": {
+            # The first item mirrors the historical CSV representation repaired by
+            # the version-order compatibility path.
+            "summary": {"structure_order": ["index,architecture", "operations"]}
+        },
+    }
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+        progress.pages_written,
+        progress.pages_total,
+    ) == ("writing", 2, 3, 0, 3)
+
+    for path in ("index", "architecture", "operations"):
+        _write_page(test_db, generation, path, f"# {path}")
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.pages_written,
+        progress.pages_total,
+    ) == (
+        "publishing",
+        3,
+        3,
+    )
 
 
 def test_plan_only_progress_skips_qa_and_publishes_after_all_pages_are_written(

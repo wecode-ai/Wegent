@@ -53,6 +53,8 @@ export interface EmbeddedBrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
   navigationError?: EmbeddedBrowserNavigationError | null
   invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
 }

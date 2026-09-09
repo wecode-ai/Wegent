@@ -352,8 +352,20 @@ describe('HoverCard', () => {
 
   test('measures the rendered card and moves it above the bottom viewport edge', async () => {
     vi.useFakeTimers()
+    let measuredStyle: {
+      left: string
+      top: string
+      visibility: string
+    } | null = null
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
       const isCard = this.dataset.testid === 'bottom-hover-card'
+      if (isCard) {
+        measuredStyle = {
+          left: this.style.left,
+          top: this.style.top,
+          visibility: this.style.visibility,
+        }
+      }
       return {
         x: isCard ? 530 : 900,
         y: isCard ? 700 : 680,
@@ -383,13 +395,19 @@ describe('HoverCard', () => {
     fireEvent.mouseEnter(screen.getByText('Current task'))
     await act(async () => vi.advanceTimersByTime(450))
 
+    expect(measuredStyle).toEqual({
+      left: '0px',
+      top: '0px',
+      visibility: 'hidden',
+    })
     expect(screen.getByTestId('bottom-hover-card')).toHaveStyle({
       left: '530px',
       top: '380px',
+      visibility: 'visible',
     })
   })
 
-  test('calibrates once when the rendered size changes with its position', async () => {
+  test('measures once when the rendered size changes with its position', async () => {
     vi.useFakeTimers()
     let cardMeasurements = 0
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
@@ -440,7 +458,7 @@ describe('HoverCard', () => {
     fireEvent.mouseEnter(screen.getByText('Current task'))
     await act(async () => vi.advanceTimersByTime(450))
 
-    expect(screen.getByTestId('stable-hover-card')).toHaveStyle({ left: '210px', top: '200px' })
+    expect(screen.getByTestId('stable-hover-card')).toHaveStyle({ left: '210px', top: '500px' })
     expect(cardMeasurements).toBe(1)
   })
 })

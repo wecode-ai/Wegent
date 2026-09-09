@@ -47,8 +47,8 @@ The catalog covers all public host slots:
   `wework.workspace.bottom-panel.tab`, and
   `wework.runtime-profile.workspace-policy`.
 - Composer: `wework.composer.action`.
-- Context: `wework.task.status`, `wework.environment.section`, and
-  `wework.board.card.status`.
+- Home and context: `wework.home`, `wework.task.status`,
+  `wework.environment.section`, and `wework.board.card.status`.
 - Shell: `wework.shell.before`, `wework.shell.after`, and
   `wework.shell.overlay`.
 
@@ -127,6 +127,8 @@ Start from the user-visible outcome, then select the narrowest matching slot:
 - Add a standalone settings page with `wework.settings.page`.
 - Add controls to an existing settings page with `wework.settings.section`;
   declare the target page in the contribution descriptor.
+- Replace the empty-task hero above the Composer with `wework.home`; use the
+  provided heading and call `onSelectSuggestion` to fill the active draft.
 - Use contextual and shell slots only when the UI genuinely belongs to that
   lifecycle.
 

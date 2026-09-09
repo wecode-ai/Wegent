@@ -13,7 +13,10 @@ import {
   updateCoreDshPlugin,
 } from '@/features/dsh-plugins/coreDshPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
-import { MODE_MANAGED_GIT_PLUGIN } from '@/features/workbench-mode/workbenchMode'
+import {
+  MODE_MANAGED_GIT_PLUGIN,
+  MODE_MANAGED_HOME_PLUGINS,
+} from '@/features/workbench-mode/workbenchMode'
 
 type Operation =
   | 'install'
@@ -287,7 +290,8 @@ function PluginRow({
     operation === `update:${plugin.name}` ||
     operation === `uninstall:${plugin.name}`
   const source = plugin.repository || plugin.homepage || plugin.requestedSpec
-  const modeManaged = plugin.name === MODE_MANAGED_GIT_PLUGIN
+  const modeManaged =
+    plugin.name === MODE_MANAGED_GIT_PLUGIN || MODE_MANAGED_HOME_PLUGINS.has(plugin.name)
 
   return (
     <article

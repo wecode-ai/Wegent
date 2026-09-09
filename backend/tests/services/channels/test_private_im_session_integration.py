@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.services.channels.callback import BaseCallbackInfo, ChannelType
 from app.services.channels.commands import IM_CHANNEL_CONTEXT_HINT
+from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 from app.services.im.session_service import im_session_service
 
@@ -316,6 +318,7 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
 ) -> None:
     handler = FakeChannelHandler(test_user)
     calls: dict[str, Any] = {}
+    current_selection = DeviceSelection(device_type=DeviceType.CLOUD)
 
     async def fake_delete_conversation_task_id(
         conversation_id: str,
@@ -326,37 +329,169 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
             "user_id": user_id,
         }
 
-    async def fake_process_chat_message(
+    async def fake_set_chat_mode(user_id: int) -> bool:
+        nonlocal current_selection
+        calls["chat_mode_user_id"] = user_id
+        current_selection = DeviceSelection(device_type=DeviceType.CHAT)
+        return True
+
+    async def fake_get_selection(user_id: int) -> DeviceSelection:
+        assert user_id == test_user.id
+        return current_selection
+
+    async def fake_process_chat_mode(
         user: User,
         message_context: MessageContext,
     ) -> None:
-        calls["fallthrough"] = message_context.content
+        calls["chat"] = {
+            "user_id": user.id,
+            "content": message_context.content,
+        }
+
+    async def fake_process_cloud_mode(
+        user: User,
+        message_context: MessageContext,
+    ) -> None:
+        calls["cloud"] = {
+            "user_id": user.id,
+            "content": message_context.content,
+        }
 
     monkeypatch.setattr(
         handler,
         "_delete_conversation_task_id",
         fake_delete_conversation_task_id,
     )
-    monkeypatch.setattr(handler, "_process_chat_message", fake_process_chat_message)
+    monkeypatch.setattr(
+        "app.services.im.interaction_service.device_selection_manager.set_chat_mode",
+        fake_set_chat_mode,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.get_selection",
+        fake_get_selection,
+    )
+    monkeypatch.setattr(handler, "_process_chat_mode", fake_process_chat_mode)
+    monkeypatch.setattr(handler, "_process_cloud_mode", fake_process_cloud_mode)
 
     first_handled = await handler.handle_message(_message("/new"))
     second_handled = await handler.handle_message(_message("1"))
+    third_handled = await handler.handle_message(_message("检查代码"))
 
     test_db.expire_all()
     session = await _private_session(test_db, test_user)
     assert first_handled is True
     assert second_handled is True
+    assert third_handled is True
     assert session is not None
     assert session.mode == IMSessionMode.CHAT
     assert session.state == IMSessionState.IDLE
     assert session.pending_payload == {}
     assert calls == {
+        "chat_mode_user_id": test_user.id,
         "delete_cache": {
             "conversation_id": "conv-private",
             "user_id": test_user.id,
-        }
+        },
+        "chat": {
+            "user_id": test_user.id,
+            "content": "检查代码",
+        },
     }
     assert handler.replies[-1] == "已开始新 Chat，请发送消息。"
+
+
+@pytest.mark.asyncio
+async def test_private_use_cloud_clears_bound_runtime_task(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "local-device",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+    selection = DeviceSelection(
+        device_type=DeviceType.LOCAL,
+        device_id="local-device",
+        device_name="Wework Device",
+    )
+    calls: dict[str, Any] = {}
+
+    async def fake_get_selection(user_id: int) -> DeviceSelection:
+        assert user_id == test_user.id
+        return selection
+
+    async def fake_set_cloud_executor(user_id: int) -> bool:
+        nonlocal selection
+        assert user_id == test_user.id
+        selection = DeviceSelection(device_type=DeviceType.CLOUD)
+        return True
+
+    async def fake_process_cloud_mode(
+        user: User,
+        message_context: MessageContext,
+    ) -> None:
+        calls["cloud"] = {
+            "user_id": user.id,
+            "content": message_context.content,
+        }
+
+    async def fake_process_device_mode(
+        user: User,
+        device_selection: DeviceSelection,
+        message_context: MessageContext,
+    ) -> None:
+        calls["device"] = {
+            "user_id": user.id,
+            "device_id": device_selection.device_id,
+            "content": message_context.content,
+        }
+
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.get_selection",
+        fake_get_selection,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.set_cloud_executor",
+        fake_set_cloud_executor,
+    )
+    monkeypatch.setattr(handler, "_process_cloud_mode", fake_process_cloud_mode)
+    monkeypatch.setattr(handler, "_process_device_mode", fake_process_device_mode)
+
+    handled = await handler.handle_message(_message("/use cloud"))
+    next_handled = await handler.handle_message(_message("执行 pwd"))
+
+    refreshed = await _private_session(test_db, test_user)
+    assert handled is True
+    assert next_handled is True
+    assert selection.device_type == DeviceType.CLOUD
+    assert refreshed is not None
+    assert refreshed.mode == IMSessionMode.CHAT
+    assert refreshed.active_task_id is None
+    assert refreshed.active_runtime_task is None
+    assert calls == {
+        "cloud": {
+            "user_id": test_user.id,
+            "content": "执行 pwd",
+        }
+    }
+    assert any("云端执行模式" in reply for reply in handler.replies)
 
 
 @pytest.mark.asyncio
@@ -508,6 +643,7 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
     assert calls["callback"]["task_id"] == "runtime:device-1:codex-1"
     assert calls["callback"]["callback_info"].conversation_id == "conv-private"
     assert calls["send"]["request"].source.source == "im"
+    assert calls["send"]["allow_app_device_task_messaging"] is True
     assert calls["send"]["request"].source.message_id == "dingtalk-message-1"
     assert (
         calls["send"]["request"].client_user_message_id
@@ -518,6 +654,83 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
     assert calls["send"]["request"].model_selection.options == {
         "reasoningEffort": "low"
     }
+
+
+@pytest.mark.asyncio
+async def test_task_mode_runtime_message_migrates_app_device_callback_route(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name="local-device",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Device",
+            "metadata": {"name": "local-device", "namespace": "default"},
+            "spec": {
+                "deviceId": "local-device",
+                "deviceType": "app",
+                "runtimeInstanceId": "runtime-installation",
+                "appDeviceId": "electron-app",
+            },
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "electron-app",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["callback_key"] = task_id
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(_message("继续 runtime"))
+
+    canonical_device_id = f"app-record-{device.id}"
+    assert handled is True
+    assert calls["callback_key"] == f"runtime:{canonical_device_id}:codex-1"
+    assert calls["send"]["request"].address.device_id == canonical_device_id
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed.active_runtime_task["deviceId"] == canonical_device_id
+    assert refreshed.active_runtime_task["localTaskId"] == "codex-1"
 
 
 @pytest.mark.asyncio
@@ -1021,6 +1234,17 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
     channel_sessionlocal,
 ) -> None:
     team = _create_team(test_db, test_user)
+    test_user.preferences = json.dumps(
+        {
+            "wework_new_chat_model_selection": {
+                "modelName": "openai-gpt-5.6-sol",
+                "modelType": "public",
+                "options": {"reasoning": "high"},
+            }
+        }
+    )
+    test_db.add(test_user)
+    test_db.commit()
     handler = FakeChannelHandler(test_user)
     calls: dict[str, Any] = {}
 
@@ -1091,6 +1315,8 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
     assert calls["create"]["params"].task_type == "task"
     assert calls["create"]["params"].client_origin == CLIENT_ORIGIN_WEWORK
     assert calls["create"]["params"].source == "im"
+    assert calls["create"]["params"].model_id is None
+    assert calls["create"]["params"].force_override_bot_model is False
     assert calls["create"]["should_trigger_ai"] is True
     assert calls["create"]["source"] == "im"
     assert session is not None

@@ -27,6 +27,7 @@ function status(over: Partial<CodeWikiRunStatus> = {}): CodeWikiRunStatus {
       total_steps: 3,
       pages_written: 7,
       pages_total: 13,
+      review_required: true,
     },
     ...over,
   }
@@ -103,6 +104,30 @@ describe('code wiki generation progress', () => {
 
     expect(screen.getByTestId('code-wiki-generation-progress')).toBeInTheDocument()
     expect(screen.queryByTestId('code-wiki-progress-step')).not.toBeInTheDocument()
+  })
+
+  it('shows the no-review planning and writing stages without calling the plan approved', () => {
+    render(
+      <GenerationProgress
+        status={status({
+          progress: {
+            stage: 'writing',
+            current_step: 2,
+            total_steps: 3,
+            pages_written: 4,
+            pages_total: 9,
+            review_required: false,
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('code-wiki-progress-plan')).toHaveTextContent(
+      'codeWiki.progress.stepLabel.planCompleted'
+    )
+    expect(screen.getByTestId('code-wiki-progress-writing')).toHaveTextContent(
+      'codeWiki.progress.stepLabel.writingActive'
+    )
   })
 
   it('hides progress after completion or when the worker is stale', () => {

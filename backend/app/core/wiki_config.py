@@ -2,7 +2,66 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Dict, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings
+
+
+class CodeWikiTeamRef(BaseModel):
+    """A Team selected by deployment policy, never by an API caller."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1)
+    namespace: str = Field("default", min_length=1)
+
+
+class CodeWikiStrategyBinding(BaseModel):
+    """Whether one known strategy is available and which Team implements it."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = True
+    team_ref: CodeWikiTeamRef = Field(alias="teamRef")
+
+
+class CodeWikiGenerationPolicy(BaseModel):
+    """Deployment choices linking Code Wiki strategies to executable Teams."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    default_strategy: str = Field(alias="defaultStrategy")
+    legacy_fallback_strategy: str = Field(alias="legacyFallbackStrategy")
+    strategies: Dict[str, CodeWikiStrategyBinding]
+
+    @model_validator(mode="after")
+    def defaults_are_enabled(self) -> "CodeWikiGenerationPolicy":
+        if self.legacy_fallback_strategy != "legacy":
+            raise ValueError("legacyFallbackStrategy must be 'legacy'")
+        for field_name, strategy_id in (
+            ("defaultStrategy", self.default_strategy),
+            ("legacyFallbackStrategy", self.legacy_fallback_strategy),
+        ):
+            binding = self.strategies.get(strategy_id)
+            if binding is None or not binding.enabled:
+                raise ValueError(f"{field_name} must name an enabled strategy")
+        return self
+
+
+def default_code_wiki_generation_policy(team_name: str) -> CodeWikiGenerationPolicy:
+    """Use adaptive collaboration for new wikis before an admin policy is saved."""
+
+    team_ref = CodeWikiTeamRef(name=team_name, namespace="default")
+    return CodeWikiGenerationPolicy(
+        defaultStrategy="coordinator_adaptive",
+        legacyFallbackStrategy="legacy",
+        strategies={
+            "coordinator_adaptive": CodeWikiStrategyBinding(teamRef=team_ref),
+            "coordinator_reviewed": CodeWikiStrategyBinding(teamRef=team_ref),
+            "legacy": CodeWikiStrategyBinding(teamRef=team_ref),
+        },
+    )
 
 
 class WikiSettings(BaseSettings):
@@ -19,6 +78,10 @@ class WikiSettings(BaseSettings):
     CODE_WIKI_TEAM_NAME: str = (
         "code-wiki-team"  # Matches init_data/02-public-resources.yaml
     )
+    # One structured policy replaces per-strategy Team settings. When absent, the
+    # existing WIKI_CODE_WIKI_TEAM_NAME remains authoritative so upgrades do not
+    # change a deployment before it opts into multiple strategies.
+    CODE_WIKI_GENERATION_POLICY: Optional[CodeWikiGenerationPolicy] = None
     # Whether new code wikis may be created (env var: WIKI_CODE_WIKI_ENABLED).
     #
     # On by default, because a deployment that never sets it should not have a

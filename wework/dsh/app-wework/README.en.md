@@ -11,6 +11,7 @@ The host declares these standard extension points:
 - `wework.plugins.action`
 - `wework.task.status`
 - `wework.environment.section`
+- `wework.home`
 - `wework.board.card.status`
 - `wework.workspace.menu.section`
 - `wework.project.work.section`

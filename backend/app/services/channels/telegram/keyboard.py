@@ -16,6 +16,8 @@ from typing import List, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.services.channels.device_selection import get_device_execution_target_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,6 +119,7 @@ class TelegramKeyboardBuilder:
 
         for idx, device in enumerate(online_devices, start=1):
             device_id = device.get("device_id", "")
+            execution_target_id = get_device_execution_target_id(device)
             device_name = device.get("name", device_id[:8])
             status = device.get("status", "")
 
@@ -126,7 +129,7 @@ class TelegramKeyboardBuilder:
 
             # Mark current selection and busy status
             prefix = ""
-            if device_id == current_device_id:
+            if execution_target_id == current_device_id:
                 prefix = "⭐ "
             elif status == "busy":
                 prefix = "🔴 "

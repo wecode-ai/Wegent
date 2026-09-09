@@ -4,6 +4,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { useTranslation } from '@/hooks/useTranslation'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { ApiError } from '@/api/http'
+import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
 import {
   createLocalCodexPluginApi,
   listPersonalMarketplacePluginsFromDisk,
@@ -1628,7 +1629,7 @@ export function PluginsWorkspace({
   const connectionNamesRequiredForInstall = useCallback(
     async (item: PluginMarketplaceItem): Promise<string[]> => {
       const requiredConnectors = (item.components.connectors ?? []).filter(
-        connector => connector.authPolicy === 'on_install'
+        requiresInstallConnectorAuth
       )
       if (requiredConnectors.length === 0) return []
 
@@ -2312,9 +2313,7 @@ export function PluginsWorkspace({
     })
 
   const ensureMarketplaceConnectors = async (item: PluginMarketplaceItem) => {
-    const required = (item.components.connectors ?? []).filter(
-      connector => connector.authPolicy === 'on_install'
-    )
+    const required = (item.components.connectors ?? []).filter(requiresInstallConnectorAuth)
     const oauthRequired = required.filter(connector => !isLocalConnector(connector))
     if (oauthRequired.length === 0) return
     if (!cloudApiBaseUrl || !cloudToken) {
@@ -2372,7 +2371,7 @@ export function PluginsWorkspace({
     const installedConnectors = plugin.spec.components.connectors ?? []
     const connectors = listedConnectors.length > 0 ? listedConnectors : installedConnectors
     const required = connectors.filter(
-      connector => connector.authPolicy === 'on_install' && isLocalConnector(connector)
+      connector => requiresInstallConnectorAuth(connector) && isLocalConnector(connector)
     )
     if (required.length === 0) return
 

@@ -68,6 +68,7 @@ jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: {
     pages: jest.fn(),
     cancel: jest.fn(),
+    strategies: jest.fn().mockResolvedValue({ default_strategy: null, strategies: [] }),
   },
 }))
 

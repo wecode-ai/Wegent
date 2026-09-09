@@ -13,6 +13,12 @@ const ACTIVE_BROWSER_PANEL_SELECTOR =
   ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"]'
 const BROWSER_INPUT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
+const BROWSER_BACK_BUTTON_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-back-button"]'
+const BROWSER_FORWARD_BUTTON_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-forward-button"]'
+const BROWSER_RELOAD_BUTTON_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
 const BROWSER_MORE_BUTTON_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-more-button"]'
 const FIND_ITEM_SELECTOR = '[data-testid="workspace-browser-find-item"]'
@@ -41,20 +47,23 @@ const DEVICE_CLOSE_SELECTOR =
 const SETTINGS_ITEM_SELECTOR = '[data-testid="workspace-browser-settings-item"]'
 const BROWSER_SETTINGS_PAGE_SELECTOR = '[data-testid="browser-settings-page"]'
 const FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture'
+const SECOND_FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture-second'
+const HANGING_FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture-hanging'
+const HANGING_FIXTURE_RELEASE_PATH = '/embedded-browser-toolbar-actions-fixture-hanging-release'
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_WORD = 'Fixture'
 
-function fixtureHtml() {
+function fixtureHtml(title, heading) {
   return [
     '<!doctype html>',
     '<html>',
     '  <head>',
     '    <meta charset="utf-8" />',
-    '    <title>Embedded Browser Toolbar Fixture</title>',
+    `    <title>${title}</title>`,
     '  </head>',
     '  <body>',
-    '    <h1>Embedded Browser Toolbar Fixture</h1>',
+    `    <h1>${heading}</h1>`,
     '    <p>Fixture paragraph one.</p>',
     '    <p>Fixture paragraph two.</p>',
     '  </body>',
@@ -156,6 +165,27 @@ async function waitForElementGone(control, selector, timeoutMs, message) {
   throw new Error(message)
 }
 
+async function waitForElementCount(control, selector, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastCount = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastCount = await control.command('getElementCount', selector)
+    if (lastCount === String(expected)) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}; last count=${lastCount}`)
+}
+
+async function waitForButtonDisabled(control, selector, disabled, timeoutMs, message) {
+  await waitForElementCount(
+    control,
+    disabled ? `${selector}[disabled]` : `${selector}:not([disabled])`,
+    1,
+    timeoutMs,
+    message
+  )
+}
+
 function assertFramesEqual(before, after) {
   assert.equal(before.length, 4, 'Inspector verification returned an invalid before frame')
   assert.equal(after.length, 4, 'Inspector verification returned an invalid after frame')
@@ -168,17 +198,45 @@ function assertFramesEqual(before, after) {
 }
 
 export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
+  const hangingWaiters = []
   return {
     async handleHttp(request, response, url) {
-      if (request.method !== 'GET' || url.pathname !== FIXTURE_PATH) return false
+      if (request.method !== 'GET') return false
+      if (url.pathname === HANGING_FIXTURE_PATH) {
+        await new Promise(resolve => hangingWaiters.push(resolve))
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(fixtureHtml('Embedded Browser Hanging Fixture', 'Hanging fixture loaded'))
+        return true
+      }
+      if (url.pathname === HANGING_FIXTURE_RELEASE_PATH) {
+        while (hangingWaiters.length > 0) hangingWaiters.pop()()
+        response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+        response.end('released')
+        return true
+      }
+      if (url.pathname === SECOND_FIXTURE_PATH) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(
+          fixtureHtml(
+            'Embedded Browser Toolbar Fixture Two',
+            'Embedded Browser Toolbar Fixture Two'
+          )
+        )
+        return true
+      }
+      if (url.pathname !== FIXTURE_PATH) return false
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      response.end(fixtureHtml())
+      response.end(
+        fixtureHtml('Embedded Browser Toolbar Fixture', 'Embedded Browser Toolbar Fixture')
+      )
       return true
     },
 
     async verify(control) {
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const fixtureUrl = control.url + FIXTURE_PATH
+      const secondFixtureUrl = control.url + SECOND_FIXTURE_PATH
+      const hangingFixtureUrl = control.url + HANGING_FIXTURE_PATH
 
       await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
@@ -192,6 +250,110 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         fixtureUrl,
         uiTimeoutMs,
         'The browser tab did not load the toolbar fixture'
+      )
+
+      // --- Toolbar navigation button state ---
+      // The first navigation has no history, so back and forward stay disabled.
+      await waitForButtonDisabled(
+        control,
+        BROWSER_BACK_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Back stayed enabled without navigation history'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_FORWARD_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Forward stayed enabled without forward history'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Reload did not become enabled after the page loaded'
+      )
+
+      // A same-tab navigation creates history and enables back.
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: secondFixtureUrl })
+      // Back becoming enabled implies the navigation finished and created history.
+      await waitForButtonDisabled(
+        control,
+        BROWSER_BACK_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Back did not become enabled after a same-tab navigation'
+      )
+
+      // Going back restores the fixture and enables forward.
+      await control.command('click', BROWSER_BACK_BUTTON_SELECTOR)
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'The back button did not return to the toolbar fixture'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_FORWARD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Forward did not become enabled after going back'
+      )
+
+      // While a page is loading, back, forward, and reload are all disabled.
+      // The hanging fixture only responds once the release endpoint is hit.
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: hangingFixtureUrl })
+      // The reload button turning disabled signals that the panel observed the
+      // loading state; the address bar keeps the previous URL while loading.
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Reload stayed enabled while the page was loading'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_BACK_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Back stayed enabled while the page was loading'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_FORWARD_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Forward stayed enabled while the page was loading'
+      )
+      await fetch(control.url + HANGING_FIXTURE_RELEASE_PATH)
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Reload did not recover once the hanging fixture finished loading'
+      )
+
+      // Return to the original fixture for the remaining toolbar checks.
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: fixtureUrl })
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'The browser tab did not return to the toolbar fixture'
+      )
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'The address bar did not settle back on the toolbar fixture'
       )
 
       if (process.platform === 'darwin') {

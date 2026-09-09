@@ -19,7 +19,10 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/apis/code-wiki', () => ({
-  codeWikiApi: { resolve: jest.fn().mockResolvedValue(null) },
+  codeWikiApi: {
+    resolve: jest.fn().mockResolvedValue(null),
+    strategies: jest.fn().mockResolvedValue({ default_strategy: null, strategies: [] }),
+  },
 }))
 
 jest.mock('@/apis/knowledge', () => ({
@@ -45,6 +48,9 @@ jest.mock('@/apis/knowledge', () => ({
 
 jest.mock('@/features/tasks/components/selector', () => ({
   RepositorySelector: () => <div data-testid="repository-selector" />,
+}))
+jest.mock('@/features/knowledge/code-wiki/GenerationStrategySelect', () => ({
+  GenerationStrategySelect: () => null,
 }))
 
 jest.mock('@/components/model-select/ModelRefSelector', () => ({

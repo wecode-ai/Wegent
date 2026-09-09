@@ -2,3 +2,6 @@
 # label parsing; convert on checkout regardless of the committing platform.
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# SDK inventories hash source bytes, including when checked out on Windows.
+sdk/** text eol=lf

@@ -126,6 +126,8 @@ Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型�
 
 ## 对话运行时
 
+本地 Codex 对话由 Executor 复用同一个 app-server。普通任务的一轮执行完成后，Executor 会继续保留该线程的 owner subscription，空闲 30 分钟后再发送 `thread/unsubscribe`，使该线程内由 Codex 启动的后台终端和 MCP 会话可以在短暂的跨轮间隔中继续工作。新的 follow-up 会重新激活原线程并使旧的空闲计时失效。为限制常驻资源，每个 app-server 最多保留 4 个空闲任务线程；超过上限时优先释放最早进入空闲状态的线程。归档任务仍会立即取消订阅，不等待空闲期限。
+
 新对话的 Composer 会展开显示插件入口和最多三个可用插件预览；进入会话后，插件入口折叠为单个图标以减少工具栏占用，但点击图标仍会打开完整插件选择器。窄工具栏同样使用图标形态。
 
 用户在输入框中选择 skill、app 或插件时，编辑器插入不可拆分的行内 mention。光标只能停在 mention 前后；复制或提交时，编辑器会把 mention 序列化为 Codex app-server 支持的 markdown 输入：

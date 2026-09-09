@@ -31,6 +31,7 @@ import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
+import { sendE2EKey } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
@@ -45,6 +46,7 @@ import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager
 import type { StartupSplashSnapshot } from './startup-splash.js'
 import type { VncSessionManager } from './vnc-session-manager.js'
 import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
+import type { SchemeQueue } from './scheme-queue.js'
 import {
   listLocalWorkspaceOpeners,
   openLocalWorkspace,
@@ -105,6 +107,8 @@ export interface ElectronDesktopServices {
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   pluginDevelopment: () => PluginDevelopmentService | null
+  pendingSchemes: SchemeQueue
+  openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
   weworkSyncRequest?: (request: {
@@ -277,6 +281,11 @@ export function createElectronCapabilityRouter(
   })
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
 
+  router.register('navigation.pendingSchemes', () => desktopServices.pendingSchemes.read())
+  router.register('navigation.acknowledgeScheme', params => {
+    const id = integerParam(params, 'id')
+    if (id !== undefined) desktopServices.pendingSchemes.acknowledge(id)
+  })
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
@@ -540,6 +549,16 @@ export function createElectronCapabilityRouter(
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
   })
+  router.register('e2e.pressKey', params => {
+    const label = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(label)
+    if (!contents) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
+    }
+    return sendE2EKey(contents, stringParam(params, 'key'), () =>
+      label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)
+    )
+  })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getClipboardText', () => clipboard.readText())
@@ -692,6 +711,10 @@ export function createElectronCapabilityRouter(
   })
   router.register('shell.openExternal', async params => {
     const url = new URL(stringParam(params, 'url'))
+    if (url.protocol === 'wework:') {
+      desktopServices.openScheme(url.toString())
+      return
+    }
     if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) {
       throw new HostCapabilityError(
         'invalid_external_url',
@@ -994,7 +1017,12 @@ export function createWorkbenchCapabilityRouter(
       )
     }
     const rect = ownerCaptureRectParam(params)
-    return { dataUrl: await browser.capture(ownerLabel, rect) }
+    return {
+      dataUrl: await browser.capture(ownerLabel, rect, {
+        preferDebugger: true,
+        debuggerFromSurface: true,
+      }),
+    }
   })
   router.grant(WEWORK_WORKBENCH_PRINCIPAL, WORKBENCH_ONLY_CAPABILITIES)
   return router

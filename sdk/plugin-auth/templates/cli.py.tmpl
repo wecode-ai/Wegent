@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Public business CLI. The native adapter calls execute directly to avoid recursion."""
+
+import json
+import sys
+from pathlib import Path
+
+import auth_provider
+from wegent_plugin_auth import AuthError, delegate_cloud_command
+
+
+def main(arguments):
+    delegated = delegate_cloud_command(Path(__file__).resolve().parents[1], "__CONNECTOR_SLUG__", arguments)
+    if delegated is not None:
+        return delegated
+    try:
+        if not arguments or arguments[0] not in auth_provider.ALLOWED_COMMANDS:
+            raise AuthError("plugin_auth_invalid_command")
+        credential = auth_provider.export_local()
+        if credential is None:
+            raise AuthError("plugin_auth_local_login_required")
+        auth_provider.validate(credential)
+        return auth_provider.execute(credential, arguments)
+    except Exception:
+        print(json.dumps({"error": "plugin_auth_local_execution_failed"}))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

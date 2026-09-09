@@ -70,6 +70,7 @@ class DocumentDownloadToken:
     user_id: int
     document_id: int
     disposition: str
+    document_download_exempt: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,8 @@ def build_content_disposition(disposition: str, file_name: str) -> str:
 def build_document_capabilities(
     document: KnowledgeDocument,
     attachment: Optional[SubtaskContext],
+    *,
+    original_download_allowed: bool = True,
 ) -> ExternalDocumentAccess:
     """Build external metadata and capability flags for a document."""
     is_attachment = (
@@ -133,7 +136,8 @@ def build_document_capabilities(
         if is_attachment and attachment.file_size is not None
         else document.file_size
     )
-    downloadable = bool(is_attachment and attachment.storage_key)
+    file_available = bool(is_attachment and attachment.storage_key)
+    downloadable = bool(file_available and original_download_allowed)
     previewable = bool(
         downloadable and mime_type and mime_type.lower() in INLINE_PREVIEW_MIME_TYPES
     )
@@ -217,6 +221,7 @@ def get_document_file_or_raise(
     user_id: int,
     document_id: int,
     disposition: str,
+    document_download_exempt: bool = False,
 ) -> ExternalDocumentAccess:
     """Validate a file download request and return document access metadata."""
     access = get_document_access_or_raise(
@@ -224,6 +229,25 @@ def get_document_file_or_raise(
         user_id=user_id,
         document_id=document_id,
     )
+    knowledge_base, _ = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=access.knowledge_base_id,
+        user_id=user_id,
+    )
+    if knowledge_base is None:
+        raise ExternalDocumentAccessError("Knowledge base not found", "not_found")
+
+    from app.services.knowledge.document_download_policy import (
+        DocumentDownloadDisabledError,
+        require_document_download_allowed,
+    )
+
+    if not document_download_exempt:
+        try:
+            require_document_download_allowed(db, knowledge_base)
+        except DocumentDownloadDisabledError as exc:
+            raise ExternalDocumentAccessError(str(exc), exc.code) from exc
+
     if not access.downloadable or access.attachment is None:
         raise ExternalDocumentAccessError(
             "Document file is unavailable", "file_unavailable"
@@ -241,6 +265,7 @@ def load_document_file_or_raise(
     user_id: int,
     document_id: int,
     disposition: str,
+    document_download_exempt: bool = False,
 ) -> ExternalDocumentFile:
     """Load a validated original document file for external download."""
     from app.services.context.context_service import context_service
@@ -250,6 +275,7 @@ def load_document_file_or_raise(
         user_id=user_id,
         document_id=document_id,
         disposition=disposition,
+        document_download_exempt=document_download_exempt,
     )
     binary_data = context_service.get_attachment_binary_data(
         db=db,
@@ -272,6 +298,7 @@ def create_document_download_token(
     user_id: int,
     document_id: int,
     disposition: str,
+    document_download_exempt: bool = False,
     expires_seconds: int = DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
 ) -> str:
     """Create a short-lived signed token for external document downloads."""
@@ -281,6 +308,7 @@ def create_document_download_token(
         "user_id": user_id,
         "document_id": document_id,
         "disposition": disposition,
+        "document_download_exempt": document_download_exempt,
         "exp": expire,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
@@ -304,12 +332,14 @@ def verify_document_download_token(token: str) -> Optional[DocumentDownloadToken
     user_id = payload.get("user_id")
     document_id = payload.get("document_id")
     disposition = payload.get("disposition")
+    document_download_exempt = payload.get("document_download_exempt", False)
     if (
         type(user_id) is not int
         or user_id <= 0
         or type(document_id) is not int
         or document_id <= 0
         or disposition not in ALLOWED_DOWNLOAD_DISPOSITIONS
+        or type(document_download_exempt) is not bool
     ):
         return None
 
@@ -317,4 +347,5 @@ def verify_document_download_token(token: str) -> Optional[DocumentDownloadToken
         user_id=user_id,
         document_id=document_id,
         disposition=disposition,
+        document_download_exempt=document_download_exempt,
     )

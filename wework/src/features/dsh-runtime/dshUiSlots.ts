@@ -5,6 +5,7 @@ export const WEWORK_DSH_SLOTS = {
   boardCardStatus: 'wework.board.card.status',
   composerAction: 'wework.composer.action',
   environmentSection: 'wework.environment.section',
+  home: 'wework.home',
   projectCreateSection: 'wework.project.create.section',
   projectWorkSection: 'wework.project.work.section',
   route: 'wework.route',
