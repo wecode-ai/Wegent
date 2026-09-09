@@ -1227,6 +1227,13 @@
       }
     },
     "reader": {
+      "update": "更新 Wiki",
+      "updateTitle": "更新 Wiki",
+      "updateDescription": "选择本次更新方式。实际模式由服务端检查仓库后决定。",
+      "checkAndUpdate": "检查并更新（推荐）",
+      "checkAndUpdateHint": "没有变化时不生成；适合增量时增量更新，否则自动全量更新。",
+      "fullUpdate": "全量重新生成",
+      "startUpdate": "开始更新",
       "regenerate": "重新生成",
       "regenerating": "生成中…",
       "upToDate": "仓库自上次生成后没有变化",

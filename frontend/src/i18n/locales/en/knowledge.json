@@ -1227,6 +1227,13 @@
       }
     },
     "reader": {
+      "update": "Update Wiki",
+      "updateTitle": "Update Wiki",
+      "updateDescription": "Choose how to update. The server checks the repository before deciding the actual mode.",
+      "checkAndUpdate": "Check and update (recommended)",
+      "checkAndUpdateHint": "Skip when unchanged, update incrementally when safe, otherwise rebuild in full.",
+      "fullUpdate": "Regenerate in full",
+      "startUpdate": "Start update",
       "regenerate": "Regenerate",
       "regenerating": "Generating…",
       "upToDate": "Already up to date with the repository",
