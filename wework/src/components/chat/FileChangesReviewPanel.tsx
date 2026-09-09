@@ -3,23 +3,40 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Columns2,
   Copy,
+  Eye,
+  EyeOff,
   FileText,
   GitBranch,
   GitCompareArrows,
   ListCollapse,
   RefreshCw,
-  Search,
+  Rows3,
   WrapText,
 } from 'lucide-react'
 import { PatchDiff } from '@pierre/diffs/react'
-import { FileTree, useFileTree } from '@pierre/trees/react'
-import type { CSSProperties } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import type { DiffLineEventBaseProps } from '@pierre/diffs'
+import type { RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { CodeCommentContext } from '@/types/workspace-files'
+import type { GitPatchAction } from '@/api/environment'
 import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
+import { DiffCommentComposer, ReviewPatchActionButton } from './fileChangesReviewInteractions'
+import {
+  ensureTrailingNewline,
+  fileNameFromPath,
+  getDiffSelection,
+  getFirstChangedLine,
+  getHunkPatches,
+  getReviewActions,
+  type DiffCommentSelection,
+  type FileChangesReviewMode,
+} from './fileChangesReviewUtils'
+import { ReviewFileTree } from './FileChangesReviewTree'
 
 const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
 const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
@@ -55,98 +72,6 @@ const PIERRE_DIFF_CSS = `
     background: rgb(239 68 68 / 0.12);
   }
 `
-const PIERRE_FILE_TREE_CSS = `
-  :host {
-    --trees-bg-override: transparent;
-    --trees-bg-muted-override: rgb(var(--color-muted));
-    --trees-fg-override: rgb(var(--color-text-secondary));
-    --trees-fg-muted-override: rgb(var(--color-text-muted));
-    --trees-border-color-override: rgb(var(--color-border));
-    --trees-selected-bg-override: rgb(var(--color-bg-surface));
-    --trees-selected-fg-override: rgb(var(--color-text-primary));
-    --trees-selected-focused-border-color-override: rgb(var(--color-primary));
-    --trees-focus-ring-color-override: rgb(var(--color-primary) / 0.35);
-    --trees-focus-ring-width-override: 1px;
-    --trees-focus-ring-offset-override: 0px;
-    --trees-gap-override: 2px;
-    --trees-level-gap-override: 6px;
-    --trees-item-padding-x-override: 4px;
-    --trees-item-margin-x-override: 0px;
-    --trees-padding-inline-override: 4px;
-    --trees-indent-guide-bg-override: rgb(var(--color-border));
-    --trees-scrollbar-thumb-override: rgb(var(--color-text-muted));
-    --trees-search-bg-override: rgb(var(--color-bg-base));
-    --trees-search-fg-override: rgb(var(--color-text-primary));
-    --trees-status-added-override: rgb(57 151 75);
-    --trees-status-modified-override: rgb(57 151 75);
-    --trees-status-renamed-override: rgb(57 151 75);
-    --trees-status-untracked-override: rgb(57 151 75);
-    --trees-status-deleted-override: rgb(210 57 57);
-    --trees-git-added-color-override: rgb(57 151 75);
-    --trees-git-modified-color-override: rgb(57 151 75);
-    --trees-git-renamed-color-override: rgb(57 151 75);
-    --trees-git-untracked-color-override: rgb(57 151 75);
-    --trees-git-deleted-color-override: rgb(210 57 57);
-    --trees-file-icon-color: rgb(var(--color-text-muted));
-    --trees-file-icon-color-default: rgb(var(--color-text-muted));
-    --trees-icon-blue: rgb(var(--color-text-muted));
-    --trees-icon-cyan: rgb(var(--color-text-muted));
-    --trees-icon-green: rgb(var(--color-text-muted));
-    --trees-icon-indigo: rgb(var(--color-text-muted));
-    --trees-icon-mauve: rgb(var(--color-text-muted));
-    --trees-icon-orange: rgb(var(--color-text-muted));
-    --trees-icon-pink: rgb(var(--color-text-muted));
-    --trees-icon-purple: rgb(var(--color-text-muted));
-    --trees-icon-red: rgb(var(--color-text-muted));
-    --trees-icon-teal: rgb(var(--color-text-muted));
-    --trees-icon-vermilion: rgb(var(--color-text-muted));
-    --trees-icon-yellow: rgb(var(--color-text-muted));
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: rgb(var(--color-text-secondary));
-    background: transparent !important;
-  }
-  button[data-type='item'] {
-    box-sizing: border-box;
-    border-radius: 6px;
-    color: rgb(var(--color-text-secondary));
-    background: transparent;
-    background-clip: padding-box;
-  }
-  button[data-type='item']:hover {
-    color: rgb(var(--color-text-primary));
-    background: rgb(var(--color-muted));
-    box-shadow:
-      0 0 0 1px rgb(var(--color-bg-base)),
-      0 1px 2px rgb(0 0 0 / 0.04);
-  }
-  button[data-type='item'][data-item-selected] {
-    color: rgb(var(--color-text-primary));
-    background: rgb(var(--color-muted)) !important;
-    box-shadow:
-      0 0 0 1px rgb(var(--color-bg-base)),
-      0 1px 2px rgb(0 0 0 / 0.04);
-  }
-  button[data-type='item'][data-item-selected='true']:has(+ [data-item-selected='true']),
-  button[data-type='item'][data-item-selected='true'] + [data-item-selected='true'] {
-    border-radius: 6px !important;
-  }
-  button[data-type='item'][data-item-focused='true']::before,
-  button[data-type='item']:focus-visible::before {
-    outline: none;
-    box-shadow: inset 0 0 0 1px var(--trees-focus-ring-color);
-  }
-  button[data-type='item'][data-item-focused='true'][data-item-selected='true']::before,
-  button[data-type='item'][data-item-selected='true']:focus-visible::before {
-    box-shadow: inset 0 0 0 1px var(--trees-selected-focused-border-color);
-  }
-  input {
-    background: rgb(var(--color-bg-base));
-    color: rgb(var(--color-text-primary));
-    border-color: rgb(var(--color-border));
-  }
-`
-
 interface FileChangesReviewPanelProps {
   loading: boolean
   diff: string
@@ -157,8 +82,12 @@ interface FileChangesReviewPanelProps {
   branchName?: string
   targetBranchName?: string
   focusFilePath?: string
+  reviewMode?: 'branch' | 'unstaged' | 'staged' | 'commit' | 'previous-turn'
   viewOptions?: FileChangesReviewViewOption[]
   onRefresh?: () => void
+  onOpenSourceFile?: (path: string, lineStart?: number, lineEnd?: number) => void
+  onApplyPatch?: (action: GitPatchAction, patch: string) => Promise<void>
+  onAddCodeComment?: (context: CodeCommentContext) => void
 }
 
 export interface FileChangesReviewViewOption {
@@ -168,6 +97,8 @@ export interface FileChangesReviewViewOption {
   disabled?: boolean
   onSelect: () => void
 }
+
+type ReviewMode = FileChangesReviewMode
 
 export function FileChangesReviewPanel({
   loading,
@@ -179,8 +110,12 @@ export function FileChangesReviewPanel({
   branchName,
   targetBranchName,
   focusFilePath,
+  reviewMode,
   viewOptions,
   onRefresh,
+  onOpenSourceFile,
+  onApplyPatch,
+  onAddCodeComment,
 }: FileChangesReviewPanelProps) {
   const { t } = useTranslation('chat')
   const appearance = useOptionalAppearance()
@@ -190,13 +125,19 @@ export function FileChangesReviewPanel({
       ? 'dark'
       : 'light')
   const [selection, setSelection] = useState<{
-    diff: string
     focusFilePath?: string
-    index: number
-  }>({ diff: '', index: 0 })
+    path?: string
+  }>({})
   const [wrapLines, setWrapLines] = useState(false)
   const [hunksCollapsed, setHunksCollapsed] = useState(false)
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const [fileTreeVisible, setFileTreeVisible] = useState(defaultFileTreeVisible)
+  const [diffStyle, setDiffStyle] = useState<'unified' | 'split'>('unified')
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [commentSelection, setCommentSelection] = useState<DiffCommentSelection | null>(null)
+  const [comment, setComment] = useState('')
+  const diffLinesRef = useRef<HTMLDivElement>(null)
 
   const sections = useMemo(() => parseUnifiedDiff(diff), [diff])
   const focusSectionIndex = useMemo(
@@ -204,22 +145,62 @@ export function FileChangesReviewPanel({
     [focusFilePath, sections]
   )
   const defaultSelectedIndex = focusSectionIndex >= 0 ? focusSectionIndex : 0
-  const selectedIndex =
-    selection.diff === diff &&
-    selection.focusFilePath === focusFilePath &&
-    selection.index < sections.length
-      ? selection.index
-      : defaultSelectedIndex
+  const selectedPathIndex =
+    selection.focusFilePath === focusFilePath && selection.path
+      ? findSectionIndexForPath(sections, selection.path)
+      : -1
+  const selectedIndex = selectedPathIndex >= 0 ? selectedPathIndex : defaultSelectedIndex
   const selectedSection = sections[selectedIndex] ?? sections[0]
   const diffStats = useMemo(() => getSectionsDiffStats(sections), [sections])
   const isLargeDiff = useMemo(() => isLargeReviewDiff(sections), [sections])
   const displayedSections = isLargeDiff && selectedSection ? [selectedSection] : sections
-  const fileTreeVisible = defaultFileTreeVisible
 
-  const selectSection = (index: number) => {
-    setSelection({ diff, focusFilePath, index })
-    setHunksCollapsed(false)
-  }
+  const scrollToSection = useCallback((section: DiffFileSection, behavior: ScrollBehavior) => {
+    const container = diffLinesRef.current
+    const target = Array.from(
+      container?.querySelectorAll<HTMLElement>('[data-review-path]') ?? []
+    ).find(element => element.dataset.reviewPath === section.path)
+    target?.scrollIntoView({ behavior, block: 'start' })
+  }, [])
+
+  const selectSection = useCallback(
+    (index: number) => {
+      const section = sections[index]
+      if (!section) return
+      setSelection({ focusFilePath, path: section.path })
+      setHunksCollapsed(false)
+      requestAnimationFrame(() => scrollToSection(section, 'smooth'))
+    },
+    [focusFilePath, scrollToSection, sections]
+  )
+
+  useEffect(() => {
+    if (focusSectionIndex < 0) return
+    const section = sections[focusSectionIndex]
+    requestAnimationFrame(() => scrollToSection(section, 'instant'))
+  }, [focusFilePath, focusSectionIndex, scrollToSection, sections])
+
+  const applyPatch = useCallback(
+    async (action: GitPatchAction, patch: string, operationKey: string) => {
+      if (!onApplyPatch || pendingAction) return
+      if (
+        action === 'revert' &&
+        !window.confirm(t('file_changes.confirm_partial_revert_description'))
+      ) {
+        return
+      }
+      setPendingAction(operationKey)
+      setActionError(null)
+      try {
+        await onApplyPatch(action, ensureTrailingNewline(patch))
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setPendingAction(null)
+      }
+    },
+    [onApplyPatch, pendingAction, t]
+  )
 
   const toggleSectionCollapsed = (section: DiffFileSection, index: number) => {
     const key = getDiffSectionKey(section, index)
@@ -260,15 +241,29 @@ export function FileChangesReviewPanel({
             deletions={diffStats.deletions}
             wrapLines={wrapLines}
             hunksCollapsed={hunksCollapsed}
+            fileTreeVisible={fileTreeVisible}
+            diffStyle={diffStyle}
             canRefresh={Boolean(onRefresh)}
             onRefresh={onRefresh}
             onToggleWrap={() => setWrapLines(value => !value)}
             onToggleHunks={() => setHunksCollapsed(value => !value)}
+            onToggleFileTree={() => setFileTreeVisible(value => !value)}
+            onToggleDiffStyle={() =>
+              setDiffStyle(current => (current === 'unified' ? 'split' : 'unified'))
+            }
             onCopyGitApplyCommand={copyGitApplyCommand}
           />
           {isLargeDiff ? (
             <p className="shrink-0 border-b border-border bg-background px-6 py-2 text-sm text-text-muted">
               {t('file_changes.large_diff_single_file_notice')}
+            </p>
+          ) : null}
+          {actionError ? (
+            <p
+              data-testid="file-changes-review-action-error"
+              className="shrink-0 border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+            >
+              {actionError}
             </p>
           ) : null}
           <div
@@ -287,21 +282,61 @@ export function FileChangesReviewPanel({
                 sections={displayedSections}
                 ariaLabel={t('file_changes.all_files_diff_label')}
                 wrapLines={wrapLines}
+                diffLinesRef={diffLinesRef}
+                diffStyle={diffStyle}
                 hunksCollapsed={hunksCollapsed}
                 collapsedSections={collapsedSections}
                 expandFileLabel={t('file_changes.actions.expand_file_diff')}
                 collapseFileLabel={t('file_changes.actions.collapse_file_diff')}
                 onToggleSectionCollapsed={toggleSectionCollapsed}
+                reviewMode={reviewMode}
+                pendingAction={pendingAction}
+                onApplyPatch={applyPatch}
+                onOpenSourceFile={onOpenSourceFile}
+                canComment={Boolean(onAddCodeComment)}
+                commentSelection={commentSelection}
+                onCommentSelectionChange={selection => {
+                  setCommentSelection(selection)
+                  setComment('')
+                }}
                 themeType={themeType}
               />
             )}
-            {sections.length > 0 && fileTreeVisible && (
+            {sections.length > 0 && (
               <ReviewFileTree
+                visible={fileTreeVisible}
                 selectedSection={selectedSection}
                 sections={sections}
                 onSelectSection={selectSection}
               />
             )}
+            {commentSelection ? (
+              <DiffCommentComposer
+                selection={commentSelection}
+                comment={comment}
+                onCommentChange={setComment}
+                onCancel={() => {
+                  setCommentSelection(null)
+                  setComment('')
+                }}
+                onSubmit={() => {
+                  if (!onAddCodeComment || !comment.trim()) return
+                  onAddCodeComment({
+                    id: `code-comment-${Date.now()}`,
+                    source: 'code_selection',
+                    filePath: commentSelection.path,
+                    fileName: fileNameFromPath(commentSelection.path),
+                    startLine: commentSelection.startLine,
+                    endLine: commentSelection.endLine,
+                    selectedText: commentSelection.selectedText,
+                    comment: comment.trim(),
+                    createdAt: new Date().toISOString(),
+                  })
+                  setCommentSelection(null)
+                  setComment('')
+                }}
+              />
+            ) : null}
           </div>
         </div>
       )}
@@ -318,10 +353,14 @@ function ReviewToolbar({
   deletions,
   wrapLines,
   hunksCollapsed,
+  fileTreeVisible,
+  diffStyle,
   canRefresh,
   onRefresh,
   onToggleWrap,
   onToggleHunks,
+  onToggleFileTree,
+  onToggleDiffStyle,
   onCopyGitApplyCommand,
 }: {
   title?: string
@@ -332,10 +371,14 @@ function ReviewToolbar({
   deletions: number
   wrapLines: boolean
   hunksCollapsed: boolean
+  fileTreeVisible: boolean
+  diffStyle: 'unified' | 'split'
   canRefresh: boolean
   onRefresh?: () => void
   onToggleWrap: () => void
   onToggleHunks: () => void
+  onToggleFileTree: () => void
+  onToggleDiffStyle: () => void
   onCopyGitApplyCommand: () => void
 }) {
   const { t } = useTranslation('chat')
@@ -410,6 +453,28 @@ function ReviewToolbar({
             onClick={onRefresh}
             disabled={!canRefresh}
             icon={RefreshCw}
+          />
+          <ToolbarButton
+            testId="toggle-file-tree-button"
+            label={
+              fileTreeVisible
+                ? t('file_changes.actions.hide_files')
+                : t('file_changes.actions.show_files')
+            }
+            onClick={onToggleFileTree}
+            pressed={fileTreeVisible}
+            icon={fileTreeVisible ? EyeOff : Eye}
+          />
+          <ToolbarButton
+            testId="toggle-diff-style-button"
+            label={
+              diffStyle === 'unified'
+                ? t('file_changes.actions.show_split')
+                : t('file_changes.actions.show_unified')
+            }
+            onClick={onToggleDiffStyle}
+            pressed={diffStyle === 'split'}
+            icon={diffStyle === 'unified' ? Columns2 : Rows3}
           />
           <ToolbarButton
             testId="toggle-line-wrap-button"
@@ -492,142 +557,43 @@ function ToolbarButton({
   )
 }
 
-function ReviewFileTree({
-  selectedSection,
-  sections,
-  onSelectSection,
-}: {
-  selectedSection?: DiffFileSection
-  sections: DiffFileSection[]
-  onSelectSection: (index: number) => void
-}) {
-  const { t } = useTranslation('chat')
-  const [query, setQuery] = useState('')
-  const paths = useMemo(() => sections.map(section => section.path), [sections])
-  const statusByPath = useMemo(
-    () =>
-      sections.map(section => ({
-        path: section.path,
-        status: getPierreGitStatus(section),
-      })),
-    [sections]
-  )
-
-  return (
-    <aside
-      data-testid="file-changes-review-file-tree"
-      className="flex h-full min-h-0 w-[34%] min-w-[240px] max-w-[380px] shrink-0 flex-col border-l border-border bg-background"
-      aria-label={t('file_changes.file_list_label')}
-    >
-      <div className="px-3 pb-1.5 pt-2">
-        <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
-          <Search className="h-3.5 w-3.5 text-text-muted" />
-          <input
-            data-testid="file-changes-review-file-search-input"
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            placeholder={t('file_changes.file_search_placeholder')}
-            aria-label={t('file_changes.file_search_placeholder')}
-            className="min-w-0 flex-1 bg-transparent text-xs leading-4 outline-none placeholder:text-text-muted"
-          />
-        </div>
-      </div>
-      <div className="scrollbar-soft min-h-0 flex-1 overflow-hidden pl-1 pr-2 pb-3">
-        <PierreReviewFileTree
-          key={paths.join('\n')}
-          paths={paths}
-          query={query}
-          gitStatus={statusByPath}
-          selectedPath={selectedSection?.path}
-          onSelectPath={path => {
-            const index = sections.findIndex(section => section.path === path)
-            if (index >= 0) {
-              onSelectSection(index)
-            }
-          }}
-        />
-      </div>
-    </aside>
-  )
-}
-
-function PierreReviewFileTree({
-  paths,
-  query,
-  gitStatus,
-  selectedPath,
-  onSelectPath,
-}: {
-  paths: string[]
-  query: string
-  gitStatus: { path: string; status: 'added' | 'deleted' | 'modified' | 'renamed' }[]
-  selectedPath?: string
-  onSelectPath: (path: string) => void
-}) {
-  const { model } = useFileTree({
-    density: 'compact',
-    flattenEmptyDirectories: true,
-    gitStatus,
-    icons: { set: 'complete', colored: false },
-    initialExpansion: 'open',
-    initialSelectedPaths: selectedPath ? [selectedPath] : [],
-    itemHeight: 28,
-    onSelectionChange: selectedPaths => {
-      const nextPath = selectedPaths[0]
-      if (nextPath) {
-        onSelectPath(nextPath)
-      }
-    },
-    paths,
-    search: false,
-    unsafeCSS: PIERRE_FILE_TREE_CSS,
-  })
-
-  useEffect(() => {
-    model.setSearch(query.trim() || null)
-  }, [model, query])
-
-  useEffect(() => {
-    if (!selectedPath) return
-    model.getItem(selectedPath)?.select()
-    model.scrollToPath(selectedPath, { focus: false, offset: 'nearest' })
-  }, [model, selectedPath])
-
-  return (
-    <FileTree
-      data-testid="pierre-file-tree"
-      model={model}
-      className="block h-full min-h-0 w-full"
-      style={
-        {
-          '--trees-border-color-override': 'rgb(var(--color-border))',
-          '--trees-fg-override': 'rgb(var(--color-text-secondary))',
-          '--trees-selected-bg-override': 'rgb(var(--color-bg-surface))',
-        } as CSSProperties
-      }
-    />
-  )
-}
-
 function AllDiffSections({
   sections,
   ariaLabel,
   wrapLines,
+  diffLinesRef,
+  diffStyle,
   hunksCollapsed,
   collapsedSections,
   expandFileLabel,
   collapseFileLabel,
   onToggleSectionCollapsed,
+  reviewMode,
+  pendingAction,
+  onApplyPatch,
+  onOpenSourceFile,
+  canComment,
+  commentSelection,
+  onCommentSelectionChange,
   themeType,
 }: {
   sections: DiffFileSection[]
   ariaLabel: string
   wrapLines: boolean
+  diffLinesRef: RefObject<HTMLDivElement | null>
+  diffStyle: 'unified' | 'split'
   hunksCollapsed: boolean
   collapsedSections: Set<string>
   expandFileLabel: string
   collapseFileLabel: string
   onToggleSectionCollapsed: (section: DiffFileSection, index: number) => void
+  reviewMode?: ReviewMode
+  pendingAction: string | null
+  onApplyPatch: (action: GitPatchAction, patch: string, operationKey: string) => Promise<void>
+  onOpenSourceFile?: (path: string, lineStart?: number, lineEnd?: number) => void
+  canComment: boolean
+  commentSelection: DiffCommentSelection | null
+  onCommentSelectionChange: (selection: DiffCommentSelection | null) => void
   themeType: 'light' | 'dark'
 }) {
   return (
@@ -638,8 +604,10 @@ function AllDiffSections({
       aria-label={ariaLabel}
     >
       <div
+        ref={diffLinesRef}
         data-testid="file-changes-review-diff-lines"
         data-wrap={wrapLines ? 'true' : 'false'}
+        data-diff-style={diffStyle}
         className="scrollbar-soft pierre-diff-view min-h-0 flex-1 overflow-auto bg-background text-xs"
       >
         {sections.map((section, index) => {
@@ -653,10 +621,18 @@ function AllDiffSections({
               index={index}
               collapsed={collapsed}
               wrapLines={wrapLines}
+              diffStyle={diffStyle}
               hunksCollapsed={hunksCollapsed}
               expandFileLabel={expandFileLabel}
               collapseFileLabel={collapseFileLabel}
               onToggle={() => onToggleSectionCollapsed(section, index)}
+              reviewMode={reviewMode}
+              pendingAction={pendingAction}
+              onApplyPatch={onApplyPatch}
+              onOpenSourceFile={onOpenSourceFile}
+              canComment={canComment}
+              commentSelection={commentSelection}
+              onCommentSelectionChange={onCommentSelectionChange}
               themeType={themeType}
             />
           )
@@ -671,82 +647,171 @@ function FileDiffSection({
   index,
   collapsed,
   wrapLines,
+  diffStyle,
   hunksCollapsed,
   expandFileLabel,
   collapseFileLabel,
   onToggle,
+  reviewMode,
+  pendingAction,
+  onApplyPatch,
+  onOpenSourceFile,
+  canComment,
+  commentSelection,
+  onCommentSelectionChange,
   themeType,
 }: {
   section: DiffFileSection
   index: number
   collapsed: boolean
   wrapLines: boolean
+  diffStyle: 'unified' | 'split'
   hunksCollapsed: boolean
   expandFileLabel: string
   collapseFileLabel: string
   onToggle: () => void
+  reviewMode?: ReviewMode
+  pendingAction: string | null
+  onApplyPatch: (action: GitPatchAction, patch: string, operationKey: string) => Promise<void>
+  onOpenSourceFile?: (path: string, lineStart?: number, lineEnd?: number) => void
+  canComment: boolean
+  commentSelection: DiffCommentSelection | null
+  onCommentSelectionChange: (selection: DiffCommentSelection | null) => void
   themeType: 'light' | 'dark'
 }) {
   const stats = useMemo(() => getDiffStats(section.lines), [section.lines])
   const patchChunks = useMemo(() => getPierrePatchChunks([section]), [section])
   const actionLabel = collapsed ? expandFileLabel : collapseFileLabel
+  const filePatch = useMemo(() => ensureTrailingNewline(section.lines.join('\n')), [section.lines])
+  const firstChangedLine = useMemo(() => getFirstChangedLine(section.lines), [section.lines])
+  const fileActions = getReviewActions(reviewMode)
 
   return (
     <article
       data-testid="file-changes-review-file-diff-section"
+      data-review-path={section.path}
       className="border-b border-border bg-background last:border-b-0"
     >
-      <button
-        type="button"
-        data-testid="file-changes-review-file-diff-toggle"
-        aria-expanded={!collapsed}
-        aria-controls={getDiffSectionDomId(index)}
-        title={actionLabel}
-        onClick={onToggle}
-        className="sticky top-0 z-10 flex h-8 w-full items-center gap-2 border-b border-border bg-background px-3 text-left text-xs font-medium text-text-primary hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
-      >
-        {collapsed ? (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-        ) : (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-        )}
+      <div className="sticky top-0 z-10 flex h-8 items-center gap-1 border-b border-border bg-background px-2 text-xs font-medium text-text-primary">
+        <button
+          type="button"
+          data-testid="file-changes-review-file-diff-toggle"
+          aria-expanded={!collapsed}
+          aria-controls={getDiffSectionDomId(index)}
+          title={actionLabel}
+          onClick={onToggle}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+        >
+          {collapsed ? (
+            <ChevronRight className="h-3.5 w-3.5 text-text-muted" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 text-text-muted" />
+          )}
+        </button>
         <FileText className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-        <span className="min-w-0 flex-1 truncate">{section.path}</span>
+        <button
+          type="button"
+          data-testid="file-changes-review-open-source-button"
+          title={section.path}
+          onClick={() => onOpenSourceFile?.(section.path, firstChangedLine, firstChangedLine)}
+          className="min-w-0 flex-1 truncate rounded px-1 text-left hover:bg-muted hover:underline"
+        >
+          {section.path}
+        </button>
         <span className="shrink-0 font-normal text-green-600">+{stats.additions}</span>
         <span className="shrink-0 font-normal text-red-600">-{stats.deletions}</span>
-      </button>
+        {fileActions.map(action => (
+          <ReviewPatchActionButton
+            key={action}
+            action={action}
+            scope="file"
+            disabled={Boolean(pendingAction)}
+            pending={pendingAction === `file:${index}:${action}`}
+            onClick={() => onApplyPatch(action, filePatch, `file:${index}:${action}`)}
+          />
+        ))}
+      </div>
       {!collapsed ? (
         <div
           id={getDiffSectionDomId(index)}
           data-testid="file-changes-review-file-diff-body"
           data-theme={themeType}
         >
-          {patchChunks.map((patch, patchIndex) => (
-            <PatchDiff
-              key={`${wrapLines}:${hunksCollapsed}:${patchIndex}:${patch}`}
-              patch={patch}
-              disableWorkerPool
-              options={{
-                collapsed: hunksCollapsed,
-                diffStyle: 'unified',
-                disableFileHeader: true,
-                overflow: wrapLines ? 'wrap' : 'scroll',
-                stickyHeader: false,
-                themeType,
-                tokenizeMaxLength: 250_000,
-                tokenizeMaxLineLength: 2_000,
-                unsafeCSS: PIERRE_DIFF_CSS,
-              }}
-              metrics={{
-                diffHeaderHeight: 0,
-                hunkLineCount: 120,
-                lineHeight: 20,
-                paddingBottom: 0,
-                paddingTop: 0,
-                spacing: 0,
-              }}
-            />
-          ))}
+          {patchChunks.flatMap((patch, patchIndex) =>
+            getHunkPatches(patch).map((hunkPatch, hunkIndex) => {
+              const selectionKey = `${index}:${patchIndex}:${hunkIndex}`
+              return (
+                <div
+                  key={`${wrapLines}:${diffStyle}:${hunksCollapsed}:${selectionKey}:${hunkPatch}`}
+                >
+                  {fileActions.length > 0 ? (
+                    <div
+                      data-testid="file-changes-review-hunk-actions"
+                      className="flex min-h-8 items-center justify-end gap-1 border-b border-border bg-muted/40 px-2"
+                    >
+                      {fileActions.map(action => (
+                        <ReviewPatchActionButton
+                          key={action}
+                          action={action}
+                          scope="hunk"
+                          disabled={Boolean(pendingAction)}
+                          pending={pendingAction === `hunk:${selectionKey}:${action}`}
+                          onClick={() =>
+                            onApplyPatch(action, hunkPatch, `hunk:${selectionKey}:${action}`)
+                          }
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                  <PatchDiff
+                    patch={hunkPatch}
+                    disableWorkerPool
+                    selectedLines={
+                      commentSelection?.key === selectionKey ? commentSelection.range : null
+                    }
+                    options={{
+                      collapsed: hunksCollapsed,
+                      controlledSelection: true,
+                      diffStyle,
+                      disableFileHeader: true,
+                      enableLineSelection: canComment,
+                      lineHoverHighlight: 'both',
+                      onLineNumberClick: (line: DiffLineEventBaseProps) =>
+                        onOpenSourceFile?.(section.path, line.lineNumber, line.lineNumber),
+                      onLineSelectionEnd: range => {
+                        if (!range) {
+                          onCommentSelectionChange(null)
+                          return
+                        }
+                        const selected = getDiffSelection(hunkPatch, range)
+                        if (!selected) return
+                        onCommentSelectionChange({
+                          key: selectionKey,
+                          path: section.path,
+                          range,
+                          ...selected,
+                        })
+                      },
+                      overflow: wrapLines ? 'wrap' : 'scroll',
+                      stickyHeader: false,
+                      themeType,
+                      tokenizeMaxLength: 250_000,
+                      tokenizeMaxLineLength: 2_000,
+                      unsafeCSS: PIERRE_DIFF_CSS,
+                    }}
+                    metrics={{
+                      diffHeaderHeight: 0,
+                      hunkLineCount: 120,
+                      lineHeight: 20,
+                      paddingBottom: 0,
+                      paddingTop: 0,
+                      spacing: 0,
+                    }}
+                  />
+                </div>
+              )
+            })
+          )}
         </div>
       ) : null}
     </article>
@@ -768,19 +833,6 @@ function getDiffSectionKey(section: DiffFileSection, index: number) {
 
 function getDiffSectionDomId(index: number) {
   return `file-changes-review-file-diff-${index}`
-}
-
-function getPierreGitStatus(section: DiffFileSection) {
-  if (section.lines.some(line => line.startsWith('new file mode'))) {
-    return 'added' as const
-  }
-  if (section.lines.some(line => line.startsWith('deleted file mode'))) {
-    return 'deleted' as const
-  }
-  if (section.oldPath && section.oldPath !== section.path) {
-    return 'renamed' as const
-  }
-  return 'modified' as const
 }
 
 function getPierrePatchChunks(sections: DiffFileSection[]) {

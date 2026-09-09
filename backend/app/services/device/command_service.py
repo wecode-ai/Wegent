@@ -74,6 +74,7 @@ REMOTE_MUTATING_COMMAND_KEYS = frozenset(
         "git_checkout",
         "git_checkout_new",
         "git_add_all",
+        "git_apply_patch",
         "git_commit",
         "git_push",
         "sync_git_credentials",
