@@ -66,23 +66,6 @@ export interface NativeImageFactory {
   createFromPath(path: string): NativeImage
 }
 
-export interface TrayBootstrapImageFactory extends NativeImageFactory {
-  createEmpty(): NativeImage
-}
-
-export function createTrayBootstrapIcon(
-  images: TrayBootstrapImageFactory,
-  iconPath: string,
-  platform: NodeJS.Platform = process.platform
-): NativeImage {
-  // Electron assigns the macOS NSStatusItem autosaveName after its constructor
-  // sets the initial image. Keep the item invisible until that identity exists
-  // so menu bar managers never observe the temporary Item-0 identity.
-  return platform === 'darwin'
-    ? images.createEmpty()
-    : createTrayIcon(images, iconPath, null, platform)
-}
-
 export function convertToTemplateBitmap(bitmap: Buffer): Buffer {
   const template = Buffer.from(bitmap)
   for (let offset = 0; offset + 3 < template.length; offset += 4) {

@@ -1,25 +1,8 @@
 import assert from 'node:assert/strict'
+import { verifyTrayPositionPersistence } from './tray-position.mjs'
 
 async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
-}
-
-async function waitForReadyAfter(control, readyCount, timeoutMs) {
-  let timeout
-  const reconnectTimeout = new Promise((_, reject) => {
-    timeout = setTimeout(
-      () =>
-        reject(
-          new Error('Restoring the main window from Tray did not reconnect the desktop controller')
-        ),
-      timeoutMs
-    )
-  })
-  try {
-    await Promise.race([control.awaitReadyAfter(readyCount), reconnectTimeout])
-  } finally {
-    clearTimeout(timeout)
-  }
 }
 
 async function waitForWindowState(control, predicate, message, timeoutMs) {
@@ -44,8 +27,12 @@ async function waitForRoute(control, expected, timeoutMs) {
   assert.fail(`Expected route ${expected}, received ${latest}`)
 }
 
-export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export async function createDesktopScenario({ appIdentifier, captureScreenshot, uiTimeoutMs }) {
+  let restartDesktopApp
   return {
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
+    },
     async verify(control) {
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
@@ -93,7 +80,6 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       await control.command('activateTray', 'body', {
         value: JSON.stringify({ type: 'click' }),
       })
-      await waitForReadyAfter(control, readyCountBeforeClose, uiTimeoutMs)
       const restored = await waitForWindowState(
         control,
         state => state.visible && !state.minimized,
@@ -103,7 +89,16 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       if (restored.platform === 'darwin') {
         assert.equal(restored.dockVisible, true, 'Restoring from Tray did not show the Dock icon')
       }
+      await waitForRoute(control, '/settings', uiTimeoutMs)
+      assert.equal(
+        control.readyCount,
+        readyCountBeforeClose,
+        'Restoring a hidden window unnecessarily reloaded its renderer'
+      )
       await captureScreenshot(control, 'tray-lifecycle-restored.png', 'body')
+      if (restored.platform === 'darwin') {
+        await verifyTrayPositionPersistence(control, appIdentifier, restartDesktopApp)
+      }
     },
 
     diagnostics() {
