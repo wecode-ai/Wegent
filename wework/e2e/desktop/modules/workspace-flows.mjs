@@ -1089,15 +1089,11 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     ':not([data-testid^="cloud-todo-card-archive-"])',
     ':not([data-testid^="cloud-todo-card-add-child-"])',
   ].join('')
-  await control.command('markElementWithText', boardCardSelector, {
+  await control.command('clickElementWithText', boardCardSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
-    value: 'default-issue-context-card',
+    visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-e2e-anchor-id="default-issue-context-card"]`
-  )
   const titleSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
   await control.command('waitFor', titleSelector, {
     visible: true,
@@ -1196,15 +1192,11 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     ':not([data-testid^="cloud-todo-card-archive-"])',
     ':not([data-testid^="cloud-todo-card-add-child-"])',
   ].join('')
-  await control.command('markElementWithText', boardCardSelector, {
+  await control.command('clickElementWithText', boardCardSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
-    value: 'tracked-work-item-card',
+    visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-e2e-anchor-id="tracked-work-item-card"]`
-  )
   await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,

@@ -1793,6 +1793,15 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  useEffect(
+    () =>
+      resolvedServices.chatStream.subscribe({
+        onRuntimeWorkChanged: () => {
+          void stableRefreshWorkLists()
+        },
+      }),
+    [resolvedServices.chatStream, stableRefreshWorkLists]
+  )
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedLifecycle = lifecycleStore.getTask(address)
     void refreshRuntimeTask(address)

@@ -267,6 +267,7 @@ class StreamingResponseEmitter(ResultEmitter):
 
     MIN_UPDATE_INTERVAL = 0.8
     MAX_FINAL_CONTENT_LENGTH = 4000
+    MAX_ERROR_CONTENT_LENGTH = 300
     FINAL_TRUNCATION_SUFFIX = "\n\n…（内容已截断，请在 Wework 查看完整结果）"
     PROGRESS_STATE_SUFFIX = ":progress"
     DISPLAY_LOCK_SUFFIX = ":display-lock"
@@ -708,6 +709,21 @@ class StreamingResponseEmitter(ResultEmitter):
             )
             try:
                 if await self._ensure_card_started():
+                    # ai_fail() alone only flips the card to FAILED and leaves the
+                    # body empty, which DingTalk renders as a blank card. Write the
+                    # error into the card body first so users can see why it failed.
+                    error_text = _compact_text(error, self.MAX_ERROR_CONTENT_LENGTH)
+                    content = (
+                        f"❌ 任务执行失败：{error_text}"
+                        if error_text
+                        else "❌ 任务执行失败"
+                    )
+                    try:
+                        self._card.ai_streaming(content, append=False)
+                    except Exception:
+                        logger.exception(
+                            "[StreamingEmitter] Failed to stream error content"
+                        )
                     self._card.ai_fail()
                     self._finished = True
             except Exception:

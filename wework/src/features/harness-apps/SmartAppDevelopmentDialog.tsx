@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
+import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 
 export interface SmartAppDevelopmentInput {
   parentPath: string
@@ -112,7 +113,13 @@ export function SmartAppDevelopmentDialog({
       })
       onClose()
     } catch (value) {
-      setError(value instanceof Error ? value.message : String(value))
+      setError(
+        getSmartAppErrorMessage(
+          value,
+          t('workbench.smart_apps_development_failed', '创建智能工作台失败。'),
+          t
+        )
+      )
     } finally {
       setSubmitting(false)
     }

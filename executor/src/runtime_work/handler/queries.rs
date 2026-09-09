@@ -14,6 +14,7 @@ impl RuntimeWorkRpcHandler {
                 limit: 1,
                 direction: CodexTranscriptDirection::Descending,
                 full_content: false,
+                prefer_rollout_history: false,
             },
         )
         .await
@@ -34,6 +35,7 @@ impl RuntimeWorkRpcHandler {
                 limit,
                 direction,
                 full_content: false,
+                prefer_rollout_history: false,
             },
         )
         .await
@@ -377,6 +379,11 @@ impl RuntimeWorkRpcHandler {
                     CodexTranscriptDirection::Descending
                 },
                 full_content: include_full_content,
+                prefer_rollout_history: local_link.as_ref().is_some_and(|link| {
+                    link.runtime_handle
+                        .get("cloudTranscript")
+                        .is_some_and(Value::is_object)
+                }),
             },
         )
         .await

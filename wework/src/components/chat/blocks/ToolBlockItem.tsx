@@ -28,6 +28,7 @@ import {
   getToolActivityFilePaths,
   getToolActivityKind,
   isWebSearchToolName,
+  unwrapShellCommand,
 } from './toolBlockActivity'
 import {
   getFileInputPath,
@@ -1048,7 +1049,9 @@ function getBlockLabel(
       }
     }
     const command = getInputField(block, 'command', 'cmd', 'commandLine')
-    const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
+    const shortCmd = command
+      ? truncate(unwrapShellCommand(command).split('\n')[0], 40)
+      : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
   if (isFileCreateToolName(name)) {

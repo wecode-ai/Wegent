@@ -437,6 +437,28 @@ describe('CloudTodoBoardCard', () => {
     expect(card).not.toHaveClass('border-focus/30', 'bg-focus/10')
   })
 
+  it('keeps the card geometry stable while hovered', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-drop-WEG-85')
+    expect(card).toHaveClass('transition-shadow', 'hover:shadow-md')
+    expect(card).not.toHaveClass('hover:-translate-y-px')
+  })
+
   it('mounts the shared task conversation in the hover preview', async () => {
     render(
       <CloudTodoBoardCard

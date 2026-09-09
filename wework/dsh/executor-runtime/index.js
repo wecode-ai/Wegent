@@ -23,7 +23,7 @@ export async function apply(ctx) {
     onError: error => {
       console.error('[wework-executor-runtime] transcript subscriber failed', error)
     },
-    readTurn: turn => readExecutorTurn(client, turn),
+    readTurn: (turn, options) => exportExecutorTranscript(client, turn, options),
   })
   const projector = new ExecutorSessionProjector(ctx.sessions, {
     onTurnCompleted: turn => transcriptSource.publish(turn),
@@ -59,11 +59,12 @@ export function createTranscriptTarget(client) {
         ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
       })
     },
-    import(transcript, turns) {
-      return client.request('runtime.tasks.transcript.import', {
+    restore(transcript, segments, options = {}) {
+      return client.request('runtime.tasks.transcript.restore', {
         transcriptId: transcript.transcriptId,
         ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
-        turns,
+        segments,
+        encryptionKey: options.encryptionKey,
       })
     },
     acknowledge(turn) {
@@ -71,10 +72,24 @@ export function createTranscriptTarget(client) {
         transcriptId: turn.transcriptId,
         taskId: turn.taskId,
         sequence: turn.cloudSequence,
+        rolloutEnd: turn.rolloutEnd,
         ...(turn.parentTranscriptId ? { parentTranscriptId: turn.parentTranscriptId } : {}),
       })
     },
   })
+}
+
+export async function exportExecutorTranscript(client, turn, options = {}) {
+  const summarized = await readExecutorTurn(client, turn)
+  const exported = await client.request('runtime.tasks.transcript.export', {
+    transcriptId: turn.transcriptId,
+    taskId: turn.taskId,
+    baseSequence: options.baseSequence,
+    sequence: options.sequence,
+    snapshot: options.snapshot === true,
+    encryptionKey: options.encryptionKey,
+  })
+  return { ...turn, ...exported, summary: summarized.payload }
 }
 
 export async function readExecutorTurn(client, turn) {

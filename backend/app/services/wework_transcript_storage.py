@@ -4,11 +4,11 @@
 
 """Private object storage for archived Wework transcripts."""
 
-import io
-from datetime import timedelta
-from typing import Optional
+import hashlib
+from datetime import UTC, datetime, timedelta
 
 from minio import Minio
+from minio.datatypes import PostPolicy
 from urllib3 import PoolManager, Timeout
 
 from app.core.config import settings
@@ -20,7 +20,7 @@ class WeworkTranscriptStorageError(RuntimeError):
 
 class WeworkTranscriptStorage:
     def __init__(self) -> None:
-        self._client: Optional[Minio] = None
+        self._client: Minio | None = None
 
     @property
     def bucket(self) -> str:
@@ -57,34 +57,6 @@ class WeworkTranscriptStorage:
             self._client = client
         return self._client
 
-    def put(self, object_key: str, content: bytes) -> None:
-        try:
-            self.client.put_object(
-                self.bucket,
-                object_key,
-                io.BytesIO(content),
-                len(content),
-                content_type="application/zstd",
-            )
-        except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to store archived Wework transcript"
-            ) from exc
-
-    def get(self, object_key: str) -> bytes:
-        response = None
-        try:
-            response = self.client.get_object(self.bucket, object_key)
-            return response.read()
-        except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to read archived Wework transcript"
-            ) from exc
-        finally:
-            if response is not None:
-                response.close()
-                response.release_conn()
-
     def download_url(self, object_key: str) -> str:
         try:
             return self.client.presigned_get_object(
@@ -97,6 +69,58 @@ class WeworkTranscriptStorage:
         except Exception as exc:
             raise WeworkTranscriptStorageError(
                 "Failed to create archived transcript download URL"
+            ) from exc
+
+    def upload_policy(
+        self,
+        object_key: str,
+        size_bytes: int,
+    ) -> tuple[str, dict[str, str], datetime]:
+        try:
+            expires = settings.WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS
+            expires_at = datetime.now(UTC) + timedelta(seconds=expires)
+            policy = PostPolicy(self.bucket, expires_at)
+            policy.add_equals_condition("key", object_key)
+            policy.add_content_length_range_condition(size_bytes, size_bytes)
+            fields = self.client.presigned_post_policy(policy)
+            endpoint = settings.ATTACHMENT_S3_ENDPOINT.rstrip("/")
+            if not endpoint.startswith(("http://", "https://")):
+                scheme = "https" if settings.ATTACHMENT_S3_USE_SSL else "http"
+                endpoint = f"{scheme}://{endpoint}"
+            upload_url = f"{endpoint}/{self.bucket}"
+            return upload_url, fields, expires_at
+        except Exception as exc:
+            raise WeworkTranscriptStorageError(
+                "Failed to create transcript segment upload policy"
+            ) from exc
+
+    def integrity(self, object_key: str, max_bytes: int) -> tuple[int, str]:
+        response = None
+        try:
+            response = self.client.get_object(self.bucket, object_key)
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in response.stream(amt=1024 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    return size, ""
+                digest.update(chunk)
+            return size, digest.hexdigest()
+        except Exception as exc:
+            raise WeworkTranscriptStorageError(
+                "Failed to verify uploaded transcript segment"
+            ) from exc
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+
+    def delete(self, object_key: str) -> None:
+        try:
+            self.client.remove_object(self.bucket, object_key)
+        except Exception as exc:
+            raise WeworkTranscriptStorageError(
+                "Failed to delete obsolete transcript segment"
             ) from exc
 
 

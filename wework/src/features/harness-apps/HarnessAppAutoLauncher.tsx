@@ -16,7 +16,7 @@ import {
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getErrorMessage } from '@/lib/error-message'
+import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
 const launches = new Map<string, Promise<void>>()
@@ -127,7 +127,11 @@ export function HarnessAppAutoLauncher({
           if (!cancelled) {
             failHarnessAppLaunch(
               installationId,
-              getErrorMessage(error, t('workbench.smart_apps_launch_failed', '智能工作台启动失败'))
+              getSmartAppErrorMessage(
+                error,
+                t('workbench.smart_apps_launch_failed', '智能工作台启动失败'),
+                t
+              )
             )
           }
         }
@@ -141,7 +145,11 @@ export function HarnessAppAutoLauncher({
           )
           failHarnessAppLaunch(
             installationId,
-            getErrorMessage(error, t('workbench.smart_apps_load_failed', '智能工作台加载失败'))
+            getSmartAppErrorMessage(
+              error,
+              t('workbench.smart_apps_load_failed', '智能工作台加载失败'),
+              t
+            )
           )
         }
       })
