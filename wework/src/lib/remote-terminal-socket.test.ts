@@ -278,21 +278,120 @@ describe('createRemoteTerminalClient', () => {
       const attached = client.attach()
       await vi.waitFor(() => expect(reply).toBeTypeOf('function'))
       const consumer = emitMock.mock.calls[0][1].consumer_id
+      const acknowledgeExit = vi.fn()
       eventHandler('terminal:output')({
         session_id: 'terminal-1',
         data: 'hello',
         ...(version === 2 ? { consumer_id: consumer, sequence: 1 } : {}),
       })
-      eventHandler('terminal:exit')({
-        session_id: 'terminal-1',
-        ...(version === 2 ? { consumer_id: consumer } : {}),
-      })
+      eventHandler('terminal:exit')(
+        {
+          session_id: 'terminal-1',
+          ...(version === 2 ? { consumer_id: consumer } : {}),
+        },
+        acknowledgeExit
+      )
       expect(received).toEqual([])
+      expect(acknowledgeExit).not.toHaveBeenCalled()
       reply!({ success: true, protocol_version: version })
       await attached
       expect(received).toEqual(['hello', 'exit'])
+      expect(acknowledgeExit).toHaveBeenCalledWith({ success: true })
     }
   )
+
+  test('does not acknowledge a buffered forced exit when attach fails', async () => {
+    let reply: ((value: unknown) => void) | undefined
+    emitMock.mockImplementation((_event, _payload, ack) => {
+      reply = ack
+    })
+    const client = createRemoteTerminalClient('terminal-1')
+    const exit = vi.fn()
+    client.onExit(exit)
+    const attached = client.attach()
+    await vi.waitFor(() => expect(reply).toBeTypeOf('function'))
+    const consumerId = emitMock.mock.calls[0][1].consumer_id
+    const acknowledge = vi.fn()
+
+    eventHandler('terminal:exit')(
+      {
+        session_id: 'terminal-1',
+        protocol_version: 2,
+        consumer_id: consumerId,
+        exit_code: null,
+        output_complete: false,
+      },
+      acknowledge
+    )
+    reply!({ success: false, error: 'Access denied' })
+
+    await expect(attached).rejects.toThrow('Access denied')
+    expect(exit).not.toHaveBeenCalled()
+    expect(acknowledge).not.toHaveBeenCalled()
+  })
+
+  test('delivers forced exit only to the active terminal consumer', async () => {
+    const client = createRemoteTerminalClient('terminal-1')
+    const exit = vi.fn()
+    client.onExit(exit)
+    await client.attach()
+    const consumerId = emitMock.mock.calls[0][1].consumer_id
+
+    const ignoredAck = vi.fn()
+    const deliveredAck = vi.fn()
+    eventHandler('terminal:exit')(
+      {
+        session_id: 'terminal-1',
+        protocol_version: 2,
+        consumer_id: 'other-consumer',
+        exit_code: null,
+        output_complete: false,
+      },
+      ignoredAck
+    )
+    eventHandler('terminal:exit')(
+      {
+        session_id: 'terminal-1',
+        protocol_version: 2,
+        consumer_id: consumerId,
+        exit_code: null,
+        error: 'Terminal session not found',
+        reason_code: 'terminal_session_not_found',
+        output_complete: false,
+      },
+      deliveredAck
+    )
+
+    expect(exit).toHaveBeenCalledTimes(1)
+    expect(ignoredAck).not.toHaveBeenCalled()
+    expect(deliveredAck).toHaveBeenCalledWith({ success: true })
+    expect(exit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason_code: 'terminal_session_not_found',
+        output_complete: false,
+      })
+    )
+  })
+
+  test('does not acknowledge forced exit without an active terminal listener', async () => {
+    const client = createRemoteTerminalClient('terminal-1')
+    await client.attach()
+    const consumerId = emitMock.mock.calls[0][1].consumer_id
+    const acknowledge = vi.fn()
+
+    eventHandler('terminal:exit')(
+      {
+        session_id: 'terminal-1',
+        protocol_version: 2,
+        consumer_id: consumerId,
+        exit_code: null,
+        output_complete: false,
+      },
+      acknowledge
+    )
+
+    expect(acknowledge).not.toHaveBeenCalled()
+  })
 
   test('does not deliver output from a failed attach', async () => {
     emitMock.mockImplementation((_event, _payload, ack) => {

@@ -22,6 +22,7 @@ from app.services.delivery.storage import DeliveryObjectNotFoundError
 from app.services.workflow_deliverables import delivery_fulfillments
 
 DEFAULT_DEPENDENCY_CONTEXT = ["final_result", "deliveries"]
+COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 logger = logging.getLogger(__name__)
 
 
@@ -100,6 +101,45 @@ def _deliverable_requirement_line(requirement: dict[str, Any]) -> str:
     return "\n".join(details)
 
 
+def _trigger_event_section(trigger_event: dict[str, Any]) -> str:
+    provider = str(trigger_event.get("source") or "")
+    event_type = str(trigger_event.get("event_type") or "")
+    payload = trigger_event.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    subject = payload.get("subject")
+    subject = subject if isinstance(subject, dict) else {}
+    repository = subject.get("repository") or payload.get("repository")
+    repository = repository if isinstance(repository, dict) else {}
+    repository_name = (
+        repository.get("full_name")
+        or repository.get("path_with_namespace")
+        or repository.get("name")
+        or ""
+    )
+    number = subject.get("number") or subject.get("iid")
+    subject_url = subject.get("url") or subject.get("web_url") or ""
+    lines = [
+        "## 分支触发事件",
+        "",
+        f"- Provider：{provider}",
+        f"- 事件类型：{event_type}",
+        f"- Event ID：{trigger_event.get('event_id') or ''}",
+        f"- Subject ID：{trigger_event.get('subject_id') or ''}",
+    ]
+    if repository_name:
+        lines.append(f"- 仓库：{repository_name}")
+    if number:
+        lines.append(f"- MR/PR：{number}")
+    if subject_url:
+        lines.append(f"- MR/PR 链接：{subject_url}")
+    if provider == "github":
+        lines.append("- 建议命令：如需查看 PR、评论或 CI，请使用 gh。")
+    elif provider == "gitlab":
+        lines.append("- 建议命令：如需查看 MR、评论或 pipeline，请使用 glab。")
+    lines.extend(["", "### 触发事件数据", "", _json_block(payload)])
+    return "\n".join(lines)
+
+
 def workflow_stage_task_instruction(stage_input: dict[str, Any]) -> str:
     """Compile the concrete task instruction shared by every stage launcher."""
 
@@ -126,6 +166,9 @@ def workflow_stage_task_instruction(stage_input: dict[str, Any]) -> str:
     prompt = str(target.get("prompt") or "").strip()
     if prompt:
         sections.append(f"## 当前节点任务\n\n{prompt}")
+    trigger_event = stage_input.get("trigger_event")
+    if isinstance(trigger_event, dict):
+        sections.append(_trigger_event_section(trigger_event))
     dependencies = stage_input.get("dependencies")
     normalized_dependencies = (
         [value for value in dependencies if isinstance(value, dict)]
@@ -237,6 +280,39 @@ class WorkflowStageContextResolver:
                 value["activity"] = self._activity(messages)
             dependencies.append(value)
 
+        # Workspace "inherit" needs a concrete predecessor Runtime task. Direct
+        # DAG dependencies are control nodes (for example a loop branch) that
+        # never ran, so search outward through the workflow for the most recent
+        # executed task and inherit its workspace instead.
+        has_runtime_task = any(
+            isinstance(dependency.get("runtime_tasks"), list)
+            and dependency.get("runtime_tasks")
+            for dependency in dependencies
+        )
+        if (
+            str(target.get("workspace_policy") or "composer") == "inherit"
+            and not has_runtime_task
+        ):
+            fallback = self._latest_executed_binding(db, item, nodes)
+            if fallback is not None:
+                dependencies.append(
+                    {
+                        "stage_id": str(fallback["node_id"]),
+                        "stage_name": str(fallback["node_name"] or fallback["node_id"]),
+                        "selected_sources": [],
+                        "runtime_tasks": [
+                            {
+                                "device_id": self._workspace_device_id(
+                                    db, fallback["binding"]
+                                ),
+                                "task_id": fallback["binding"].task_id,
+                                "task_title": fallback["binding"].task_title
+                                or fallback["binding"].task_id,
+                            }
+                        ],
+                    }
+                )
+
         snapshot = {
             "version": 1,
             "issue": {
@@ -253,6 +329,7 @@ class WorkflowStageContextResolver:
                 "workspace_policy": str(target.get("workspace_policy") or "composer"),
             },
             "dependencies": dependencies,
+            "trigger_event": target.get("trigger_event"),
         }
         encoded = json.dumps(
             snapshot,
@@ -264,28 +341,60 @@ class WorkflowStageContextResolver:
         return compiled_workflow_stage_input(snapshot)
 
     @staticmethod
+    def _latest_executed_binding(
+        db: Session,
+        item: LoopItem,
+        nodes: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Return the newest completed task binding outside the target node."""
+
+        bindings = (
+            db.query(LoopItemTaskBinding)
+            .filter(
+                LoopItemTaskBinding.loop_item_id == item.id,
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                LoopItemTaskBinding.device_id.isnot(None),
+                LoopItemTaskBinding.task_id.isnot(None),
+            )
+            .order_by(LoopItemTaskBinding.linked_at.desc())
+            .all()
+        )
+        for binding in bindings:
+            node_id = str(binding.workflow_node_id or "")
+            node = nodes.get(node_id)
+            if node is None or node.get("node_type") != "task":
+                continue
+            if node.get("status") not in COMPLETED_NODE_STATUSES:
+                continue
+            return {
+                "binding": binding,
+                "node_id": node_id,
+                "node_name": str(node.get("name") or ""),
+            }
+        return None
+
+    @staticmethod
     def _workspace_device_id(
         db: Session,
         binding: LoopItemTaskBinding,
     ) -> str:
-        metadata = (
-            binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
-        )
-        persisted = metadata.get("workspace_device_id")
-        if isinstance(persisted, str) and persisted:
-            return persisted
+        # The workspace of a predecessor task lives on the device that actually
+        # owns its Runtime task. Logical queue devices such as "local-device"
+        # must not be used here or the executor rejects the inherited workspace
+        # as belonging to another device.
+        if binding.device_id:
+            return binding.device_id
         execution = (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.runtime_device_id == binding.device_id,
                 LoopItemExecution.runtime_task_id == binding.task_id,
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
-        if execution is not None and execution.execution_device_id:
-            return execution.execution_device_id
-        return binding.device_id
+        if execution is not None and execution.runtime_device_id:
+            return execution.runtime_device_id
+        return ""
 
     @staticmethod
     def freeze_binding(

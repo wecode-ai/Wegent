@@ -12,6 +12,8 @@ Provides pre-defined business metrics and decorators for automatic metric collec
 from shared.telemetry.metrics.business import (
     WegentMetrics,
     get_wegent_metrics,
+    record_dispatch_waiting_change,
+    record_http_429_response,
     record_message_sent,
     record_model_call,
     record_session_active_change,
@@ -29,6 +31,8 @@ __all__ = [
     # Business metrics
     "WegentMetrics",
     "get_wegent_metrics",
+    "record_dispatch_waiting_change",
+    "record_http_429_response",
     "record_session_opened",
     "record_session_active_change",
     "record_message_sent",

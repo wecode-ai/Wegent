@@ -40,9 +40,9 @@ class PluginAuthSourceSync:
         )
         if row is not None:
             current = row.json["spec"]
-            if current["status"] != "connected" or spec["device_id"] in current.get(
-                "deviceRevocations", []
-            ):
+            if (
+                current["status"] != "connected" and not spec.get("local_login")
+            ) or spec["device_id"] in current.get("deviceRevocations", []):
                 raise PluginAccountAuthError("plugin_auth_connection_disabled", 403)
             self.connections._validate_current_plugin(db, user_id, current)
             if (current.get("oauthRefresh") or {}).get("state") == "in_flight":
@@ -106,6 +106,9 @@ class PluginAuthSourceSync:
             source["device_id"]: observation,
         }
         self.connections._replace(db, row, spec, spec["revision"])
+        from app.services.plugin_auth_local_lifecycle import finish_local_login
+
+        finish_local_login(db, user_id, source)
 
     def consume(
         self, db: Session, user_id: int, spec: dict, request: PluginNativeEnrollment
@@ -118,7 +121,10 @@ class PluginAuthSourceSync:
             else None
         )
         observation = self.observation(user_id, spec, request, previous)
-        if previous == observation:
+        if previous == observation and row.json["spec"]["status"] == "connected":
+            from app.services.plugin_auth_local_lifecycle import finish_local_login
+
+            finish_local_login(db, user_id, spec)
             return self.connections._response(row)
         connection = self.connections.enroll(
             db,

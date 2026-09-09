@@ -150,6 +150,7 @@ async def test_credential_events_bypass_payload_tracing(monkeypatch):
     extract = Mock()
     monkeypatch.setattr(decorators, "_set_event_data_attributes", extract)
     for event in (
+        "plugin.auth.local_lifecycle",
         "plugin.auth.automatic",
         "plugin.auth.prepare",
         "plugin.auth.transfer.stage",

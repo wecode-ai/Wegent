@@ -57,3 +57,22 @@ test('backend restart requires fresh registration before accepting cached online
     environment.remoteExecutorLogPath
   )
 })
+
+test('a completed cloud turn remains an active conversation and must settle the task wait', async () => {
+  const moduleUrl = pathToFileURL(
+    resolve(import.meta.dirname, '../../e2e/desktop/modules/cloud-environment.mjs')
+  ).href
+  const { RealCloudEnvironment } = await import(/* @vite-ignore */ moduleUrl)
+  const environment = new RealCloudEnvironment({})
+  const address = { taskId: 'cloud-task', workspacePath: '/workspace' }
+  environment.runtimeTask = vi
+    .fn()
+    .mockResolvedValueOnce({ ...address, running: false, status: 'queued' })
+    .mockResolvedValueOnce({ ...address, running: true, status: 'running' })
+    .mockResolvedValue({ ...address, running: false, status: 'active', threadStatus: 'idle' })
+  const result = await environment.waitForRuntimeTask(address)
+  expect(result).toMatchObject({ ...address, running: false, status: 'active' })
+  expect(environment.runtimeTask).toHaveBeenCalledTimes(3)
+  environment.runtimeTask.mockResolvedValue({ ...address, running: false, status: 'failed' })
+  await expect(environment.waitForRuntimeTask(address)).rejects.toThrow('settled as failed')
+})

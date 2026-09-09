@@ -122,7 +122,7 @@ async function connectTerminal(socket) {
 // work below uses the production Backend and Rust Executor started by the runner.
 export async function verifyTerminalWireCompatibility(
   cloudEnvironment,
-  { requestedVersion, expectedVersion, name }
+  { requestedVersion, expectedVersion, name, forceRevocation = false }
 ) {
   // Prebuilt CI shards have no workspace node_modules; use their bundled client.
   const { io } = createRequire(
@@ -174,7 +174,9 @@ export async function verifyTerminalWireCompatibility(
         ackEvents += 1
       })
       .catch(error => {
-        wireError = error
+        // Revocation can overtake an output ACK already queued by this raw test
+        // client. The session end is authoritative once the close phase starts.
+        if (!closed) wireError = error
       })
   }
   socket.on('terminal:output', payload => {
@@ -269,8 +271,43 @@ export async function verifyTerminalWireCompatibility(
     await ackChain
     readText()
     assert.ok(expectedVersion === 1 ? ackEvents === 0 : ackEvents > 0)
-    await terminalCall(socket, 'terminal:close', controlPayload())
-    closed = true
+    let forcedEndDelivered = false
+    if (forceRevocation) {
+      assert.equal(sessionVersion, 2, 'Forced terminal end coverage requires protocol v2')
+      const forcedMarker = `WEWORK_FORCED_END_${randomUUID().replaceAll('-', '')}`
+      const forcedSocketId = socket.id
+      const forcedExitPromise = withTimeout(
+        new Promise(resolvePromise => {
+          const receiveForcedExit = (payload, acknowledge) => {
+            socket.off('terminal:exit', receiveForcedExit)
+            acknowledge?.({ success: true })
+            resolvePromise(payload)
+          }
+          socket.on('terminal:exit', receiveForcedExit)
+        }),
+        DEFAULT_STEP_TIMEOUT_MS,
+        `The frontend terminal did not receive the forced session end on ${forcedSocketId}`
+      )
+      await input(`sleep 0.5; ${markerCommand(forcedMarker)}\r`)
+      closed = true
+      cloudEnvironment.revokeTerminalSession(sessionId)
+      const forcedExit = await forcedExitPromise
+      assert.equal(forcedExit.session_id, sessionId)
+      assert.equal(forcedExit.consumer_id, consumerId)
+      assert.equal(forcedExit.protocol_version, 2)
+      assert.equal(forcedExit.reason_code, 'terminal_session_not_found')
+      assert.equal(forcedExit.output_complete, false)
+      assert.equal(forcedExit.exit_code, null)
+      assert.equal(
+        outputLines(readText()).includes(forcedMarker),
+        false,
+        'Output emitted after revocation reached the frontend terminal'
+      )
+      forcedEndDelivered = true
+    } else {
+      await terminalCall(socket, 'terminal:close', controlPayload())
+      closed = true
+    }
     const reattach = await socket.timeout(DEFAULT_STEP_TIMEOUT_MS).emitWithAck('terminal:attach', {
       ...controlPayload(),
       protocol_version: sessionVersion,
@@ -292,6 +329,7 @@ export async function verifyTerminalWireCompatibility(
       protocolPinned: true,
       commandAfterBurstObserved: true,
       closedSessionRejected: true,
+      forcedEndDelivered,
     })
   } finally {
     try {

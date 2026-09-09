@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Identity checks shared by registration, status, and device operations."""
+"""Device identity checks and user-scoped alias resolution."""
 
 from typing import Any
 
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.schemas.device import DeviceType
 
 
 class DeviceIdentityConflictError(ValueError):
@@ -24,14 +25,28 @@ class RuntimeInstanceMismatchError(DeviceIdentityConflictError):
 RECORD_ROUTE_PREFIX = "app-record-"
 
 
+def device_kind_type(device: Kind) -> DeviceType:
+    """Read the persisted device type with a stable default."""
+
+    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+    raw_type = spec.get("deviceType", DeviceType.LOCAL.value)
+    try:
+        return DeviceType(raw_type)
+    except (TypeError, ValueError):
+        return DeviceType.LOCAL
+
+
 def record_route_id(device: Kind) -> str:
     """Keep transport identity independent of legacy duplicate logical names."""
-    if device.json.get("spec", {}).get("deviceType") == "app":
+
+    if device_kind_type(device) == DeviceType.APP:
         return f"{RECORD_ROUTE_PREFIX}{device.id}"
     return device.name
 
 
 def record_id_from_route(device_id: str) -> int | None:
+    """Extract a persisted Device record id from an App transport route."""
+
     if device_id.startswith(RECORD_ROUTE_PREFIX):
         suffix = device_id.removeprefix(RECORD_ROUTE_PREFIX)
         if suffix.isascii() and suffix.isdecimal() and int(suffix) > 0:
@@ -39,8 +54,68 @@ def record_id_from_route(device_id: str) -> int | None:
     return None
 
 
+def device_identity_ids(device: Kind) -> list[str]:
+    """Return every persisted identity that refers to one device record."""
+
+    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+    candidates = [
+        record_route_id(device),
+        str(device.name or "").strip(),
+        str(spec.get("deviceId") or "").strip(),
+        str(spec.get("appDeviceId") or "").strip(),
+    ]
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
+def _unambiguous_device(matches: list[Kind]) -> Kind | None:
+    """Resolve aliases only when they identify one unambiguous device."""
+
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    app_matches = [
+        device for device in matches if device_kind_type(device) == DeviceType.APP
+    ]
+    if len(app_matches) == 1:
+        return app_matches[0]
+    return None
+
+
+def resolve_owned_device_alias(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str,
+) -> Kind | None:
+    """Resolve one user-owned device from any stable identity without guessing."""
+
+    submitted = device_id.strip()
+    if not submitted:
+        return None
+    query = db.query(Kind).filter_by(
+        user_id=user_id,
+        kind="Device",
+        namespace="default",
+        is_active=True,
+    )
+    record_id = record_id_from_route(submitted)
+    if record_id is not None:
+        device = query.filter_by(id=record_id).one_or_none()
+        return (
+            device
+            if device is not None and device_kind_type(device) == DeviceType.APP
+            else None
+        )
+    matches = [
+        device for device in query.all() if submitted in device_identity_ids(device)
+    ]
+    return _unambiguous_device(matches)
+
+
 def lock_device_owner(db: Session, user_id: int) -> None:
     """Serialize registration and deletion without a new schema constraint."""
+
     if db.get_bind().dialect.name == "sqlite":
         # SQLite ignores FOR UPDATE; a write reserves its database write lock.
         db.execute(
@@ -60,6 +135,7 @@ def validate_persistent_runtime_instance_id(
     device_id: str,
 ) -> None:
     """Pin every registered device type to its first Runtime installation."""
+
     spec = device_json.get("spec", {})
     persisted = spec.get("runtimeInstanceId")
     if persisted and persisted != runtime_instance_id:
@@ -78,6 +154,7 @@ def find_registration_device(
     device_type: str | None = None,
 ) -> Kind | None:
     """Serialize first registration on the owner, then lock the scoped identity."""
+
     if device_id.startswith(RECORD_ROUTE_PREFIX):
         raise DeviceIdentityConflictError("Device ID uses a reserved routing prefix")
     lock_device_owner(db, user_id)
@@ -105,7 +182,8 @@ def find_registration_device(
     active = [device for device in devices if device.is_active]
     if len(active) > 1:
         raise DeviceIdentityConflictError(
-            f"Ambiguous device identity {device_id}; select or reconnect the original installation"
+            f"Ambiguous device identity {device_id}; "
+            "select or reconnect the original installation"
         )
     if active:
         return active[0]
@@ -118,13 +196,15 @@ def find_registration_device(
         ]
         if len(devices) != 1:
             raise DeviceIdentityConflictError(
-                f"Ambiguous inactive device identity {device_id}; reconnect using the original installation identity"
+                f"Ambiguous inactive device identity {device_id}; "
+                "reconnect using the original installation identity"
             )
     return devices[0] if devices else None
 
 
 def owned_active_device(db: Session, user_id: int, device_id: str) -> Kind | None:
     """Never silently select a legacy duplicate for a destructive operation."""
+
     query = db.query(Kind).filter_by(
         user_id=user_id,
         kind="Device",
@@ -134,15 +214,12 @@ def owned_active_device(db: Session, user_id: int, device_id: str) -> Kind | Non
     record_id = record_id_from_route(device_id)
     if record_id is not None:
         device = query.filter_by(id=record_id).one_or_none()
-        return (
-            device
-            if device and device.json.get("spec", {}).get("deviceType") == "app"
-            else None
-        )
+        return device if device and device_kind_type(device) == DeviceType.APP else None
     devices = query.filter_by(name=device_id).limit(2).all()
     if len(devices) > 1:
         raise DeviceIdentityConflictError(
-            f"Duplicate active device identity {device_id}; select a device record explicitly"
+            f"Duplicate active device identity {device_id}; "
+            "select a device record explicitly"
         )
     return devices[0] if devices else None
 
@@ -151,6 +228,7 @@ def matching_online_info(
     spec: dict[str, Any], online_info: dict[str, Any] | None
 ) -> dict[str, Any] | None:
     """A shared Redis key is not proof that this database Runtime is online."""
+
     if not online_info:
         return None
     persisted = spec.get("runtimeInstanceId")

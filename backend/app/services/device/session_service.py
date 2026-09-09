@@ -18,6 +18,7 @@ from app.services.device.remote_control_policy import (
     device_kind_type,
     remote_control_is_enabled,
 )
+from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     terminal_session_service,
@@ -70,7 +71,18 @@ class LocalDeviceSessionService:
         allow_app_device: bool = True,
     ) -> dict[str, Any]:
         """Ask an online local device to start an interactive project session."""
-        device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+        route_identity = resolve_runtime_route_identity(
+            db,
+            user_id=user_id,
+            submitted_device_id=device_id,
+        )
+        if route_identity is None:
+            raise DeviceSessionNotFoundError("Device not found or access denied")
+        device_kind = device_service.get_device_by_device_id(
+            db,
+            user_id,
+            route_identity.logical_device_id,
+        )
         if not device_kind:
             raise DeviceSessionNotFoundError("Device not found or access denied")
         if not allow_app_device and not remote_control_is_enabled(
@@ -78,9 +90,15 @@ class LocalDeviceSessionService:
         ):
             raise DeviceSessionError(REMOTE_CONTROL_DISABLED_MESSAGE)
 
-        online_info = await device_service.get_device_online_info(user_id, device_id)
+        runtime_device_id = route_identity.runtime_device_id
+        online_info = await device_service.get_device_online_info(
+            user_id,
+            runtime_device_id,
+        )
         if not online_info:
-            raise DeviceSessionError(f"Device '{device_id}' is offline")
+            raise DeviceSessionError(
+                f"Device '{route_identity.logical_device_id}' is offline"
+            )
         if not _interactive_session_enabled(online_info, session_type):
             raise DeviceSessionError(SESSION_DISABLED_MESSAGES[session_type])
 
@@ -105,9 +123,11 @@ class LocalDeviceSessionService:
 
         logger.info(
             "[LocalDeviceSessionService] Starting session: "
-            "user_id=%s, device_id=%s, project_id=%s, type=%s, socket_id=%s",
+            "user_id=%s, logical_device_id=%s, runtime_device_id=%s, "
+            "project_id=%s, type=%s, socket_id=%s",
             user_id,
-            device_id,
+            route_identity.logical_device_id,
+            runtime_device_id,
             project_id,
             session_type,
             socket_id,
@@ -134,7 +154,7 @@ class LocalDeviceSessionService:
         result = dict(result)
         result["session_id"] = session_id
         result.setdefault("project_id", project_id)
-        result.setdefault("device_id", device_id)
+        result["device_id"] = route_identity.logical_device_id
         result.setdefault("type", session_type)
         result.setdefault("path", path)
         result.setdefault("expires_at", expires_at)
@@ -145,7 +165,7 @@ class LocalDeviceSessionService:
                     TerminalSessionRecord(
                         session_id=session_id,
                         user_id=user_id,
-                        device_id=device_id,
+                        device_id=runtime_device_id,
                         socket_id=socket_id,
                         project_id=project_id,
                         path=result.get("path") or path,

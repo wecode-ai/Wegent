@@ -73,6 +73,10 @@ InvalidationHandler = Callable[[str, str], None]
 ResyncHandler = Callable[[], None]
 
 
+class TerminalSessionAuthorizationUnavailable(RuntimeError):
+    """Raised when terminal authorization cannot be decided safely."""
+
+
 class RedisTerminalSessionClientProvider:
     """Own one shared Redis pool for a Backend process."""
 
@@ -716,7 +720,9 @@ class TerminalSessionService:
             return None
         if not self._is_coherent():
             record_terminal_session_cache_request("incoherent")
-            return None
+            raise TerminalSessionAuthorizationUnavailable(
+                "Terminal session invalidation listener is unavailable"
+            )
         if self._cache.is_revoked(session_id):
             record_terminal_session_cache_request("revoked")
             return None
@@ -766,7 +772,20 @@ class TerminalSessionService:
         """Rebind one exact session after its executor reconnects."""
         if not normalize_terminal_session_id(record.session_id) or not socket_id:
             return None
-        rebound = await self._store.rebind_socket(record, socket_id)
+        if not self._is_coherent():
+            raise TerminalSessionAuthorizationUnavailable(
+                "Terminal session invalidation listener is unavailable"
+            )
+        try:
+            rebound = await self._store.rebind_socket(record, socket_id)
+        except Exception as exc:
+            raise TerminalSessionAuthorizationUnavailable(
+                "Terminal session store is unavailable"
+            ) from exc
+        if not self._is_coherent():
+            raise TerminalSessionAuthorizationUnavailable(
+                "Terminal session invalidation listener became unavailable"
+            )
         if not rebound or rebound.is_expired():
             self._cache.invalidate(record.session_id)
             return None
@@ -776,9 +795,7 @@ class TerminalSessionService:
 
     def is_revoked(self, session_id: str) -> bool:
         """Return whether this process has revoked one exact session."""
-        return bool(session_id) and (
-            not self._is_coherent() or self._cache.is_revoked(session_id)
-        )
+        return bool(session_id) and self._cache.is_revoked(session_id)
 
     async def is_durably_revoked(self, session_id: str) -> bool:
         """Confirm a duplicate terminal exit using one exact Redis key."""
@@ -825,14 +842,26 @@ class TerminalSessionService:
     ) -> Optional[TerminalSessionRecord]:
         for _ in range(2):
             authorization_epoch = self._authorization_epoch
-            record = await self._store.get(session_id)
-            if not self._is_coherent() or self._cache.is_revoked(session_id):
+            try:
+                record = await self._store.get(session_id)
+            except Exception as exc:
+                raise TerminalSessionAuthorizationUnavailable(
+                    "Terminal session store is unavailable"
+                ) from exc
+            if self._cache.is_revoked(session_id):
                 record_terminal_session_cache_request("invalidated_during_read")
                 return None
+            if not self._is_coherent():
+                record_terminal_session_cache_request("incoherent_during_read")
+                raise TerminalSessionAuthorizationUnavailable(
+                    "Terminal session invalidation listener became unavailable"
+                )
             if authorization_epoch == self._authorization_epoch:
                 return record
         record_terminal_session_cache_request("resync_during_read")
-        return None
+        raise TerminalSessionAuthorizationUnavailable(
+            "Terminal session authorization changed during lookup"
+        )
 
     async def _load_and_cache(
         self,

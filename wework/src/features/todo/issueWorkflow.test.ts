@@ -10,6 +10,80 @@ import {
 } from '@/api/issueWorkflow'
 import type { CloudLoopItem } from '@/api/deliveries'
 
+const loopDefinition = {
+  version: 3,
+  nodes: [
+    {
+      id: 'start',
+      name: '开始',
+      node_type: 'event' as const,
+      role: 'start' as const,
+      depends_on: [],
+      required: false,
+      workspace_policy: 'none' as const,
+    },
+    {
+      id: 'loop1',
+      name: '修复循环',
+      node_type: 'loop' as const,
+      depends_on: ['start'],
+      body_node_ids: ['ls', 'br', 'fix1', 'le'],
+      loop_config: { max_attempts: 5, timeout_seconds: null },
+      required: true,
+      workspace_policy: 'composer' as const,
+    },
+    {
+      id: 'after',
+      name: '发布',
+      depends_on: ['loop1'],
+      required: true,
+      workspace_policy: 'composer' as const,
+    },
+    {
+      id: 'ls',
+      name: '循环开始',
+      node_type: 'loop_start' as const,
+      loop_id: 'loop1',
+      depends_on: [],
+      required: false,
+      workspace_policy: 'none' as const,
+    },
+    {
+      id: 'br',
+      name: '分支',
+      node_type: 'branch' as const,
+      loop_id: 'loop1',
+      depends_on: ['ls'],
+      branch_conditions: [
+        { event_type: 'change_request.checks_failed', handler_node_ids: ['fix1'] },
+        { event_type: 'change_request.merged', handler_node_ids: ['le'] },
+      ],
+      required: false,
+      workspace_policy: 'none' as const,
+    },
+    {
+      id: 'fix1',
+      name: '修复',
+      node_type: 'task' as const,
+      loop_id: 'loop1',
+      depends_on: ['br'],
+      automation_rule_id: 'fix-rule',
+      execution_mode: 'robot' as const,
+      required: false,
+      workspace_policy: 'composer' as const,
+    },
+    {
+      id: 'le',
+      name: '循环结束',
+      node_type: 'loop_end' as const,
+      loop_id: 'loop1',
+      depends_on: ['br'],
+      required: false,
+      workspace_policy: 'none' as const,
+    },
+  ],
+}
+
 const definition = {
   version: 3,
   nodes: [
@@ -47,6 +121,38 @@ describe('Issue workflow projection', () => {
       'blocked',
       'blocked',
     ])
+  })
+
+  it('instantiates a loop with an armed waiting branch', () => {
+    const instance = instantiateIssueWorkflow(loopDefinition)
+    const byId = new Map(instance?.nodes.map(node => [node.id, node]))
+    expect(byId.get('start')?.status).toBe('completed')
+    expect(byId.get('loop1')?.loop_state).toBe('idle')
+    expect(byId.get('br')?.status).toBe('blocked')
+    expect(byId.get('fix1')?.status).toBe('blocked')
+    expect(byId.get('after')?.status).toBe('blocked')
+  })
+
+  it('keeps loop body nodes blocked when their dependencies complete', () => {
+    const instance = instantiateIssueWorkflow(loopDefinition)
+    if (!instance) throw new Error('instance expected')
+    const advanced = updateIssueWorkflowForRuntime(instance, 'start', 'succeeded')
+    const byId = new Map(advanced.nodes.map(node => [node.id, node]))
+    expect(byId.get('br')?.status).toBe('blocked')
+    expect(byId.get('fix1')?.status).toBe('blocked')
+    expect(byId.get('after')?.status).toBe('blocked')
+  })
+
+  it('projects waiting and reacting loops as in progress', () => {
+    const instance = instantiateIssueWorkflow(loopDefinition)
+    if (!instance) throw new Error('instance expected')
+    const waiting = {
+      ...instance,
+      nodes: instance.nodes.map(node =>
+        node.id === 'br' ? { ...node, status: 'waiting' as const } : node
+      ),
+    }
+    expect(workflowBoardStatus(waiting)).toBe('in_progress')
   })
 
   it('does not let a delayed queued snapshot overwrite a completed workflow', () => {

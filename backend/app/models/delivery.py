@@ -273,13 +273,13 @@ class ProjectWorkflowPlanItem(LoopNode):
 
 
 class ProjectIncomingHook(LoopNode):
-    """An opaque project endpoint that turns external events into loop items."""
+    """One observed-resource event subscription and its collection state."""
 
     __mapper_args__ = {"polymorphic_identity": "incoming_hook"}
 
 
 class ProjectIncomingEvent(LoopNode):
-    """One deduplicated delivery received by a project incoming hook."""
+    """One deduplicated webhook, polling, or internal event input."""
 
     __mapper_args__ = {"polymorphic_identity": "incoming_event"}
 
@@ -310,6 +310,16 @@ class LoopItemTaskBinding(LoopNode):
             return None
         value = metadata.get("workflow_node_id")
         return value if isinstance(value, str) and value else None
+
+    @property
+    def change_requests(self) -> list[dict[str, object]]:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return []
+        values = metadata.get("change_requests")
+        if not isinstance(values, list):
+            return []
+        return [dict(value) for value in values if isinstance(value, dict)]
 
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("linked_at", func.now())

@@ -803,6 +803,39 @@ fn responses_tools(
     converted
 }
 
+fn sanitize_defer_loading_tools_for_responses(body: &mut Value) {
+    let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
+        return;
+    };
+    if tools
+        .iter()
+        .any(|tool| tool.get("type").and_then(Value::as_str) == Some("tool_search"))
+    {
+        return;
+    }
+    for tool in tools {
+        remove_defer_loading(tool);
+    }
+}
+
+fn remove_defer_loading(tool: &mut Value) {
+    let Some(object) = tool.as_object_mut() else {
+        return;
+    };
+    object.remove("defer_loading");
+    if object.get("type").and_then(Value::as_str) != Some("namespace") {
+        return;
+    }
+    for inner_tool in object
+        .get_mut("tools")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        remove_defer_loading(inner_tool);
+    }
+}
+
 fn responses_tool_choice(
     choice: &Value,
     context: &ToolContext,
@@ -863,6 +896,7 @@ pub(super) fn responses_to_responses(
             ));
         }
     }
+    sanitize_defer_loading_tools_for_responses(&mut result);
 
     if let Some(input) = result.get("input") {
         result["input"] = convert_responses_input_items(
@@ -4280,13 +4314,18 @@ mod tests {
     }
 
     #[test]
-    fn responses_bridge_completes_native_tool_search_contract() {
+    fn responses_bridge_removes_defer_loading_without_native_tool_search() {
         let input = json!({
             "model": "third-party-responses-model",
             "tools": [{
                 "type": "tool_search",
                 "execution": "client",
                 "parameters": {"type": "object"}
+            }, {
+                "type": "function",
+                "name": "multi_agent_v1__spawn_agent",
+                "parameters": {"type": "object"},
+                "defer_loading": true
             }]
         });
 
@@ -4314,6 +4353,7 @@ mod tests {
             converted["tools"][0]["parameters"]["additionalProperties"],
             false
         );
+        assert!(converted["tools"][1].get("defer_loading").is_none());
     }
 
     #[test]
@@ -4358,6 +4398,12 @@ mod tests {
                         "name": "create_issue",
                         "parameters": {"type": "object"}
                     }]
+                },
+                {
+                    "type": "function",
+                    "name": "multi_agent_v1__spawn_agent",
+                    "parameters": {"type": "object"},
+                    "defer_loading": true
                 },
                 {"type": "web_search_preview"}
             ],

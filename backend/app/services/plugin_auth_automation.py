@@ -110,6 +110,13 @@ class PluginAuthAutomationService:
     ) -> dict | None:
         slug = connector["slug"]
         source = self.connections._source_identity(plugin.json["spec"]["source"])
+        from app.services.plugin_auth_local_lifecycle import (
+            local_login_pending,
+            local_sync_enabled,
+        )
+
+        if not local_sync_enabled(db, user_id, source, slug):
+            return None
         rows = (
             self.connections._query(db, user_id)
             .populate_existing()
@@ -120,9 +127,9 @@ class PluginAuthAutomationService:
             )
             .all()
         )
-        if any(row.json["spec"]["status"] == "disconnected" for row in rows):
-            return None
+        disconnected = any(row.json["spec"]["status"] == "disconnected" for row in rows)
         logical, binding = self.connections._device_binding(db, user_id, device_id)
+        fresh_login = local_login_pending(db, user_id, source, slug, logical, binding)
         rows = (
             db.query(Kind)
             .filter(
@@ -144,6 +151,10 @@ class PluginAuthAutomationService:
                 and spec["binding"] == binding
                 and spec["auth_definition"] == connector["accountAuth"]
             ):
+                if fresh_login and not spec.get("local_login"):
+                    row.json = {"spec": {**spec, "local_login": True}}
+                if disconnected and not (fresh_login or spec.get("local_login")):
+                    continue
                 return {
                     "id": row.name,
                     "installed_plugin_id": plugin.id,
@@ -151,6 +162,8 @@ class PluginAuthAutomationService:
                 }
             # Expired intents contain only public metadata and cannot be reused.
             db.delete(row)
+        if disconnected and not fresh_login:
+            return None
         intent = self.migrations.create(
             db,
             user_id=user_id,
@@ -163,7 +176,13 @@ class PluginAuthAutomationService:
         )
         row = self.migrations._query(db, user_id, intent.id).first()
         if row is not None:
-            row.json = {"spec": {**row.json["spec"], "automatic": True}}
+            row.json = {
+                "spec": {
+                    **row.json["spec"],
+                    "automatic": True,
+                    "local_login": fresh_login,
+                }
+            }
         db.flush()
         return {
             "id": intent.id,

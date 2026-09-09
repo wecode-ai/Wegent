@@ -13,7 +13,10 @@ import pytest
 
 from app.api.ws import terminal_namespace
 from app.api.ws.terminal_namespace import TerminalNamespace
-from app.services.device.terminal_session_service import TerminalSessionRecord
+from app.services.device.terminal_session_service import (
+    TerminalSessionAuthorizationUnavailable,
+    TerminalSessionRecord,
+)
 
 
 def _record(
@@ -149,6 +152,7 @@ async def test_attach_enters_terminal_room_when_owner_matches(monkeypatch):
         {
             "session_id": "terminal-1",
             "protocol_version": 2,
+            "browser_socket_id": "browser-sid",
             "consumer_id": "consumer-1",
             "last_acked_sequence": 7,
         },
@@ -252,6 +256,59 @@ async def test_attach_targets_and_rebinds_the_current_executor_socket(monkeypatc
     )
     saved_session = namespace.save_session.await_args.args[1]
     assert saved_session["terminal_authorization"] == rebound
+
+
+@pytest.mark.asyncio
+async def test_attach_releases_room_when_rebind_authorization_is_unavailable(
+    monkeypatch,
+):
+    namespace = TerminalNamespace()
+    record = _record()
+    service = _service(
+        authorize=AsyncMock(return_value=record),
+        rebind_socket=AsyncMock(side_effect=TerminalSessionAuthorizationUnavailable()),
+    )
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
+    enter_room = AsyncMock()
+    leave_room = AsyncMock()
+    monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
+    monkeypatch.setattr(
+        terminal_namespace,
+        "device_service",
+        SimpleNamespace(
+            get_device_online_info=AsyncMock(
+                return_value={"socket_id": "current-device-sid"}
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "token_exp": 9999999999}),
+    )
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
+    monkeypatch.setattr(namespace, "leave_room", leave_room)
+
+    result = await namespace.on_terminal_attach(
+        "browser-sid",
+        {
+            "session_id": "terminal-1",
+            "protocol_version": 2,
+            "consumer_id": "consumer-1",
+            "last_acked_sequence": 0,
+        },
+    )
+
+    assert result == {
+        "error": "Terminal session authorization is temporarily unavailable"
+    }
+    enter_room.assert_awaited_once_with("browser-sid", "terminal:terminal-1")
+    leave_room.assert_awaited_once_with("browser-sid", "terminal:terminal-1")
+    namespace.save_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -616,7 +673,7 @@ async def test_terminal_input_refreshes_authorization_after_listener_resync(
     session = _attached_session()
     refreshed = _record(authorization_epoch=1)
     service = _service(
-        is_authorization_current=Mock(return_value=False),
+        is_authorization_current=Mock(side_effect=[False, True]),
         is_revoked=Mock(return_value=False),
         authorize=AsyncMock(return_value=refreshed),
     )
@@ -646,6 +703,37 @@ async def test_terminal_input_refreshes_authorization_after_listener_resync(
     save_session.assert_awaited_once_with("browser-sid", session)
     service.is_revoked.assert_called_once_with("terminal-1")
     sio.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_terminal_input_retries_when_refreshed_authorization_is_unavailable(
+    monkeypatch,
+):
+    namespace = TerminalNamespace()
+    service = _service(
+        is_authorization_current=Mock(return_value=False),
+        is_revoked=Mock(return_value=False),
+        authorize=AsyncMock(side_effect=TerminalSessionAuthorizationUnavailable()),
+    )
+    sio = SimpleNamespace(emit=AsyncMock())
+    monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value=_attached_session()),
+    )
+
+    result = await namespace.on_terminal_input(
+        "browser-sid",
+        {"session_id": "terminal-1", "data": "ls\n"},
+    )
+
+    assert result == {
+        "error": "Terminal session authorization is temporarily unavailable"
+    }
+    sio.emit.assert_not_awaited()
+    service.is_revoked.assert_not_called()
 
 
 @pytest.mark.asyncio

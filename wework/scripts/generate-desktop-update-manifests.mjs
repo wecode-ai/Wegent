@@ -53,8 +53,6 @@ const sharedComponentBaseUrl = (
   `https://github.com/${repository}/releases/download/wework-updater`
 ).replace(/\/+$/, '')
 const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
-const includeLegacyTauriBridge =
-  process.env.WEWORK_INCLUDE_LEGACY_TAURI_BRIDGE?.trim().toLowerCase() !== 'false'
 const requestedTargets = new Set(
   (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
     .split(',')
@@ -106,48 +104,6 @@ for (const targetChannel of electronChannels) {
 }
 
 const updateChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
-if (includeLegacyTauriBridge) {
-  const tauriPlatforms = {}
-  for (const [target, platform] of macosReleasePlatforms) {
-    if (requestedTargets.has(target)) {
-      tauriPlatforms[platform] = await tauriEntry(`WeWork_${version}_${platform}.app.tar.gz`)
-    }
-  }
-  if (requestedTargets.has('windows-x64')) {
-    tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows-x64-setup.exe`)
-  }
-  const tauriSource = {
-    version,
-    notes,
-    pub_date: releaseDate,
-    platforms: tauriPlatforms,
-  }
-  await writeFile(
-    resolve(output, 'latest.json'),
-    `${JSON.stringify(tauriSource, null, 2)}\n`,
-    'utf8'
-  )
-  for (const targetChannel of updateChannels) {
-    for (const [platform, entry] of Object.entries(tauriSource.platforms)) {
-      const [operatingSystem, ...architecture] = platform.split('-')
-      const target = `${targetChannel}-${operatingSystem}`
-      await writeFile(
-        resolve(output, `${target}-${architecture.join('-')}.json`),
-        `${JSON.stringify(
-          {
-            version,
-            notes,
-            pub_date: releaseDate,
-            platforms: { [target]: entry },
-          },
-          null,
-          2
-        )}\n`,
-        'utf8'
-      )
-    }
-  }
-}
 
 const componentTargets = [
   ...(requestedTargets.has('macos-arm64') ? [['macos', 'arm64']] : []),
@@ -270,14 +226,6 @@ async function requireAsset(name) {
   const path = resolve(assets, name)
   const file = await stat(path).catch(() => null)
   if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
-}
-
-async function tauriEntry(name) {
-  const signaturePath = resolve(assets, `${name}.sig`)
-  return {
-    signature: (await readFile(signaturePath, 'utf8')).trim(),
-    url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
-  }
 }
 
 function electronManifest(releaseVersion, date, releaseNotes, files) {

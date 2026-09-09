@@ -15,6 +15,7 @@ const outputRoot = join(weworkDir, 'resources', 'binaries', 'codex')
 const legacyCacheRoot = join(weworkDir, 'node_modules', '.cache', 'wework-codex')
 const DOWNLOAD_ATTEMPTS = 3
 const DOWNLOAD_RETRY_DELAY_MS = 1_000
+const skipDownloads = process.env.WEWORK_SKIP_CODEX_DOWNLOADS === '1'
 
 const hostTargetByPlatform = {
   'darwin:arm64': 'aarch64-apple-darwin',
@@ -201,6 +202,9 @@ async function exposeTarget(targetRoot, outputTargetRoot) {
 }
 
 async function downloadToCache(url, destination) {
+  if (skipDownloads) {
+    throw new Error(`Codex download is disabled; missing cache entry for ${url}`)
+  }
   const temporaryPath = join(
     dirname(destination),
     `${basename(destination)}.${process.pid}.${Date.now()}.part`
@@ -245,6 +249,11 @@ async function ensureTarballIntegrity(tarballPath, entry, target) {
   const actualIntegrity = await integrityFile(tarballPath)
   if (actualIntegrity === entry.integrity) return
 
+  if (skipDownloads) {
+    throw new Error(
+      `Cached Codex archive is invalid for ${target}; downloads are disabled`
+    )
+  }
   await rm(tarballPath, { force: true })
   console.log(`Cached Codex archive is invalid for ${target}; downloading a fresh copy`)
   await downloadToCache(entry.tarball, tarballPath)

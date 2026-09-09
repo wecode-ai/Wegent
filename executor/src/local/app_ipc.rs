@@ -2179,6 +2179,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.mark_read" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .mark_task_read(project_id, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.create" => {
             let project_id = required_task_string(&params, "project_id")?;
             let input = serde_json::from_value::<TaskCreate>(

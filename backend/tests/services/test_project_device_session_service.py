@@ -18,6 +18,23 @@ def _project_config(path: str = "/repo", device_id: str = "device-abc") -> dict:
     }
 
 
+def _patch_session_runtime_identity(
+    monkeypatch,
+    session_service,
+    *,
+    logical_device_id: str = "device-abc",
+    runtime_device_id: str | None = None,
+) -> None:
+    monkeypatch.setattr(
+        session_service,
+        "resolve_runtime_route_identity",
+        lambda db, *, user_id, submitted_device_id: SimpleNamespace(
+            logical_device_id=logical_device_id,
+            runtime_device_id=runtime_device_id or logical_device_id,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_start_project_device_session_uses_project_bound_device_and_path(
     monkeypatch,
@@ -443,6 +460,11 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     """Device session service should send a start_session RPC to the online device."""
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(
+        monkeypatch,
+        session_service,
+        runtime_device_id="runtime-device-abc",
+    )
     monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
@@ -497,10 +519,14 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     record = terminal_registry.register.await_args.args[0]
     assert record.session_id == payload["session_id"]
     assert record.user_id == 7
-    assert record.device_id == "device-abc"
+    assert record.device_id == "runtime-device-abc"
     assert record.socket_id == "socket-123"
     assert record.project_id == 123
     assert record.path == "/repo"
+    session_service.device_service.get_device_online_info.assert_awaited_once_with(
+        7,
+        "runtime-device-abc",
+    )
 
 
 @pytest.mark.asyncio
@@ -523,6 +549,7 @@ async def test_local_device_session_service_rejects_disabled_interactive_session
 ):
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(monkeypatch, session_service)
     mock_sio = AsyncMock()
     monkeypatch.setattr(
         session_service.device_service,
@@ -561,6 +588,7 @@ async def test_local_device_session_service_rejects_disabled_interactive_session
 async def test_local_device_session_service_keeps_legacy_session_defaults(monkeypatch):
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(monkeypatch, session_service)
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
         "success": True,
@@ -605,6 +633,11 @@ async def test_external_session_rejects_app_device_when_remote_control_is_disabl
 ):
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(
+        monkeypatch,
+        session_service,
+        logical_device_id="app-device",
+    )
     online_info = AsyncMock(return_value={"socket_id": "socket-123"})
     monkeypatch.setattr(
         session_service.device_service,
@@ -643,6 +676,7 @@ async def test_local_device_session_service_maps_terminal_registry_failures(
     """Terminal registry failures should return a device session error and clean up."""
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(monkeypatch, session_service)
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
         "success": True,
@@ -700,6 +734,7 @@ async def test_local_device_session_service_adds_missing_url_token(monkeypatch):
     """Returned code-server URLs must include the generated access token."""
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(monkeypatch, session_service)
     monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
@@ -742,6 +777,7 @@ async def test_cloud_device_session_service_rewrites_localhost_session_url(
     """Cloud code-server sessions should not return the device-local localhost URL."""
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(monkeypatch, session_service)
     monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "short")
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
@@ -803,6 +839,7 @@ async def test_cloud_device_session_service_uses_runtime_transfer_host(
     """Cloud IDE URLs should use the host advertised by the online executor."""
     from app.services.device import session_service
 
+    _patch_session_runtime_identity(monkeypatch, session_service)
     monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "short")
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {

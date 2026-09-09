@@ -38,6 +38,7 @@ from app.api.endpoints import (
     knowledge_video_upload,
     local_executor,
     loop_item_executions,
+    mcp_identity,
     mcp_providers,
     oauth_clients,
     oauth_provider,
@@ -68,6 +69,7 @@ from app.api.endpoints import (
     utils,
     web_content,
     web_scraper,
+    wework_api,
     wework_auth,
     wework_notifications,
     wework_transcripts,
@@ -278,6 +280,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(wework_api.router, tags=["openapi-discovery"])
 api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
@@ -402,6 +405,7 @@ api_router.include_router(
     system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
+api_router.include_router(mcp_identity.router, tags=["mcp-identity"])
 api_router.include_router(
     prompt_optimization.router,
     prefix="/prompt-optimization",
