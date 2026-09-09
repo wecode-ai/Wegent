@@ -653,6 +653,10 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     content_revision: 1,
+    has_additional_context:
+      typeof record.metadata.has_additional_context === 'boolean'
+        ? record.metadata.has_additional_context
+        : true,
     is_unread: record.metadata.is_unread === true,
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_agent_id: record.assignee_agent_id ?? null,

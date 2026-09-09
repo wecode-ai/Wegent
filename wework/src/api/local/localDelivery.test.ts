@@ -114,6 +114,38 @@ describe('local delivery API', () => {
     })
   })
 
+  test('maps the executor-owned Issue context marker', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') {
+        return [
+          {
+            ...taskRecord,
+            metadata: {
+              tags: [],
+              has_additional_context: false,
+              runtime_projection: {
+                source_title: taskRecord.title,
+                source_description: taskRecord.description,
+              },
+            },
+          },
+          {
+            ...taskRecord,
+            id: 'LOCAL-2',
+            metadata: { tags: [] },
+          },
+        ]
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    const { items } = await api.listLoopItems('project-1')
+
+    expect(items[0].has_additional_context).toBe(false)
+    expect(items[1].has_additional_context).toBe(true)
+  })
+
   test('lists every task execution associated with a work-item project', async () => {
     const execution = {
       id: 7,
