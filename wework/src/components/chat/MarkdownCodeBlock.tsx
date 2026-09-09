@@ -34,6 +34,7 @@ const CODE_ACTION_BUTTON_CLASS =
 const CODE_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
 const HIGHLIGHT_INTERVAL_MS = 120
+let highlightCodeModulePromise: Promise<typeof import('./highlightCode')> | null = null
 
 const codeCustomStyle: CSSProperties = {
   margin: 0,
@@ -243,10 +244,14 @@ function useThrottledHighlightedCode(text: string, language: string): Highlighte
       const code = state.latestText
       const nextLanguage = state.latestLanguage
       state.lastStartedAtMs = performance.now()
-      void import('./highlightCode').then(({ highlightCode }) => {
-        if (state.disposed) return
-        setHighlightedCode(highlightCode(code, nextLanguage))
-      })
+      highlightCodeModulePromise ??= import('./highlightCode')
+      void highlightCodeModulePromise.then(
+        ({ highlightCode }) => {
+          if (state.disposed) return
+          setHighlightedCode(highlightCode(code, nextLanguage))
+        },
+        () => undefined
+      )
     }
 
     if (delay === 0) {
