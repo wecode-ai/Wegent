@@ -136,6 +136,83 @@ export interface WeworkComposerService {
   setValue(value: string, selectionOffset?: number): void
 }
 
+export interface WeworkConversationReference {
+  readonly deviceId: string
+  readonly taskId: string
+  readonly workspacePath?: string | null
+}
+
+export interface WeworkConversationAttachment {
+  readonly id: number
+  readonly filename: string
+  readonly fileSize: number
+  readonly mimeType: string
+  readonly localPath?: string | null
+  readonly previewUrl?: string | null
+}
+
+export type WeworkConversationBlock =
+  | {
+      readonly type: 'thinking' | 'text' | 'plan'
+      readonly content: string
+      readonly status: string
+    }
+  | {
+      readonly type: 'tool'
+      readonly toolName: string
+      readonly toolInput?: unknown
+      readonly toolOutput?: unknown
+      readonly status: string
+    }
+  | {
+      readonly type: 'file_changes'
+      readonly fileChanges: unknown
+      readonly status: string
+    }
+
+export type WeworkConversationItem =
+  | {
+      readonly id: string
+      readonly type: 'user_message'
+      readonly content: string
+      readonly createdAt?: string | null
+      readonly status: string
+      readonly attachments: readonly WeworkConversationAttachment[]
+    }
+  | {
+      readonly id: string
+      readonly type: 'assistant_text'
+      readonly content: string
+      readonly createdAt?: string | null
+    }
+  | {
+      readonly id: string
+      readonly type: 'block'
+      readonly block: WeworkConversationBlock
+    }
+
+export interface WeworkConversationTurn {
+  readonly id?: string | null
+  readonly status: string
+  readonly completedAt?: string | number | null
+  readonly items: readonly WeworkConversationItem[]
+}
+
+export interface WeworkConversationSnapshot {
+  readonly reference: WeworkConversationReference
+  readonly title: string
+  readonly complete: boolean
+  readonly turns: readonly WeworkConversationTurn[]
+}
+
+export interface WeworkConversationService {
+  getTranscript(reference: WeworkConversationReference): Promise<WeworkConversationSnapshot>
+}
+
+export interface WeworkDialogService {
+  save(options?: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
 export interface WeworkContribution {
   readonly id: string
   readonly label?: string
@@ -336,6 +413,7 @@ export interface WeworkService {
   readonly chat: WeworkChatService
   readonly commands: WeworkCommandRegistry
   readonly composer: WeworkComposerService
+  readonly conversations: WeworkConversationService
   readonly contributions: WeworkContributionCatalog
   readonly context: WeworkContextRegistry
   readonly environments: WeworkEnvironmentService
@@ -354,6 +432,7 @@ export interface WeworkExtensionHost extends Pick<
   | 'backend'
   | 'chat'
   | 'composer'
+  | 'conversations'
   | 'contributions'
   | 'context'
   | 'environments'
@@ -365,6 +444,7 @@ export interface WeworkExtensionHost extends Pick<
   | 'secrets'
   | 'testing'
 > {
+  readonly dialog: WeworkDialogService
   getRevision(): number
   subscribe(listener: () => void): () => void
 }

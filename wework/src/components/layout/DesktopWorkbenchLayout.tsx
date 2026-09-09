@@ -70,6 +70,8 @@ import {
 } from './workbenchPaneIdentity'
 import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
+import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
+import { loadDshConversationTranscript } from '@/features/dsh-runtime/dshConversationTranscript'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -143,6 +145,7 @@ export function DesktopWorkbenchLayout({
     startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
     openRuntimeTask: onOpenRuntimeTask,
+    loadRuntimeTranscriptForPane: onLoadRuntimeTranscriptForPane,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
     renameRuntimeTask: onRenameRuntimeTask,
     archiveRuntimeTask: onArchiveRuntimeTask,
@@ -218,6 +221,12 @@ export function DesktopWorkbenchLayout({
     validRuntimeKeys: runtimePaneKeys,
     runtimeKeysReady: state.runtimeWork !== null,
   })
+  useEffect(() => {
+    return bindDshConversationController({
+      getTranscript: reference =>
+        loadDshConversationTranscript(reference, state.runtimeWork, onLoadRuntimeTranscriptForPane),
+    })
+  }, [onLoadRuntimeTranscriptForPane, state.runtimeWork])
   const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
