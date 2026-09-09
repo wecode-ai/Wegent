@@ -7,6 +7,7 @@
 use std::{
     fs,
     path::PathBuf,
+    process::Command,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -47,6 +48,7 @@ fn unix_pty_manager_spawns_process_with_term_env_cwd_and_bounded_read() {
     let manager = UnixPtyManager::new();
     assert!(manager.is_available());
     let cwd = unique_dir("pty-spawn");
+    let home = std::env::var("HOME").unwrap();
 
     let mut process = manager
         .spawn(
@@ -56,7 +58,11 @@ fn unix_pty_manager_spawns_process_with_term_env_cwd_and_bounded_read() {
                 "printf 'ready:%s:%s:%s' \"$TERM\" \"$CUSTOM_ENV\" \"$PWD\"; exit 0",
             ],
             Some(&cwd),
-            &[("PATH", "/bin"), ("CUSTOM_ENV", "contract")],
+            &[
+                ("PATH", "/bin"),
+                ("HOME", home.as_str()),
+                ("CUSTOM_ENV", "contract"),
+            ],
             30,
             100,
         )
@@ -64,11 +70,11 @@ fn unix_pty_manager_spawns_process_with_term_env_cwd_and_bounded_read() {
 
     assert!(process.pid() > 0);
     process.resize(40, 120).unwrap();
-    let output = process
-        .read_available(Duration::from_secs(2))
-        .unwrap()
-        .expect("expected PTY output before timeout");
-    let output = String::from_utf8_lossy(&output);
+    let output = read_until_contains(
+        &mut process,
+        "ready:xterm-256color:contract:",
+        Duration::from_secs(2),
+    );
     assert!(output.contains("ready:xterm-256color:contract:"));
     assert!(output.contains(cwd.to_str().unwrap()));
     assert_eq!(
@@ -76,6 +82,55 @@ fn unix_pty_manager_spawns_process_with_term_env_cwd_and_bounded_read() {
         Some(0)
     );
     process.close();
+}
+
+#[test]
+fn unix_pty_manager_replaces_inherited_environment() {
+    const CHILD_MARKER: &str = "WEGENT_TEST_PTY_ENV_CHILD";
+    const PARENT_ONLY_ENV: &str = "WEGENT_TEST_PTY_PARENT_ONLY";
+
+    if std::env::var(CHILD_MARKER).as_deref() == Ok("1") {
+        let manager = UnixPtyManager::new();
+        let mut process = manager
+            .spawn(
+                &["/usr/bin/env"],
+                Some(&unique_dir("pty-environment")),
+                &[("PATH", "/usr/bin:/bin"), ("CUSTOM_ENV", "contract")],
+                24,
+                80,
+            )
+            .unwrap();
+
+        let output =
+            read_until_contains(&mut process, "CUSTOM_ENV=contract", Duration::from_secs(2));
+        assert!(output.contains("CUSTOM_ENV=contract"));
+        assert!(!output.contains("BASH_FUNC_which%%"));
+        assert!(!output.contains(PARENT_ONLY_ENV));
+        assert_eq!(
+            process.wait_timeout(Duration::from_secs(2)).unwrap(),
+            Some(0)
+        );
+        process.close();
+        return;
+    }
+
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unix_pty_manager_replaces_inherited_environment",
+            "--nocapture",
+        ])
+        .env(CHILD_MARKER, "1")
+        .env(PARENT_ONLY_ENV, "must-not-leak")
+        .env("BASH_FUNC_which%%", "() {")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
