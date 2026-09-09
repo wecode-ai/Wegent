@@ -23,7 +23,7 @@ def is_internal_original_download_allowed(
     deliberately confined to this module so it cannot leak into core policy.
     """
     spec = knowledge_base.json.get("spec", {}) if knowledge_base.json else {}
-    if "allowDocumentDownload" in spec:
+    if spec.get("allowDocumentDownload") is not None:
         return is_default_original_download_allowed(db, knowledge_base)
 
     namespace = load_active_namespace_map(db, [knowledge_base.namespace]).get(
