@@ -5,7 +5,7 @@ import {
   waitForSnapshot,
 } from './conversation-layout.mjs'
 
-import { assertConversationTextOrder, ensurePlanMode } from './conversation-navigation.mjs'
+import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
 
@@ -49,7 +49,15 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await ensurePlanMode(control)
+  const composerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (composerSnapshot.testIds.includes('plan-mode-pill')) {
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+  }
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('plan-mode-pill'),
+    'The request-user-input regression must run in Default mode'
+  )
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,
@@ -197,7 +205,6 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       }
     }
   }
-  await control.command('click', '[data-testid="cancel-plan-mode-button"]')
 }
 
 async function findRuntimeTaskSortableListSelector(control, taskRowTestIds) {

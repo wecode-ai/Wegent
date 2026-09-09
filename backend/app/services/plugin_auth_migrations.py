@@ -156,7 +156,15 @@ class PluginAuthMigrationService:
     def _validated(
         self, db: Session, user_id: int, device_id: str, migration_id: str
     ) -> tuple[Kind, Kind, PluginAccountAuthDefinition]:
-        row = self._query(db, user_id, migration_id).first()
+        if self._query(db, user_id, migration_id).first() is None:
+            raise PluginAccountAuthError("plugin_auth_migration_expired", 403)
+        self.connections._lock_owner(db, user_id)
+        row = (
+            self._query(db, user_id, migration_id)
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
         if row is None or row.json["spec"]["expires_at"] <= time.time():
             raise PluginAccountAuthError("plugin_auth_migration_expired", 403)
         spec = row.json["spec"]

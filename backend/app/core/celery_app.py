@@ -31,6 +31,7 @@ from celery.signals import (
     after_setup_task_logger,
     task_postrun,
     task_prerun,
+    worker_process_init,
     worker_shutdown,
     worker_shutting_down,
 )
@@ -66,6 +67,30 @@ def build_beat_schedule() -> dict:
         },
         "check-due-project-automations": {
             "task": "app.tasks.project_automation_tasks.check_due_project_automations",
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "check-pending-project-incoming-events": {
+            "task": (
+                "app.tasks.project_automation_tasks."
+                "check_pending_project_incoming_events"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "check-due-project-event-subscriptions": {
+            "task": (
+                "app.tasks.project_automation_tasks."
+                "check_due_project_event_subscriptions"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-workflow-loop-timeouts": {
+            "task": (
+                "app.tasks.project_automation_tasks." "scan_workflow_loop_timeouts"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-branch-collectors": {
+            "task": ("app.tasks.project_automation_tasks." "scan_branch_collectors"),
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
         "scan-stale-index-tasks": {
@@ -189,6 +214,14 @@ def setup_celery_task_logger(logger, *args, **kwargs):
     and write to the rotating log file.
     """
     _apply_backend_format(logger)
+
+
+@worker_process_init.connect
+def log_worker_database_pool_configuration(*args, **kwargs):
+    """Log the per-process database pool budget after a worker forks."""
+    from app.db.pool_observability import log_registered_pool_configurations
+
+    log_registered_pool_configurations()
 
 
 @task_prerun.connect

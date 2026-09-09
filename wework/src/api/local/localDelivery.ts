@@ -657,7 +657,7 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
       typeof record.metadata.has_additional_context === 'boolean'
         ? record.metadata.has_additional_context
         : true,
-    is_unread: false,
+    is_unread: record.metadata.is_unread === true,
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -995,7 +995,12 @@ export function createLocalDeliveryApi(
       return localTask(record)
     },
     async markLoopItemRead(itemId: string) {
-      return api.getLoopItem(itemId)
+      const projectId = await resolveProjectId(itemId)
+      const record = await request<LocalLoopItemRecord>('todos.mark_read', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      return localTask(record)
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {

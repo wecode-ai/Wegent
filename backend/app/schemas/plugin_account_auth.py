@@ -283,3 +283,12 @@ class PluginNativeAutomation(BaseModel):
         if any(item <= 0 for item in value) or len(set(value)) != len(value):
             raise ValueError("Installed plugin IDs must be positive and distinct")
         return value
+
+
+class PluginNativeLocalLifecycle(BaseModel):
+    """Public local-login lifecycle; credentials never enter this request."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    installed_plugin_id: int = Field(gt=0)
+    connector_slug: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,99}$")
+    action: Literal["status", "logout", "login"]

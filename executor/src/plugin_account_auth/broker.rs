@@ -31,6 +31,7 @@ struct Endpoint {
     token: String,
     mode: String,
     home: PathBuf,
+    lifecycle: tokio::sync::mpsc::Sender<super::local_lifecycle::Request>,
 }
 
 fn endpoint() -> &'static Mutex<Option<Endpoint>> {
@@ -60,12 +61,24 @@ pub fn environment() -> HashMap<String, String> {
     ])
 }
 
+pub(super) fn lifecycle_sender(
+) -> Result<tokio::sync::mpsc::Sender<super::local_lifecycle::Request>, AuthError> {
+    endpoint()
+        .lock()
+        .map_err(|_| AuthError("plugin_auth_broker_unavailable"))?
+        .as_ref()
+        .filter(|endpoint| endpoint.mode == "local")
+        .map(|endpoint| endpoint.lifecycle.clone())
+        .ok_or(AuthError("plugin_auth_broker_unavailable"))
+}
+
 pub struct RunningBroker {
     endpoint: Endpoint,
     cancel: watch::Sender<bool>,
     task: JoinHandle<()>,
     revocations: JoinHandle<()>,
     automation: JoinHandle<()>,
+    lifecycle: JoinHandle<()>,
 }
 
 impl Drop for RunningBroker {
@@ -74,6 +87,7 @@ impl Drop for RunningBroker {
         self.task.abort();
         self.revocations.abort();
         self.automation.abort();
+        self.lifecycle.abort();
         let mut active = endpoint()
             .lock()
             .expect("plugin broker endpoint lock poisoned");
@@ -110,13 +124,16 @@ pub async fn start<T: LocalBackendTransport>(
     let mut nonce = [0u8; 32];
     getrandom::fill(&mut nonce).map_err(|_| AuthError("plugin_auth_broker_unavailable"))?;
     let token: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
+    let (cancel, _) = watch::channel(false);
+    let (lifecycle_sender, lifecycle) =
+        super::local_lifecycle::start(transport.clone(), connected.clone(), cancel.subscribe());
     let endpoint_value = Endpoint {
         url: format!("http://{address}/v1/run"),
         token,
         mode: if cloud { "cloud" } else { "local" }.into(),
         home,
+        lifecycle: lifecycle_sender,
     };
-    let (cancel, _) = watch::channel(false);
     let revocation_transport = transport.clone();
     let revocation_home = endpoint_value.home.clone();
     let revocation_connected = connected.clone();
@@ -177,6 +194,7 @@ pub async fn start<T: LocalBackendTransport>(
         task,
         revocations,
         automation,
+        lifecycle,
     })
 }
 
