@@ -119,9 +119,9 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-auto-update,plugin-workspace-publication,plugin-account-auth
+  plugin-account-auth
   cloud-worktree-queued-cancel
-  workspace-attachments
+  plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
 # Group checkpoints by observed Core CI duration so every serial shard stays
 # below the desktop suite's critical-path budget while reusing the same
