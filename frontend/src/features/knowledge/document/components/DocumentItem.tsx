@@ -198,7 +198,6 @@ export function DocumentItem({
   // Whether to show download button
   const showDownload = allowDownload && document.source_type === 'file' && !!document.attachment_id
   // Check document source type
-  const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
   const isNotIndexed = document.index_status === 'not_indexed'
   const isIndexFailed = document.index_status === 'failed'
@@ -217,7 +216,7 @@ export function DocumentItem({
   const canReindex =
     !!onReindex &&
     !showIndexingState &&
-    (isExternal ? isIndexFailed : ragConfigured && !isTable && (isIndexFailed || isNotIndexed))
+    (isExternal ? isIndexFailed : ragConfigured && (isIndexFailed || isNotIndexed))
   // The same control serves as "retry import" for external documents; the
   // DocumentList handler routes external documents to the retry entry.
   const reindexActionLabel = isExternal
@@ -235,13 +234,11 @@ export function DocumentItem({
   const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
   const isExcel = ['xls', 'xlsx'].includes(document.file_extension?.toLowerCase() || '')
   const isExcelExceedingSizeLimit = isExcel && document.file_size > EXCEL_FILE_SIZE_LIMIT
-  // URL for table, web and imported external documents
+  // URL for web and imported external documents
   const externalSource = getExternalSourceInfo(document)
   const sourceUrl =
-    isTable || isWeb
-      ? document.source_config?.url && typeof document.source_config.url === 'string'
-        ? document.source_config.url
-        : null
+    isWeb && document.source_config?.url && typeof document.source_config.url === 'string'
+      ? document.source_config.url
       : isExternal && typeof externalSource?.url === 'string'
         ? externalSource.url
         : null
@@ -357,15 +354,7 @@ export function DocumentItem({
           <div className="flex items-center justify-between mt-0.5">
             <div className="flex items-center gap-1.5 min-w-0">
               {/* Type badge */}
-              {isTable ? (
-                <Badge
-                  variant="default"
-                  size="sm"
-                  className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[9px] px-1 py-0"
-                >
-                  {t('knowledge:document.document.type.table')}
-                </Badge>
-              ) : isWeb ? (
+              {isWeb ? (
                 <Badge
                   variant="default"
                   size="sm"
@@ -381,7 +370,7 @@ export function DocumentItem({
                 </span>
               )}
               {/* Size */}
-              {!isTable && !isWeb && (
+              {!isWeb && (
                 <span className="text-[9px] text-text-muted">
                   {formatFileSize(document.file_size)}
                 </span>
@@ -612,15 +601,7 @@ export function DocumentItem({
 
       {/* Type */}
       <div className="text-center min-w-0">
-        {isTable ? (
-          <Badge
-            variant="default"
-            size="sm"
-            className="bg-blue-500/10 text-blue-600 border-blue-500/20"
-          >
-            {t('knowledge:document.document.type.table')}
-          </Badge>
-        ) : isWeb ? (
+        {isWeb ? (
           <Badge
             variant="default"
             size="sm"
@@ -660,7 +641,7 @@ export function DocumentItem({
       {/* Size */}
       <div className="text-center min-w-0">
         <span className="text-xs text-text-muted">
-          {isTable || isWeb ? '-' : formatFileSize(document.file_size)}
+          {isWeb ? '-' : formatFileSize(document.file_size)}
         </span>
       </div>
       {/* Creator */}

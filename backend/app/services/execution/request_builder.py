@@ -532,7 +532,6 @@ class TaskRequestBuilder:
             mcp_servers=mcp_servers,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
-            table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
             project_id=request_project_id,

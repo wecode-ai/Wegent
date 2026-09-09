@@ -675,7 +675,7 @@
       "text_contexts": "消息上下文",
       "structured_contexts": "附加上下文",
       "no_text_contexts": "暂无可用的消息上下文。",
-      "no_structured_contexts": "暂无附件、知识库或表格上下文。",
+      "no_structured_contexts": "暂无附件或知识库上下文。",
       "confirm": "继续",
       "confirming": "继续中...",
       "missing_task": "缺少任务或团队信息",

@@ -4,7 +4,6 @@
 
 """Built-in tools module."""
 
-from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
 from .history_backtrack import (
@@ -35,7 +34,6 @@ __all__ = [
     "KnowledgeListDocumentsTool",
     "KbHeadTool",
     "KBToolCallCounter",
-    "DataTableTool",
     "FileReaderSkill",
     "FileListSkill",
     "SubmitEvaluationResultTool",

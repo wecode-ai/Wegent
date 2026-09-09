@@ -194,8 +194,6 @@ export interface MessageBubbleProps {
   isPendingConfirmation?: boolean
   /** Callback when pipeline stage is confirmed (for FinalPromptMessage) */
   onPipelineStageConfirmed?: () => void
-  /** Callback when user clicks on a context badge to re-select it */
-  onContextReselect?: (context: SubtaskContextBrief) => void
   /** Whether this message is currently in edit mode */
   isEditing?: boolean
   /** Callback when user clicks the edit button */
@@ -417,7 +415,6 @@ const MessageBubble = memo(
     isGroupChat,
     isPendingConfirmation,
     onPipelineStageConfirmed,
-    onContextReselect,
     isEditing,
     onEdit,
     onEditSave,
@@ -1199,7 +1196,6 @@ const MessageBubble = memo(
                   }
                   return msg.contexts
                 })()}
-                onContextReselect={isUserTypeMessage ? onContextReselect : undefined}
                 shareToken={shareToken}
                 displayGeneratedMedia={!isUserTypeMessage}
               />
