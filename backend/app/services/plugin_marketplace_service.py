@@ -1473,6 +1473,9 @@ class PluginMarketplaceService:
         defer_commit: bool = False,
     ) -> PublishedRelease:
         """Persist one ready release and clean up its object on transaction failure."""
+        from app.services.plugin_publication_artifact import release_source_tree
+
+        release_source_tree(package)
         if not parsed.version:
             raise HTTPException(status_code=422, detail="Plugin version is required")
         self._validate_version(parsed.version)

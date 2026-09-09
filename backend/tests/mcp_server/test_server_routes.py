@@ -6,6 +6,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -269,7 +270,11 @@ def test_default_external_knowledge_auth_uses_api_key_owner(
         user = _default_external_auth_handler(raw_key, request)
 
     test_db.refresh(api_key_record)
-    assert user == ExternalKnowledgeUser(id=test_user.id, user_name=test_user.user_name)
+    assert user == ExternalKnowledgeUser(
+        id=test_user.id,
+        user_name=test_user.user_name,
+        document_download_exempt=True,
+    )
     assert api_key_record.last_used_at == original_last_used
 
 
@@ -284,6 +289,9 @@ def test_external_knowledge_mcp_auth_ignores_x_api_key(
             {
                 "user_id": user.id if user else None,
                 "user_name": user.user_name if user else None,
+                "document_download_exempt": (
+                    user.document_download_exempt if user else None
+                ),
             }
         )
 
@@ -390,6 +398,9 @@ def test_external_knowledge_mcp_custom_auth_sets_lightweight_user_context():
             {
                 "user_id": user.id if user else None,
                 "user_name": user.user_name if user else None,
+                "document_download_exempt": (
+                    user.document_download_exempt if user else None
+                ),
             }
         )
 
@@ -419,7 +430,11 @@ def test_external_knowledge_mcp_custom_auth_sets_lightweight_user_context():
         )
 
     assert response.status_code == 200
-    assert response.json() == {"user_id": 7, "user_name": "alice"}
+    assert response.json() == {
+        "user_id": 7,
+        "user_name": "alice",
+        "document_download_exempt": True,
+    }
     auth_handler.assert_called_once()
 
 
@@ -829,7 +844,10 @@ def test_external_knowledge_document_file_downloads_with_short_lived_token(
         patch("app.db.session.SessionLocal", return_value=NonClosingSession(test_db)),
         patch(
             "app.services.knowledge.external_document_access.KnowledgeService.get_knowledge_base",
-            return_value=(object(), True),
+            return_value=(
+                SimpleNamespace(json={"spec": {}}, namespace="default"),
+                True,
+            ),
         ),
         patch.object(
             context_service, "get_attachment_binary_data", return_value=b"%PDF bytes"
@@ -864,7 +882,10 @@ def test_external_knowledge_document_file_supports_attachment_disposition(
         patch("app.db.session.SessionLocal", return_value=NonClosingSession(test_db)),
         patch(
             "app.services.knowledge.external_document_access.KnowledgeService.get_knowledge_base",
-            return_value=(object(), True),
+            return_value=(
+                SimpleNamespace(json={"spec": {}}, namespace="default"),
+                True,
+            ),
         ),
         patch.object(context_service, "get_attachment_binary_data", return_value=b"x"),
     ):
@@ -973,7 +994,10 @@ def test_external_knowledge_document_file_reports_missing_binary_after_token_iss
         patch("app.db.session.SessionLocal", return_value=NonClosingSession(test_db)),
         patch(
             "app.services.knowledge.external_document_access.KnowledgeService.get_knowledge_base",
-            return_value=(object(), True),
+            return_value=(
+                SimpleNamespace(json={"spec": {}}, namespace="default"),
+                True,
+            ),
         ),
         patch.object(context_service, "get_attachment_binary_data", return_value=None),
     ):
@@ -1013,7 +1037,10 @@ def test_external_knowledge_document_file_rejects_inline_for_non_previewable_fil
         patch("app.db.session.SessionLocal", return_value=NonClosingSession(test_db)),
         patch(
             "app.services.knowledge.external_document_access.KnowledgeService.get_knowledge_base",
-            return_value=(object(), True),
+            return_value=(
+                SimpleNamespace(json={"spec": {}}, namespace="default"),
+                True,
+            ),
         ),
     ):
         app = _build_external_knowledge_mcp_app()

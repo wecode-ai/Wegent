@@ -8,6 +8,7 @@ import React, { useMemo, useState, useCallback, type Dispatch, type SetStateActi
 import { ChevronRight, CircleStop, Hand, Plus, SlidersHorizontal, Zap } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
+import ImageSizeSelector from '../selector/ImageSizeSelector'
 import VideoGenerationModeSelector from '../selector/VideoGenerationModeSelector'
 import VideoSettingsPopover from '../selector/VideoSettingsPopover'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
@@ -100,6 +101,8 @@ export interface MobileChatInputControlsProps {
   selectedImageModel?: Model | null
   onImageModelChange?: (model: Model) => void
   isImageModelsLoading?: boolean
+  selectedImageSize?: string
+  onImageSizeChange?: (size: string) => void
   showVideoControlsInChat?: boolean
   selectedResolution?: string
   onResolutionChange?: (resolution: string) => void
@@ -194,6 +197,8 @@ export function MobileChatInputControls({
   selectedImageModel,
   onImageModelChange,
   isImageModelsLoading = false,
+  selectedImageSize = '1024x1024',
+  onImageSizeChange,
   showVideoControlsInChat = false,
   selectedResolution = '720p',
   onResolutionChange,
@@ -234,6 +239,7 @@ export function MobileChatInputControls({
   const { t } = useTranslation('chat')
   const [resourceDrawerOpen, setResourceDrawerOpen] = useState(false)
   const [videoConfigurationDrawerOpen, setVideoConfigurationDrawerOpen] = useState(false)
+  const [imageConfigurationDrawerOpen, setImageConfigurationDrawerOpen] = useState(false)
   const [nestedSelectorOpen, setNestedSelectorOpen] = useState(false)
   const [skillDrawerOpen, setSkillDrawerOpen] = useState(false)
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
@@ -277,6 +283,7 @@ export function MobileChatInputControls({
   )
   const showVideoConfiguration =
     showVideoGenerationModeAction || showVideoModelAction || showVideoSettings
+  const showImageConfiguration = Boolean(isImageMode && (onImageModelChange || onImageSizeChange))
   const hasMoreActions =
     showAttachmentAction ||
     showChatContexts ||
@@ -463,23 +470,29 @@ export function MobileChatInputControls({
           </div>
         )}
 
-        {isImageMode && onImageModelChange && (
-          <div
-            className="min-w-0 flex-1 overflow-hidden"
-            data-testid="mobile-image-model-selector-slot"
+        {showImageConfiguration && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-expanded={imageConfigurationDrawerOpen}
+            aria-invalid={isModelSelectionRequired || undefined}
+            aria-label={t('image.settings_title')}
+            data-testid="mobile-image-configuration-button"
+            title={t('image.settings_title')}
+            onClick={() => {
+              setResourceDrawerOpen(false)
+              setImageConfigurationDrawerOpen(true)
+            }}
+            disabled={isStreaming || Boolean(hideSelectors)}
+            className={`h-11 w-11 shrink-0 rounded-xl border hover:bg-hover hover:text-text-primary ${
+              isModelSelectionRequired
+                ? 'border-error bg-error/5 text-error'
+                : 'border-border bg-base text-text-muted'
+            }`}
           >
-            <MobileModelSelector
-              selectedModel={selectedImageModel ?? null}
-              setSelectedModel={model => model && onImageModelChange(model)}
-              forceOverride={false}
-              setForceOverride={() => {}}
-              selectedTeam={selectedTeam}
-              disabled={isStreaming}
-              isLoading={isImageModelsLoading}
-              modelCategoryType="image"
-              triggerVariant="compact"
-            />
-          </div>
+            <SlidersHorizontal className="h-5 w-5" />
+          </Button>
         )}
         {showVideoConfiguration && (
           <Button
@@ -617,6 +630,54 @@ export function MobileChatInputControls({
                   </Button>
                 </div>
               )}
+            </div>
+          </DrawerContent>
+        )}
+      </Drawer>
+
+      <Drawer open={imageConfigurationDrawerOpen} onOpenChange={setImageConfigurationDrawerOpen}>
+        {imageConfigurationDrawerOpen && (
+          <DrawerContent
+            className="max-h-[85vh] bg-[#f2f2f7] dark:bg-[#1c1c1e]"
+            showHandle={false}
+            data-testid="mobile-image-configuration-menu"
+          >
+            <div className="flex justify-center pb-3 pt-2">
+              <div className="h-1 w-9 rounded-full bg-[#3c3c43]/30 dark:bg-[#5c5c5e]" />
+            </div>
+            <div
+              className="max-h-[65vh] min-h-0 flex-1 overflow-y-auto px-4 pb-4"
+              style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            >
+              <div className="px-1 pb-2 text-xs font-medium text-[#8e8e93]">
+                {t('image.settings_title')}
+              </div>
+              <div
+                className="divide-y divide-border overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]"
+                data-testid="mobile-image-configuration"
+              >
+                {onImageModelChange && (
+                  <MobileModelSelector
+                    selectedModel={selectedImageModel ?? null}
+                    setSelectedModel={model => model && onImageModelChange(model)}
+                    forceOverride={false}
+                    setForceOverride={() => {}}
+                    selectedTeam={selectedTeam}
+                    disabled={isStreaming}
+                    isLoading={isImageModelsLoading}
+                    modelCategoryType="image"
+                    triggerVariant="settings-row"
+                  />
+                )}
+                {onImageSizeChange && (
+                  <ImageSizeSelector
+                    selectedSize={selectedImageSize}
+                    onSizeChange={onImageSizeChange}
+                    disabled={isStreaming}
+                    inline
+                  />
+                )}
+              </div>
             </div>
           </DrawerContent>
         )}

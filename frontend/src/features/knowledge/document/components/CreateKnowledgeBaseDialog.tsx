@@ -126,6 +126,7 @@ export function CreateKnowledgeBaseDialog({
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
+  const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
   // Selected KB type (can be changed by user)
   const [selectedKbType, setSelectedKbType] = useState<KnowledgeBaseType>(initialKbType)
   // Which kind of knowledge base is being created. Chosen first because it decides
@@ -189,6 +190,7 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
+      setAllowDocumentDownload(true)
       setRetrievalConfig(createDefaultRetrievalConfig())
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
@@ -274,6 +276,7 @@ export function CreateKnowledgeBaseDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         direct_access_requirement: directAccessRequirement,
+        allow_document_download: allowDocumentDownload,
         retrieval_config:
           ragConfigMode === 'disabled' || !retrievalConfigChangedRef.current
             ? undefined
@@ -309,6 +312,7 @@ export function CreateKnowledgeBaseDialog({
       setName('')
       setDescription('')
       setDirectAccessRequirement('read')
+      setAllowDocumentDownload(true)
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
       setKind('document')
@@ -333,6 +337,7 @@ export function CreateKnowledgeBaseDialog({
       setName('')
       setDescription('')
       setDirectAccessRequirement('read')
+      setAllowDocumentDownload(true)
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
       setKind('document')
@@ -552,6 +557,8 @@ export function CreateKnowledgeBaseDialog({
             onDescriptionChange={value => setDescription(value)}
             directAccessRequirement={directAccessRequirement}
             onDirectAccessRequirementChange={setDirectAccessRequirement}
+            allowDocumentDownload={allowDocumentDownload}
+            onAllowDocumentDownloadChange={setAllowDocumentDownload}
             summaryEnabled={summaryEnabled}
             onSummaryEnabledChange={checked => {
               setSummaryEnabled(checked)

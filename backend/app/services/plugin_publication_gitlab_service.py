@@ -99,6 +99,7 @@ class PluginPublicationGitLabGateway(Protocol):
         pipeline_url: str,
         slug: str,
         artifact_tree_sha256: str,
+        build_artifact_sha256: str = "",
         merge_request_iid: int = 0,
         source_branch: str = "",
     ) -> None: ...
@@ -411,6 +412,7 @@ class PluginPublicationGitLabService:
         pipeline_url: str,
         slug: str,
         artifact_tree_sha256: str,
+        build_artifact_sha256: str = "",
         merge_request_iid: int = 0,
         source_branch: str = "",
     ) -> None:
@@ -454,6 +456,19 @@ class PluginPublicationGitLabService:
             if not hmac.compare_digest(repository_tree_sha256, artifact_tree_sha256):
                 raise PluginPublicationGitLabVerificationError(
                     "Release artifact source tree does not match the GitLab commit"
+                )
+            if build_artifact_sha256:
+                from app.services.plugin_build_attestation import verify_build_artifact
+
+                verify_build_artifact(
+                    client=client,
+                    request_json=lambda path, **kwargs: self._request(
+                        client, "GET", path, **kwargs
+                    ),
+                    project_api=self._project_api(),
+                    pipeline_id=pipeline_id,
+                    commit_sha=commit_sha,
+                    expected_sha256=build_artifact_sha256,
                 )
             if merge_request_iid:
                 merge_request = self._request(

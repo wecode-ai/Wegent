@@ -13,6 +13,7 @@ import type {
   ChunkResponse,
   KnowledgeBaseRetrievalProfile,
   DocumentDetailResponse,
+  DocumentProtection,
   DocumentContentReadResponse,
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -28,7 +29,6 @@ import type {
   KnowledgeFolderUpdate,
   KnowledgeContentOrigin,
   KnowledgeResourceScope,
-  TableUrlValidationResponse,
   WebScrapeResponse,
 } from '@/types/knowledge'
 
@@ -53,6 +53,11 @@ export async function listKnowledgeBases(
  */
 export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
   return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`)
+}
+
+/** Return the effective reader capability used only for knowledge UI state. */
+export async function getDocumentProtection(id: number): Promise<DocumentProtection> {
+  return apiClient.get<DocumentProtection>(`/knowledge-bases/${id}/document-protection`)
 }
 
 /**
@@ -375,17 +380,6 @@ export async function batchDeleteDocuments(documentIds: number[]): Promise<Batch
  */
 export async function getAccessibleKnowledge(): Promise<AccessibleKnowledgeResponse> {
   return apiClient.get<AccessibleKnowledgeResponse>('/knowledge-bases/accessible')
-}
-
-// ============== Table URL Validation APIs ==============
-
-/**
- * Validate a table URL and extract metadata
- * @param url The table URL to validate
- * @returns Validation result with provider and extracted metadata
- */
-export async function validateTableUrl(url: string): Promise<TableUrlValidationResponse> {
-  return apiClient.post<TableUrlValidationResponse>('/tables/validate-url', { url })
 }
 
 // ============== Web Scraper APIs ==============

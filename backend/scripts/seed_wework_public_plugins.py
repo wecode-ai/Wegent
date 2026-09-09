@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.services.official_plugin_publisher import (  # noqa: E402
+    OfficialPluginPackage,
     official_plugin_publisher,
 )
 
@@ -91,12 +92,20 @@ def main() -> int:
 
     plugins_root = _resolve_plugins_root(args.plugins_dir)
     results: list[dict[str, object]] = []
-
-    for index, slug in enumerate(WEWORK_PUBLIC_PLUGIN_SLUGS, start=1):
+    packages: list[tuple[str, OfficialPluginPackage]] = []
+    # Validate all required artifacts before any release is written.
+    for slug in WEWORK_PUBLIC_PLUGIN_SLUGS:
         source = plugins_root / slug
         if not source.is_dir():
             raise SystemExit(f"Missing public plugin source: {source}")
-        built = official_plugin_publisher.build_package(source)
+        packages.append(
+            (
+                slug,
+                official_plugin_publisher.build_package(source),
+            )
+        )
+
+    for index, (slug, built) in enumerate(packages, start=1):
         entry: dict[str, object] = {
             "slug": slug,
             "name": built.name,

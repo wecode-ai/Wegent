@@ -13,7 +13,6 @@ import asyncio
 import logging
 import threading
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -94,8 +93,8 @@ def _run_in_new_loop(coro) -> Any:
         loop.close()
 
 
-# Thread pool for running async dispatch in separate threads
-_thread_pool: ThreadPoolExecutor | None = None
+# Keep strong references to fire-and-forget dispatch tasks until they finish.
+_scheduled_tasks: set[asyncio.Task[None]] = set()
 
 
 class _DispatchWaitMetric:
@@ -142,14 +141,6 @@ def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
         return ""
 
     return extract_display_prompt(user_subtask.prompt) or ""
-
-
-def _get_thread_pool() -> ThreadPoolExecutor:
-    """Get or create the shared thread pool."""
-    global _thread_pool
-    if _thread_pool is None:
-        _thread_pool = ThreadPoolExecutor(max_workers=5)
-    return _thread_pool
 
 
 async def _dispatch_task_async(task_id: int) -> None:
@@ -498,8 +489,9 @@ class _DispatchStrategy(ABC):
 class _RunningLoopStrategy(_DispatchStrategy):
     """Strategy for when there's already a running event loop.
 
-    This happens in async contexts (e.g., FastAPI endpoints, Celery with async).
-    We need to run in a separate thread to avoid blocking.
+    This happens in async contexts such as FastAPI and channel handlers. Keep
+    dispatch on that loop so shared async resources such as Socket.IO's Redis
+    manager are never awaited from a separate loop.
     """
 
     def can_handle(self) -> bool:
@@ -515,32 +507,32 @@ class _RunningLoopStrategy(_DispatchStrategy):
         )
 
         wait_metric = _DispatchWaitMetric()
-
-        def run_in_thread():
-            return _run_in_new_loop(_run_scheduled_dispatch(task_id, wait_metric))
-
-        # Submit to thread pool without blocking
-        try:
-            future = _get_thread_pool().submit(run_in_thread)
-        except Exception:
-            wait_metric.finish_waiting()
-            raise
+        task = asyncio.create_task(_run_scheduled_dispatch(task_id, wait_metric))
+        _scheduled_tasks.add(task)
 
         # Add callback for logging
-        def log_result(f):
+        def log_result(completed_task: asyncio.Task[None]) -> None:
+            _scheduled_tasks.discard(completed_task)
             wait_metric.finish_waiting()
             try:
-                f.result(timeout=30)
+                completed_task.result()
                 logger.info(
-                    f"[schedule_dispatch] Task completed in thread for task_id={task_id}"
+                    "[schedule_dispatch] Task completed in running loop "
+                    f"for task_id={task_id}"
+                )
+            except asyncio.CancelledError:
+                logger.info(
+                    "[schedule_dispatch] Task cancelled in running loop "
+                    f"for task_id={task_id}"
                 )
             except Exception as e:
                 logger.error(
-                    f"[schedule_dispatch] Task failed in thread for task_id={task_id}: {e}",
+                    "[schedule_dispatch] Task failed in running loop "
+                    f"for task_id={task_id}: {e}",
                     exc_info=True,
                 )
 
-        future.add_done_callback(log_result)
+        task.add_done_callback(log_result)
 
 
 class _MainLoopStrategy(_DispatchStrategy):

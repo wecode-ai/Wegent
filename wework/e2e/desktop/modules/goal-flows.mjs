@@ -90,10 +90,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   const goalTaskId = goalTaskRowTestId.replace('runtime-local-task-row-', '')
   const goalUnreadTestId = `runtime-local-task-unread-dot-${goalTaskId}`
   const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
+  const goalDotTestId = `runtime-local-task-goal-dot-${goalTaskId}`
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes(goalRunningTestId) && !snapshot.testIds.includes(goalUnreadTestId),
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
+      !snapshot.testIds.includes(goalUnreadTestId),
     'The running Goal turn did not render a consistent sidebar state'
   )
   await waitForSnapshot(
@@ -151,6 +154,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId),
     'The between-turn Goal gap did not preserve the sidebar and unread state'
   )
@@ -216,6 +220,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId),
     'Reloading lost the provider-confirmed sidebar state during Goal continuation',
     WORKBENCH_READY_TIMEOUT_MS
@@ -262,6 +267,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId) &&
       snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
@@ -295,7 +301,8 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.testIds.includes(goalTaskRowTestId) &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
-      snapshot.testIds.includes(goalRunningTestId),
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes(goalDotTestId),
     'The background Goal continuation stopped running or became unread'
   )
   await captureVerificationScreenshot(control, 'goal-idle-04-background-unread-free.png')
@@ -326,7 +333,9 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await waitForSnapshot(
     control,
     snapshot =>
-      !snapshot.testIds.includes(goalUnreadTestId) && !snapshot.testIds.includes(goalRunningTestId),
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes(goalDotTestId),
     'Opening the completed Goal task did not clear its sidebar state'
   )
   await waitForSnapshot(
@@ -354,6 +363,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     false,
     'The completed Goal kept the composer busy'
   )
+  await captureVerificationScreenshot(control, 'goal-idle-06-completed-read.png')
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {
