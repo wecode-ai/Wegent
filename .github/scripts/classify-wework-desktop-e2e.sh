@@ -13,6 +13,7 @@ core_segments=(
   project-event-sources
   project-assignment-notification
   offline-local-project-space
+  board-focus-view
   cloud-context-resilience
   core-dsh-plugin-management
   plugin-development
@@ -138,7 +139,7 @@ core_shards=(
   project-automation
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
@@ -457,6 +458,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
       select_target "core:cloud-space-mention"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
+      select_target "core:board-focus-view"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \
