@@ -926,7 +926,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         `[data-testid="smart-app-export-package-${CREATED_INSTALLATION_ID}"]`
       )
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
-        text: '安装包已导出到下载目录',
+        text: '发布包已导出到下载目录。',
         timeoutMs: 120_000,
       })
       await assertExportedPackage({
@@ -1002,6 +1002,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         !publishDialogText.includes('Choose File') &&
           !publishDialogText.includes('no file selected'),
         'Smart app publish dialog leaked native English file picker text'
+      )
+      assert.ok(
+        publishDialogText.includes('将使用已导入的发布包') &&
+          publishDialogText.includes('关联文件夹'),
+        'Smart app publish dialog did not explain the imported release package flow'
       )
       await captureScreenshot(control, 'harness-apps-04a-publish-dialog-zh.png', 'body')
       await control.command('click', '[data-testid="smart-app-publish-close"]')
@@ -1127,14 +1132,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'waitFor',
         `[data-testid="smart-app-export-package-${INSTALLATION_ID}"]`,
         {
-          text: '导出安装包',
+          text: '导出发布包',
           timeoutMs: uiTimeoutMs,
         }
       )
       const installedExportsBefore = await exportedPackages(downloadsPath)
       await control.command('click', `[data-testid="smart-app-export-package-${INSTALLATION_ID}"]`)
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
-        text: '安装包已导出到下载目录。',
+        text: '发布包已导出到下载目录。',
         timeoutMs: uiTimeoutMs,
       })
       await assertExportedPackage({

@@ -11516,14 +11516,14 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(
         screen.getByTestId('smart-app-development-preview-verification-failed')
-      ).toHaveTextContent('runtime_selector_missing')
+      ).toHaveTextContent('智能工作台校验未通过，请修复后重新验证。')
     )
     expect(
       screen.getByTestId('smart-app-development-preview-verification-failed')
     ).toHaveTextContent('smart-app.contract.json')
     expect(
       screen.getByTestId('smart-app-development-preview-verification-failed')
-    ).toHaveTextContent('Add the stable ready selector to the client root.')
+    ).not.toHaveTextContent('Add the stable ready selector to the client root.')
     await userEvent.click(screen.getByTestId('smart-app-development-preview-verification-details'))
     expect(screen.getByText('artifact_missing')).toBeInTheDocument()
 
