@@ -6,6 +6,8 @@ import type {
 } from '../../app-wework/client'
 
 const MARKDOWN_IMAGE_PATTERN = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
+const REMOTE_IMAGE_TIMEOUT_MS = 15_000
+const REMOTE_IMAGE_MAX_BYTES = 50 * 1024 * 1024
 const IMAGE_MIME_TYPES_BY_EXTENSION = new Map([
   ['avif', 'image/avif'],
   ['bmp', 'image/bmp'],
@@ -350,7 +352,7 @@ function cachedLocalDataUrl(
   const key = `${workspacePath ?? ''}:${path}`
   const cached = imageCache.get(key)
   if (cached) return cached
-  const dataUrl = readLocalImageBase64(path, workspacePath, backend).then(
+  const dataUrl = readLocalImageBase64(path, mimeType, workspacePath, backend).then(
     base64 => `data:${mimeType};base64,${base64}`
   )
   imageCache.set(key, dataUrl)
@@ -359,6 +361,7 @@ function cachedLocalDataUrl(
 
 async function readLocalImageBase64(
   path: string,
+  mimeType: string,
   workspacePath: string | null,
   backend: WeworkPluginBackendClient
 ): Promise<string> {
@@ -371,7 +374,7 @@ async function readLocalImageBase64(
       bytesRead: number
       eof: boolean
       size: number
-    }>('readImageChunk', { path, offset, workspacePath })
+    }>('readImageChunk', { path, offset, workspacePath, mimeType })
     if (
       !Number.isSafeInteger(chunk.bytesRead) ||
       chunk.bytesRead < 0 ||
@@ -385,6 +388,9 @@ async function readLocalImageBase64(
     if (expectedSize !== null && chunk.size !== expectedSize) {
       throw new Error('Image changed while the conversation export was reading it')
     }
+    if (!chunk.eof && chunk.bytesRead % 3 !== 0) {
+      throw new Error('Conversation export received a misaligned image chunk')
+    }
     expectedSize = chunk.size
     chunks.push(chunk.chunkBase64)
     offset += chunk.bytesRead
@@ -397,9 +403,50 @@ async function readLocalImageBase64(
 }
 
 async function fetchBase64(source: string, label: string): Promise<string> {
-  const response = await fetch(source, { credentials: 'same-origin' })
+  const response = await fetch(source, {
+    credentials: 'same-origin',
+    signal: AbortSignal.timeout(REMOTE_IMAGE_TIMEOUT_MS),
+  })
   if (!response.ok) throw new Error(`Unable to read ${label}: HTTP ${response.status}`)
-  return encodeBase64(new Uint8Array(await response.arrayBuffer()))
+  const contentLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > REMOTE_IMAGE_MAX_BYTES) {
+    throw new Error(`Unable to read ${label}: the image exceeds 50 MB`)
+  }
+  const bytes = await readResponseBytes(response, REMOTE_IMAGE_MAX_BYTES, label)
+  return encodeBase64(bytes)
+}
+
+async function readResponseBytes(
+  response: Response,
+  maxBytes: number,
+  label: string
+): Promise<Uint8Array> {
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.byteLength > maxBytes) throw new Error(`Unable to read ${label}: file is too large`)
+    return bytes
+  }
+  const chunks: Uint8Array[] = []
+  let size = 0
+  const reader = response.body.getReader()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value?.byteLength) continue
+    size += value.byteLength
+    if (size > maxBytes) {
+      await reader.cancel()
+      throw new Error(`Unable to read ${label}: file is too large`)
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
 }
 
 function dataUrlBase64(source: string, expectedMimeType: string): string {

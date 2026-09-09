@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
   WeworkConversationReference,
   WeworkConversationSnapshot,
   WeworkExtensionHost,
 } from '../../app-wework/client'
+import { splitContentChunks } from './contentChunks'
 import {
   conversationExportFilename,
   formatConversation,
@@ -20,10 +21,13 @@ import {
 
 const OPEN_EVENT = 'wework:conversation-export:open'
 const BACKEND_ID = 'conversation-export'
-const CONTENT_CHUNK_SIZE = 128 * 1024
 const BASE64_CHUNK_SIZE = 192 * 1024
 const ASSET_BYTE_CHUNK_SIZE = 128 * 1024
 const STATUS_POLL_INTERVAL_MS = 100
+const REMOTE_ASSET_TIMEOUT_MS = 30_000
+const REMOTE_ASSET_MAX_BYTES = 100 * 1024 * 1024
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 interface ExportTaskStatus {
   readonly exportTaskId: string
@@ -56,6 +60,8 @@ export default function ConversationExportDialog() {
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
   const [completedPath, setCompletedPath] = useState('')
+  const dialogRef = useRef<HTMLElement | null>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -72,6 +78,28 @@ export default function ConversationExportDialog() {
     window.addEventListener(OPEN_EVENT, open)
     return () => window.removeEventListener(OPEN_EVENT, open)
   }, [])
+
+  useEffect(() => {
+    if (!reference) return
+    previousFocusRef.current = document.activeElement as HTMLElement | null
+    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus())
+    return () => {
+      window.cancelAnimationFrame(frame)
+      previousFocusRef.current?.focus()
+      previousFocusRef.current = null
+    }
+  }, [reference])
+
+  useEffect(() => {
+    if (!reference || submitting) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setReference(null)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [reference, submitting])
 
   useEffect(() => {
     if (!reference) return
@@ -176,10 +204,10 @@ export default function ConversationExportDialog() {
         assetCount: prepared.assets.length,
       })
       exportTaskId = started.exportTaskId
-      for (let offset = 0; offset < content.length; offset += CONTENT_CHUNK_SIZE) {
+      for (const chunk of splitContentChunks(content)) {
         await backend.request('append', {
           exportTaskId,
-          content: content.slice(offset, offset + CONTENT_CHUNK_SIZE),
+          content: chunk,
         })
       }
       await writeAssets(backend, exportTaskId, prepared.assets, setProgress)
@@ -220,10 +248,29 @@ export default function ConversationExportDialog() {
       }}
     >
       <section
+        ref={dialogRef}
         aria-labelledby="conversation-export-title"
         aria-modal="true"
         className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-5 text-text-primary shadow-xl"
         role="dialog"
+        tabIndex={-1}
+        onKeyDown={event => {
+          if (event.key !== 'Tab') return
+          const focusable = Array.from(
+            dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []
+          )
+          if (focusable.length === 0) return
+          const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
+          const nextIndex = event.shiftKey
+            ? currentIndex <= 0
+              ? focusable.length - 1
+              : currentIndex - 1
+            : currentIndex === focusable.length - 1
+              ? 0
+              : currentIndex + 1
+          event.preventDefault()
+          focusable[nextIndex]?.focus()
+        }}
       >
         <h2 id="conversation-export-title" className="text-heading-md font-semibold">
           {translate('导出会话', 'Export conversation')}
@@ -448,23 +495,35 @@ async function appendRemoteAsset(
   url: string,
   label: string
 ): Promise<void> {
-  const response = await fetch(url, { credentials: 'same-origin' })
+  const response = await fetch(url, {
+    credentials: 'same-origin',
+    signal: AbortSignal.timeout(REMOTE_ASSET_TIMEOUT_MS),
+  })
   if (!response.ok) throw new Error(`Unable to read ${label}: HTTP ${response.status}`)
+  const contentLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > REMOTE_ASSET_MAX_BYTES) {
+    throw new Error(`Unable to read ${label}: the attachment exceeds 100 MB`)
+  }
   if (!response.body) {
-    await appendAssetBytes(
-      backend,
-      exportTaskId,
-      archivePath,
-      new Uint8Array(await response.arrayBuffer())
-    )
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.byteLength > REMOTE_ASSET_MAX_BYTES) {
+      throw new Error(`Unable to read ${label}: the attachment exceeds 100 MB`)
+    }
+    await appendAssetBytes(backend, exportTaskId, archivePath, bytes)
     return
   }
   const reader = response.body.getReader()
   let wroteChunk = false
+  let bytesRead = 0
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
     if (!value?.byteLength) continue
+    bytesRead += value.byteLength
+    if (bytesRead > REMOTE_ASSET_MAX_BYTES) {
+      await reader.cancel()
+      throw new Error(`Unable to read ${label}: the attachment exceeds 100 MB`)
+    }
     wroteChunk = true
     await appendAssetBytes(backend, exportTaskId, archivePath, value)
   }

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { splitContentChunks } from './contentChunks'
 import ConversationExportDialog from './dialog'
 
 const reference = {
@@ -112,6 +113,7 @@ describe('ConversationExportDialog', () => {
       path: '/tmp/screenshot.png',
       offset: 0,
       workspacePath: null,
+      mimeType: 'image/png',
     })
     expect(request).toHaveBeenNthCalledWith(2, 'start', {
       path: '/tmp/export-example.html',
@@ -325,5 +327,53 @@ describe('ConversationExportDialog', () => {
       path: '/tmp/image.png',
       workspacePath: null,
     })
+  })
+
+  it('traps focus, closes with Escape, and restores the previous focus', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+    window.__WEWORK_DSH_EXTENSIONS__ = {
+      conversations: {
+        getTranscript: vi.fn().mockResolvedValue({
+          reference,
+          title: reference.title,
+          complete: true,
+          turns: [],
+        }),
+      },
+      dialog: { save: vi.fn() },
+      backend: { scope: vi.fn() },
+    } as typeof window.__WEWORK_DSH_EXTENSIONS__
+
+    render(<ConversationExportDialog />)
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('wework:conversation-export:open', {
+          detail: reference,
+        })
+      )
+    })
+
+    const dialog = await screen.findByRole('dialog')
+    await waitFor(() => expect(dialog).toHaveFocus())
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
+    expect(screen.getByTestId('conversation-export-cancel')).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(trigger).toHaveFocus()
+    trigger.remove()
+  })
+})
+
+describe('splitContentChunks', () => {
+  it('does not split a Unicode surrogate pair', () => {
+    const content = `${'a'.repeat(128 * 1024 - 1)}😀tail`
+    const chunks = splitContentChunks(content)
+
+    expect(chunks).toHaveLength(2)
+    expect(chunks.join('')).toBe(content)
+    expect(chunks[0]).toBe('a'.repeat(128 * 1024 - 1))
+    expect(chunks[1]).toBe('😀tail')
   })
 })

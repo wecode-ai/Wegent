@@ -4292,7 +4292,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       args={{
         deviceId: currentRuntimeTask.deviceId,
         taskId: currentRuntimeTask.taskId,
-        workspacePath: currentRuntimeTask.workspacePath,
+        workspacePath: currentRuntimeConversationSource?.workspacePath,
       }}
       buttonClassName={DESKTOP_TOP_BAR_BUTTON_CLASS}
       location="conversation.toolbar"

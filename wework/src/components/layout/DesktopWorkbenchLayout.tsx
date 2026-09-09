@@ -222,11 +222,12 @@ export function DesktopWorkbenchLayout({
     runtimeKeysReady: state.runtimeWork !== null,
   })
   useEffect(() => {
+    if (!routeActive || surfaceKind === 'board') return
     return bindDshConversationController({
       getTranscript: reference =>
         loadDshConversationTranscript(reference, state.runtimeWork, onLoadRuntimeTranscriptForPane),
     })
-  }, [onLoadRuntimeTranscriptForPane, state.runtimeWork])
+  }, [onLoadRuntimeTranscriptForPane, routeActive, state.runtimeWork, surfaceKind])
   const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)

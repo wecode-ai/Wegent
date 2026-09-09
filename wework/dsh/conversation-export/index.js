@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { open, rename, rm, stat } from 'node:fs/promises'
-import { extname, isAbsolute, posix, resolve } from 'node:path'
+import { open, realpath, rename, rm, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { extname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 
 import { writeZipArchive } from './zipArchive.js'
 
@@ -11,6 +12,7 @@ const BACKEND_ID = 'conversation-export'
 const MAX_ACTIVE_EXPORTS = 8
 const IMAGE_CHUNK_BYTES = 192 * 1024
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024
+const IMAGE_HEADER_BYTES = 4096
 const TERMINAL_TASK_RETENTION_MS = 5 * 60 * 1000
 const exportTasks = new Map()
 
@@ -25,8 +27,8 @@ export function apply(ctx) {
       finish: ({ exportTaskId }) => finishExport(exportTaskId),
       status: ({ exportTaskId }) => exportStatus(exportTaskId),
       cancel: ({ exportTaskId }) => cancelExport(exportTaskId),
-      readImageChunk: ({ path, offset, workspacePath }) =>
-        readImageChunk(path, offset, workspacePath),
+      readImageChunk: ({ path, offset, workspacePath, mimeType }) =>
+        readImageChunk(path, offset, workspacePath, mimeType),
     },
   })
   ctx.effect(
@@ -98,7 +100,7 @@ async function addExportAsset({ exportTaskId, archivePath, path, workspacePath }
   const target = requiredArchivePath(archivePath)
   if (task.assets.has(target))
     throw new Error(`Conversation export asset already exists: ${target}`)
-  const sourcePath = resolvedSource(path, workspacePath, 'Export asset')
+  const sourcePath = await resolvedSource(path, workspacePath, 'Export asset')
   const metadata = await stat(sourcePath)
   if (!metadata.isFile()) throw new Error('Conversation export asset source must be a file')
   task.assets.set(target, { kind: 'local', path: sourcePath, size: metadata.size })
@@ -199,8 +201,8 @@ async function cancelExport(exportTaskId) {
   return { cancelled: true, ...taskResult(task) }
 }
 
-async function readImageChunk(path, offset, workspacePath) {
-  const source = resolvedSource(path, workspacePath, 'Image source')
+async function readImageChunk(path, offset, workspacePath, mimeType) {
+  const source = await resolvedSource(path, workspacePath, 'Image source')
   if (!Number.isSafeInteger(offset) || offset < 0) {
     throw new Error('Image read offset must be a non-negative safe integer')
   }
@@ -210,12 +212,20 @@ async function readImageChunk(path, offset, workspacePath) {
     throw new Error('Image exceeds the 50 MB conversation export limit')
   }
   if (offset > metadata.size) throw new Error('Image read offset exceeds the file size')
+  await validateImageSource(source, mimeType, metadata.size)
 
   const length = Math.min(IMAGE_CHUNK_BYTES, metadata.size - offset)
   const buffer = Buffer.alloc(length)
   const handle = await open(source, 'r')
   try {
-    const { bytesRead } = await handle.read(buffer, 0, length, offset)
+    let bytesRead = 0
+    while (bytesRead < length) {
+      const result = await handle.read(buffer, bytesRead, length - bytesRead, offset + bytesRead)
+      if (result.bytesRead === 0) {
+        throw new Error('Image changed while the conversation export was reading it')
+      }
+      bytesRead += result.bytesRead
+    }
     return {
       chunkBase64: buffer.subarray(0, bytesRead).toString('base64'),
       bytesRead,
@@ -227,14 +237,93 @@ async function readImageChunk(path, offset, workspacePath) {
   }
 }
 
-function resolvedSource(value, workspacePath, label) {
+async function resolvedSource(value, workspacePath, label) {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`${label} path is required`)
   }
   const path = value.trim()
-  if (isAbsolute(path)) return path
-  const workspace = requiredAbsolutePath(workspacePath, 'Conversation workspace')
-  return resolve(workspace, path)
+  const workspace =
+    typeof workspacePath === 'string' && workspacePath.trim()
+      ? requiredAbsolutePath(workspacePath, 'Conversation workspace')
+      : null
+  const source = await realpath(
+    isAbsolute(path) ? path : resolve(requiredWorkspace(workspace), path)
+  )
+  const roots = await existingApprovedRoots(workspace)
+  if (!roots.some(root => isWithinRoot(source, root))) {
+    throw new Error(`${label} must stay inside the conversation workspace or attachment storage`)
+  }
+  return source
+}
+
+function requiredWorkspace(workspacePath) {
+  if (!workspacePath) {
+    throw new Error('Conversation workspace is required for relative export paths')
+  }
+  return workspacePath
+}
+
+async function existingApprovedRoots(workspacePath) {
+  const executorHome = process.env.WEGENT_EXECUTOR_HOME?.trim() || join(homedir(), '.wework')
+  const candidates = [
+    workspacePath,
+    join(executorHome, 'workspace', 'attachments'),
+    join(homedir(), '.wegent', 'attachments'),
+  ].filter(Boolean)
+  const roots = []
+  for (const candidate of candidates) {
+    try {
+      roots.push(await realpath(candidate))
+    } catch (error) {
+      if (!isMissingFile(error)) throw error
+    }
+  }
+  return roots
+}
+
+function isWithinRoot(path, root) {
+  const child = relative(root, path)
+  return child === '' || (!child.startsWith('..') && !isAbsolute(child))
+}
+
+async function validateImageSource(path, mimeType, size) {
+  const normalizedMimeType = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : ''
+  const length = Math.min(IMAGE_HEADER_BYTES, size)
+  const header = Buffer.alloc(length)
+  const handle = await open(path, 'r')
+  try {
+    const { bytesRead } = await handle.read(header, 0, length, 0)
+    if (!matchesImageSignature(normalizedMimeType, header.subarray(0, bytesRead))) {
+      throw new Error('Image source content does not match its declared type')
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+function matchesImageSignature(mimeType, bytes) {
+  if (mimeType === 'image/png') {
+    return bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  }
+  if (mimeType === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  if (mimeType === 'image/gif') {
+    const signature = bytes.subarray(0, 6).toString('ascii')
+    return signature === 'GIF87a' || signature === 'GIF89a'
+  }
+  if (mimeType === 'image/webp') {
+    return (
+      bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+    )
+  }
+  if (mimeType === 'image/bmp') return bytes[0] === 0x42 && bytes[1] === 0x4d
+  if (mimeType === 'image/avif') {
+    return bytes.subarray(4, 8).toString('ascii') === 'ftyp' && bytes.includes('avif', 8)
+  }
+  if (mimeType === 'image/svg+xml') {
+    return /<svg(?:\s|>)/i.test(bytes.toString('utf8').replace(/^\uFEFF/, ''))
+  }
+  return false
 }
 
 function requiredDestination(value) {

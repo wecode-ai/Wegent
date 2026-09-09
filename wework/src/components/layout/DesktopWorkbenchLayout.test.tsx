@@ -108,6 +108,9 @@ const harnessAppTabMocks = vi.hoisted(() => ({
   takeProxyToken: vi.fn(),
   takeContextToken: vi.fn(),
 }))
+const dshExtensionMocks = vi.hoisted(() => ({
+  bindConversationController: vi.fn(() => vi.fn()),
+}))
 const cloudDesktopExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
 
@@ -182,6 +185,14 @@ vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
     unregisterHarnessAppTab: harnessAppTabMocks.unregister,
     takeHarnessAppProxyToken: harnessAppTabMocks.takeProxyToken,
     takeHarnessAppContextToken: harnessAppTabMocks.takeContextToken,
+  }
+})
+
+vi.mock('@/features/dsh-runtime/dshExtensions', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/features/dsh-runtime/dshExtensions')>()
+  return {
+    ...actual,
+    bindDshConversationController: dshExtensionMocks.bindConversationController,
   }
 })
 
@@ -11875,6 +11886,23 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
     })
+  })
+
+  test('binds the conversation controller only for the active task surface', async () => {
+    const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} routeActive={false} />)
+
+    expect(dshExtensionMocks.bindConversationController).not.toHaveBeenCalled()
+
+    rerender(<DesktopWorkbenchLayout {...baseProps} routeActive />)
+    await waitFor(() => {
+      expect(dshExtensionMocks.bindConversationController).toHaveBeenCalledTimes(1)
+    })
+
+    rerender(<DesktopWorkbenchLayout {...baseProps} routeActive surfaceKind="board" />)
+    await waitFor(() => {
+      expect(dshExtensionMocks.bindConversationController.mock.results[0]?.value).toHaveBeenCalled()
+    })
+    expect(dshExtensionMocks.bindConversationController).toHaveBeenCalledTimes(1)
   })
 
   test('does not reuse a migrated default browser label after switching panes', async () => {

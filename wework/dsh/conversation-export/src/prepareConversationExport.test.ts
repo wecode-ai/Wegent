@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import {
   countConversationExportContent,
@@ -69,6 +69,10 @@ const snapshot = {
     },
   ],
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('prepareConversationExport', () => {
   test('uses format-specific defaults and counts selectable content', () => {
@@ -161,11 +165,79 @@ describe('prepareConversationExport', () => {
 
     expect(result.assets).toEqual([])
     expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenCalledWith('readImageChunk', {
+      path: '/tmp/image.png',
+      offset: 0,
+      workspacePath: null,
+      mimeType: 'image/png',
+    })
+    expect(request).toHaveBeenCalledWith('readImageChunk', {
+      path: 'evidence/screenshot.png',
+      offset: 0,
+      workspacePath: '/workspace',
+      mimeType: 'image/png',
+    })
     expect(result.snapshot.turns[0].items[0]).toMatchObject({
       attachments: [{ dataUrl: 'data:image/png;base64,AQIDBA==' }],
     })
     expect(result.snapshot.turns[0].items[1]).toMatchObject({
       content: 'Evidence:\n\n![Screenshot](data:image/png;base64,AQIDBA==)',
     })
+  })
+
+  test('rejects non-final base64 chunks that are not aligned to three bytes', async () => {
+    const request = vi.fn().mockResolvedValue({
+      chunkBase64: 'AQ==',
+      bytesRead: 1,
+      eof: false,
+      size: 4,
+    })
+
+    await expect(
+      prepareConversationExport(snapshot, 'html', defaultConversationExportSelection('html'), {
+        request,
+      })
+    ).rejects.toThrow('misaligned image chunk')
+  })
+
+  test('rejects remote images whose declared size exceeds the limit', async () => {
+    const remoteSnapshot = {
+      ...snapshot,
+      turns: [
+        {
+          id: 'turn-remote',
+          status: 'done',
+          items: [
+            {
+              id: 'assistant-remote',
+              type: 'assistant_text' as const,
+              content: '![Remote](https://example.com/image.png)',
+            },
+          ],
+        },
+      ],
+    }
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1]), {
+        headers: { 'content-length': String(50 * 1024 * 1024 + 1) },
+      })
+    )
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(
+      prepareConversationExport(
+        remoteSnapshot,
+        'html',
+        defaultConversationExportSelection('html'),
+        { request: vi.fn() }
+      )
+    ).rejects.toThrow('image exceeds 50 MB')
+    expect(fetch).toHaveBeenCalledWith(
+      'https://example.com/image.png',
+      expect.objectContaining({
+        credentials: 'same-origin',
+        signal: expect.any(AbortSignal),
+      })
+    )
   })
 })
