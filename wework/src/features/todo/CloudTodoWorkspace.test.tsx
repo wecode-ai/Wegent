@@ -1183,17 +1183,22 @@ describe('CloudTodoWorkspace', () => {
     ).not.toBe(0)
 
     const focusView = screen.getByTestId('cloud-board-focus-running')
+    const viewActions = screen.getByTestId('cloud-board-view-actions')
+    expect(viewActions).toHaveClass('ml-auto')
+    expect(viewActions).toContainElement(focusView)
     expect(focusView).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[292px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[292px]')
 
     await userEvent.click(focusView)
 
     expect(focusView).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
     expect(screen.getByTestId('cloud-todo-column-pending')).toHaveClass('w-[292px]')
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass('line-clamp-[8]')
     expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('line-clamp-3')
-    expect(localStorage.getItem('wework-board-focus-running:v1:1:backend:11')).toBe('true')
+    expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBe('true')
 
     act(() => {
       for (const [id, cmd] of [
@@ -1223,10 +1228,11 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(focusView)
 
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[292px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[292px]')
     expect(screen.queryByTestId('cloud-todo-card-tool-WEG-1-tool-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-card-tool-WEG-1-tool-2')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-3')).toBeInTheDocument()
-    expect(localStorage.getItem('wework-board-focus-running:v1:1:backend:11')).toBeNull()
+    expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBeNull()
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
@@ -1269,8 +1275,8 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
-  it('restores the running-column focus view for the selected project', async () => {
-    localStorage.setItem('wework-board-focus-running:v1:1:backend:11', 'true')
+  it('restores the execution-stage focus view for the selected project', async () => {
+    localStorage.setItem('wework-board-focus-execution:v1:1:backend:11', 'true')
 
     render(
       <CloudTodoWorkspace
@@ -1289,6 +1295,7 @@ describe('CloudTodoWorkspace', () => {
       )
     )
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
     expect(screen.getByTestId('cloud-todo-column-inbox')).toHaveClass('w-[292px]')
 
     const boardScroll = screen.getByTestId('cloud-board-scroll')
@@ -1306,6 +1313,7 @@ describe('CloudTodoWorkspace', () => {
 
     expect(screen.getByTestId('cloud-board-focus-running')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
     expect(boardScroll.scrollLeft).toBe(0)
   })
 

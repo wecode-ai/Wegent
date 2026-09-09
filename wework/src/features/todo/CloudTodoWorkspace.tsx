@@ -1407,7 +1407,7 @@ export function CloudTodoWorkspace({
   const [nativeGroupBy, setNativeGroupBy] = useState<NativeBoardGroupBy>('status')
   const [nativeGroupFilter, setNativeGroupFilter] = useState('')
   const [nativeBoardQuery, setNativeBoardQuery] = useState('')
-  const [focusRunningColumn, setFocusRunningColumn] = useState(false)
+  const [focusExecutionColumns, setFocusExecutionColumns] = useState(false)
   const [localProjectFilter, setLocalProjectFilter] = useState('all')
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
@@ -1976,8 +1976,8 @@ export function CloudTodoWorkspace({
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
-  const focusRunningColumnKey = selectedProjectKey
-    ? `wework-board-focus-running:v1:${user.id}:${selectedProjectKey}`
+  const focusExecutionColumnsKey = selectedProjectKey
+    ? `wework-board-focus-execution:v1:${user.id}:${selectedProjectKey}`
     : null
 
   useEffect(() => {
@@ -2052,10 +2052,10 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     // The selected project changes the external localStorage key we synchronize from.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFocusRunningColumn(
-      focusRunningColumnKey ? localStorage.getItem(focusRunningColumnKey) === 'true' : false
+    setFocusExecutionColumns(
+      focusExecutionColumnsKey ? localStorage.getItem(focusExecutionColumnsKey) === 'true' : false
     )
-  }, [focusRunningColumnKey])
+  }, [focusExecutionColumnsKey])
 
   const selectedGroupField = aitableFields.find(field => field.id === aitableGroupFieldId)
   const configuredGroupValues = Array.isArray(selectedGroupField?.config?.options)
@@ -3604,14 +3604,14 @@ export function CloudTodoWorkspace({
     if (personalGroupKey) localStorage.setItem(personalGroupKey, groupBy)
   }
 
-  function toggleFocusRunningColumn() {
-    setFocusRunningColumn(current => {
+  function toggleFocusExecutionColumns() {
+    setFocusExecutionColumns(current => {
       const next = !current
-      if (focusRunningColumnKey) {
+      if (focusExecutionColumnsKey) {
         if (next) {
-          localStorage.setItem(focusRunningColumnKey, 'true')
+          localStorage.setItem(focusExecutionColumnsKey, 'true')
         } else {
-          localStorage.removeItem(focusRunningColumnKey)
+          localStorage.removeItem(focusExecutionColumnsKey)
         }
       }
       return next
@@ -4828,58 +4828,67 @@ export function CloudTodoWorkspace({
                           className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
                         />
                       </label>
-                      {nativeGroupBy === 'status' ? (
-                        <Tooltip
-                          label={t(
-                            focusRunningColumn
-                              ? 'todo.exit_focus_view_description'
-                              : 'todo.focus_view_description',
-                            focusRunningColumn ? '退出进行中列专注视图' : '展开进行中列'
-                          )}
-                        >
-                          <button
-                            type="button"
-                            data-testid="cloud-board-focus-running"
-                            aria-pressed={focusRunningColumn}
-                            aria-label={t(
-                              focusRunningColumn
+                      <div
+                        data-testid="cloud-board-view-actions"
+                        className="ml-auto flex shrink-0 items-center gap-2"
+                      >
+                        {nativeGroupBy === 'status' ? (
+                          <Tooltip
+                            label={t(
+                              focusExecutionColumns
                                 ? 'todo.exit_focus_view_description'
                                 : 'todo.focus_view_description',
-                              focusRunningColumn ? '退出进行中列专注视图' : '展开进行中列'
-                            )}
-                            onClick={toggleFocusRunningColumn}
-                            className={cn(
-                              'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
-                              focusRunningColumn
-                                ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
-                                : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
+                              focusExecutionColumns
+                                ? '退出执行阶段专注视图'
+                                : '展开进行中与待确认列'
                             )}
                           >
-                            {focusRunningColumn ? (
-                              <Minimize2 className="h-3.5 w-3.5" />
-                            ) : (
-                              <Maximize2 className="h-3.5 w-3.5" />
-                            )}
-                            {t('todo.focus_view', '专注视图')}
+                            <button
+                              type="button"
+                              data-testid="cloud-board-focus-running"
+                              aria-pressed={focusExecutionColumns}
+                              aria-label={t(
+                                focusExecutionColumns
+                                  ? 'todo.exit_focus_view_description'
+                                  : 'todo.focus_view_description',
+                                focusExecutionColumns
+                                  ? '退出执行阶段专注视图'
+                                  : '展开进行中与待确认列'
+                              )}
+                              onClick={toggleFocusExecutionColumns}
+                              className={cn(
+                                'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+                                focusExecutionColumns
+                                  ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
+                                  : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
+                              )}
+                            >
+                              {focusExecutionColumns ? (
+                                <Minimize2 className="h-3.5 w-3.5" />
+                              ) : (
+                                <Maximize2 className="h-3.5 w-3.5" />
+                              )}
+                              {t('todo.focus_view', '专注视图')}
+                            </button>
+                          </Tooltip>
+                        ) : null}
+                        {personalGroupKey && localStorage.getItem(personalGroupKey) ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-board-save-global"
+                            disabled={
+                              groupScopeBusy ||
+                              !['Owner', 'Maintainer'].includes(
+                                selectedProject.access_role ?? 'Owner'
+                              )
+                            }
+                            onClick={() => void saveGlobalGroupBy()}
+                            className="h-8 shrink-0 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                          >
+                            应用到全局
                           </button>
-                        </Tooltip>
-                      ) : null}
-                      {personalGroupKey && localStorage.getItem(personalGroupKey) ? (
-                        <button
-                          type="button"
-                          data-testid="cloud-board-save-global"
-                          disabled={
-                            groupScopeBusy ||
-                            !['Owner', 'Maintainer'].includes(
-                              selectedProject.access_role ?? 'Owner'
-                            )
-                          }
-                          onClick={() => void saveGlobalGroupBy()}
-                          className="h-8 shrink-0 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
-                        >
-                          应用到全局
-                        </button>
-                      ) : null}
+                        ) : null}
+                      </div>
                     </div>
                   )}
                   <nav
@@ -5071,11 +5080,11 @@ export function CloudTodoWorkspace({
                               }
                               setQuickCreateStatus(column.status)
                             }
-                            const focusedRunningColumn =
-                              focusRunningColumn &&
+                            const focusedExecutionColumn =
+                              focusExecutionColumns &&
                               nativeGroupBy === 'status' &&
-                              column.status === 'in_progress'
-                            const progressDisplay: BoardCardProgressDisplay = focusedRunningColumn
+                              (column.status === 'in_progress' || column.status === 'in_review')
+                            const progressDisplay: BoardCardProgressDisplay = focusedExecutionColumn
                               ? 'focused'
                               : 'compact'
 
@@ -5085,7 +5094,7 @@ export function CloudTodoWorkspace({
                                 data-testid={`cloud-todo-column-${column.key}`}
                                 className={cn(
                                   'group flex max-h-full shrink-0 flex-col rounded-2xl bg-muted p-0.5 transition-[width]',
-                                  focusedRunningColumn ? 'w-[480px]' : 'w-[292px]',
+                                  focusedExecutionColumn ? 'w-[480px]' : 'w-[292px]',
                                   // While a drag is active, outline every column with a dashed
                                   // border at its natural (content) height so each one reads as
                                   // a potential drop target without any layout shift.

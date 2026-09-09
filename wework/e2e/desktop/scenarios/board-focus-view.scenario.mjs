@@ -23,7 +23,7 @@ const PROCESS_TEXT = [
   SHORT_PROCESS_TEXT,
   '已定位过程文本的数据来源。',
   '正在检查命令摘要是否移除 Shell 包装。',
-  '准备验证进行中列的专注视图。',
+  '准备验证执行阶段列的专注视图。',
   '等待界面稳定后完成视觉审查。',
 ].join('\n')
 const TOOL_CALL_ID = 'board-focus-view-command'
@@ -361,12 +361,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await captureScreenshot(control, '03-running-card-hover-stable.png', 'body')
 
       await control.command('hover', '[data-testid="cloud-board-focus-running"]')
+      const [toolbarMetrics] = JSON.parse(
+        await control.command('getElementMetrics', '[data-testid="cloud-board-toolbar"]')
+      )
+      const [viewActionsMetrics] = JSON.parse(
+        await control.command('getElementMetrics', '[data-testid="cloud-board-view-actions"]')
+      )
+      assert.ok(
+        toolbarMetrics.left +
+          toolbarMetrics.width -
+          viewActionsMetrics.left -
+          viewActionsMetrics.width <=
+          32,
+        'The focus-view action group was not aligned to the right side of the board toolbar'
+      )
       assert.equal(
         await control.command('getStyle', '[data-testid="cloud-todo-column-in_progress"]', {
           value: 'width',
         }),
         '292px',
         'The In progress column did not start at the standard width'
+      )
+      assert.equal(
+        await control.command('getStyle', '[data-testid="cloud-todo-column-in_review"]', {
+          value: 'width',
+        }),
+        '292px',
+        'The In review column did not start at the standard width'
       )
       await control.command('click', '[data-testid="cloud-board-focus-running"]')
       assert.equal(
@@ -384,11 +405,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'The focus view did not widen the In progress column'
       )
       assert.equal(
+        await control.command('getStyle', '[data-testid="cloud-todo-column-in_review"]', {
+          value: 'width',
+        }),
+        '480px',
+        'The focus view did not widen the In review column'
+      )
+      assert.equal(
         await control.command('getStyle', '[data-testid="cloud-todo-column-pending"]', {
           value: 'width',
         }),
         '292px',
-        'The focus view unexpectedly widened another board column'
+        'The focus view unexpectedly widened the Pending column'
       )
       const focusedProcessClass = await control.command('getAttribute', processSelector, {
         value: 'class',
@@ -432,6 +460,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }),
         '480px',
         'The restored focus view did not widen the In progress column'
+      )
+      assert.equal(
+        await control.command('getStyle', '[data-testid="cloud-todo-column-in_review"]', {
+          value: 'width',
+        }),
+        '480px',
+        'The restored focus view did not widen the In review column'
       )
       await captureScreenshot(control, '06-focus-view-restored.png', ACTIVE_BOARD)
 
