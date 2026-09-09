@@ -760,6 +760,13 @@ class LoopItemService:
         self._require_item_access(db, item, user_id)
         return item
 
+    def get_for_edit(self, db: Session, item_id: str, user_id: int) -> LoopItem:
+        """Return one board item after enforcing comment/update permission."""
+
+        item = self._get_item_row(db, item_id)
+        self._require_item_access(db, item, user_id, edit=True)
+        return item
+
     def list_attachments(
         self, db: Session, item_id: str, user_id: int
     ) -> list[LoopItemAttachment]:

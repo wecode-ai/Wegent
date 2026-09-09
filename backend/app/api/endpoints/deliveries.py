@@ -90,6 +90,7 @@ from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
+    loop_item_comment_provider_router,
     loop_item_provider_router,
 )
 from app.services.project_automation_domain import ProjectAutomationEvent
@@ -1140,12 +1141,20 @@ def archive_loop_item(
 def add_loop_item_comment(
     item_id: str,
     values: LoopItemCommentCreate,
+    automation_run_id: str = Header(default="", alias="X-Wegent-Automation-Run-ID"),
+    execution_id: int = Header(default=0, alias="X-Wegent-Execution-ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemCommentResponse:
     return LoopItemCommentResponse.model_validate(
-        external_loop_item_provider.add_comment(
-            db, item_id, current_user.id, values.body
+        loop_item_comment_provider_router.add_comment(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+            body=values.body,
+            automation_run_id=automation_run_id,
+            execution_id=execution_id,
         )
     )
 

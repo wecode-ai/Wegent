@@ -42,6 +42,8 @@ pub(crate) struct SpaceContextGrant {
     item_id: Option<String>,
     device_id: Option<String>,
     automation_run_id: Option<String>,
+    #[serde(default)]
+    execution_id: Option<u64>,
     automation_manager: bool,
     #[serde(default)]
     event_id: Option<String>,
@@ -159,6 +161,9 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
             .and_then(|origin| origin.get("run_id"))
             .and_then(id_value)
             .filter(|value| !value.is_empty()),
+        execution_id: origin
+            .and_then(|origin| origin.get("executionId"))
+            .and_then(Value::as_u64),
         automation_manager,
         event_id: origin
             .filter(|value| value.get("type").and_then(Value::as_str) == Some("project_event"))
@@ -1603,14 +1608,16 @@ async fn call_backend_tool(
         "update_board_item" => client
             .patch(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
             .json(arguments.get("item").unwrap_or(arguments)),
-        "add_board_item_comment" => client
-            .post(format!(
+        "add_board_item_comment" => {
+            let request = client.post(format!(
                 "{base}/loop-items/{}/comments",
                 encode_segment(task_id()?)
             ))
             .json(&json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default()
-            })),
+            }));
+            with_comment_actor_headers(request, grant)
+        },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
@@ -2037,6 +2044,17 @@ fn with_automation_run_header(
 ) -> reqwest::RequestBuilder {
     match grant.and_then(|value| value.automation_run_id.as_deref()) {
         Some(run_id) => request.header("X-Wegent-Automation-Run-ID", run_id),
+        None => request,
+    }
+}
+
+fn with_comment_actor_headers(
+    request: reqwest::RequestBuilder,
+    grant: Option<&SpaceContextGrant>,
+) -> reqwest::RequestBuilder {
+    let request = with_automation_run_header(request, grant);
+    match grant.and_then(|value| value.execution_id) {
+        Some(execution_id) => request.header("X-Wegent-Execution-ID", execution_id.to_string()),
         None => request,
     }
 }
@@ -3203,7 +3221,8 @@ mod tests {
             json!({
                 "type": "project_automation",
                 "automationRole": "manager",
-                "run_id": "run-1"
+                "run_id": "run-1",
+                "executionId": 42
             }),
         );
 
@@ -3211,6 +3230,7 @@ mod tests {
 
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
+        assert_eq!(grant.execution_id, Some(42));
         assert!(grant.automation_manager);
     }
 
@@ -3233,6 +3253,36 @@ mod tests {
                 .get("X-Wegent-Automation-Run-ID")
                 .and_then(|value| value.to_str().ok()),
             Some("run-1")
+        );
+    }
+
+    #[test]
+    fn comment_request_carries_its_ai_execution_identity() {
+        let grant = SpaceContextGrant {
+            automation_run_id: Some("run-1".to_owned()),
+            execution_id: Some(42),
+            ..SpaceContextGrant::default()
+        };
+        let request = with_comment_actor_headers(
+            reqwest::Client::new().post("http://backend.test/comments"),
+            Some(&grant),
+        )
+        .build()
+        .expect("comment request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Wegent-Automation-Run-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Wegent-Execution-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("42")
         );
     }
 
@@ -3288,6 +3338,7 @@ mod tests {
             item_id: Some("item-1".to_owned()),
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
+            execution_id: None,
             automation_manager: false,
             event_id: None,
             event_execution_id: None,
@@ -3317,6 +3368,7 @@ mod tests {
             item_id: Some("item-1".to_owned()),
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
+            execution_id: None,
             automation_manager: false,
             event_id: None,
             event_execution_id: None,
@@ -3738,6 +3790,7 @@ mod tests {
                 item_id: Some("ISSUE-1".to_owned()),
                 device_id: None,
                 automation_run_id: None,
+                execution_id: None,
                 automation_manager: false,
                 event_id: None,
                 event_execution_id: None,
@@ -4148,6 +4201,7 @@ mod tests {
             item_id: Some(task.id.clone()),
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
+            execution_id: None,
             automation_manager: false,
             event_id: None,
             event_execution_id: None,

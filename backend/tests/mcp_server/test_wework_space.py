@@ -208,6 +208,43 @@ def test_local_project_tools_use_canonical_loop_item_service(
     assert detail["tags"] == ["automation"]
 
 
+def test_local_comment_preserves_automation_manager_identity(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    item, _robot = _workflow_issue(test_db, project, test_user)
+    run, activity = _manager_run(test_db, project, item, test_user)
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(
+        wework_space,
+        "_board_context",
+        lambda *_args, **_kwargs: {
+            "source": "project_automation",
+            "space_id": str(project.id),
+            "item_id": item.id,
+            "project_automation_run_id": str(run.id),
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.loop_items.comment_provider.push_project_chat_message",
+        lambda _message: None,
+    )
+
+    response = wework_space.add_board_item_comment(
+        _token(test_user), body="Coordinator conclusion"
+    )
+
+    assert response["author"] == activity.sender_name
+    comment = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response["id"])
+        .one()
+    )
+    assert comment.sender_type == "agent"
+    assert comment.sender_id == activity.sender_id
+    assert comment.content == "Coordinator conclusion"
+
+
 def test_current_context_resolves_space_and_item_from_authenticated_task(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:

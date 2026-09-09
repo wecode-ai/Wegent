@@ -38,6 +38,7 @@ from app.schemas.delivery import (
     DeliveryFinalize,
     DeliveryResponse,
     LoopItemAttachmentResponse,
+    LoopItemCommentResponse,
     LoopItemCreate,
     LoopItemReorder,
     LoopItemResponse,
@@ -56,6 +57,7 @@ from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
+    loop_item_comment_provider_router,
     loop_item_provider_router,
 )
 from app.services.loop_items.service import loop_item_service
@@ -764,17 +766,23 @@ def add_board_item_comment(
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Add a comment to a provider-backed board item."""
+    """Add a comment to the board item's canonical activity stream."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
-        return dict(
-            external_loop_item_provider.add_comment(
-                db, resolved_item_id, token_info.user_id, body
-            )
+        context = _board_context(db, token_info)
+        result = loop_item_comment_provider_router.add_comment(
+            db,
+            item_id=resolved_item_id,
+            user_id=token_info.user_id,
+            user_name=token_info.user_name,
+            body=body,
+            automation_run_id=context.get("project_automation_run_id", ""),
+            execution_id=int(context.get("board_team_execution_id") or 0),
         )
+        return LoopItemCommentResponse.model_validate(result).model_dump(mode="json")
 
 
 @mcp_tool(server="wework_space")

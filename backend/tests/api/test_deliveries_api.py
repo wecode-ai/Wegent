@@ -27,6 +27,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectIncomingEvent,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -143,6 +144,41 @@ def test_todo_attachment_flow(
     )
     assert deleted.status_code == 204
     assert not delivery_storage.objects
+
+
+def test_backend_stored_todo_comment_uses_project_activity(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.loop_items.comment_provider.push_project_chat_message",
+        lambda _message: None,
+    )
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Backend comment target"},
+    ).json()["id"]
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{item_id}/comments",
+        headers=_auth(test_token),
+        json={"body": "Stored in the activity stream"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["author"] == test_user.user_name
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.task_id == item_id)
+        .one()
+    )
+    assert message.sender_type == "user"
+    assert message.content == "Stored in the activity stream"
 
 
 @pytest.fixture

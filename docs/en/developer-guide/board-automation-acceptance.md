@@ -447,3 +447,19 @@ sequenceDiagram
 Regression source requires AI advancement to avoid workflow `start()` and avoid creating another `ProjectWorkflowRun`, `ProjectAutomationRun`, or `LoopItemExecution`. Custom Runtime addressing remains unchanged and the Wegent Task ID remains unchanged. The old assignment ID carried by a callback identifies the completed result; every new decision generates a fresh `request_id`, while only an exact-payload retry reuses one. An ordinary reply still only appends to the thread and does not trigger coordination.
 
 Coordinator and worker permissions remain separate. Only a coordinator task carrying the current `automation_run_id` can see and call `get_assignment_candidates` or `decide_issue_assignment`. A stage worker completes its assigned work, submits deliverables, or sends notifications; it cannot redistribute work while its own assignment is `running`. The Backend validates coordinator identity before inspecting Issue state so an unauthorized call cannot be misreported as an ordinary state conflict.
+
+## 2026-09-10 Route board comments by item storage provider
+
+The Issue provider determines where a comment is stored, independently of whether the AI runs in a local Runtime, a cloud Executor, or a Backend Task. GitHub and GitLab Issues receive external comments. Backend-stored Issues append `ProjectChatMessage` activity. REST and MCP share one comment router and must not call the external provider directly.
+
+```mermaid
+flowchart LR
+  A[AI in any execution environment] --> B[Shared comment router]
+  B --> C{Issue provider}
+  C -->|GitHub / GitLab| D[External comment]
+  C -->|Backend| E[ProjectChatMessage]
+  E --> F[Restore AI author from Automation Run / Execution]
+  E --> G[Advance unread revision and push activity]
+```
+
+AI comment requests carry the available `automation_run_id`, `execution_id`, or both. The Backend verifies that the execution belongs to the current user, project, and Issue before restoring its author from existing activity. A mismatched identity is rejected instead of presenting the AI comment as the authenticated user. Human API calls continue to append activity as the current user.

@@ -538,3 +538,19 @@ sequenceDiagram
 回归源码约束：AI 推进不调用流程 `start()`，不创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun` 或 `LoopItemExecution`；自定义 Runtime 地址保持不变，Wegent 的 Task ID 保持不变。callback 携带的旧 assignment ID 只用于关联结果，下一次新决策必须生成新的 `request_id`；只有完全相同的请求重试才复用 ID。普通评论仍只盖楼，不触发调度。
 
 协调者与执行者权限必须分离。只有携带当前 `automation_run_id` 的协调任务能看到并调用 `get_assignment_candidates` 和 `decide_issue_assignment`；节点执行 AI 负责完成已交办工作、提交交付物或发送通知，不能在自己的交办仍为 `running` 时重新分活。后端在检查工单状态前先验证协调身份，防止越权调用被误报成普通状态冲突。
+
+## 2026-09-10 看板评论按工单存储来源路由
+
+评论位置由工单的 Provider 决定，与 AI 在本机、云端 Executor 或 Backend Task 中执行无关。GitHub/GitLab 工单写入外部平台；Backend 存储的工单写入 `ProjectChatMessage` 动态。REST 和 MCP 共用同一评论路由，禁止直接调用外部 Provider。
+
+```mermaid
+flowchart LR
+  A[任意执行环境中的 AI] --> B[统一评论路由]
+  B --> C{工单 Provider}
+  C -->|GitHub / GitLab| D[外部平台评论]
+  C -->|Backend| E[ProjectChatMessage]
+  E --> F[恢复 Automation Run / Execution 的 AI 作者]
+  E --> G[更新未读版本并推送动态]
+```
+
+AI 评论请求携带当前可用的 `automation_run_id` 和/或 `execution_id`。Backend 必须验证该执行属于当前用户、项目和工单，再从已有执行动态恢复作者；身份不匹配时拒绝写入，不能把 AI 评论伪装成认证用户。人工调用仍以当前用户身份写入动态。
