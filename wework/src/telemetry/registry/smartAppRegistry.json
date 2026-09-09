@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "domain": "smart_app",
+  "owner": "wework/harness-apps",
+  "routes": [
+    {
+      "key": "smart_app.marketplace",
+      "feature": "marketplace",
+      "name": {
+        "zh-CN": "打开智能工作台市场",
+        "en": "Open Smart App marketplace"
+      },
+      "description": {
+        "zh-CN": "用户进入智能工作台市场入口",
+        "en": "The user enters the Smart App marketplace"
+      },
+      "match": {
+        "pathname": "/sites",
+        "query": {
+          "app_type": "smart_app"
+        },
+        "queryNot": {
+          "view": "owned"
+        }
+      },
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.owned",
+      "feature": "owned",
+      "name": {
+        "zh-CN": "打开我的智能工作台",
+        "en": "Open owned Smart Apps"
+      },
+      "description": {
+        "zh-CN": "用户进入我的智能工作台",
+        "en": "The user enters owned Smart Apps"
+      },
+      "match": {
+        "pathname": "/sites",
+        "query": {
+          "app_type": "smart_app",
+          "view": "owned"
+        }
+      },
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.app",
+      "feature": "app",
+      "name": {
+        "zh-CN": "打开智能工作台",
+        "en": "Open Smart App"
+      },
+      "description": {
+        "zh-CN": "用户打开一个智能工作台",
+        "en": "The user opens a Smart App"
+      },
+      "match": {
+        "pathnamePrefix": "/app/harness-"
+      },
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "key": "smart_app.install",
+      "action": "install",
+      "name": {
+        "zh-CN": "安装智能工作台",
+        "en": "Install Smart App"
+      },
+      "description": {
+        "zh-CN": "用户安装智能工作台",
+        "en": "The user installs a Smart App"
+      },
+      "failureStages": ["download", "validate", "install", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.update",
+      "action": "update",
+      "name": {
+        "zh-CN": "更新智能工作台",
+        "en": "Update Smart App"
+      },
+      "description": {
+        "zh-CN": "用户更新智能工作台",
+        "en": "The user updates a Smart App"
+      },
+      "failureStages": ["download", "validate", "install", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    },
+    {
+      "key": "smart_app.zip_import",
+      "action": "zip_import",
+      "name": {
+        "zh-CN": "导入智能工作台 ZIP",
+        "en": "Import Smart App ZIP"
+      },
+      "description": {
+        "zh-CN": "用户导入智能工作台 ZIP",
+        "en": "The user imports a Smart App ZIP"
+      },
+      "failureStages": ["preview", "validate", "install", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["smart_app"]
+        }
+      ]
+    }
+  ]
+}

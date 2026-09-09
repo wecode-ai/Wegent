@@ -22,6 +22,8 @@
     "lint": "eslint . && pnpm run lint:typography && pnpm run lint:task-lifecycle",
     "lint:typography": "node scripts/check-typography.mjs",
     "lint:task-lifecycle": "node scripts/check-runtime-task-lifecycle.mjs",
+    "telemetry:catalog": "node scripts/generate-telemetry-catalog.mjs",
+    "telemetry:catalog:check": "node scripts/generate-telemetry-catalog.mjs --check",
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "test": "node scripts/run-vitest.mjs",
