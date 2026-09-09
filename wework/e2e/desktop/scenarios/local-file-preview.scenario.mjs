@@ -104,6 +104,10 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       await control.command('waitFor', '[data-testid="workspace-file-editor"][data-theme="dark"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+        text: 'export const authenticated = true',
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, 'auth.ts'),
