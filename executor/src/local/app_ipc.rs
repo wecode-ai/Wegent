@@ -2982,15 +2982,17 @@ async fn apply_git_patch(
         Ok(patch) => patch,
         Err(_) => return CommandResult::error("Invalid patch payload".to_owned(), 0.0, false),
     };
-    let cwd = cwd.map(Path::new);
-    if cwd.is_none_or(|path| !git_is_worktree(path.to_string_lossy().as_ref())) {
+    let Some(cwd) = cwd.map(Path::new) else {
+        return CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false);
+    };
+    if !git_is_worktree(cwd.to_string_lossy().as_ref()) {
         return CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false);
     }
 
     match run_git_capture_with_input(
         &git_args,
         &patch,
-        cwd,
+        Some(cwd),
         env,
         Duration::from_secs_f64(timeout_seconds.max(0.001)),
         max_output_bytes,
