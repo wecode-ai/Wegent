@@ -94,34 +94,16 @@ class IssueWorkflowPlanningService:
             return None
         metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
         automation_run_id = str(metadata.get("project_automation_run_id") or "")
-        if automation_run_id:
-            automation_run = db.get(ProjectAutomationRun, automation_run_id)
-            if automation_run is not None:
-                return automation_run
-        candidates = (
-            db.query(ProjectAutomationRun)
-            .filter(
-                ProjectAutomationRun.cloud_project_id == run.cloud_project_id,
-                ProjectAutomationRun.task_id == run.parent_id,
-                loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
-            )
-            .order_by(ProjectAutomationRun.created_at.desc())
-            .all()
-        )
-        for candidate in candidates:
-            candidate_metadata = (
-                candidate.metadata_json
-                if isinstance(candidate.metadata_json, dict)
-                else {}
-            )
-            event = candidate_metadata.get("event")
-            payload = event.get("payload") if isinstance(event, dict) else None
-            if (
-                isinstance(payload, dict)
-                and str(payload.get("workflow_run_id") or "") == workflow_run_id
-            ):
-                return candidate
-        return None
+        if not automation_run_id:
+            return None
+        automation_run = db.get(ProjectAutomationRun, automation_run_id)
+        if (
+            automation_run is None
+            or automation_run.task_id != run.parent_id
+            or str(automation_run.cloud_project_id) != str(run.cloud_project_id)
+        ):
+            raise ValueError("The coordinator automation run is unavailable")
+        return automation_run
 
     def pause(self, db: Session, *, issue_id: str, user_id: int) -> WorkflowPlanView:
         issue = self._issue(db, issue_id, user_id, for_update=True)

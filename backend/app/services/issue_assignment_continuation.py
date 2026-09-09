@@ -14,7 +14,6 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRun,
     ProjectWorkflowRun,
-    loop_unset_datetime_for_connection,
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
@@ -48,11 +47,6 @@ class _CoordinatorContext:
     activity: ProjectChatMessage
     owner: User
     manager_type: str
-    previous_run_status: str
-    previous_activity_id: str
-    previous_planning_status: str
-    previous_completed_at: datetime | None
-    previous_description: str
 
 
 @dataclass(frozen=True)
@@ -63,7 +57,7 @@ class _WegentTurn:
 
 
 class IssueAssignmentContinuationService:
-    """Resume one durable coordinator task instead of creating another task."""
+    """Create a coordinator turn on an existing conversation."""
 
     @trace_async(
         span_name="issue_assignment.continue_coordinator",
@@ -78,47 +72,99 @@ class IssueAssignmentContinuationService:
         assignment_id: str,
         summary: str,
     ) -> None:
-        context = self._context(db, issue=issue, workflow=workflow)
-        trigger = self._human_reply(db, issue=issue, workflow=workflow)
-        prompt = self._prompt(issue.id, assignment_id, summary)
-        response = self._response(issue, context, trigger)
+        previous_planning_id = str(workflow.get("active_run_id") or "")
+        context = None
+        planning = None
+        run = None
+        response = None
         wegent_turn = None
-        custom_model_selection = None
-        if context.manager_type == "custom":
-            execution = self._custom_execution(db, issue=issue, context=context)
-            custom_model_selection = (
-                loop_item_execution_service.runtime_model_selection(execution)
-            )
-            if custom_model_selection is None:
-                raise ValueError("The original coordinator model is unavailable")
-        elif context.manager_type == "wegent":
-            wegent_turn = await self._prepare_wegent_turn(
-                db, context=context, response=response, prompt=prompt
-            )
-        else:
-            raise ValueError(
-                "The original coordinator conversation type is unavailable"
-            )
-        self._reopen(db, context=context, response=response)
-        queue_assignment_comment(db, response)
-        db.commit()
+        continuation_execution = None
         try:
+            context = self._context(db, issue=issue, workflow=workflow)
+            trigger = self._human_reply(db, issue=issue, workflow=workflow)
+            prompt = self._prompt(issue.id, assignment_id, summary)
+            planning = self._new_planning_run(
+                db,
+                issue=issue,
+                workflow=workflow,
+                user_id=context.owner.id,
+            )
+            run = self._new_automation_run(
+                db,
+                context=context,
+                planning=planning,
+            )
+            response = self._response(issue, context, run, trigger)
+            db.add(response)
+            run.metadata_json = {
+                **(run.metadata_json or {}),
+                "activity_message_id": response.message_id,
+            }
+            planning.metadata_json = {
+                **(planning.metadata_json or {}),
+                "project_automation_run_id": str(run.id),
+            }
+            db.flush()
+            custom_model_selection = None
+            if context.manager_type == "custom":
+                previous_execution = self._custom_execution(
+                    db, issue=issue, context=context
+                )
+                custom_model_selection = (
+                    loop_item_execution_service.runtime_model_selection(
+                        previous_execution
+                    )
+                )
+                if custom_model_selection is None:
+                    raise ValueError("The original coordinator model is unavailable")
+                continuation_execution = (
+                    loop_item_execution_service.begin_runtime_continuation(
+                        db,
+                        previous_execution=previous_execution,
+                        automation_run_id=str(run.id),
+                        activity=response,
+                        client_user_message_id=trigger.message_id,
+                    )
+                )
+            elif context.manager_type == "wegent":
+                wegent_turn = await self._prepare_wegent_turn(
+                    db,
+                    context=context,
+                    run=run,
+                    response=response,
+                    prompt=prompt,
+                )
+            else:
+                raise ValueError(
+                    "The original coordinator conversation type is unavailable"
+                )
+            queue_assignment_comment(db, response)
+            db.commit()
             if wegent_turn is None:
                 await self._send_custom(
                     db,
                     context=context,
+                    run=run,
+                    execution=continuation_execution,
+                    trigger=trigger,
                     prompt=prompt,
                     model_selection=custom_model_selection,
                 )
             else:
                 self._dispatch_wegent(context, wegent_turn, prompt)
         except Exception as exc:
+            db.rollback()
             self._restore_waiting_human(
                 db,
                 issue_id=issue.id,
                 assignment_id=assignment_id,
-                context=context,
-                response_id=response.message_id,
+                previous_planning_id=previous_planning_id,
+                planning_id=str(planning.id) if planning is not None else None,
+                run_id=str(run.id) if run is not None else None,
+                execution_id=(
+                    continuation_execution.id if continuation_execution else None
+                ),
+                response_id=response.message_id if response is not None else None,
                 error=str(exc) or "Original coordinator continuation failed",
             )
             raise ValueError(
@@ -155,12 +201,63 @@ class IssueAssignmentContinuationService:
             activity=activity,
             owner=owner,
             manager_type=manager_type,
-            previous_run_status=run.status,
-            previous_activity_id=activity.message_id,
-            previous_planning_status=planning.status,
-            previous_completed_at=run.completed_at,
-            previous_description=run.description or "",
         )
+
+    @staticmethod
+    def _new_planning_run(
+        db: Session,
+        *,
+        issue: LoopItem,
+        workflow: dict,
+        user_id: int,
+    ) -> ProjectWorkflowRun:
+        next_workflow = dict(workflow)
+        next_workflow.update(active_run_id=None, orchestration_status="planning")
+        issue_workflow_planning_service._write_workflow(issue, next_workflow)
+        return issue_workflow_planning_service.ensure_run(
+            db,
+            issue=issue,
+            user_id=user_id,
+        )
+
+    @staticmethod
+    def _new_automation_run(
+        db: Session,
+        *,
+        context: _CoordinatorContext,
+        planning: ProjectWorkflowRun,
+    ) -> ProjectAutomationRun:
+        metadata = deepcopy(context.run.metadata_json or {})
+        metadata.pop("activity_message_id", None)
+        metadata.pop("error", None)
+        event = deepcopy(metadata.get("event") or {})
+        payload = deepcopy(event.get("payload") or {})
+        payload["workflow_run_id"] = str(planning.id)
+        payload["workflow_plan_version"] = (planning.metadata_json or {}).get(
+            "plan_version"
+        )
+        event["payload"] = payload
+        metadata.update(
+            event=event,
+            trigger="human_continue",
+            continuation_of_run_id=str(context.run.id),
+        )
+        run = ProjectAutomationRun(
+            cloud_project_id=context.run.cloud_project_id,
+            parent_id=context.run.parent_id,
+            task_id=context.run.task_id,
+            task_title=context.run.task_title,
+            source="human_continue",
+            status="queued",
+            created_by_user_id=context.run.created_by_user_id,
+            updated_by_user_id=context.run.created_by_user_id,
+            assignee_agent_id=context.run.assignee_agent_id,
+            device_id=context.run.device_id,
+            metadata_json=metadata,
+        )
+        db.add(run)
+        db.flush()
+        return run
 
     @staticmethod
     def _human_reply(
@@ -202,6 +299,7 @@ class IssueAssignmentContinuationService:
     def _response(
         issue: LoopItem,
         context: _CoordinatorContext,
+        run: ProjectAutomationRun,
         trigger: ProjectChatMessage,
     ) -> ProjectChatMessage:
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
@@ -212,15 +310,15 @@ class IssueAssignmentContinuationService:
         )
         metadata = {
             "kind": "issue_assignment_continuation",
-            "automation_run_id": str(context.run.id),
+            "automation_run_id": str(run.id),
             "assignment_mode": "ai_managed",
             "manager_type": context.manager_type,
-            "run_id": str(context.run.id),
+            "run_id": str(run.id),
             "run_status": "queued",
+            "continuation_of_run_id": str(context.run.id),
         }
-        for key in ("execution_id", "executor_type", "backend_task_id"):
-            if activity_metadata.get(key) is not None:
-                metadata[key] = activity_metadata[key]
+        if activity_metadata.get("backend_task_id") is not None:
+            metadata["backend_task_id"] = activity_metadata["backend_task_id"]
         return ProjectChatMessage(
             message_id=message_id,
             client_message_id=message_id,
@@ -277,6 +375,7 @@ class IssueAssignmentContinuationService:
         db: Session,
         *,
         context: _CoordinatorContext,
+        run: ProjectAutomationRun,
         response: ProjectChatMessage,
         prompt: str,
     ) -> _WegentTurn:
@@ -312,9 +411,11 @@ class IssueAssignmentContinuationService:
             )
         task_json = deepcopy(created.task.json or {})
         current_labels = task_json.setdefault("metadata", {}).setdefault("labels", {})
+        current_labels["projectAutomationRunId"] = str(run.id)
         current_labels["projectAutomationSubtaskId"] = str(created.assistant_subtask.id)
         current_labels["projectChatMessageId"] = response.message_id
         task_store.update_json(db, task=created.task, payload=task_json)
+        run.backend_task_id = task.id
         response.metadata_json = {
             **response.metadata_json,
             "backend_task_id": task.id,
@@ -350,34 +451,18 @@ class IssueAssignmentContinuationService:
         return team
 
     @staticmethod
-    def _reopen(
-        db: Session,
-        *,
-        context: _CoordinatorContext,
-        response: ProjectChatMessage,
-    ) -> None:
-        context.planning.status = "planning"
-        context.run.status = "queued"
-        context.run.description = ""
-        context.run.completed_at = loop_unset_datetime_for_connection(
-            db.connection(), "completed_at"
-        )
-        context.run.version += 1
-        context.run.metadata_json = {
-            **(context.run.metadata_json or {}),
-            "activity_message_id": response.message_id,
-        }
-        db.add(response)
-        db.flush()
-
-    @staticmethod
     async def _send_custom(
         db: Session,
         *,
         context: _CoordinatorContext,
+        run: ProjectAutomationRun,
+        execution: LoopItemExecution | None,
+        trigger: ProjectChatMessage,
         prompt: str,
         model_selection: RuntimeModelSelection,
     ) -> None:
+        if execution is None:
+            raise ValueError("The coordinator continuation execution is unavailable")
         result = await runtime_work_service.send_runtime_message(
             db=db,
             user_id=context.owner.id,
@@ -388,8 +473,20 @@ class IssueAssignmentContinuationService:
                 ),
                 message=prompt,
                 modelSelection=model_selection,
+                clientUserMessageId=trigger.message_id,
             ),
             allow_app_device_task_messaging=True,
+            execution_origin={
+                "type": "project_automation",
+                "automationRole": "manager",
+                "run_id": str(run.id),
+                "executionId": execution.id,
+                "cloudProjectId": str(run.cloud_project_id),
+                "loopItemId": str(run.task_id or ""),
+                "projectChatMessageId": str(
+                    (run.metadata_json or {}).get("activity_message_id") or ""
+                ),
+            },
         )
         if not result.accepted:
             raise RuntimeError(result.error or "Runtime rejected the continuation")
@@ -427,10 +524,26 @@ class IssueAssignmentContinuationService:
         *,
         issue_id: str,
         assignment_id: str,
-        context: _CoordinatorContext,
-        response_id: str,
+        previous_planning_id: str,
+        planning_id: str | None,
+        run_id: str | None,
+        execution_id: int | None,
+        response_id: str | None,
         error: str,
     ) -> None:
+        if execution_id is not None:
+            execution = db.get(LoopItemExecution, execution_id)
+            if execution is not None and execution.status not in {
+                "completed",
+                "failed",
+                "cancelled",
+            }:
+                loop_item_execution_service.fail(
+                    db,
+                    execution_id=execution.id,
+                    error=error,
+                    requeue=False,
+                )
         db.expire_all()
         issue = (
             db.query(LoopItem).filter(LoopItem.id == issue_id).with_for_update().one()
@@ -442,28 +555,31 @@ class IssueAssignmentContinuationService:
             workflow.update(
                 assignment=assignment,
                 orchestration_status="waiting_human",
-                active_run_id=context.planning.id,
+                active_run_id=previous_planning_id,
             )
             issue.metadata_json = {**(issue.metadata_json or {}), "workflow": workflow}
             issue.assignee_user_id = assignment.get("assignee_user_id")
-        planning = db.get(ProjectWorkflowRun, context.planning.id)
-        run = db.get(ProjectAutomationRun, context.run.id)
-        response = db.query(ProjectChatMessage).filter_by(message_id=response_id).one()
-        planning.status = context.previous_planning_status
-        run.status = context.previous_run_status
-        run.completed_at = context.previous_completed_at
-        run.description = context.previous_description
-        run.metadata_json = {
-            **(run.metadata_json or {}),
-            "activity_message_id": context.previous_activity_id,
-        }
-        response.status = "failed"
-        response.content = error
-        response.metadata_json = {
-            **(response.metadata_json or {}),
-            "run_status": "failed",
-        }
-        queue_assignment_comment(db, response)
+        planning = db.get(ProjectWorkflowRun, planning_id) if planning_id else None
+        run = db.get(ProjectAutomationRun, run_id) if run_id else None
+        response = (
+            db.query(ProjectChatMessage).filter_by(message_id=response_id).one_or_none()
+            if response_id
+            else None
+        )
+        if planning is not None:
+            planning.status = "failed"
+        if run is not None and run.status not in {"succeeded", "failed", "cancelled"}:
+            run.status = "failed"
+            run.completed_at = datetime.utcnow()
+            run.description = error
+        if response is not None:
+            response.status = "failed"
+            response.content = error
+            response.metadata_json = {
+                **(response.metadata_json or {}),
+                "run_status": "failed",
+            }
+            queue_assignment_comment(db, response)
         db.commit()
 
 

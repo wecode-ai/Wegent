@@ -1990,7 +1990,7 @@ describe('TaskActivityView', () => {
       content: '请确认下一步。',
       metadata: {
         execution_id: 229,
-        executor_type: 'wegent_team',
+        executor_type: 'project_robot',
         backend_task_id: 288,
       },
       status: 'completed',
@@ -2011,7 +2011,7 @@ describe('TaskActivityView', () => {
       messageId: 'wegent-continuation-1',
       metadata: {
         execution_id: 229,
-        executor_type: 'wegent_team',
+        executor_type: 'project_robot',
         backend_task_id: 288,
         backend_subtask_id: 301,
       },

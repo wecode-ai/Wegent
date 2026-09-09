@@ -408,6 +408,13 @@ def _make_running_automation_execution(
             "activity_message_id": message_id,
         },
     )
+    run.metadata_json = {"activity_message_id": message_id}
+    activity.metadata_json = {
+        **activity.metadata_json,
+        "execution_id": execution.id,
+        "executor_type": execution.executor_type,
+    }
+    db.commit()
     claimed = loop_item_execution_service.claim(
         db,
         agent_id=bot.id,
@@ -1526,6 +1533,7 @@ def test_recovery_scan_repairs_terminal_automation_projection(
     }
     activity.metadata_json = {
         "execution_id": execution.id,
+        "executor_type": "automation_manager",
         "run_status": "queued",
     }
     execution.status = "failed"
@@ -2745,6 +2753,54 @@ def test_terminal_report_closes_streaming_activity(
     )
     assert message.status == "completed"
     assert message.content == "verified and fixed"
+
+
+def test_terminal_report_closes_execution_activity_after_agent_comment(
+    test_db: Session, test_user: User
+) -> None:
+    execution, run, activity = _make_running_automation_execution(test_db, test_user)
+    comment_id = str(uuid.uuid4())
+    comment = ProjectChatMessage(
+        message_id=comment_id,
+        client_message_id=comment_id,
+        project_id=execution.cloud_project_id,
+        task_id=execution.loop_item_id,
+        sender_type="agent",
+        sender_id=activity.sender_id,
+        sender_name=activity.sender_name,
+        message_type="text",
+        content="The requested HTML file has been delivered.",
+        metadata_json={
+            "kind": "board_item_comment",
+            "automation_run_id": str(run.id),
+            "execution_id": execution.id,
+        },
+        agent_id=activity.agent_id,
+        runtime_device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        status="completed",
+    )
+    test_db.add(comment)
+    test_db.commit()
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.completed",
+        payload={"eventSeq": 2, "data": {"text": "Runtime completed."}},
+    )
+
+    assert completed is not None and completed.status == "completed"
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    test_db.refresh(comment)
+    assert run.status == "succeeded"
+    assert run.metadata_json["activity_message_id"] == activity.message_id
+    assert activity.status == "completed"
+    assert activity.content == "Runtime completed."
+    assert comment.status == "completed"
+    assert comment.content == "The requested HTML file has been delivered."
 
 
 def test_terminal_failure_closes_streaming_activity_with_error(
@@ -4909,6 +4965,7 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     activity.metadata_json = {
         **activity.metadata_json,
         "execution_id": manager_execution.id,
+        "executor_type": "automation_manager",
     }
     test_db.commit()
 
@@ -5025,6 +5082,100 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     status_history = item.metadata_json.get("status_history", [])
     assert status_history[-1]["to_status"] == "in_review"
     assert status_history[-1]["trigger"] == "ai_completed"
+
+
+@pytest.mark.parametrize("assignment_recorded", [True, False])
+def test_manager_runtime_completion_closes_its_run_and_activity(
+    test_db: Session, test_user: User, assignment_recorded: bool
+) -> None:
+    from app.services.project_automation_execution import MISSING_MANAGER_PLAN_ERROR
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="Manager terminal projection")
+    if assignment_recorded:
+        item.assignee_user_id = test_user.id
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        task_id=item.id,
+        title="Issue coordinator turn",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={"issue_coordinator": True},
+    )
+    test_db.add(run)
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        automation_run_id=str(run.id),
+        execution_environment="local",
+        execution_device_id="device-1",
+        runtime_device_id="device-1",
+        runtime_task_id="manager-runtime-task",
+        status="running",
+        execution_payload=loop_item_execution_service._serialize_execution_intent(
+            runtime_selection={"executor_kind": "automation_manager"},
+            origin_context={},
+        ),
+    )
+    test_db.add(execution)
+    test_db.flush()
+    message_id = str(uuid.uuid4())
+    activity_metadata = {
+        "kind": "project_automation_run",
+        "automation_run_id": str(run.id),
+        "execution_id": execution.id,
+        "executor_type": "automation_manager",
+        "run_status": "running",
+    }
+    if assignment_recorded:
+        activity_metadata.update(
+            selected_assignee_type="user",
+            selected_assignee_id=str(test_user.id),
+        )
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id=f"issue_coordinator:{item.id}",
+        sender_name="工单 AI",
+        message_type="agent_chunk",
+        content="I evaluated the available assignees.",
+        metadata_json=activity_metadata,
+        status="streaming",
+    )
+    test_db.add(activity)
+    run.metadata_json = {**run.metadata_json, "activity_message_id": message_id}
+    test_db.commit()
+
+    completed = loop_item_execution_service.complete(
+        test_db,
+        execution_id=execution.id,
+        content="I assigned the owner." if assignment_recorded else "No decision.",
+    )
+
+    assert completed is not None
+    assert completed.status == "completed"
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    if assignment_recorded:
+        assert run.status == "succeeded"
+        assert activity.status == "completed"
+        assert activity.content == "I assigned the owner."
+        assert activity.metadata_json["run_status"] == "completed"
+        assert "error" not in activity.metadata_json
+    else:
+        assert run.status == "failed"
+        assert run.description == MISSING_MANAGER_PLAN_ERROR
+        assert activity.status == "failed"
+        assert activity.content == MISSING_MANAGER_PLAN_ERROR
+        assert activity.metadata_json["run_status"] == "failed"
+        assert activity.metadata_json["error"] == MISSING_MANAGER_PLAN_ERROR
 
 
 def test_manager_assigns_project_member_without_parsing_final_output(
@@ -5300,6 +5451,10 @@ def test_manager_completion_cannot_treat_historical_plan_as_new_assignment(
     )
     test_db.add(workflow_run)
     test_db.flush()
+    workflow_run.metadata_json = {
+        **workflow_run.metadata_json,
+        "project_automation_run_id": str(run.id),
+    }
     test_db.add(
         ProjectWorkflowPlanItem(
             cloud_project_id=project.id,
@@ -5350,7 +5505,7 @@ def test_manager_completion_cannot_treat_historical_plan_as_new_assignment(
     assert run.status == "failed"
     assert activity.status == "failed"
     assert activity.metadata_json.get("workflow_plan_run_id") is None
-    assert workflow_run.metadata_json.get("project_automation_run_id") is None
+    assert workflow_run.metadata_json["project_automation_run_id"] == str(run.id)
 
     project_automation_execution.finalize_manager_result(
         test_db,
@@ -5372,7 +5527,7 @@ def test_manager_completion_cannot_treat_historical_plan_as_new_assignment(
     assert run.status == "failed"
     assert activity.status == "failed"
     assert activity.metadata_json.get("workflow_plan_run_id") is None
-    assert workflow_run.metadata_json.get("project_automation_run_id") is None
+    assert workflow_run.metadata_json["project_automation_run_id"] == str(run.id)
 
 
 def test_manager_completion_rejects_empty_trigger_created_workflow_run(
@@ -5694,6 +5849,7 @@ def test_cancel_queued_execution_closes_linked_activity_without_runtime_device(
     activity.metadata_json = {
         **activity.metadata_json,
         "execution_id": execution.id,
+        "executor_type": "automation_manager",
     }
     test_db.commit()
     assert not execution.runtime_device_id

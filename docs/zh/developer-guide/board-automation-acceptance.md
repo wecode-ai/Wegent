@@ -521,21 +521,27 @@ flowchart LR
 
 ## 2026-09-10 人工回复续接原协调任务
 
-“回复并继续推进”是原人工交办的 callback，不代表创建一件新工作。人工回复保留在原评论楼，AI 调度员继续原协调会话。自定义 Runtime 复用原 `deviceId + taskId`；Wegent 复用原 Task，只在该 Task 内新增一轮 Subtask。原协调会话无法定位或发送失败时，工单恢复为等待人工并明确报错，不允许退回创建新任务的启动路径。
+“回复并继续推进”是原人工交办的 callback，不代表创建一件新工作。人工回复保留在原评论楼，AI 调度员继续原协调会话。每次唤醒都创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun`、动态和执行轮；自定义 Runtime 只复用原 `deviceId + taskId`，Wegent 只复用原 Task 并新增一轮 Subtask。原协调会话无法定位或发送失败时，新轮失败，工单恢复为等待人工并明确报错，不允许退回创建新任务的启动路径。
 
 ```mermaid
 sequenceDiagram
     participant H as 负责人
     participant I as 原工单与评论楼
-    participant C as 原协调任务
+    participant W as 新 WorkflowRun
+    participant A as 新 AutomationRun
+    participant E as 新执行轮
+    participant C as 原 Runtime 会话
     H->>I: 回复并继续推进
     I->>I: 保存人工结果和 callback 身份
-    I->>C: 向原 Task 发送 human_continue，旧 request_id 仅标识已完成交办
+    I->>W: 创建本次协调决策
+    W->>A: 一对一绑定本次调度
+    A->>E: 创建本次执行
+    E->>C: 发送 human_continue 和本轮 clientUserMessageId
     C->>I: 读取动态、交付物和当前状态
     C->>I: 使用全新 request_id 分派下一步或完成工单
 ```
 
-回归源码约束：AI 推进不调用流程 `start()`，不创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun` 或 `LoopItemExecution`；自定义 Runtime 地址保持不变，Wegent 的 Task ID 保持不变。callback 携带的旧 assignment ID 只用于关联结果，下一次新决策必须生成新的 `request_id`；只有完全相同的请求重试才复用 ID。普通评论仍只盖楼，不触发调度。
+回归源码约束：AI 推进不调用流程 `start()`；每轮创建新的 `ProjectWorkflowRun`、`ProjectAutomationRun` 和执行身份，终态记录不可复活。自定义 Runtime 地址保持不变，Wegent 的 Task ID 保持不变，但每轮 Subtask 独立。Runtime 事件必须按本轮 `clientUserMessageId` 或 Subtask 关联，迟到事件不得回落到普通评论链路。执行轮是自定义 Runtime 的唯一终态裁决者：AI 已提交分派时调度动态和运行成功结束；AI 正常退出但未提交分派时，调度动态和运行明确失败并说明原因。callback 携带的旧 assignment ID 只用于关联结果，下一次新决策必须生成新的 `request_id`；只有完全相同的请求重试才复用 ID。普通评论仍只盖楼，不触发调度。
 
 协调者与执行者权限必须分离。只有携带当前 `automation_run_id` 的协调任务能看到并调用 `get_assignment_candidates` 和 `decide_issue_assignment`；节点执行 AI 负责完成已交办工作、提交交付物或发送通知，不能在自己的交办仍为 `running` 时重新分活。后端在检查工单状态前先验证协调身份，防止越权调用被误报成普通状态冲突。
 

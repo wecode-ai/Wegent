@@ -20,6 +20,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectChatAgent,
     ProjectIncomingHook,
+    ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
     loop_unset_datetime_for_connection,
@@ -787,6 +788,13 @@ class ProjectAutomationService:
                 },
             },
             "workflow_execution_config": execution_config,
+        }
+        planning_run = db.get(ProjectWorkflowRun, workflow_run_id)
+        if planning_run is None or planning_run.parent_id != item.id:
+            raise RuntimeError("AI workflow coordinator turn is unavailable")
+        planning_run.metadata_json = {
+            **(planning_run.metadata_json or {}),
+            "project_automation_run_id": str(run.id),
         }
         db.commit()
         db.refresh(run)

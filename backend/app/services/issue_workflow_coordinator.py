@@ -55,6 +55,10 @@ async def start_issue_coordinator(
     )
     db.add(run)
     db.flush()
+    planning_run.metadata_json = {
+        **(planning_run.metadata_json or {}),
+        "project_automation_run_id": str(run.id),
+    }
     message_id = str(uuid4())
     activity = ProjectChatMessage(
         message_id=message_id,

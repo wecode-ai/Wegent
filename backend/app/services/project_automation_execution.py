@@ -1076,10 +1076,9 @@ class ProjectAutomationExecution:
         )
         if expected_workflow_run_id != workflow_run_id:
             raise RuntimeError("AI manager workflow plan is no longer active")
-        workflow_run.metadata_json = {
-            **(workflow_run.metadata_json or {}),
-            "project_automation_run_id": run.id,
-        }
+        workflow_metadata = dict(workflow_run.metadata_json or {})
+        if str(workflow_metadata.get("project_automation_run_id") or "") != str(run.id):
+            raise RuntimeError("AI manager workflow plan is no longer active")
         activity.metadata_json = {
             **(activity.metadata_json or {}),
             "workflow_plan_run_id": workflow_run_id,

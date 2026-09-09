@@ -2582,6 +2582,68 @@ def test_execution_truth_rejection_blocks_project_chat_projection(
     assert message.status == "streaming"
 
 
+def test_terminal_execution_address_blocks_late_event_chat_fallback(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="finished-automation-task",
+        ),
+    )
+    execution = LoopItemExecution(
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="completed",
+        runtime_device_id="local-device",
+        runtime_task_id="finished-automation-task",
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": "finished-automation-task",
+                "eventSeq": 99,
+                "data": {"value": "late terminal output"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is None
+    test_db.refresh(execution)
+    assert execution.status == "completed"
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response.message_id)
+        .one_or_none()
+    )
+    assert message is not None
+    assert message.status == "streaming"
+    assert message.content == ""
+
+
 def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
     test_db: Session, test_user: User
 ) -> None:
@@ -2876,7 +2938,7 @@ def test_subscribe_never_rewrites_wegent_activity_sender(
         content="",
         metadata_json={
             "execution_id": execution.id,
-            "executor_type": "wegent_team",
+            "executor_type": "project_robot",
             "executor_ref": str(team.id),
             "run_status": "queued",
         },

@@ -13,8 +13,10 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectWorkflowRun,
 )
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.task import TaskResource
 from app.schemas.issue_assignment import IssueAssignmentDecision, IssueAssignmentResult
 from app.services.issue_assignment_continuation import (
     issue_assignment_continuation_service,
@@ -24,6 +26,7 @@ from app.services.issue_assignments import issue_assignment_service
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automations import project_automation_service
+from app.services.project_chat.service import project_chat_service
 from app.services.project_workflow_projection import sync_automation_workflow_node
 
 
@@ -80,6 +83,10 @@ def assigned_issue(test_db, test_user):
     )
     test_db.add(manager)
     test_db.flush()
+    planning.metadata_json = {
+        **planning.metadata_json,
+        "project_automation_run_id": str(manager.id),
+    }
     issue.metadata_json = {
         "workflow": {
             "version": 1,
@@ -130,6 +137,53 @@ def command(action="assign_role", **kwargs):
         reason="Requirements are implemented",
         **kwargs,
     )
+
+
+def configure_custom_manager_runtime(test_db, test_user, issue, manager):
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.message_id
+            == manager.metadata_json["activity_message_id"]
+        )
+        .one()
+    )
+    execution = LoopItemExecution(
+        loop_item_id=issue.id,
+        cloud_project_id=str(issue.cloud_project_id),
+        executor_owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        automation_run_id=manager.id,
+        execution_environment="local",
+        execution_device_id="device-1",
+        runtime_device_id="device-1",
+        runtime_task_id="coordinator-task-1",
+        status="completed",
+        execution_payload=loop_item_execution_service._serialize_execution_intent(
+            runtime_selection={
+                "model": "deepseek-v4-flash",
+                "model_type": "user",
+                "model_options": {
+                    "weworkCloudModelNamespace": "private-models",
+                    "weworkCloudModelResourceUserId": test_user.id,
+                },
+            },
+            origin_context={},
+        ),
+    )
+    test_db.add(execution)
+    test_db.flush()
+    activity.runtime_device_id = execution.runtime_device_id
+    activity.runtime_task_id = execution.runtime_task_id
+    activity.metadata_json = {
+        "automation_run_id": manager.id,
+        "assignment_mode": "ai_managed",
+        "manager_type": "custom",
+        "executor_type": "automation_manager",
+        "execution_id": execution.id,
+    }
+    test_db.commit()
+    return activity, execution
 
 
 @pytest.mark.asyncio
@@ -348,55 +402,15 @@ async def test_human_result_resumes_same_issue_and_preserves_original_goal(
 
 
 @pytest.mark.asyncio
-async def test_human_continue_reuses_the_original_coordinator_runtime_task(
+async def test_human_continue_creates_a_new_turn_on_the_original_runtime_task(
     test_db, test_user, assigned_issue, monkeypatch
 ):
     from app.services import runtime_work_service
 
     issue, manager = assigned_issue
-    activity = (
-        test_db.query(ProjectChatMessage)
-        .filter(
-            ProjectChatMessage.message_id
-            == manager.metadata_json["activity_message_id"]
-        )
-        .one()
+    activity, execution = configure_custom_manager_runtime(
+        test_db, test_user, issue, manager
     )
-    execution = LoopItemExecution(
-        loop_item_id=issue.id,
-        cloud_project_id=str(issue.cloud_project_id),
-        executor_owner_user_id=test_user.id,
-        assigner_user_id=test_user.id,
-        automation_run_id=manager.id,
-        execution_environment="local",
-        execution_device_id="device-1",
-        runtime_device_id="device-1",
-        runtime_task_id="coordinator-task-1",
-        status="completed",
-        execution_payload=loop_item_execution_service._serialize_execution_intent(
-            runtime_selection={
-                "model": "deepseek-v4-flash",
-                "model_type": "user",
-                "model_options": {
-                    "weworkCloudModelNamespace": "private-models",
-                    "weworkCloudModelResourceUserId": test_user.id,
-                },
-            },
-            origin_context={},
-        ),
-    )
-    test_db.add(execution)
-    test_db.flush()
-    activity.runtime_device_id = execution.runtime_device_id
-    activity.runtime_task_id = execution.runtime_task_id
-    activity.metadata_json = {
-        "automation_run_id": manager.id,
-        "assignment_mode": "ai_managed",
-        "manager_type": "custom",
-        "executor_type": "automation_manager",
-        "execution_id": execution.id,
-    }
-    test_db.commit()
     original_workflow_run_id = issue.metadata_json["workflow"]["active_run_id"]
     original_workflow_run_count = test_db.query(ProjectWorkflowRun).count()
     original_automation_run_count = test_db.query(ProjectAutomationRun).count()
@@ -408,6 +422,9 @@ async def test_human_continue_reuses_the_original_coordinator_runtime_task(
         decision=command("assign_user", assignee_user_id=test_user.id),
         manager_run_id=manager.id,
     )
+    manager.status = "succeeded"
+    activity.status = "completed"
+    test_db.commit()
     send = AsyncMock(return_value=SimpleNamespace(accepted=True, error=None))
     monkeypatch.setattr(runtime_work_service, "send_runtime_message", send)
 
@@ -420,13 +437,26 @@ async def test_human_continue_reuses_the_original_coordinator_runtime_task(
         ),
     )
 
-    assert resumed["active_run_id"] == original_workflow_run_id
-    assert test_db.query(ProjectWorkflowRun).count() == original_workflow_run_count
-    assert test_db.query(ProjectAutomationRun).count() == original_automation_run_count
-    assert test_db.query(LoopItemExecution).count() == original_execution_count
+    assert resumed["active_run_id"] != original_workflow_run_id
+    assert test_db.query(ProjectWorkflowRun).count() == original_workflow_run_count + 1
+    assert (
+        test_db.query(ProjectAutomationRun).count() == original_automation_run_count + 1
+    )
+    assert test_db.query(LoopItemExecution).count() == original_execution_count + 1
+    assert manager.status == "succeeded"
+    assert execution.status == "completed"
     request = send.await_args.kwargs["request"]
     assert request.address.device_id == "device-1"
-    assert request.address.task_id == "coordinator-task-1"
+    assert request.address.local_task_id == "coordinator-task-1"
+    human_reply = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.sender_type == "user",
+            ProjectChatMessage.content == "Just test it; choose the details",
+        )
+        .one()
+    )
+    assert request.client_user_message_id == human_reply.message_id
     assert request.model_selection.model_name == "deepseek-v4-flash"
     assert request.model_selection.model_type == "user"
     assert request.model_selection.options == {
@@ -445,9 +475,288 @@ async def test_human_continue_reuses_the_original_coordinator_runtime_task(
         .one()
     )
     assert continuation.runtime_task_id == "coordinator-task-1"
+    new_execution = test_db.get(
+        LoopItemExecution, continuation.metadata_json["execution_id"]
+    )
+    assert new_execution.id != execution.id
+    assert new_execution.automation_run_id == continuation.metadata_json["run_id"]
+    assert (
+        new_execution.runtime_origin_context["runtime_turn_client_message_id"]
+        == human_reply.message_id
+    )
+    origin = send.await_args.kwargs["execution_origin"]
+    assert origin["executionId"] == new_execution.id
+    assert origin["run_id"] == new_execution.automation_run_id
+    stale = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="device-1",
+        runtime_task_id="coordinator-task-1",
+        event_name="response.completed",
+        payload={
+            "taskId": "coordinator-task-1",
+            "eventSeq": 90,
+            "data": {"text": "late output from the previous turn"},
+        },
+        owner_user_id=test_user.id,
+    )
+    assert stale is None
+    test_db.refresh(new_execution)
+    assert new_execution.status == "claimed"
+    matched = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id="device-1",
+        runtime_task_id="coordinator-task-1",
+        event_name="response.output_text.delta",
+        payload={
+            "taskId": "coordinator-task-1",
+            "clientUserMessageId": human_reply.message_id,
+            "eventSeq": 91,
+            "data": {"delta": "I am reviewing the human reply."},
+        },
+        owner_user_id=test_user.id,
+    )
+    assert matched is not None
+    assert matched.id == new_execution.id
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="device-1",
+        runtime_task_id="coordinator-task-1",
+        event_name="response.output_text.delta",
+        payload={"data": {"delta": "I am reviewing the human reply."}},
+        execution_id=new_execution.id,
+    )
+    assert projected is not None
+    test_db.refresh(continuation)
+    assert continuation.content == "I am reviewing the human reply."
     assert (
         continuation.thread_root_message_id
         == resumed["assignment"]["thread_root_message_id"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_human_continue_send_failure_preserves_reply_and_old_terminal_turn(
+    test_db, test_user, assigned_issue, monkeypatch
+):
+    from app.services import runtime_work_service
+
+    issue, manager = assigned_issue
+    activity, execution = configure_custom_manager_runtime(
+        test_db, test_user, issue, manager
+    )
+    previous_planning_id = issue.metadata_json["workflow"]["active_run_id"]
+    await issue_assignment_service.decide(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision=command("assign_user", assignee_user_id=test_user.id),
+        manager_run_id=manager.id,
+    )
+    manager.status = "succeeded"
+    activity.status = "completed"
+    test_db.commit()
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        AsyncMock(return_value=SimpleNamespace(accepted=False, error="offline")),
+    )
+
+    with pytest.raises(ValueError, match="your reply was saved"):
+        await issue_assignment_service.submit_result(
+            test_db,
+            issue_id=issue.id,
+            user_id=test_user.id,
+            result=IssueAssignmentResult(
+                assignment_id="assignment-1",
+                summary="Keep the approved release window",
+            ),
+        )
+
+    test_db.refresh(issue)
+    test_db.refresh(manager)
+    test_db.refresh(execution)
+    workflow = issue.metadata_json["workflow"]
+    assert workflow["orchestration_status"] == "waiting_human"
+    assert workflow["active_run_id"] == previous_planning_id
+    assert workflow["assignment"]["status"] == "waiting_human"
+    assert issue.assignee_user_id == test_user.id
+    assert manager.status == "succeeded"
+    assert execution.status == "completed"
+    human_reply = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.sender_type == "user",
+            ProjectChatMessage.content == "Keep the approved release window",
+        )
+        .one()
+    )
+    assert workflow["assignment"]["reply_message_id"] == human_reply.message_id
+    failed_response = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.metadata_json["kind"].as_string()
+            == "issue_assignment_continuation"
+        )
+        .one()
+    )
+    failed_execution = test_db.get(
+        LoopItemExecution, failed_response.metadata_json["execution_id"]
+    )
+    failed_run = test_db.get(
+        ProjectAutomationRun, failed_response.metadata_json["automation_run_id"]
+    )
+    failed_planning = (
+        test_db.query(ProjectWorkflowRun)
+        .filter(ProjectWorkflowRun.id != previous_planning_id)
+        .one()
+    )
+    assert failed_response.status == "failed"
+    assert failed_execution.status == "failed"
+    assert failed_run.status == "failed"
+    assert failed_planning.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_human_continue_reuses_wegent_task_with_a_new_subtask_and_run(
+    test_db, test_user, assigned_issue, monkeypatch
+):
+    import app.services.issue_assignment_continuation as continuation_module
+
+    issue, manager = assigned_issue
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.message_id
+            == manager.metadata_json["activity_message_id"]
+        )
+        .one()
+    )
+    team = Kind(
+        kind="Team",
+        name="issue-coordinator-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.flush()
+    task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name="issue-coordinator-task",
+        namespace="default",
+        json={
+            "metadata": {
+                "labels": {
+                    "source": "project_automation",
+                    "projectAutomationRunId": str(manager.id),
+                    "projectAutomationSubtaskId": "700",
+                    "projectAutomationTeamId": str(team.id),
+                    "projectChatMessageId": activity.message_id,
+                }
+            }
+        },
+    )
+    test_db.add(task)
+    test_db.flush()
+    manager.backend_task_id = task.id
+    activity.metadata_json = {
+        "automation_run_id": manager.id,
+        "assignment_mode": "ai_managed",
+        "manager_type": "wegent",
+        "backend_task_id": task.id,
+    }
+    test_db.commit()
+    previous_planning_id = issue.metadata_json["workflow"]["active_run_id"]
+    original_workflow_count = test_db.query(ProjectWorkflowRun).count()
+    original_automation_count = test_db.query(ProjectAutomationRun).count()
+    original_task_count = test_db.query(TaskResource).count()
+    create_turn = AsyncMock(
+        return_value=SimpleNamespace(
+            task=task,
+            user_subtask=SimpleNamespace(id=701),
+            assistant_subtask=SimpleNamespace(id=702),
+        )
+    )
+    enqueue = MagicMock()
+    monkeypatch.setattr(continuation_module, "create_chat_task", create_turn)
+    monkeypatch.setattr(
+        "app.tasks.project_automation_tasks."
+        "execute_managed_project_automation.delay",
+        enqueue,
+    )
+    await issue_assignment_service.decide(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        decision=command("assign_user", assignee_user_id=test_user.id),
+        manager_run_id=manager.id,
+    )
+    manager.status = "succeeded"
+    activity.status = "completed"
+    test_db.commit()
+
+    resumed = await issue_assignment_service.submit_result(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        result=IssueAssignmentResult(
+            assignment_id="assignment-1",
+            summary="The human review is complete",
+        ),
+    )
+
+    assert test_db.query(ProjectWorkflowRun).count() == original_workflow_count + 1
+    assert test_db.query(ProjectAutomationRun).count() == original_automation_count + 1
+    assert test_db.query(TaskResource).count() == original_task_count
+    create_kwargs = create_turn.await_args.kwargs
+    assert create_kwargs["task_id"] == task.id
+    assert create_kwargs["source"] == "project_automation"
+    test_db.refresh(task)
+    labels = task.json["metadata"]["labels"]
+    assert labels["projectAutomationRunId"] != str(manager.id)
+    assert labels["projectAutomationSubtaskId"] == "702"
+    response = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.metadata_json["kind"].as_string()
+            == "issue_assignment_continuation"
+        )
+        .one()
+    )
+    assert labels["projectChatMessageId"] == response.message_id
+    assert response.metadata_json["backend_task_id"] == task.id
+    assert response.metadata_json["backend_subtask_id"] == 702
+    assert resumed["active_run_id"] != previous_planning_id
+    from app.services.project_automation_completion import _managed_activity
+
+    assert (
+        _managed_activity(
+            test_db,
+            task_id=task.id,
+            subtask_id=700,
+            user_id=test_user.id,
+        )
+        is None
+    )
+    current_activity = _managed_activity(
+        test_db,
+        task_id=task.id,
+        subtask_id=702,
+        user_id=test_user.id,
+    )
+    assert current_activity is not None
+    assert current_activity.run.id == labels["projectAutomationRunId"]
+    assert current_activity.message.message_id == response.message_id
+    enqueue.assert_called_once_with(
+        task_id=task.id,
+        assistant_subtask_id=702,
+        user_subtask_id=701,
+        team_id=team.id,
+        user_id=test_user.id,
+        prompt=create_kwargs["message"],
+        source="project_automation",
     )
 
 

@@ -357,6 +357,10 @@ class IssueAssignmentService:
         issue.assignee_user_id = None
         queue_assignment_comment(db, message)
         if ai_advancement and next_workflow["orchestration_status"] != "paused":
+            # The human reply is durable before a new coordinator turn is created.
+            # A Runtime/configuration failure may fail that turn, but must not erase
+            # the person's decision or force them to type it again.
+            db.commit()
             from app.services.issue_assignment_continuation import (
                 issue_assignment_continuation_service,
             )

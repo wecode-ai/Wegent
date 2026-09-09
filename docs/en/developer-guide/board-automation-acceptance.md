@@ -430,21 +430,27 @@ Regression coverage includes both transports, device aliases, RPC timeout, inter
 
 ## 2026-09-10 Continue the original coordinator task after a human reply
 
-Reply and continue is a callback for the existing human assignment rather than a new piece of work. The reply stays in its original comment thread and the AI coordinator continues its original conversation. A custom Runtime reuses the original `deviceId + taskId`; Wegent reuses the original Task and creates only another Subtask turn inside it. If the original coordinator conversation cannot be resolved or messaged, the Issue returns to waiting for the person with an explicit error. The service must not fall back to the new-task launch path.
+Reply and continue is a callback for the existing human assignment rather than a new piece of work. The reply stays in its original comment thread and the AI coordinator continues its original conversation. Every wake-up creates a new `ProjectWorkflowRun`, `ProjectAutomationRun`, activity, and execution turn. A custom Runtime reuses only the original `deviceId + taskId`; Wegent reuses only the original Task and creates another Subtask turn inside it. If the original coordinator conversation cannot be resolved or messaged, the new turn fails and the Issue returns to waiting for the person with an explicit error. The service must not fall back to the new-task launch path.
 
 ```mermaid
 sequenceDiagram
     participant H as Assignee
     participant I as Existing Issue and thread
-    participant C as Existing coordinator task
+    participant W as New WorkflowRun
+    participant A as New AutomationRun
+    participant E as New execution turn
+    participant C as Existing Runtime conversation
     H->>I: Reply and continue
     I->>I: Persist result and callback identity
-    I->>C: Send human_continue; old request_id identifies completed work only
+    I->>W: Create this coordination decision
+    W->>A: Bind this scheduling turn one-to-one
+    A->>E: Create this execution turn
+    E->>C: Send human_continue with this turn's clientUserMessageId
     C->>I: Read comments, deliverables and current state
     C->>I: Use a fresh request_id to assign or complete the Issue
 ```
 
-Regression source requires AI advancement to avoid workflow `start()` and avoid creating another `ProjectWorkflowRun`, `ProjectAutomationRun`, or `LoopItemExecution`. Custom Runtime addressing remains unchanged and the Wegent Task ID remains unchanged. The old assignment ID carried by a callback identifies the completed result; every new decision generates a fresh `request_id`, while only an exact-payload retry reuses one. An ordinary reply still only appends to the thread and does not trigger coordination.
+Regression source requires AI advancement to avoid workflow `start()`. Every turn creates new `ProjectWorkflowRun`, `ProjectAutomationRun`, and execution identities; terminal records are immutable. Custom Runtime addressing remains unchanged and the Wegent Task ID remains unchanged, while every Wegent Subtask is distinct. Runtime events must correlate through this turn's `clientUserMessageId` or Subtask and late events cannot fall back to ordinary chat projection. The execution turn is the only terminal authority for a custom Runtime: a submitted assignment completes the manager activity and run, while a manager that exits normally without submitting an assignment fails both with an explicit reason. The old assignment ID carried by a callback identifies the completed result; every new decision generates a fresh `request_id`, while only an exact-payload retry reuses one. An ordinary reply still only appends to the thread and does not trigger coordination.
 
 Coordinator and worker permissions remain separate. Only a coordinator task carrying the current `automation_run_id` can see and call `get_assignment_candidates` or `decide_issue_assignment`. A stage worker completes its assigned work, submits deliverables, or sends notifications; it cannot redistribute work while its own assignment is `running`. The Backend validates coordinator identity before inspecting Issue state so an unauthorized call cannot be misreported as an ordinary state conflict.
 

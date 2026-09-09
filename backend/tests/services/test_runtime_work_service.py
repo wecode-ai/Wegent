@@ -4714,6 +4714,13 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
         ),
         message="continue",
         attachment_ids=[],
+        client_user_message_id="human-reply-1",
+        origin={
+            "type": "project_automation",
+            "automationRole": "manager",
+            "run_id": "run-2",
+            "executionId": 42,
+        },
         additional_context={
             "wework.terminal.current": {
                 "kind": "application",
@@ -4727,6 +4734,13 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
     assert execution_request.device_id == "device-1"
     assert execution_request.prompt.endswith("continue")
     assert "terminal output" in execution_request.prompt
+    assert execution_request.client_user_message_id == "human-reply-1"
+    assert execution_request.origin == {
+        "type": "project_automation",
+        "automationRole": "manager",
+        "run_id": "run-2",
+        "executionId": 42,
+    }
 
 
 def test_compile_runtime_task_create_materializes_attachment_ids_once(

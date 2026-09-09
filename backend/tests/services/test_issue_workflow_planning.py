@@ -127,6 +127,11 @@ def test_plan_view_projects_manager_runtime(
         metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
     )
     test_db.add_all([rule, automation_run])
+    test_db.flush()
+    workflow_run.metadata_json = {
+        **workflow_run.metadata_json,
+        "project_automation_run_id": str(automation_run.id),
+    }
     test_db.commit()
 
     view = issue_workflow_planning_service.get(

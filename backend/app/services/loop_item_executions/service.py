@@ -2175,6 +2175,175 @@ class LoopItemExecutionService:
             )
         return query.order_by(LoopItemExecution.id.desc()).first()
 
+    def latest_for_runtime(
+        self,
+        db: Session,
+        *,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        owner_user_id: int | None = None,
+    ) -> Optional[LoopItemExecution]:
+        """Return the newest execution that owns a Runtime address."""
+
+        device_ids = runtime_device_identity_ids(
+            db,
+            runtime_device_id,
+            owner_user_id=owner_user_id,
+        )
+        if not device_ids:
+            return None
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.runtime_device_id.in_(device_ids),
+            LoopItemExecution.runtime_task_id == runtime_task_id,
+        )
+        if owner_user_id is not None:
+            query = query.filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id
+            )
+        return query.order_by(LoopItemExecution.id.desc()).first()
+
+    def begin_runtime_continuation(
+        self,
+        db: Session,
+        *,
+        previous_execution: LoopItemExecution,
+        automation_run_id: str,
+        activity: ProjectChatMessage,
+        client_user_message_id: str,
+    ) -> LoopItemExecution:
+        """Create one execution turn on an existing Runtime conversation."""
+
+        if previous_execution.status not in TERMINAL_STATUSES:
+            raise ValueError("The previous coordinator execution is still active")
+        if (
+            previous_execution.executor_type != "automation_manager"
+            or not previous_execution.runtime_device_id
+            or not previous_execution.runtime_task_id
+        ):
+            raise ValueError("The previous coordinator conversation is unavailable")
+        active = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.runtime_device_id
+                == previous_execution.runtime_device_id,
+                LoopItemExecution.runtime_task_id == previous_execution.runtime_task_id,
+                LoopItemExecution.status.in_(ACTIVE_STATUSES),
+            )
+            .first()
+        )
+        if active is not None:
+            raise ValueError("The coordinator conversation already has an active turn")
+
+        now = utcnow()
+        origin_context = {
+            **previous_execution.runtime_origin_context,
+            "run_id": automation_run_id,
+            "activity_message_id": activity.message_id,
+            "runtime_turn_client_message_id": client_user_message_id,
+            "continuation_of_execution_id": previous_execution.id,
+            "direct_runtime_continuation": True,
+        }
+        row = LoopItemExecution(
+            loop_item_id=previous_execution.loop_item_id,
+            cloud_project_id=previous_execution.cloud_project_id,
+            executor_owner_user_id=previous_execution.executor_owner_user_id,
+            agent_id=previous_execution.agent_id,
+            team_id=previous_execution.team_id,
+            backend_task_id=previous_execution.backend_task_id,
+            automation_run_id=automation_run_id,
+            execution_environment=previous_execution.execution_environment,
+            execution_device_id=previous_execution.execution_device_id,
+            runtime_instance_id=previous_execution.runtime_instance_id,
+            assigner_user_id=previous_execution.assigner_user_id,
+            status=STATUS_CLAIMED,
+            priority_weight=previous_execution.priority_weight,
+            queued_at=now,
+            claimed_at=now,
+            start_requested_at=now,
+            heartbeat_at=now,
+            lease_expires_at=now + timedelta(seconds=DEFAULT_LEASE_SECONDS),
+            attempt_no=1,
+            previous_execution_id=previous_execution.id,
+            execution_scope=execution_scope_for(
+                loop_item_id=previous_execution.loop_item_id,
+                agent_id=previous_execution.agent_id,
+                team_id=previous_execution.optional_team_id,
+                automation_run_id=automation_run_id,
+            ),
+            observed_state=OBSERVED_UNCONFIRMED,
+            sync_state=SYNC_PENDING,
+            max_retries=0,
+            runtime_device_id=previous_execution.runtime_device_id,
+            runtime_task_id=previous_execution.runtime_task_id,
+            execution_payload=self._serialize_execution_intent(
+                runtime_selection=dict(previous_execution.runtime_selection),
+                origin_context=origin_context,
+            ),
+        )
+        db.add(row)
+        db.flush()
+        activity.metadata_json = {
+            **(activity.metadata_json or {}),
+            "execution_id": row.id,
+            "executor_type": row.executor_type,
+            "execution_device_id": row.execution_device_id,
+            "runtime_task_id": row.runtime_task_id,
+        }
+        activity.runtime_device_id = row.runtime_device_id
+        activity.runtime_task_id = row.runtime_task_id
+        activity.runtime_activity_key = project_chat_message_key(activity.message_id)
+        return row
+
+    @staticmethod
+    def _runtime_event_client_message_id(payload: dict[str, Any]) -> str:
+        data = payload.get("data")
+        data = data if isinstance(data, dict) else {}
+        value = (
+            payload.get("clientUserMessageId")
+            or payload.get("client_user_message_id")
+            or data.get("clientUserMessageId")
+            or data.get("client_user_message_id")
+        )
+        return str(value).strip() if value is not None else ""
+
+    def execution_for_runtime_event(
+        self,
+        db: Session,
+        *,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        payload: dict[str, Any],
+        owner_user_id: int | None = None,
+    ) -> Optional[LoopItemExecution]:
+        """Resolve an active execution and enforce per-turn correlation."""
+
+        row = self.execution_for_runtime(
+            db,
+            runtime_device_id=runtime_device_id,
+            runtime_task_id=runtime_task_id,
+            owner_user_id=owner_user_id,
+        )
+        if row is None:
+            return None
+        expected = str(
+            row.runtime_origin_context.get("runtime_turn_client_message_id") or ""
+        ).strip()
+        if not expected:
+            return row
+        incoming = self._runtime_event_client_message_id(payload)
+        if incoming == expected:
+            return row
+        logger.info(
+            "[LoopItemExecution] Rejected Runtime event for a different turn "
+            "execution=%s task=%s expected_client_message=%s "
+            "incoming_client_message=%s",
+            row.id,
+            runtime_task_id,
+            expected,
+            incoming or "missing",
+        )
+        return None
+
     def open_execution_activity(
         self,
         db: Session,
@@ -2271,7 +2440,7 @@ class LoopItemExecutionService:
                 sender_name=profile.display_name,
                 message_type="agent_chunk",
                 content="",
-                metadata_json={},
+                metadata_json={"kind": "loop_item_execution"},
                 agent_id=execution.agent_id or "",
                 status=activity_status,
             )
@@ -2299,6 +2468,11 @@ class LoopItemExecutionService:
             row.trigger_message_id or "",
         )
         row.status = activity_status
+        self._bind_automation_activity_if_unset(
+            db,
+            execution=execution,
+            activity=row,
+        )
         agent = (
             db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
         )
@@ -2905,30 +3079,18 @@ class LoopItemExecutionService:
                 db, run_id=execution.automation_run_id
             )
         )
-        if activity is not None and execution.executor_type == "automation_manager":
-            if terminal_status != STATUS_COMPLETED and manager_assignment_recorded:
-                activity.status = STATUS_COMPLETED
-                activity.message_type = "text"
-                activity.content = "AI 调度员已完成分派，但调度结果回传失败。" + (
-                    f" {error}" if error else ""
-                )
-                activity_metadata = dict(activity.metadata_json or {})
-                activity.metadata_json = {
-                    **activity_metadata,
-                    "run_status": STATUS_COMPLETED,
-                    **({"transport_error": str(error)} if error else {}),
-                }
-            elif terminal_status != STATUS_COMPLETED:
-                activity.status = terminal_status
-                activity.message_type = "text"
-                activity.content = str(content or error or "AI manager failed")
-                activity_metadata = dict(activity.metadata_json or {})
-                activity.metadata_json = {
-                    **activity_metadata,
-                    "run_status": terminal_status,
-                    **({"error": str(error)} if error else {}),
-                }
-        elif activity is not None:
+        if execution.executor_type == "automation_manager":
+            return self._apply_manager_terminal_projection(
+                db,
+                execution=execution,
+                activity=activity,
+                terminal_status=terminal_status,
+                content=content,
+                error=error,
+                completed_at=completed_at,
+                assignment_recorded=manager_assignment_recorded,
+            )
+        if activity is not None:
             project_chat_service._finish_activity(
                 db,
                 activity,
@@ -2945,25 +3107,6 @@ class LoopItemExecutionService:
         if execution.automation_run_id:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
-                if (
-                    execution.executor_type == "automation_manager"
-                    and manager_assignment_recorded
-                ):
-                    if run.status not in TERMINAL_RUN_STATUSES:
-                        run.status = "succeeded"
-                        run.completed_at = completed_at
-                        run.version += 1
-                        from app.services.project_workflow_projection import (
-                            sync_automation_workflow_node,
-                        )
-
-                        sync_automation_workflow_node(db, run)
-                    return activity
-                if (
-                    execution.executor_type == "automation_manager"
-                    and terminal_status == STATUS_COMPLETED
-                ):
-                    return activity
                 if (
                     execution.executor_type == "project_robot"
                     and project_automation_execution.has_recorded_manager_assignment(
@@ -2996,6 +3139,88 @@ class LoopItemExecutionService:
                     )
 
                     sync_automation_workflow_node(db, run)
+        return activity
+
+    @staticmethod
+    def _apply_manager_terminal_projection(
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        activity: ProjectChatMessage | None,
+        terminal_status: str,
+        content: str | None,
+        error: str | None,
+        completed_at: datetime,
+        assignment_recorded: bool,
+    ) -> ProjectChatMessage | None:
+        """Project a manager turn from its submitted action and Runtime outcome."""
+
+        from app.models.delivery import ProjectAutomationRun
+        from app.services.project_automation_execution import (
+            MISSING_MANAGER_PLAN_ERROR,
+        )
+
+        if assignment_recorded:
+            activity_status = STATUS_COMPLETED
+            run_status = "succeeded"
+            if terminal_status == STATUS_COMPLETED:
+                message = str(content or "").strip() or "AI 调度员已完成分派。"
+                projection_error = None
+                transport_error = None
+            else:
+                message = "AI 调度员已完成分派，但调度结果回传失败。" + (
+                    f" {error}" if error else ""
+                )
+                projection_error = None
+                transport_error = str(error) if error else terminal_status
+        elif terminal_status == STATUS_COMPLETED:
+            activity_status = STATUS_FAILED
+            run_status = "failed"
+            message = MISSING_MANAGER_PLAN_ERROR
+            projection_error = MISSING_MANAGER_PLAN_ERROR
+            transport_error = None
+        else:
+            activity_status = terminal_status
+            run_status = {
+                STATUS_FAILED: "failed",
+                STATUS_CANCELLED: "cancelled",
+            }[terminal_status]
+            message = str(content or error or "AI manager failed")
+            projection_error = str(error or message)
+            transport_error = None
+
+        if activity is not None:
+            activity.status = activity_status
+            activity.message_type = "text"
+            activity.content = message
+            activity_metadata = dict(activity.metadata_json or {})
+            activity_metadata["run_status"] = activity_status
+            if projection_error:
+                activity_metadata["error"] = projection_error
+            else:
+                activity_metadata.pop("error", None)
+            if transport_error:
+                activity_metadata["transport_error"] = transport_error
+            else:
+                activity_metadata.pop("transport_error", None)
+            activity.metadata_json = activity_metadata
+
+        run = (
+            db.get(ProjectAutomationRun, execution.automation_run_id)
+            if execution.automation_run_id
+            else None
+        )
+        if run is not None and run.status not in TERMINAL_RUN_STATUSES:
+            run.status = run_status
+            run.completed_at = completed_at
+            run.version += 1
+            if run_status == "failed":
+                run.description = projection_error or message
+            from app.services.project_workflow_projection import (
+                sync_automation_workflow_node,
+            )
+
+            sync_automation_workflow_node(db, run)
         return activity
 
     @staticmethod
@@ -3148,6 +3373,46 @@ class LoopItemExecutionService:
         return value if isinstance(value, str) else ""
 
     @staticmethod
+    def _bind_automation_activity_if_unset(
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        activity: ProjectChatMessage,
+    ) -> None:
+        """Give direct automation runs a durable pointer to their activity."""
+
+        if not execution.automation_run_id:
+            return
+        run, _ = LoopItemExecutionService._automation_run_and_rule(db, execution)
+        if run is None:
+            return
+        run_metadata = dict(run.metadata_json or {})
+        if run_metadata.get("activity_message_id"):
+            return
+        run_metadata["activity_message_id"] = activity.message_id
+        run.metadata_json = run_metadata
+
+    @staticmethod
+    def _is_execution_activity(
+        row: ProjectChatMessage | None,
+        execution: LoopItemExecution,
+    ) -> bool:
+        metadata = (
+            row.metadata_json
+            if row is not None and isinstance(row.metadata_json, dict)
+            else {}
+        )
+        try:
+            execution_id = int(metadata.get("execution_id") or 0)
+        except (TypeError, ValueError):
+            return False
+        return bool(
+            row is not None
+            and execution_id == execution.id
+            and metadata.get("executor_type") == execution.executor_type
+        )
+
+    @staticmethod
     def _linked_activity(
         db: Session, execution: LoopItemExecution
     ) -> ProjectChatMessage | None:
@@ -3164,48 +3429,23 @@ class LoopItemExecutionService:
                 )
                 .first()
             )
-            row_metadata = (
-                row.metadata_json
-                if row is not None and isinstance(row.metadata_json, dict)
-                else {}
-            )
-            if row is not None and row_metadata.get("execution_id") == execution.id:
+            if LoopItemExecutionService._is_execution_activity(row, execution):
                 return row
-        if not execution.runtime_device_id or not execution.runtime_task_id:
-            runtime_row = None
-        else:
-            runtime_row = (
-                db.query(ProjectChatMessage)
-                .filter(
-                    ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
-                    ProjectChatMessage.sender_type == "agent",
-                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-                )
-                .order_by(ProjectChatMessage.id.desc())
-                .first()
-            )
-        if runtime_row is not None:
-            return runtime_row
-        candidates = (
+        return (
             db.query(ProjectChatMessage)
             .filter(
                 ProjectChatMessage.project_id == execution.cloud_project_id,
                 ProjectChatMessage.task_id == execution.loop_item_id,
+                ProjectChatMessage.sender_type == "agent",
+                ProjectChatMessage.trigger_message_id == "",
+                ProjectChatMessage.metadata_json["execution_id"].as_integer()
+                == execution.id,
+                ProjectChatMessage.metadata_json["executor_type"].as_string()
+                == execution.executor_type,
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
-            .order_by(ProjectChatMessage.id.desc())
-            .limit(20)
-            .all()
+            .one_or_none()
         )
-        for candidate in candidates:
-            metadata = candidate.metadata_json
-            if (
-                isinstance(metadata, dict)
-                and metadata.get("execution_id") == execution.id
-            ):
-                return candidate
-        return None
 
     @staticmethod
     def _push_activity(payload: dict[str, Any]) -> None:
@@ -3275,10 +3515,11 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
 
-        row = self.execution_for_runtime(
+        row = self.execution_for_runtime_event(
             db,
             runtime_device_id=device_id,
             runtime_task_id=runtime_task_id,
+            payload=payload,
             owner_user_id=owner_user_id,
         )
         if row is None:

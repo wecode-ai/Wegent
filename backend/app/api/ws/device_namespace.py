@@ -1136,6 +1136,12 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             owner_user_id=user_id,
         )
+        managed_execution = execution or loop_item_execution_service.latest_for_runtime(
+            db,
+            runtime_device_id=device_id,
+            runtime_task_id=runtime_task_id,
+            owner_user_id=user_id,
+        )
         ready_before = (
             _execution_ready_stage_ids(db, execution)
             if projected_status is not None
@@ -1153,13 +1159,14 @@ def _project_chat_runtime_event_sync(
             owner_user_id=user_id,
             allow_unsequenced_terminal=trusted_terminal_snapshot,
         )
-        if execution is not None and matched_execution is None:
+        if managed_execution is not None and matched_execution is None:
             logger.info(
                 "[ProjectChat] Runtime event projection rejected by execution truth: "
-                "device_id=%s task_id=%s event=%s",
+                "device_id=%s task_id=%s event=%s latest_execution=%s",
                 device_id,
                 runtime_task_id,
                 event_name,
+                managed_execution.id,
             )
             return None
         if matched_execution is not None:
@@ -1217,13 +1224,19 @@ def _project_chat_runtime_event_sync(
                     runtime_task_id,
                     event_name,
                 )
-        projected = project_chat_service.project_runtime_event(
-            db,
-            device_id=device_id,
-            runtime_task_id=runtime_task_id,
-            event_name=event_name,
-            payload=payload,
-        )
+        if matched_execution is not None and projected_status is not None:
+            projected = None
+        else:
+            projected = project_chat_service.project_runtime_event(
+                db,
+                device_id=device_id,
+                runtime_task_id=runtime_task_id,
+                event_name=event_name,
+                payload=payload,
+                execution_id=(
+                    matched_execution.id if matched_execution is not None else None
+                ),
+            )
         if projected is None:
             return {
                 "message": None,
