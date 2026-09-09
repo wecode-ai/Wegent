@@ -3118,7 +3118,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
         from app.services.wework_api.events import publish_runtime_event
 
-        await publish_runtime_event(user_id, logical_device_id, payload)
+        await publish_runtime_event(user_id, device_id, payload)
         await self._local_task_responses.forward_runtime_event_to_channels(
             device_id=logical_device_id,
             payload=payload["payload"],
