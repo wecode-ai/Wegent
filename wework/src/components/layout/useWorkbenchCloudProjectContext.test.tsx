@@ -490,7 +490,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     firstHook.unmount()
   })
 
-  test('falls back to My Tasks after clearing an extra project-space selection', async () => {
+  test('keeps My Tasks as bookkeeping after clearing an extra project-space selection', async () => {
     const configuredProject = project('space-default', 'local')
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
@@ -540,9 +540,9 @@ describe('useWorkbenchCloudProjectContext', () => {
       submission = await result.current.prepareSubmission('只加入我的任务')
     })
 
-    expect(submission?.additionalContext?.cloudCollaboration?.value).toContain(
-      `Current cloud project: 我的任务 (id=${DEFAULT_WORK_ITEM_PROJECT_ID}).`
-    )
+    expect(submission?.cloudProjectId).toBeUndefined()
+    expect(submission?.additionalContext).toBeUndefined()
+    expect(submission?.origin).toBeUndefined()
   })
 
   test('waits for the executor to bind the default work-item project', async () => {
@@ -551,7 +551,10 @@ describe('useWorkbenchCloudProjectContext', () => {
       project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
       name: '我的任务',
     }
-    const trackedItem = loopItem(defaultBoard.id)
+    const trackedItem = {
+      ...loopItem(defaultBoard.id),
+      has_additional_context: false,
+    }
     const runtimeTask = {
       deviceId: 'device-1',
       taskId: 'runtime-1',
@@ -597,11 +600,41 @@ describe('useWorkbenchCloudProjectContext', () => {
     await act(async () => {
       submission = await result.current.prepareSubmission('完成零配置任务')
     })
+    expect(submission?.cloudProjectId).toBeUndefined()
+    expect(submission?.additionalContext).toBeUndefined()
+    expect(submission?.origin).toBeUndefined()
     act(() => submission?.onRuntimeTaskCreated(runtimeTask))
     rerender({ currentRuntimeTask: runtimeTask })
 
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(trackedItem))
     expect(localApi.trackProjectTask).not.toHaveBeenCalled()
+
+    const unchangedFollowup = await result.current.prepareSubmission('继续执行')
+    expect(unchangedFollowup.cloudProjectId).toBeUndefined()
+    expect(unchangedFollowup.additionalContext).toBeUndefined()
+    expect(unchangedFollowup.origin).toBeUndefined()
+
+    const enrichedItem = {
+      ...trackedItem,
+      description: `${trackedItem.description}\n\n补充验收标准`,
+      has_additional_context: true,
+    }
+    localApi.findCloudContextForTask.mockResolvedValue({
+      id: 1,
+      cloud_project_id: defaultBoard.id,
+      loop_item_id: enrichedItem.id,
+      project: defaultBoard,
+      loop_item: enrichedItem,
+    })
+    const { publishProjectSpaceTaskContextChanged } =
+      await import('@/features/todo/projectSpaceSelection')
+    act(() => publishProjectSpaceTaskContextChanged(runtimeTask))
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(enrichedItem))
+
+    const enrichedFollowup = await result.current.prepareSubmission('按补充标准继续')
+    expect(enrichedFollowup.cloudProjectId).toBeUndefined()
+    expect(enrichedFollowup.additionalContext?.cloudCollaboration.value).toContain('补充验收标准')
+    expect(enrichedFollowup.origin).toBeUndefined()
   })
 
   test('submits immediately and delegates a late default-project association to executor', async () => {
@@ -655,7 +688,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       { initialProps: { currentRuntimeTask: null } }
     )
 
-    const submission = result.current.prepareSubmission('继续发送')
+    const submission = await result.current.prepareSubmission('继续发送')
 
     expect(submission.cloudProjectId).toBeUndefined()
     expect(submission.additionalContext).toBeUndefined()

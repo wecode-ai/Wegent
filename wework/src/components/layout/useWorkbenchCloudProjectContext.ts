@@ -240,7 +240,7 @@ function cloudProjectAdditionalContext(
   project: CloudProject | null,
   item: CloudLoopItem | null
 ): RuntimeAdditionalContext | undefined {
-  if (!project) return undefined
+  if (!projectHasModelContext(project, item)) return undefined
   const projectReference = `cloud://projects/${project.id}`
   const todoReference = item ? `${projectReference}/todos/${item.id}` : null
   const scope = item
@@ -265,6 +265,15 @@ function cloudProjectAdditionalContext(
       ].join('\n'),
     },
   }
+}
+
+function projectHasModelContext(
+  project: CloudProject | null,
+  item: CloudLoopItem | null
+): project is CloudProject {
+  if (!project) return false
+  if (!isDefaultWorkItemProject(project)) return true
+  return Boolean(item?.has_additional_context)
 }
 
 export function useWorkbenchCloudProjectContext({
@@ -1054,7 +1063,33 @@ export function useWorkbenchCloudProjectContext({
   }, [activeDeliveryItem, userId, t])
 
   const prepareSubmission = useCallback(
-    (description: string): CloudSubmissionContext => {
+    async (description: string): Promise<CloudSubmissionContext> => {
+      let refreshedCloudAdditionalContext = cloudAdditionalContext
+      if (contextRuntimeTask && boundCloudProject && isDefaultWorkItemProject(boundCloudProject)) {
+        const api = projectSpaceApiFor(boundCloudProject)
+        if (api) {
+          try {
+            const context = await api.findCloudContextForTask(contextRuntimeTask)
+            setBoundCloudProject(context.project)
+            setBoundCloudItem(context.loop_item)
+            setDeliveryItem(
+              context.loop_item
+                ? cloudItemAsLocalWorkItem(context.loop_item, contextRuntimeTask)
+                : null
+            )
+            refreshedCloudAdditionalContext = cloudProjectAdditionalContext(
+              context.project,
+              context.loop_item
+            )
+          } catch (error) {
+            console.warn('[Wework] Failed to refresh default Issue context before send', {
+              task: contextRuntimeTask,
+              error,
+            })
+            refreshedCloudAdditionalContext = cloudAdditionalContext
+          }
+        }
+      }
       let submissionProject = contextRuntimeTask ? null : pendingCloudProject
       if (
         !contextRuntimeTask &&
@@ -1065,6 +1100,7 @@ export function useWorkbenchCloudProjectContext({
       }
       if (!contextRuntimeTask && !submissionProject) submissionProject = defaultWorkItemProject
       const submissionItem = submissionProject ? pendingTodoItem : null
+      const submissionHasModelContext = projectHasModelContext(submissionProject, submissionItem)
       if (!contextRuntimeTask) {
         setPendingCloudContext(submissionProject, submissionItem)
         pendingAutoJoinResolutionRef.current =
@@ -1081,10 +1117,12 @@ export function useWorkbenchCloudProjectContext({
       return {
         additionalContext:
           cloudProjectAdditionalContext(submissionProject, submissionItem) ??
-          cloudAdditionalContext,
-        cloudProjectId: runtimeCloudProjectId(submissionProject),
+          refreshedCloudAdditionalContext,
+        cloudProjectId: submissionHasModelContext
+          ? runtimeCloudProjectId(submissionProject)
+          : undefined,
         origin:
-          submissionProject && submissionItem
+          submissionHasModelContext && submissionProject && submissionItem
             ? {
                 type: 'board_task',
                 projectStore: submissionProject.project_store,
@@ -1108,6 +1146,7 @@ export function useWorkbenchCloudProjectContext({
     },
     [
       cloudAdditionalContext,
+      boundCloudProject,
       contextRuntimeTask,
       defaultCloudProjectSelectionKey,
       defaultProject,
@@ -1116,6 +1155,7 @@ export function useWorkbenchCloudProjectContext({
       pendingCloudProject,
       pendingTodoItem,
       paneKey,
+      projectSpaceApiFor,
       setPendingCloudContext,
       todoBindingApis,
     ]

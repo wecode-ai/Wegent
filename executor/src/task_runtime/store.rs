@@ -27,6 +27,7 @@ use super::model::{
 const LOCAL_SCHEMA_VERSION: i64 = 7;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
+const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
 static LOCAL_TASK_STORE_INITIALIZATION: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
@@ -427,6 +428,7 @@ impl LocalTaskStore {
             .ok_or_else(|| TaskRuntimeError::Invalid("project key is missing".to_owned()))?;
         let id = format!("{project_key}-{sequence}");
         let now = now();
+        let parent_id = input.parent_id.clone();
         let completed_at = (input.status == "completed").then(|| now.clone());
         let mut metadata = json!({"tags": input.tags});
         if let Some(workflow) = input.workflow {
@@ -462,6 +464,9 @@ impl LocalTaskStore {
                 None::<String>,
             ],
         )?;
+        if let Some(parent_id) = parent_id.as_deref() {
+            refresh_runtime_projection_additional_context(&transaction, parent_id)?;
+        }
         transaction.commit()?;
         drop(connection);
         self.get_item(&id, "task")
@@ -505,6 +510,7 @@ impl LocalTaskStore {
         if let Some(Some(parent_id)) = input.parent_id.as_ref() {
             require_parent(&transaction, project_id, parent_id, Some(task_id))?;
         }
+        let previous_parent_id = current.parent_id.clone();
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
         let status = input.status.or(current.status);
@@ -552,6 +558,15 @@ impl LocalTaskStore {
         )?;
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
+        }
+        refresh_runtime_projection_additional_context(&transaction, task_id)?;
+        if previous_parent_id != parent_id {
+            if let Some(previous_parent_id) = previous_parent_id.as_deref() {
+                refresh_runtime_projection_additional_context(&transaction, previous_parent_id)?;
+            }
+            if let Some(parent_id) = parent_id.as_deref() {
+                refresh_runtime_projection_additional_context(&transaction, parent_id)?;
+            }
         }
         if assignee_changed {
             cancel_active_executions(&transaction, task_id)?;
@@ -2141,6 +2156,14 @@ impl LocalTaskStore {
         let sequence = project.next_item_number.unwrap_or(1);
         let item_id = format!("{DEFAULT_WORK_ITEM_PROJECT_KEY}-{sequence}");
         let timestamp = now();
+        let mut task_metadata = json!({
+            "tags": [],
+            "has_additional_context": false,
+        });
+        task_metadata[RUNTIME_PROJECTION_METADATA_KEY] = json!({
+            "source_title": task_title,
+            "source_description": description,
+        });
         transaction.execute(
             "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
                     updated_at = ?2 WHERE id = ?3",
@@ -2159,7 +2182,7 @@ impl LocalTaskStore {
                 task_title,
                 description,
                 sequence,
-                json!({"tags": []}).to_string(),
+                task_metadata.to_string(),
                 timestamp,
             ],
         )?;
@@ -3004,6 +3027,148 @@ fn unused_project_key(connection: &Connection) -> Result<String, rusqlite::Error
     }
 }
 
+struct RuntimeProjectionTask {
+    title: Option<String>,
+    description: String,
+    priority: Option<String>,
+    parent_id: Option<String>,
+    current_delivery_id: Option<String>,
+    assignee_agent_id: Option<String>,
+    metadata: Value,
+}
+
+fn load_runtime_projection_task(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Option<RuntimeProjectionTask>, TaskRuntimeError> {
+    connection
+        .query_row(
+            "SELECT title, description, priority, parent_id, current_delivery_id,
+                    assignee_agent_id, metadata
+             FROM loop_items
+             WHERE id = ?1 AND resource_type = 'task' AND deleted_at IS NULL",
+            [task_id],
+            |row| {
+                let metadata = row.get::<_, String>(6)?;
+                Ok(RuntimeProjectionTask {
+                    title: row.get(0)?,
+                    description: row.get(1)?,
+                    priority: row.get(2)?,
+                    parent_id: row.get(3)?,
+                    current_delivery_id: row.get(4)?,
+                    assignee_agent_id: row.get(5)?,
+                    metadata: serde_json::from_str(&metadata).unwrap_or_else(|_| json!({})),
+                })
+            },
+        )
+        .optional()
+        .map_err(TaskRuntimeError::from)
+}
+
+fn projection_has_metadata_context(metadata: &Value) -> bool {
+    let tags_present = metadata
+        .get("tags")
+        .and_then(Value::as_array)
+        .is_some_and(|tags| !tags.is_empty());
+    let workflow_present = metadata
+        .get("workflow")
+        .is_some_and(|workflow| !workflow.is_null());
+    let due_date_present = metadata
+        .get("due_at")
+        .and_then(Value::as_str)
+        .is_some_and(|due_at| !due_at.trim().is_empty());
+    tags_present || workflow_present || due_date_present
+}
+
+fn projection_has_related_context(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<bool, TaskRuntimeError> {
+    let related_content_exists = connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM loop_items
+            WHERE deleted_at IS NULL AND (
+                (resource_type IN ('attachment', 'delivery') AND loop_item_id = ?1)
+                OR (resource_type = 'task' AND parent_id = ?1)
+            )
+         )",
+        [task_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if related_content_exists {
+        return Ok(true);
+    }
+    connection
+        .query_row(
+            "SELECT EXISTS(
+            SELECT 1 FROM loop_item_comments
+            WHERE task_id = ?1 AND sender_type = 'user'
+              AND trim(content) != '' AND deleted_at IS NULL
+         )",
+            [task_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(TaskRuntimeError::from)
+}
+
+fn projection_has_intrinsic_context(
+    task: &RuntimeProjectionTask,
+    source_title: &str,
+    source_description: &str,
+) -> bool {
+    task.title.as_deref().unwrap_or_default() != source_title
+        || task.description != source_description
+        || task
+            .priority
+            .as_deref()
+            .is_some_and(|value| value != "none")
+        || task.parent_id.is_some()
+        || task.current_delivery_id.is_some()
+        || task.assignee_agent_id.is_some()
+        || projection_has_metadata_context(&task.metadata)
+}
+
+pub(super) fn refresh_runtime_projection_additional_context(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<(), TaskRuntimeError> {
+    let Some(mut task) = load_runtime_projection_task(connection, task_id)? else {
+        return Ok(());
+    };
+    let Some(projection) = task
+        .metadata
+        .get(RUNTIME_PROJECTION_METADATA_KEY)
+        .and_then(Value::as_object)
+    else {
+        return Ok(());
+    };
+    let source_title = projection
+        .get("source_title")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let source_description = projection
+        .get("source_description")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let has_additional_context =
+        projection_has_intrinsic_context(&task, source_title, source_description)
+            || projection_has_related_context(connection, task_id)?;
+    if task
+        .metadata
+        .get("has_additional_context")
+        .and_then(Value::as_bool)
+        == Some(has_additional_context)
+    {
+        return Ok(());
+    }
+    task.metadata["has_additional_context"] = json!(has_additional_context);
+    connection.execute(
+        "UPDATE loop_items SET metadata = ?1 WHERE id = ?2 AND resource_type = 'task'",
+        params![task.metadata.to_string(), task_id],
+    )?;
+    Ok(())
+}
+
 fn get_item_from(
     connection: &Connection,
     id: &str,
@@ -3615,6 +3780,7 @@ fn insert_comment(
             now,
         ],
     )?;
+    refresh_runtime_projection_additional_context(connection, &create.task_id)?;
     comment_row(connection, &message_id)
 }
 
@@ -6384,6 +6550,120 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title.as_deref(), Some("Create from executor"));
         assert_eq!(items[0].description, "Track after runtime creation");
+        assert_eq!(items[0].metadata["has_additional_context"], json!(false));
+        assert_eq!(
+            items[0].metadata[RUNTIME_PROJECTION_METADATA_KEY],
+            json!({
+                "source_title": "Create from executor",
+                "source_description": "Track after runtime creation",
+            })
+        );
+    }
+
+    #[test]
+    fn tracks_additional_context_for_default_runtime_issues() {
+        let (_directory, store) = store();
+        let binding = store
+            .ensure_default_work_item_binding(
+                "local-device",
+                "runtime-default-context",
+                "Runtime title",
+                "Runtime description",
+            )
+            .unwrap();
+        let item_id = binding.loop_item_id.unwrap();
+        let initial = store
+            .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &item_id)
+            .unwrap();
+
+        let status_only = store
+            .update_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                &item_id,
+                TaskUpdate {
+                    version: initial.version,
+                    status: Some("in_progress".to_owned()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(status_only.metadata["has_additional_context"], json!(false));
+
+        let enriched = store
+            .update_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                &item_id,
+                TaskUpdate {
+                    version: status_only.version,
+                    description: Some("Runtime description\n\nExtra Issue context".to_owned()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(enriched.metadata["has_additional_context"], json!(true));
+
+        let reverted = store
+            .update_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                &item_id,
+                TaskUpdate {
+                    version: enriched.version,
+                    description: Some("Runtime description".to_owned()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(reverted.metadata["has_additional_context"], json!(false));
+
+        let attachment = store
+            .add_task_attachment(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                &item_id,
+                true,
+                crate::task_runtime::BinaryInput {
+                    display_name: "context.txt".to_owned(),
+                    content_type: Some("text/plain".to_owned()),
+                    base64: "Y29udGV4dA==".to_owned(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &item_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(true)
+        );
+
+        store.delete_task_attachment(&attachment.id).unwrap();
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &item_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(false)
+        );
+
+        store
+            .create_comment(&LocalCommentCreate {
+                project_id: DEFAULT_WORK_ITEM_PROJECT_ID.to_owned(),
+                task_id: item_id.clone(),
+                client_message_id: None,
+                sender_type: "user".to_owned(),
+                sender_id: "user-1".to_owned(),
+                sender_name: "User".to_owned(),
+                content: "Use the attached acceptance criteria".to_owned(),
+                metadata: json!({}),
+                reply_to_message_id: None,
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &item_id)
+                .unwrap()
+                .metadata["has_additional_context"],
+            json!(true)
+        );
     }
 
     #[test]
