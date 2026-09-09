@@ -330,3 +330,80 @@ describe('Issue workflow projection', () => {
     })
   })
 })
+
+describe('workflow execution authority', () => {
+  it('projects explicit AI stages without an automation rule through deliverable completion', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.nodes[0].execution_mode = 'robot'
+    workflow.nodes[0].required_deliverables = [
+      { id: 'report', name: 'Report', description: '', value_type: 'file' },
+    ]
+    const succeeded = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded', 'device:task')
+    expect(succeeded.nodes[0].status).toBe('awaiting_deliverables')
+    const delivered = attachIssueWorkflowDelivery(succeeded, 'develop', 'delivery', ['report'])
+    expect(delivered.nodes[0].status).toBe('completed')
+    expect(delivered.nodes[1].status).toBe('ready')
+  })
+
+  it('honors explicit human execution even when a rule is referenced', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.nodes[0].execution_mode = 'human'
+    workflow.nodes[0].automation_rule_id = 'rule'
+    const succeeded = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded')
+    expect(succeeded.nodes[0].status).toBe('awaiting_approval')
+    expect(decideIssueWorkflowNode(succeeded, 'develop', 'approve', 1, '').nodes[0].status).toBe(
+      'completed'
+    )
+  })
+
+  it.each(['approve', 'reject', 'force_advance'] as const)(
+    'rejects %s for an AI stage without a rule',
+    action => {
+      const workflow = instantiateIssueWorkflow(definition)!
+      workflow.nodes[0].execution_mode = 'robot'
+      workflow.nodes[0].status = 'awaiting_approval'
+      expect(() => decideIssueWorkflowNode(workflow, 'develop', action, 1, 'reason')).toThrow(
+        'Automated stages do not accept decisions'
+      )
+    }
+  )
+
+  it.each(['paused', 'running', 'waiting_human', 'completed'] as const)(
+    'preserves AI stage authority while %s',
+    status => {
+      const workflow = instantiateIssueWorkflow(definition)!
+      workflow.advancement_policy = 'ai'
+      workflow.orchestration_status = status
+      workflow.nodes[0].status = 'failed'
+      workflow.nodes[0].execution_mode = 'robot'
+      workflow.nodes[0].task_ids = ['device:task']
+      workflow.nodes[0].task_statuses = { 'device:task': 'succeeded' }
+      expect(reconcileIssueWorkflowForTaskBindings(workflow, [])).toBe(workflow)
+      for (const runtimeStatus of ['running', 'succeeded', 'cancelled'] as const) {
+        const updated = updateIssueWorkflowForRuntime(
+          workflow,
+          'develop',
+          runtimeStatus,
+          'device:task'
+        )
+        expect(updated.orchestration_status).toBe(status)
+        expect(updated.nodes[0].status).toBe('failed')
+        expect(updated.nodes[0].task_statuses?.['device:task']).toBe(runtimeStatus)
+        expect(updated.nodes[1].status).toBe('blocked')
+      }
+      workflow.nodes[0].status = 'awaiting_deliverables'
+      expect(attachIssueWorkflowDelivery(workflow, 'develop', 'delivery').nodes[0].status).toBe(
+        'awaiting_deliverables'
+      )
+    }
+  )
+
+  it('does not advance paused sequential stages from task results', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.orchestration_status = 'paused'
+    workflow.nodes[0].status = 'failed'
+    const updated = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded', 'device:task')
+    expect(reconcileIssueWorkflowForTaskBindings(updated, []).nodes[0].status).toBe('failed')
+    expect(updated.nodes[1].status).toBe('blocked')
+  })
+})

@@ -4,6 +4,25 @@ sidebar_position: 10
 
 # Board automation interaction and acceptance
 
+## 2026-09-09 Stage state and explicit resume
+
+For AI progression, the Issue orchestration record owns stage state. Runtime status remains execution detail and cannot imply human approval or release another stage. Paused workflows likewise cannot advance from task results. Sequential workflows use execution_mode to distinguish human approval from AI execution. Resume controls live beside the stage graph and call the existing resume endpoint.
+
+```mermaid
+flowchart TD
+  T[Task status or deliverable update] --> P{AI progression or paused?}
+  P -->|Yes| K[Preserve authoritative stage state]
+  P -->|No| M{Stage execution mode}
+  M -->|Human succeeds| H[Await human approval]
+  M -->|AI succeeds| D[Evaluate required deliverables]
+  S[User stops execution] --> W[Paused with visible resume action]
+  W -->|User clicks Resume progression| R[Existing resume endpoint]
+  R --> C[Coordinator continues]
+  W -->|New task or comment| W
+```
+
+Regression coverage: AI nodes without rule IDs never offer human approval; explicit human nodes retain approval; late runtime results preserve AI and paused stage state; resume is visible and unique, and failed requests leave the Issue paused. The CI event-center scenario now resumes through the UI. Test sources were updated but tests and Electron verification were not run, as requested; acceptance is delegated to Test-Wegent.
+
 ## 2026-09-09 Continue the same work in its comment thread
 
 This supersedes the separate reply panel: the AI question is the parent comment, with the person's answers and later AI follow-ups in chronological replies. Cards and notifications locate the active assignment's discussion and composer. The same goal stays in its discussion even after a task ends; a new independently deliverable goal starts a new activity and task.

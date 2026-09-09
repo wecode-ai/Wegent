@@ -19,7 +19,6 @@ import {
   CircleUserRound,
   Copy,
   Download,
-  ExternalLink,
   File,
   FileText,
   Flag,
@@ -33,7 +32,6 @@ import {
   Package,
   Paperclip,
   Plus,
-  Sparkles,
   Tag,
   Trash2,
   Upload,
@@ -71,6 +69,7 @@ import { AITableTaskFields } from './AITableTaskFields'
 import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 import { TaskActivityView } from './TaskActivityView'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
+import { IssueWorkflowControls, type WorkflowPlanAction } from './IssueWorkflowControls'
 import { IssueAssignmentPanel } from './IssueAssignmentPanel'
 import { IssueExperienceMigration } from './IssueExperienceMigration'
 import { markdownAttachmentRows } from './attachmentMarkdown'
@@ -88,8 +87,6 @@ type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 function supportsAssignApi(api: DeliveryApi): boolean {
   return typeof (api as { assignLoopItem?: unknown }).assignLoopItem === 'function'
 }
-
-type WorkflowPlanAction = 'pauseWorkflowPlan' | 'resumeWorkflowPlan' | 'replanWorkflowPlan'
 
 type WorkflowPlanMethod = (itemId: string) => Promise<WorkflowPlan>
 
@@ -2123,89 +2120,6 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
-                  {item.workflow?.advancement_policy === 'ai' || item.workflow?.assignment ? (
-                    <>
-                      <div
-                        className="mt-4 flex items-center gap-2 text-sm"
-                        data-testid="cloud-todo-workflow-plan"
-                      >
-                        <Sparkles className="h-4 w-4" />
-                        <span data-testid="cloud-todo-workflow-plan-status">
-                          {workflowPlanStatusLabel}
-                        </span>
-                        {openWorkflowManagerExecution ? (
-                          <button
-                            type="button"
-                            data-testid="cloud-todo-workflow-manager-run"
-                            onClick={openWorkflowManagerExecution}
-                            className="ml-auto rounded-md p-1 hover:bg-muted"
-                          >
-                            <ExternalLink className="h-4 w-4" />
-                            {t('workbench.task_activity_view_execution')}
-                          </button>
-                        ) : null}
-                        {!item.workflow?.migration_required &&
-                        ['failed', 'paused'].includes(workflowPlanStatus) ? (
-                          <button
-                            type="button"
-                            data-testid={
-                              workflowPlanStatus === 'paused'
-                                ? 'cloud-todo-workflow-resume'
-                                : 'cloud-todo-workflow-replan'
-                            }
-                            disabled={
-                              workflowPlanBusy ||
-                              !workflowPlanMethod(
-                                api,
-                                workflowPlanStatus === 'paused'
-                                  ? 'resumeWorkflowPlan'
-                                  : 'replanWorkflowPlan'
-                              )
-                            }
-                            onClick={() =>
-                              void mutateWorkflowPlan(
-                                workflowPlanStatus === 'paused'
-                                  ? 'resumeWorkflowPlan'
-                                  : 'replanWorkflowPlan'
-                              )
-                            }
-                          >
-                            {t(
-                              workflowPlanStatus === 'paused'
-                                ? 'todo.workflow_plan_resume'
-                                : 'todo.workflow_plan_retry'
-                            )}
-                          </button>
-                        ) : null}
-                        {!item.workflow?.migration_required &&
-                        item.workflow?.advancement_policy === 'ai' &&
-                        ['planning', 'dispatching', 'running', 'waiting_human'].includes(
-                          workflowPlanStatus
-                        ) ? (
-                          <button
-                            type="button"
-                            data-testid="cloud-todo-workflow-pause"
-                            disabled={
-                              workflowPlanBusy || !workflowPlanMethod(api, 'pauseWorkflowPlan')
-                            }
-                            onClick={() => void mutateWorkflowPlan('pauseWorkflowPlan')}
-                          >
-                            {t('todo.workflow_plan_pause')}
-                          </button>
-                        ) : null}
-                      </div>
-                      <IssueAssignmentPanel key={item.id} item={item} />
-                      {workflowError ? (
-                        <p
-                          role="alert"
-                          data-testid="cloud-todo-workflow-error-summary"
-                          className="mt-2 text-xs text-destructive"
-                        >
-                          {workflowError}
-                        </p>
-                      ) : null}
-                    </>
-                  ) : null}
                   {item?.workflow?.migration_required && 'adoptIssueExperience' in api ? (
                     <IssueExperienceMigration
                       key={item.id}
@@ -2243,6 +2157,29 @@ export function TodoEditor(props: TodoEditorProps) {
                         </button>
                       ) : null}
                     </div>
+                    {item.workflow?.advancement_policy === 'ai' || item.workflow?.assignment ? (
+                      <>
+                        <IssueWorkflowControls
+                          workflow={item.workflow!}
+                          status={workflowPlanStatus}
+                          statusLabel={workflowPlanStatusLabel}
+                          busy={workflowPlanBusy}
+                          canAction={action => Boolean(workflowPlanMethod(api, action))}
+                          onAction={mutateWorkflowPlan}
+                          onOpenExecution={openWorkflowManagerExecution}
+                        />
+                        <IssueAssignmentPanel key={item.id} item={item} />
+                        {workflowError ? (
+                          <p
+                            role="alert"
+                            data-testid="cloud-todo-workflow-error-summary"
+                            className="mt-2 text-xs text-destructive"
+                          >
+                            {workflowError}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : null}
                     {displayedWorkflow?.nodes.length ? (
                       <IssueWorkflowDag
                         nodes={displayedWorkflow.nodes}

@@ -91,7 +91,7 @@ function projectWorkflowNodeTaskStatus(
   const latestStatus = orderedTaskIds[0] ? taskStatuses[orderedTaskIds[0]] : fallbackStatus
   if (latestStatus === 'running') return 'running'
   if (['succeeded', 'archived'].includes(latestStatus ?? '')) {
-    if (!node.automation_rule_id) return 'awaiting_approval'
+    if (workflowNodeExecutionMode(node) === 'human') return 'awaiting_approval'
     const fulfilled = new Set(node.fulfilled_deliverable_ids ?? [])
     return (node.required_deliverables ?? []).every(requirement => fulfilled.has(requirement.id))
       ? 'completed'
@@ -101,10 +101,15 @@ function projectWorkflowNodeTaskStatus(
   return node.status
 }
 
+function projectsTaskProgress(workflow: IssueWorkflowInstance): boolean {
+  return workflow.advancement_policy !== 'ai' && workflow.orchestration_status !== 'paused'
+}
+
 export function reconcileIssueWorkflowForTaskBindings(
   workflow: IssueWorkflowInstance,
   bindings: WorkflowTaskBinding[]
 ): IssueWorkflowInstance {
+  if (!projectsTaskProgress(workflow)) return workflow
   const orderedBindings = [...bindings].sort((left, right) => {
     const timeOrder = (right.linked_at ?? '').localeCompare(left.linked_at ?? '')
     if (timeOrder !== 0) return timeOrder
@@ -141,36 +146,36 @@ export function updateIssueWorkflowForRuntime(
   runtimeTaskId?: string,
   stageTaskIds: string[] = []
 ): IssueWorkflowInstance {
-  const nodes = releaseReadyNodes(
-    workflow.nodes.map(node => {
-      if (node.id !== workflowNodeId) return node
-      const taskStatuses = {
-        ...(node.task_statuses ?? {}),
-        ...(runtimeTaskId ? { [runtimeTaskId]: executionStatus } : {}),
-      }
-      const knownTaskIds = Array.from(
-        new Set([
-          ...stageTaskIds,
-          ...(node.task_ids ?? []),
-          ...(runtimeTaskId ? [runtimeTaskId] : []),
-        ])
-      )
-      const orderedTaskIds = Array.from(
-        new Set([
-          ...(stageTaskIds.length > 0 ? stageTaskIds : runtimeTaskId ? [runtimeTaskId] : []),
-          ...knownTaskIds,
-        ])
-      )
-      const status = projectWorkflowNodeTaskStatus(
-        node,
-        taskStatuses,
-        orderedTaskIds,
-        executionStatus
-      )
-      return { ...node, status, task_ids: knownTaskIds, task_statuses: taskStatuses }
-    })
-  )
-  return { ...workflow, version: workflow.version + 1, nodes }
+  const projectProgress = projectsTaskProgress(workflow)
+  const nodes = workflow.nodes.map(node => {
+    if (node.id !== workflowNodeId) return node
+    const taskStatuses = {
+      ...(node.task_statuses ?? {}),
+      ...(runtimeTaskId ? { [runtimeTaskId]: executionStatus } : {}),
+    }
+    const knownTaskIds = Array.from(
+      new Set([
+        ...stageTaskIds,
+        ...(node.task_ids ?? []),
+        ...(runtimeTaskId ? [runtimeTaskId] : []),
+      ])
+    )
+    const orderedTaskIds = Array.from(
+      new Set([
+        ...(stageTaskIds.length > 0 ? stageTaskIds : runtimeTaskId ? [runtimeTaskId] : []),
+        ...knownTaskIds,
+      ])
+    )
+    const status = projectProgress
+      ? projectWorkflowNodeTaskStatus(node, taskStatuses, orderedTaskIds, executionStatus)
+      : node.status
+    return { ...node, status, task_ids: knownTaskIds, task_statuses: taskStatuses }
+  })
+  return {
+    ...workflow,
+    version: workflow.version + 1,
+    nodes: projectProgress ? releaseReadyNodes(nodes) : nodes,
+  }
 }
 
 export function workflowBoardStatus(workflow: IssueWorkflowInstance): CloudLoopItem['status'] {
@@ -202,7 +207,9 @@ export function decideIssueWorkflowNode(
   const nodes = releaseReadyNodes(
     workflow.nodes.map(node => {
       if (node.id !== workflowNodeId) return node
-      if (node.automation_rule_id) throw new Error('Automated stages do not accept decisions')
+      if (workflowNodeExecutionMode(node) === 'robot') {
+        throw new Error('Automated stages do not accept decisions')
+      }
       if (action === 'approve') {
         if (node.status !== 'awaiting_approval') throw new Error('Stage is not awaiting approval')
         const fulfilled = new Set(node.fulfilled_deliverable_ids ?? [])
@@ -262,7 +269,10 @@ export function attachIssueWorkflowDelivery(
       delivery_ids: Array.from(new Set([...(node.delivery_ids ?? []), deliveryId])),
       fulfilled_deliverable_ids: fulfilled,
       status:
-        node.automation_rule_id && node.status === 'awaiting_deliverables' && allRequiredFulfilled
+        projectsTaskProgress(workflow) &&
+        workflowNodeExecutionMode(node) === 'robot' &&
+        node.status === 'awaiting_deliverables' &&
+        allRequiredFulfilled
           ? ('completed' as const)
           : node.status,
     }
@@ -270,7 +280,7 @@ export function attachIssueWorkflowDelivery(
   return {
     ...workflow,
     version: workflow.version + 1,
-    nodes: releaseReadyNodes(nodes),
+    nodes: projectsTaskProgress(workflow) ? releaseReadyNodes(nodes) : nodes,
   }
 }
 

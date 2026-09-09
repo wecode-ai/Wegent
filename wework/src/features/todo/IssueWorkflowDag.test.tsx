@@ -495,6 +495,19 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('cloud-todo-create-workflow-task-编辑')).toHaveTextContent('添加任务')
   })
 
+  test('does not offer human decisions for an AI stage with a stale approval state', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('AI', { execution_mode: 'robot', status: 'awaiting_approval' })]}
+        tasks={[]}
+        onDecide={vi.fn()}
+      />
+    )
+    expect(screen.queryByTestId('cloud-todo-approve-workflow-node-AI')).not.toBeInTheDocument()
+    expect(screen.queryByText('驳回')).not.toBeInTheDocument()
+    expect(screen.queryByText('强制推进')).not.toBeInTheDocument()
+  })
+
   test('allows another task while a human stage awaits approval', () => {
     const onCreateTask = vi.fn()
     render(

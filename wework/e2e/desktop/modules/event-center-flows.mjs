@@ -337,8 +337,13 @@ export async function verifyEventCenter({
     'paused'
   )
   await control.command('click', '[data-testid^="workbench-close-pane-"]', { visible: true })
+  await control.command('scrollIntoView', '[data-testid="cloud-todo-workflow-resume"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-workflow-paused-hint"]', {
+    visible: true,
+  })
+  await captureScreenshot(control, 'event-center-explicit-resume.png')
+  await control.command('click', '[data-testid="cloud-todo-workflow-resume"]', { visible: true })
   await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
-  await request(`/api/v1/loop-items/${issueId}/workflow-plan/resume`, { method: 'POST' })
   await waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
     issue => issue.workflow.assignment_version === initialVersion + 2,

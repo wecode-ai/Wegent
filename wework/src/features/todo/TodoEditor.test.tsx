@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
 import type { CloudLoopItem, CloudProject, WorkflowPlan } from '@/api/deliveries'
@@ -404,6 +404,65 @@ describe('TodoEditor workflow plans', () => {
     items: [],
     manager_run: null,
   }
+
+  it.each([false, true])(
+    'resumes a paused Issue only on click and retains pause on failure (%s)',
+    async fails => {
+      const user = userEvent.setup()
+      const pausedItem: CloudLoopItem = {
+        ...managedItem,
+        workflow: { ...managedItem.workflow!, orchestration_status: 'paused' },
+      }
+      const resumedItem: CloudLoopItem = {
+        ...pausedItem,
+        workflow: { ...pausedItem.workflow!, orchestration_status: 'planning' },
+      }
+      const resume = vi.fn(async () => {
+        if (fails) throw new Error('Resume request failed')
+        return { ...awaitingApprovalPlan, status: 'planning' as const }
+      })
+      const getItem = vi.fn(async () => resumedItem)
+      const updated = vi.fn()
+      const workflowApi = {
+        listDeliveries: vi.fn(async () => ({ items: [] })),
+        listTaskBindings: vi.fn(async () => []),
+        listLoopItemAttachments: vi.fn(async () => []),
+        listLoopItemCollaborators: vi.fn(async () => []),
+        listCloudProjectMembers: vi.fn(async () => []),
+        getWorkflowPlan: vi.fn(async () => awaitingApprovalPlan),
+        resumeWorkflowPlan: resume,
+        getLoopItem: getItem,
+      } as never
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          item={pausedItem}
+          project={project}
+          allItems={[pausedItem]}
+          onUpdated={updated}
+          onClose={vi.fn()}
+          api={workflowApi}
+          currentUserId={1}
+        />
+      )
+
+      const stages = within(await screen.findByTestId('cloud-todo-tasks'))
+      expect(stages.getByTestId('cloud-todo-workflow-paused-hint')).toBeVisible()
+      expect(screen.getAllByTestId('cloud-todo-workflow-resume')).toHaveLength(1)
+      expect(resume).not.toHaveBeenCalled()
+      await user.click(stages.getByTestId('cloud-todo-workflow-resume'))
+      expect(resume).toHaveBeenCalledExactlyOnceWith(pausedItem.id)
+      if (fails) {
+        expect(await screen.findByTestId('cloud-todo-workflow-error-summary')).toBeVisible()
+        expect(stages.getByTestId('cloud-todo-workflow-resume')).toBeEnabled()
+        expect(updated).not.toHaveBeenCalled()
+        expect(getItem).not.toHaveBeenCalled()
+      } else {
+        await vi.waitFor(() => expect(updated).toHaveBeenCalledWith(resumedItem))
+      }
+    }
+  )
 
   it('exposes a stable selector for the workflow error summary', async () => {
     const failedPlan: WorkflowPlan = {

@@ -573,7 +573,7 @@ export function IssueWorkflowDag({
               const stageTasks = tasks.filter(task => task.workflow_node_id === stage.id)
               const automated = workflowNodeExecutionMode(stage) === 'robot'
               const startHumanStage = stageTasks.length === 0 && stage.status === 'ready'
-              const awaitingApproval = stage.status === 'awaiting_approval'
+              const awaitingApproval = !automated && stage.status === 'awaiting_approval'
               const canRunAutomation =
                 automated &&
                 Boolean(stage.automation_rule_id) &&
