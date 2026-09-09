@@ -241,7 +241,8 @@ export default function ContextSelector({
           value={searchValue}
           onChange={event => setSearchValue(event.target.value)}
           className={cn(
-            'h-11 shrink-0 rounded-none border-b border-border text-sm lg:h-9',
+            'h-11 shrink-0 rounded-none border-x-0 border-t-0 border-b border-border text-sm lg:h-9',
+            'focus-visible:border-b-2 focus-visible:border-primary focus-visible:ring-0',
             'placeholder:text-text-muted'
           )}
           data-testid="context-selector-knowledge-search-input"
