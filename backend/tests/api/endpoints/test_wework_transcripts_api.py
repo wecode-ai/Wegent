@@ -36,7 +36,7 @@ def _segment(lease, **overrides):
         "sequence": 1,
         "sha256": "a" * 64,
         "sizeBytes": 4096,
-        "format": "codex-rollout-snapshot.v1.tgz.aes256gcm",
+        "format": "codex-snapshot.v1.tgz.aes256gcm",
         "turnId": "turn-1",
         "summary": {
             "userMessages": [{"id": "user-1", "text": "Continue"}],
@@ -194,9 +194,9 @@ def test_prunes_segments_older_than_previous_snapshot(
                 "taskId": "task-1",
             },
             format=(
-                "codex-rollout-snapshot.v1.tgz.aes256gcm"
+                "codex-snapshot.v1.tgz.aes256gcm"
                 if is_snapshot
-                else "codex-rollout-delta.v1.tgz.aes256gcm"
+                else "codex-delta.v1.tgz.aes256gcm"
             ),
         )
         response = test_client.post(
@@ -244,9 +244,9 @@ def test_continues_bounded_pruning_on_delta_commits(
                 sha256=f"{sequence:064x}",
                 turnId=f"turn-{sequence}",
                 format=(
-                    "codex-rollout-snapshot.v1.tgz.aes256gcm"
+                    "codex-snapshot.v1.tgz.aes256gcm"
                     if is_snapshot
-                    else "codex-rollout-delta.v1.tgz.aes256gcm"
+                    else "codex-delta.v1.tgz.aes256gcm"
                 ),
             ),
         )
@@ -292,7 +292,7 @@ def test_pruning_hides_obsolete_metadata_and_retries_object_deletion(
                 sequence=sequence,
                 sha256=f"{sequence:064x}",
                 turnId=f"turn-{sequence}",
-                format="codex-rollout-snapshot.v1.tgz.aes256gcm",
+                format="codex-snapshot.v1.tgz.aes256gcm",
             ),
         )
         assert response.status_code == 200
@@ -348,7 +348,7 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
                 sequence=sequence,
                 sha256=f"{sequence:064x}",
                 turnId=f"turn-{sequence}",
-                format="codex-rollout-snapshot.v1.tgz.aes256gcm",
+                format="codex-snapshot.v1.tgz.aes256gcm",
             ),
         )
         assert response.status_code == 200
@@ -415,7 +415,7 @@ def test_rejects_stale_sequence_before_upload(test_client, test_token, monkeypat
         json=_segment(
             lease,
             sha256="b" * 64,
-            format="codex-rollout-delta.v1.tgz.aes256gcm",
+            format="codex-delta.v1.tgz.aes256gcm",
         ),
     )
     assert stale.status_code == 409
@@ -531,7 +531,7 @@ def test_download_uses_presigned_object_url(
         storage_key="users/1/transcripts/key/1-snapshot.tgz.aes256gcm",
         sha256="c" * 64,
         size_bytes=10,
-        format="codex-rollout-snapshot.v1.tgz.aes256gcm",
+        format="codex-snapshot.v1.tgz.aes256gcm",
     )
     test_db.add(archive)
     test_db.commit()

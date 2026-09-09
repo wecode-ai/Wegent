@@ -42,8 +42,8 @@ async function segmentSource() {
         sha256: 'a'.repeat(64),
         sizeBytes: 18,
         format: options.snapshot
-          ? 'codex-rollout-snapshot.v1.tgz.aes256gcm'
-          : 'codex-rollout-delta.v1.tgz.aes256gcm',
+          ? 'codex-snapshot.v1.tgz.aes256gcm'
+          : 'codex-delta.v1.tgz.aes256gcm',
         rolloutEnd: 2048,
         summary: {
           userMessages: [{ id: 'user-1', text: 'Continue' }],
@@ -191,12 +191,20 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
                       currentSequence: 2,
                       archives: [
                         {
+                          id: 0,
+                          fromSequence: 0,
+                          toSequence: 0,
+                          sha256: '0'.repeat(64),
+                          sizeBytes: 32,
+                          format: 'jsonl.zst',
+                        },
+                        {
                           id: 1,
                           fromSequence: 0,
                           toSequence: 1,
                           sha256: 'a'.repeat(64),
                           sizeBytes: 32,
-                          format: 'codex-rollout-snapshot.v1.tgz.aes256gcm',
+                          format: 'codex-snapshot.v1.tgz.aes256gcm',
                         },
                         {
                           id: 2,
@@ -204,7 +212,7 @@ test('restores the latest snapshot and contiguous native deltas', async () => {
                           toSequence: 2,
                           sha256: 'b'.repeat(64),
                           sizeBytes: 32,
-                          format: 'codex-rollout-delta.v1.tgz.aes256gcm',
+                          format: 'codex-delta.v1.tgz.aes256gcm',
                         },
                       ],
                     },

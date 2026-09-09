@@ -46,8 +46,8 @@ nonce for different plaintext.
 Each cloud sequence maps to exactly one object:
 
 - Sequence 1, every tenth sequence, and sequence 1 of a conflict branch are
-  full encrypted `codex-rollout-snapshot.v1.tgz.aes256gcm` snapshots.
-- Other sequences are encrypted `codex-rollout-delta.v1.tgz.aes256gcm`
+  full encrypted `codex-snapshot.v1.tgz.aes256gcm` snapshots.
+- Other sequences are encrypted `codex-delta.v1.tgz.aes256gcm`
   increments.
 - Every segment also carries a workspace overlay so recent files are not lost.
 - Workspace packaging excludes `.git`, `node_modules`, build outputs, and
@@ -158,15 +158,16 @@ identifier.
 
 Object storage reuses the `ATTACHMENT_S3_*` connection settings:
 
-| Environment variable                            | Default              | Purpose                                  |
-| ----------------------------------------------- | -------------------- | ---------------------------------------- |
-| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | Private native transcript segment bucket |
-| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | Upload/download signed URL lifetime      |
-| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`            | empty                | Stable high-entropy root for per-user keys |
+| Environment variable                            | Default              | Purpose                                    |
+| ----------------------------------------------- | -------------------- | ------------------------------------------ |
+| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | Private native transcript segment bucket   |
+| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | Upload/download signed URL lifetime        |
+| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`           | empty                | Stable high-entropy root for per-user keys |
 
-Run the Alembic migration before deployment. If object storage is unavailable,
-segment metadata is not committed and the outbox keeps its locator while local
-execution remains available offline.
+This design reuses the existing three transcript tables. It adds no Alembic
+migration and requires no schema change for existing deployments. If object
+storage is unavailable, segment metadata is not committed and the outbox keeps
+its locator while local execution remains available offline.
 
 When the dedicated root is empty, `SECRET_KEY` is used for compatibility.
 Production deployments should configure a dedicated value and keep it unchanged

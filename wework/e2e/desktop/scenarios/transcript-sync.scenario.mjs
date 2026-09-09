@@ -424,7 +424,7 @@ export function createDesktopScenario({
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
         'Restart did not reconcile the already committed native snapshot'
       )
-      assert.equal(activeTranscript().archives[0].format, 'codex-rollout-snapshot.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().archives[0].format, 'codex-snapshot.v1.tgz.aes256gcm')
       assert.equal(activeTranscript().turns[0].payload.assistantMessage, FIRST_COMPLETION)
       await captureScreenshot(control, 'transcript-sync-01-device-a-snapshot-uploaded.png', 'body')
 
@@ -446,7 +446,7 @@ export function createDesktopScenario({
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
         'Second turn did not upload a native rollout delta'
       )
-      assert.equal(activeTranscript().archives[1].format, 'codex-rollout-delta.v1.tgz.aes256gcm')
+      assert.equal(activeTranscript().archives[1].format, 'codex-delta.v1.tgz.aes256gcm')
       assert.equal(activeTranscript().turns[1].payload.assistantMessage, SECOND_COMPLETION)
       await captureScreenshot(control, 'transcript-sync-02-device-a-delta-uploaded.png', 'body')
       const snapshotObject = objects.get(activeTranscript().archives[0].objectId)

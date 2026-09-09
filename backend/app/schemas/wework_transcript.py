@@ -27,8 +27,8 @@ class TranscriptSegmentRequest(BaseModel):
         le=MAX_ENCRYPTED_TRANSCRIPT_SEGMENT_BYTES,
     )
     format: str = Field(
-        pattern=r"^codex-rollout-(delta|snapshot)\.v1\.tgz\.aes256gcm$",
-        max_length=64,
+        pattern=r"^codex-(delta|snapshot)\.v1\.tgz\.aes256gcm$",
+        max_length=32,
     )
 
 

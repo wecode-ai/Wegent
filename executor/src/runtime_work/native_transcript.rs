@@ -154,9 +154,9 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         return Err("native Codex rollout moved behind its synchronized offset".to_owned());
     }
     let format = if request.snapshot {
-        "codex-rollout-snapshot.v1.tgz.aes256gcm"
+        "codex-snapshot.v1.tgz.aes256gcm"
     } else {
-        "codex-rollout-delta.v1.tgz.aes256gcm"
+        "codex-delta.v1.tgz.aes256gcm"
     }
     .to_owned();
     let manifest = NativeTranscriptManifest {

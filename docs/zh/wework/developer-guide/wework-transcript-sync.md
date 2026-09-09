@@ -38,8 +38,8 @@ sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-
 每个云端 sequence 恰好对应一个对象：
 
 - 第 1 个 sequence、每第 10 个 sequence 和冲突分支的第 1 个 sequence 是完整加密快照
-  `codex-rollout-snapshot.v1.tgz.aes256gcm`。
-- 其他 sequence 是加密增量 `codex-rollout-delta.v1.tgz.aes256gcm`。
+  `codex-snapshot.v1.tgz.aes256gcm`。
+- 其他 sequence 是加密增量 `codex-delta.v1.tgz.aes256gcm`。
 - 每个 segment 同时携带工作区覆盖层，避免只恢复会话却丢失最近文件。
 - 工作区打包会排除 `.git`、`node_modules`、构建产物和常见缓存目录，避免重复上传
   仓库对象库或无关的大体积派生文件。
@@ -133,14 +133,15 @@ GitHub CI 的执行前提。
 
 对象存储复用 `ATTACHMENT_S3_*` 连接配置：
 
-| 环境变量                                        | 默认值               | 说明                        |
-| ----------------------------------------------- | -------------------- | --------------------------- |
-| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | 私有原生会话 segment bucket |
-| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | 上传/下载签名地址有效期     |
-| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`            | 空                   | 派生每用户密钥的稳定高熵根密钥 |
+| 环境变量                                        | 默认值               | 说明                           |
+| ----------------------------------------------- | -------------------- | ------------------------------ |
+| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | 私有原生会话 segment bucket    |
+| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | 上传/下载签名地址有效期        |
+| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`           | 空                   | 派生每用户密钥的稳定高熵根密钥 |
 
-部署前执行 Alembic migration。对象存储不可用时，segment 不会提交到 MySQL，outbox
-继续保留定位信息，本地任务仍可离线执行。
+本方案直接复用已有的三张 transcript 表，不新增 Alembic migration，也不要求已有部署
+调整数据库结构。对象存储不可用时，segment 不会提交到 MySQL，outbox 继续保留定位
+信息，本地任务仍可离线执行。
 
 未配置独立根密钥时兼容使用 `SECRET_KEY`。生产环境应配置独立值，并在相关 tgz 保留期间
 保持不变。

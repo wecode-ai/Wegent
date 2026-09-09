@@ -41,7 +41,7 @@ test('exports a native segment with a separate structured summary', async () => 
         path: '/tmp/segment.tgz.aes256gcm',
         sha256: 'a'.repeat(64),
         sizeBytes: 100,
-        format: 'codex-rollout-delta.v1.tgz.aes256gcm',
+        format: 'codex-delta.v1.tgz.aes256gcm',
         rolloutEnd: 2048,
       }
     },
@@ -84,7 +84,7 @@ test('routes restore and acknowledgement through native transcript RPCs', async 
       path: '/tmp/1.tgz.aes256gcm',
       sha256: 'b'.repeat(64),
       sequence: 1,
-      format: 'codex-rollout-snapshot.v1.tgz.aes256gcm',
+      format: 'codex-snapshot.v1.tgz.aes256gcm',
     },
   ]
   await target.status(transcript)

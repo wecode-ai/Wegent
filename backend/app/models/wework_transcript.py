@@ -314,11 +314,11 @@ class WeworkTranscriptArchive(Base):
         comment="Compressed archive size in bytes",
     )
     format = Column(
-        String(64),
+        String(32),
         nullable=False,
-        default="codex-rollout-delta.v1.tgz.aes256gcm",
-        server_default="codex-rollout-delta.v1.tgz.aes256gcm",
-        comment="Native segment kind, serialization, and compression format",
+        default="jsonl.zst",
+        server_default="jsonl.zst",
+        comment="Archive serialization and compression format",
     )
     created_at = Column(
         _DATETIME,
@@ -331,8 +331,9 @@ class WeworkTranscriptArchive(Base):
     __table_args__ = (
         UniqueConstraint(
             "transcript_db_id",
+            "from_sequence",
             "to_sequence",
-            name="uniq_wework_transcript_archive_sequence",
+            name="uniq_wework_transcript_archive_range",
         ),
         Index(
             "idx_wework_transcript_archive_range",
