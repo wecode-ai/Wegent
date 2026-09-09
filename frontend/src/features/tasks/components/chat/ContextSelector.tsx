@@ -5,27 +5,17 @@
 'use client'
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { BookOpen, Check, Table2, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
-import { tableApi, TableDocument } from '@/apis/table'
 import type { KnowledgeBase } from '@/types/api'
 import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
-import type { ContextItem, TableContext } from '@/types/context'
+import type { ContextItem } from '@/types/context'
 import { useExternalKnowledgeSources } from '@/features/knowledge/externalKnowledgeSourceRegistry'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -84,7 +74,7 @@ function filterKnowledgeBases(
 
 /**
  * Generic context selector component
- * Currently supports: knowledge_base, table
+ * Currently supports: knowledge_base
  * Future: person, bot, team
  *
  * For group chat mode (taskId + isGroupChat), shows bound knowledge bases
@@ -108,13 +98,9 @@ export default function ContextSelector({
   const [allGroupedKnowledge, setAllGroupedKnowledge] =
     useState<AllGroupedKnowledgeResponse | null>(null)
   const [boundKnowledgeBases, setBoundKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
-  const [tables, setTables] = useState<TableDocument[]>([])
   const [loading, setLoading] = useState(false)
-  const [tableLoading, setTableLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [tableError, setTableError] = useState<string | null>(null)
   const [searchValue, setSearchValue] = useState('')
-  const [activeTab, setActiveTab] = useState('knowledge')
   const knowledgeBaseError = error
   const isMobile = useIsMobile()
 
@@ -149,21 +135,6 @@ export default function ContextSelector({
     }
   }, [taskId, isGroupChat])
 
-  // Fetch table documents
-  const fetchTables = useCallback(async () => {
-    setTableLoading(true)
-    setTableError(null)
-    try {
-      const response = await tableApi.list()
-      setTables(response.items)
-    } catch (error) {
-      console.error('Failed to fetch tables:', error)
-      setTableError(t('knowledge:table.error.loadFailed'))
-    } finally {
-      setTableLoading(false)
-    }
-  }, [t])
-
   // Fetch knowledge bases on mount (not on every open) - like ModelSelector
   useEffect(() => {
     fetchKnowledgeBases()
@@ -173,15 +144,6 @@ export default function ContextSelector({
   useEffect(() => {
     fetchBoundKnowledgeBases()
   }, [fetchBoundKnowledgeBases])
-
-  // Fetch tables on mount
-  useEffect(() => {
-    fetchTables()
-  }, [fetchTables])
-
-  const handleTabChange = useCallback((value: string) => {
-    setActiveTab(value)
-  }, [])
 
   // Group knowledge bases by category (personal, group, organization)
   // and exclude bound ones and current notebook KB from user list
@@ -239,32 +201,8 @@ export default function ContextSelector({
     return groups
   }, [allGroupedKnowledge, boundKnowledgeBases, excludeKnowledgeBaseId])
 
-  // Check if a context item is selected
-  const isSelected = (id: number | string) => {
-    return selectedContexts.some(ctx => ctx.id === id)
-  }
-
   const handleKnowledgeBaseRetry = () => {
     fetchKnowledgeBases()
-  }
-
-  // Handle table selection (multi-select support like knowledge base)
-  const handleTableSelect = (doc: TableDocument) => {
-    // Check if table is already selected
-    const tableContextId = `table-${doc.id}`
-    if (isSelected(tableContextId)) {
-      onDeselect(tableContextId)
-    } else {
-      // Create context and select
-      const context: TableContext = {
-        id: tableContextId,
-        name: doc.name,
-        type: 'table',
-        document_id: doc.id,
-        source_config: doc.source_config,
-      }
-      onSelect(context)
-    }
   }
 
   const externalSources = useExternalKnowledgeSources()
@@ -273,20 +211,15 @@ export default function ContextSelector({
   useEffect(() => {
     if (!open) {
       setSearchValue('')
-      setActiveTab('knowledge')
     }
   }, [open])
 
   const selectedContextCount = selectedContexts.filter(context =>
-    ['knowledge_base', 'table', 'dingtalk_doc', 'external_knowledge'].includes(context.type)
+    ['knowledge_base', 'dingtalk_doc', 'external_knowledge'].includes(context.type)
   ).length
 
   const selectorContent = (
-    <Tabs
-      value={activeTab}
-      onValueChange={handleTabChange}
-      className="flex min-h-0 flex-1 flex-col"
-    >
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-11 shrink-0 items-center justify-between border-b border-border px-4 lg:hidden">
         <h2 className="text-base font-semibold text-text-primary">
           {t('knowledge:picker.selectContent')}
@@ -302,157 +235,34 @@ export default function ContextSelector({
         </button>
       </div>
 
-      <TabsList className="h-11 w-full shrink-0 rounded-none border-b border-border bg-transparent p-0 lg:h-9">
-        <TabsTrigger
-          value="knowledge"
+      <div className="flex h-full min-h-0 flex-1 flex-col">
+        <Input
+          placeholder={t('knowledge:search_placeholder')}
+          value={searchValue}
+          onChange={event => setSearchValue(event.target.value)}
           className={cn(
-            'h-full flex-1 rounded-none border-b-2 border-transparent text-sm font-medium',
-            'data-[state=active]:border-primary data-[state=active]:text-primary',
-            'data-[state=inactive]:text-text-muted hover:text-text-primary'
+            'h-11 shrink-0 rounded-none border-b border-border text-sm lg:h-9',
+            'placeholder:text-text-muted'
           )}
-          data-testid="context-selector-knowledge-tab"
-        >
-          <BookOpen className="mr-1.5 h-3.5 w-3.5" />
-          {t('knowledge:title')}
-        </TabsTrigger>
-        <TabsTrigger
-          value="table"
-          className={cn(
-            'h-full flex-1 rounded-none border-b-2 border-transparent text-sm font-medium',
-            'data-[state=active]:border-blue-500 data-[state=active]:text-blue-600',
-            'data-[state=inactive]:text-text-muted hover:text-text-primary'
-          )}
-          data-testid="context-selector-table-tab"
-        >
-          <Table2 className="mr-1.5 h-3.5 w-3.5" />
-          {t('knowledge:table.title')}
-        </TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="knowledge" className="m-0 min-h-0 flex-1 overflow-hidden">
-        <div className="flex h-full min-h-0 flex-1 flex-col">
-          <Input
-            placeholder={t('knowledge:search_placeholder')}
-            value={searchValue}
-            onChange={event => setSearchValue(event.target.value)}
-            className={cn(
-              'h-11 shrink-0 rounded-none border-b border-border text-sm lg:h-9',
-              'placeholder:text-text-muted'
-            )}
-            data-testid="context-selector-knowledge-search-input"
-          />
-          <KnowledgeSourcePicker
-            groupedKnowledgeBases={groupedKnowledgeBases}
-            boundKnowledgeBases={boundKnowledgeBases}
-            externalSources={externalSources}
-            selectedContexts={selectedContexts}
-            searchValue={searchValue}
-            onSearchValueChange={setSearchValue}
-            loading={loading}
-            error={knowledgeBaseError}
-            onRetry={handleKnowledgeBaseRetry}
-            onSelect={onSelect}
-            onDeselect={onDeselect}
-            onSelectMultiple={onSelectMultiple}
-            onDeselectMultiple={onDeselectMultiple}
-            onReplaceContexts={onReplaceContexts}
-          />
-        </div>
-      </TabsContent>
-
-      <TabsContent value="table" className="m-0 min-h-0 flex-1 overflow-hidden">
-        <Command className="flex min-h-0 flex-1 flex-col border-0">
-          <CommandInput
-            placeholder={t('knowledge:search_placeholder')}
-            value={searchValue}
-            onValueChange={setSearchValue}
-            className={cn(
-              'h-11 shrink-0 rounded-none border-b border-border text-sm lg:h-9',
-              'placeholder:text-text-muted'
-            )}
-          />
-          <CommandList className="min-h-0 max-h-none flex-1 overflow-y-auto lg:max-h-[calc(var(--radix-popover-content-available-height)-72px)]">
-            {tableLoading ? (
-              <div className="px-3 py-4 text-center text-sm text-text-muted">
-                {t('common:actions.loading')}
-              </div>
-            ) : tableError ? (
-              <div className="px-3 py-4 text-center">
-                <p className="mb-2 text-sm text-red-500">{tableError}</p>
-                <button onClick={fetchTables} className="text-xs text-primary hover:underline">
-                  {t('common:actions.retry')}
-                </button>
-              </div>
-            ) : tables.length === 0 ? (
-              <div className="px-4 py-6 text-center">
-                <p className="mb-2 text-sm text-text-muted">{t('knowledge:table.empty')}</p>
-                <p className="text-xs text-text-muted">{t('knowledge:table.emptyHint')}</p>
-              </div>
-            ) : (
-              <>
-                <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                  {t('common:branches.no_match')}
-                </CommandEmpty>
-
-                <CommandGroup>
-                  {tables.map(doc => {
-                    const tableContextId = `table-${doc.id}`
-                    const selected = isSelected(tableContextId)
-
-                    return (
-                      <CommandItem
-                        key={`table-${doc.id}`}
-                        value={`${doc.name} ${doc.id}`}
-                        onSelect={() => handleTableSelect(doc)}
-                        className={cn(
-                          'group mx-1 my-[2px] cursor-pointer select-none rounded-md',
-                          'max-lg:min-h-11 px-3 py-2 text-sm text-text-primary',
-                          'data-[selected=true]:bg-blue-500/10 data-[selected=true]:text-blue-600',
-                          'aria-selected:bg-hover',
-                          '!flex !flex-row !items-start !justify-between !gap-2'
-                        )}
-                      >
-                        <div className="flex min-w-0 flex-1 items-start gap-2">
-                          <Table2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-500" />
-                          <div className="flex min-w-0 flex-1 flex-col">
-                            <span
-                              className="truncate text-sm font-medium text-text-primary"
-                              title={doc.name}
-                            >
-                              {doc.name}
-                            </span>
-                            {doc.source_config?.url && (
-                              <span
-                                className="truncate text-xs text-text-muted"
-                                title={doc.source_config.url}
-                              >
-                                {(() => {
-                                  try {
-                                    const url = new URL(doc.source_config.url)
-                                    return url.hostname
-                                  } catch {
-                                    return doc.source_config.url
-                                  }
-                                })()}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <Check
-                          className={cn(
-                            'mt-0.5 h-3.5 w-3.5 shrink-0',
-                            selected ? 'text-blue-500 opacity-100' : 'opacity-0'
-                          )}
-                        />
-                      </CommandItem>
-                    )
-                  })}
-                </CommandGroup>
-              </>
-            )}
-          </CommandList>
-        </Command>
-      </TabsContent>
+          data-testid="context-selector-knowledge-search-input"
+        />
+        <KnowledgeSourcePicker
+          groupedKnowledgeBases={groupedKnowledgeBases}
+          boundKnowledgeBases={boundKnowledgeBases}
+          externalSources={externalSources}
+          selectedContexts={selectedContexts}
+          searchValue={searchValue}
+          onSearchValueChange={setSearchValue}
+          loading={loading}
+          error={knowledgeBaseError}
+          onRetry={handleKnowledgeBaseRetry}
+          onSelect={onSelect}
+          onDeselect={onDeselect}
+          onSelectMultiple={onSelectMultiple}
+          onDeselectMultiple={onDeselectMultiple}
+          onReplaceContexts={onReplaceContexts}
+        />
+      </div>
 
       <div className="flex min-h-16 shrink-0 items-center justify-between border-t border-border px-4 lg:hidden">
         <span className="text-sm text-text-primary" data-testid="context-selector-selected-count">
@@ -468,7 +278,7 @@ export default function ContextSelector({
           {t('common:actions.done')}
         </Button>
       </div>
-    </Tabs>
+    </div>
   )
 
   if (isMobile) {

@@ -317,6 +317,8 @@ class KnowledgeService:
             "retrievalConfig": _to_json_dict(data.retrieval_config),
             "summaryEnabled": data.summary_enabled,
         }
+        if data.allow_document_download is not None:
+            spec_kwargs["allowDocumentDownload"] = data.allow_document_download
         # A code wiki records the repository it is generated from, and the language
         # its pages are written in. Both are omitted entirely when absent rather than
         # stored empty: absent means "fall back to the deployment default", which is
@@ -354,6 +356,8 @@ class KnowledgeService:
 
         # Build resource data
         resource_data = kb_crd.model_dump()
+        if data.allow_document_download is None:
+            resource_data["spec"].pop("allowDocumentDownload", None)
         if "status" not in resource_data or resource_data["status"] is None:
             resource_data["status"] = {"state": "Available"}
 
@@ -881,6 +885,9 @@ class KnowledgeService:
 
         if data.direct_access_requirement is not None:
             spec["directAccessRequirement"] = data.direct_access_requirement
+
+        if "allow_document_download" in data.model_fields_set:
+            spec["allowDocumentDownload"] = data.allow_document_download
 
         # Update retrieval config if provided (only allowed fields)
         if data.retrieval_config is not None:
@@ -3564,102 +3571,6 @@ class KnowledgeService:
             failed_ids=failed_ids,
             message=f"Successfully disabled {success_count} documents, {len(failed_ids)} failed",
         )
-
-    # ============== Table Operations ==============
-
-    @staticmethod
-    def list_table_documents(
-        db: Session,
-        user_id: int,
-    ) -> list[KnowledgeDocument]:
-        """
-        List all table documents accessible to the user.
-
-        This method returns all documents with source_type='table'
-        from knowledge bases that the user has access to.
-        Supports multiple providers: DingTalk, Feishu, etc.
-
-        Args:
-            db: Database session
-            user_id: Requesting user ID
-
-        Returns:
-            List of table documents
-        """
-        from app.models.knowledge import DocumentSourceType
-
-        # Get all accessible knowledge base IDs
-        accessible_kb_ids = []
-
-        # Get personal knowledge bases
-        personal_kbs = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "KnowledgeBase",
-                Kind.user_id == user_id,
-                Kind.namespace == "default",
-                Kind.is_active == True,
-            )
-            .all()
-        )
-        accessible_kb_ids.extend([kb.id for kb in personal_kbs])
-
-        # Get team knowledge bases from accessible groups
-        accessible_groups = get_user_groups(db, user_id)
-        if accessible_groups:
-            team_kbs = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "KnowledgeBase",
-                    Kind.namespace.in_(accessible_groups),
-                    Kind.is_active == True,
-                )
-                .all()
-            )
-            accessible_kb_ids.extend([kb.id for kb in team_kbs])
-
-        if not accessible_kb_ids:
-            return []
-
-        # Query table documents from accessible knowledge bases
-        return (
-            db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.kind_id.in_(accessible_kb_ids),
-                KnowledgeDocument.source_type == DocumentSourceType.TABLE.value,
-            )
-            .order_by(KnowledgeDocument.created_at.desc())
-            .all()
-        )
-
-    @staticmethod
-    def get_table_document_by_id(
-        db: Session,
-        document_id: int,
-        user_id: int,
-    ) -> Optional[KnowledgeDocument]:
-        """
-        Get a table document by ID with permission check.
-
-        Args:
-            db: Database session
-            document_id: Document ID
-            user_id: Requesting user ID
-
-        Returns:
-            KnowledgeDocument if found, accessible, and is table type, None otherwise
-        """
-        from app.models.knowledge import DocumentSourceType
-
-        doc = KnowledgeService.get_document(db, document_id, user_id)
-        if not doc:
-            return None
-
-        # Verify it's a table document
-        if doc.source_type != DocumentSourceType.TABLE.value:
-            return None
-
-        return doc
 
     # ============== Knowledge Base Migration and Transfer Delegates ==============
 

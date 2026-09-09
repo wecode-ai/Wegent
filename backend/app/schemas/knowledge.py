@@ -60,7 +60,6 @@ class DocumentSourceType(str, Enum):
 
     FILE = "file"
     TEXT = "text"
-    TABLE = "table"
     WEB = "web"
     ATTACHMENT = "attachment"
     # Source file indexed for retrieval rather than a browsable document. Declared so
@@ -304,6 +303,10 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         default="read",
         description="Minimum capability required for direct knowledge base access",
     )
+    allow_document_download: Optional[bool] = Field(
+        default=None,
+        description="Whether readers may download original knowledge documents",
+    )
     kb_type: KnowledgeBaseType = Field(
         KnowledgeBaseType.NOTEBOOK,
         description=(
@@ -424,6 +427,10 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     direct_access_requirement: Optional[Literal["read", "edit"]] = Field(
         default=None,
         description="Minimum capability required for direct knowledge base access",
+    )
+    allow_document_download: Optional[bool] = Field(
+        default=None,
+        description="Whether readers may download original knowledge documents",
     )
     retrieval_config: Optional[RetrievalConfigUpdate] = Field(
         None,
@@ -889,6 +896,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     user_id: int
     namespace: str
     direct_access_requirement: Literal["read", "edit"] = "read"
+    allow_document_download: Optional[bool] = None
     source: Optional[Dict[str, Any]] = Field(
         None,
         description=(
@@ -1018,6 +1026,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             user_id=kind.user_id,
             namespace=kind.namespace,
             direct_access_requirement=spec.get("directAccessRequirement", "read"),
+            allow_document_download=spec.get("allowDocumentDownload"),
             kb_type=kb_type,
             source=source,
             language=language,
@@ -1045,6 +1054,13 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
 
     class Config:
         from_attributes = True
+
+
+class DocumentProtectionResponse(BaseModel):
+    """Effective document-export capability for a knowledge-base reader."""
+
+    original_download_allowed: bool
+    watermark_text: Optional[str] = None
 
 
 class KnowledgeBaseListResponse(BaseModel):
@@ -1083,7 +1099,7 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     _no_internal_source = field_validator("source_type")(reject_internal_source_type)
     source_config: dict = Field(
         default_factory=dict,
-        description="Source configuration (e.g., {'url': '...'} for table)",
+        description="Source configuration (e.g., {'url': '...'} for web)",
     )
 
 
@@ -1558,32 +1574,6 @@ class PersonalKnowledgeBaseGroup(BaseModel):
 
     created_by_me: list[KnowledgeBaseResponse]
     shared_with_me: list[KnowledgeBaseResponse]
-
-
-# ============== Table URL Validation Schemas ==============
-
-
-class TableUrlValidationRequest(BaseModel):
-    """Schema for table URL validation request."""
-
-    url: str = Field(..., min_length=1, description="The table URL to validate")
-
-
-class TableUrlValidationResponse(BaseModel):
-    """Schema for table URL validation response."""
-
-    valid: bool = Field(..., description="Whether the URL is valid")
-    provider: Optional[str] = Field(
-        None, description="Detected table provider (e.g., 'dingtalk')"
-    )
-    base_id: Optional[str] = Field(None, description="Extracted base ID from URL")
-    sheet_id: Optional[str] = Field(None, description="Extracted sheet ID from URL")
-    error_code: Optional[str] = Field(
-        None, description="Error code if validation failed"
-    )
-    error_message: Optional[str] = Field(
-        None, description="Error message if validation failed"
-    )
 
 
 # ============== Document Detail Schemas ==============

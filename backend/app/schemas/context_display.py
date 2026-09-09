@@ -35,13 +35,6 @@ def build_context_display_fields(
             "scope_restricted": data.get("scope_restricted"),
         }
 
-    if context_type == "table":
-        table_url = data.get("url")
-        return {
-            "document_id": data.get("document_id"),
-            "source_config": {"url": table_url} if table_url else None,
-        }
-
     if context_type == "selected_documents":
         document_ids = data.get("document_ids") or []
         return {

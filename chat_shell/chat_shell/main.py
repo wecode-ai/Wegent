@@ -82,11 +82,6 @@ async def lifespan(app: FastAPI):
     logger.info(f"Mode: {settings.CHAT_SHELL_MODE}")
     logger.info(f"Storage: {settings.STORAGE_TYPE}")
 
-    # Set DATA_TABLE_CONFIG to environment variable for os.getenv() access
-    if settings.DATA_TABLE_CONFIG:
-        os.environ["DATA_TABLE_CONFIG"] = settings.DATA_TABLE_CONFIG
-        logger.info("DATA_TABLE_CONFIG loaded from settings and set to environment")
-
     # Initialize storage provider
     storage_type = StorageType(settings.STORAGE_TYPE)
     storage_kwargs = {}

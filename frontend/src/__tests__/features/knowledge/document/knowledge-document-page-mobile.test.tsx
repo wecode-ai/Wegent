@@ -128,7 +128,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeTree', () => ({
     onCreateKb,
   }: {
     onSelectKb: (kb: Pick<KnowledgeBase, 'id' | 'name' | 'namespace'>) => void
-    onCreateKb: (scope: 'personal', kbType: 'code_wiki') => void
+    onCreateKb: (scope: 'personal', kbType: 'notebook' | 'code_wiki') => void
   }) => (
     <div data-testid="mock-knowledge-tree">
       <button
@@ -145,6 +145,13 @@ jest.mock('@/features/knowledge/document/components/KnowledgeTree', () => ({
       >
         Create Code Wiki
       </button>
+      <button
+        type="button"
+        data-testid="create-normal-kb"
+        onClick={() => onCreateKb('personal', 'notebook')}
+      >
+        Create KB
+      </button>
     </div>
   ),
 }))
@@ -158,25 +165,41 @@ jest.mock('@/features/knowledge/document/components/CreateKnowledgeBaseDialog', 
     onSubmit: (data: Record<string, unknown>) => Promise<void>
   }) =>
     open ? (
-      <button
-        type="button"
-        data-testid="submit-code-wiki"
-        onClick={() =>
-          void onSubmit({
-            name: '',
-            description: undefined,
-            kb_type: 'code_wiki',
-            source_type: 'github',
-            source_url: 'https://github.com/wecode-ai/Wegent.git',
-            language: 'zh',
-            resolved_name: 'Wegent',
-            resolved_description: 'Agent platform',
-            execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
-          })
-        }
-      >
-        Submit Code Wiki
-      </button>
+      <div>
+        <button
+          type="button"
+          data-testid="submit-code-wiki"
+          onClick={() =>
+            void onSubmit({
+              name: '',
+              description: undefined,
+              kb_type: 'code_wiki',
+              source_type: 'github',
+              source_url: 'https://github.com/wecode-ai/Wegent.git',
+              language: 'zh',
+              resolved_name: 'Wegent',
+              resolved_description: 'Agent platform',
+              execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
+            })
+          }
+        >
+          Submit Code Wiki
+        </button>
+        <button
+          type="button"
+          data-testid="submit-normal-kb"
+          onClick={() =>
+            void onSubmit({
+              name: 'Docs',
+              description: undefined,
+              allow_document_download: false,
+              kb_type: 'notebook',
+            })
+          }
+        >
+          Submit KB
+        </button>
+      </div>
     ) : null,
 }))
 
@@ -210,19 +233,22 @@ jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: { create: jest.fn() },
 }))
 
-import { getKnowledgeBase } from '@/apis/knowledge'
+import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
 
 jest.mock('@/apis/knowledge', () => {
   const actual = jest.requireActual('@/apis/knowledge')
   const getKnowledgeBase = jest.fn()
+  const createKnowledgeBase = jest.fn()
   return {
     __esModule: true,
     ...actual,
     getKnowledgeBase,
+    createKnowledgeBase,
   }
 })
 
 const mockGetKnowledgeBase = jest.mocked(getKnowledgeBase)
+const mockCreateKnowledgeBase = jest.mocked(createKnowledgeBase)
 const mockCreateCodeWiki = jest.mocked(codeWikiApi.create)
 
 jest.mock('@/apis/user', () => ({
@@ -279,6 +305,8 @@ function resetMockTree() {
   mockTree.refreshGroup = jest.fn()
   mockGetKnowledgeBase.mockReset()
   mockGetKnowledgeBase.mockResolvedValue(baseKb)
+  mockCreateKnowledgeBase.mockReset()
+  mockCreateKnowledgeBase.mockResolvedValue(baseKb)
   mockCreateCodeWiki.mockReset()
   mockCreateCodeWiki.mockResolvedValue({
     id: 8,
@@ -428,5 +456,23 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
     await userEvent.click(await screen.findByTestId('open-code-wiki-config'))
 
     expect(screen.getByTestId('mock-edit-knowledge-base-dialog')).toBeInTheDocument()
+  })
+
+  it('9) normal KB creation forwards the dialog download setting', async () => {
+    render(<KnowledgeDocumentPageMobile />)
+
+    await userEvent.click(screen.getByTestId('create-normal-kb'))
+    await userEvent.click(screen.getByTestId('submit-normal-kb'))
+
+    await waitFor(() => {
+      expect(mockCreateKnowledgeBase).toHaveBeenCalledTimes(1)
+    })
+    expect(mockCreateKnowledgeBase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        namespace: 'default',
+        kb_type: 'notebook',
+        allow_document_download: false,
+      })
+    )
   })
 })
