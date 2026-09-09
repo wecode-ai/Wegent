@@ -106,9 +106,8 @@ class KnowledgeBaseToolsResult:
 class ChatContextsResult:
     """Result container for prepare_contexts_for_chat — backend-only.
 
-    Groups the three orthogonal dimensions of context processing:
+    Groups the two orthogonal dimensions of context processing:
     - final_message: user message after attachment injection
-    - has_table_context / table_contexts: parsed table info for chat_shell
     - kb: all knowledge-base related results (tools, prompts, IDs)
 
     ``kb`` nests ``KnowledgeBaseToolsResult`` to avoid duplicating its six
@@ -118,9 +117,5 @@ class ChatContextsResult:
 
     # Processed user message (may be str or OpenAI Responses API vision list).
     final_message: Union[str, list[dict[str, Any]]]
-    # Whether any table contexts were found for this subtask.
-    has_table_context: bool
-    # Parsed table descriptors forwarded to chat_shell for DataTableTool creation.
-    table_contexts: list[dict[str, Any]]
     # All knowledge-base related results (tools, prompts, resolved IDs).
     kb: KnowledgeBaseToolsResult
