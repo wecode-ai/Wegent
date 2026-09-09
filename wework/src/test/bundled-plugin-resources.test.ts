@@ -236,6 +236,9 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
       'utf8'
     )
+    const signingKeychainStep = workflow.match(
+      / {6}- name: Prepare Apple signing keychain\n(?:(?!\n {6}- name:)[\s\S])*/
+    )?.[0]
     const packageManifest = JSON.parse(
       readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')
     ) as {
@@ -263,10 +266,15 @@ describe('bundled plugin resources', () => {
     expect(builderConfig).toContain('productName: identity.productName')
     expect(builderConfig).toContain('executableName: identity.executableName')
     expect(builderConfig).toContain('weworkAppId: identity.identifier')
-    expect(workflow).toMatch(
-      /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?CSC_KEYCHAIN=[\s\S]*?MACOS_KEYCHAIN_PATH=/
+    expect(signingKeychainStep).toContain('security import')
+    expect(signingKeychainStep).toContain('security list-keychains -d user -s')
+    expect(signingKeychainStep).toContain(
+      'echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"'
     )
-    expect(workflow).toContain('security list-keychains -d user -s')
+    expect(signingKeychainStep).toContain('echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"')
+    expect(signingKeychainStep).toContain(
+      'echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"'
+    )
     expect(workflow).not.toMatch(/^\s+CSC_LINK:/m)
     expect(workflow).not.toMatch(/^\s+CSC_KEY_PASSWORD:/m)
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
