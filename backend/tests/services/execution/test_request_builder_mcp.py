@@ -444,7 +444,8 @@ class TestBuildMcpServers:
         business = servers["business-server"]
         assert "inject_wegent_token" not in business
         token = business["auth"]["X-Wegent-Token"]
-        assert business["headers"]["X-Wegent-Token"] == token
+        # Only the canonical auth map carries the identity header.
+        assert "headers" not in business
         token_info = verify_mcp_identity_token(token)
         assert token_info is not None
         assert token_info.user_id == 7
@@ -455,10 +456,8 @@ class TestBuildMcpServers:
         assert existing_auth["auth"]["Authorization"] == "Bearer static-token"
         assert existing_auth["auth"]["X-Wegent-Token"]
         # The identity header is injected without touching the static
-        # Authorization; "headers" only carries the injected identity header.
-        assert existing_auth["headers"] == {
-            "X-Wegent-Token": existing_auth["auth"]["X-Wegent-Token"]
-        }
+        # Authorization; no separate headers map is created.
+        assert "headers" not in existing_auth
         assert "inject_wegent_token" not in existing_auth
 
         plain = servers["plain-server"]
@@ -468,10 +467,7 @@ class TestBuildMcpServers:
 
         http_server = servers["http-server"]
         assert http_server["auth"]["X-Wegent-Token"]
-        assert (
-            http_server["headers"]["X-Wegent-Token"]
-            == http_server["auth"]["X-Wegent-Token"]
-        )
+        assert "headers" not in http_server
         assert "inject_wegent_token" not in http_server
 
         stdio = servers["stdio-server"]
@@ -508,8 +504,9 @@ class TestBuildMcpServers:
 
         server = result[0]
         assert server["auth"]["X-Wegent-Token"] != "static-wegent-token"
-        assert server["headers"]["X-Wegent-Token"] == server["auth"]["X-Wegent-Token"]
-        # One warning per header map that already had an X-Wegent-Token entry
+        assert "headers" not in server
+        # The statically configured X-Wegent-Token in the auth map is
+        # overridden with a warning.
         assert any(
             "overrides" in str(call.args[0]) and "X-Wegent-Token" in str(call.args[0])
             for call in mock_log.call_args_list

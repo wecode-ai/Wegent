@@ -2297,12 +2297,13 @@ Response template:
 
         A Ghost ``mcpServers`` entry can opt in with
         ``inject_wegent_token: true``. When enabled, the business MCP server
-        receives a freshly signed Wegent identity token in the ``auth`` and
-        ``headers`` maps under the ``X-Wegent-Token`` header when building the
-        task request, so it can resolve the current user through
-        ``GET /api/external/mcp-identity/userinfo``. A dedicated header is used
-        so the business server's own ``Authorization`` configuration is
-        preserved.
+        receives a freshly signed Wegent identity token under the
+        ``X-Wegent-Token`` header when building the task request, so it can
+        resolve the current user through
+        ``GET /api/external/mcp-identity/userinfo``. The token is stored in the
+        server's ``auth`` map, the canonical header map of the execution
+        request contract; a dedicated header is used so the business server's
+        own ``Authorization`` configuration is preserved.
         The option is consumed here and never forwarded to the executor.
 
         Args:
@@ -2333,9 +2334,6 @@ Response template:
             )
             TaskRequestBuilder._set_identity_token_header(
                 server, "auth", token, server_name
-            )
-            TaskRequestBuilder._set_identity_token_header(
-                server, "headers", token, server_name
             )
             logger.info(
                 "[TaskRequestBuilder] Injected Wegent identity token into MCP "
