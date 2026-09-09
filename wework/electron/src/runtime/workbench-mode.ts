@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, stat } from 'node:fs/promises'
 import { delimiter, join, normalize } from 'node:path'
 
 import type { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
@@ -140,7 +140,7 @@ export async function probeDevelopmentCommand(
       }
       try {
         await access(candidate, platform === 'win32' ? constants.F_OK : constants.X_OK)
-        return true
+        if ((await stat(candidate)).isFile()) return true
       } catch {
         // Continue searching the remaining PATH entries.
       }

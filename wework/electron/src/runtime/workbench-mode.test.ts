@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -116,6 +116,19 @@ describe('workbench mode runtime policy', () => {
       ).resolves.toBe('focus')
 
       expect(preferences.update).toHaveBeenCalledWith({ workbenchMode: 'focus' })
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  test('ignores directories named like development commands', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-mode-'))
+    try {
+      await mkdir(join(root, 'git.exe'))
+
+      await expect(
+        probeDevelopmentCommand('git', { PATH: root, PATHEXT: '.EXE' }, 'win32')
+      ).resolves.toBe(false)
     } finally {
       await rm(root, { force: true, recursive: true })
     }
