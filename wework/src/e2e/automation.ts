@@ -2271,6 +2271,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       throw new Error(lastFailure)
     }
+    case 'clickElementWithText': {
+      const text = command.text ?? ''
+      if (!text) throw new Error('clickElementWithText requires text')
+      const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+      const startedAt = Date.now()
+      while (Date.now() - startedAt < timeoutMs) {
+        const element = findDesktopControlElements(command.selector).find(
+          candidate =>
+            (!command.visible || desktopControlElementVisible(candidate)) &&
+            desktopControlElementEnabled(candidate) &&
+            (candidate.textContent ?? '').includes(text)
+        )
+        if (element) {
+          element.scrollIntoView({ block: 'center', inline: 'nearest' })
+          element.click()
+          return element.textContent?.trim() ?? ''
+        }
+        await waitForDesktopControlTick()
+      }
+      throw new Error(`Unable to click selector "${command.selector}" containing "${text}"`)
+    }
     case 'markElementWithText': {
       const text = command.text ?? ''
       const value = command.value?.trim()
