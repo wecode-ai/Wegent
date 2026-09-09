@@ -29,6 +29,8 @@ interface HoverCardProps {
   cardClassName?: string
   estimatedWidth?: number
   estimatedHeight?: number
+  placement?: 'anchor' | 'viewport-right'
+  viewportTop?: number
 }
 
 type HoverCardPosition = CSSProperties & {
@@ -70,6 +72,20 @@ function hoverCardPosition(
   }
 }
 
+function viewportRightHoverCardPosition(
+  estimatedWidth: number,
+  viewportTop: number
+): HoverCardPosition {
+  return {
+    left: Math.max(VIEWPORT_PADDING, window.innerWidth - estimatedWidth - VIEWPORT_PADDING),
+    top: clamp(
+      viewportTop,
+      VIEWPORT_PADDING,
+      Math.max(VIEWPORT_PADDING, window.innerHeight - VIEWPORT_PADDING)
+    ),
+  }
+}
+
 export function HoverCard({
   children,
   content,
@@ -82,6 +98,8 @@ export function HoverCard({
   cardClassName,
   estimatedWidth = 310,
   estimatedHeight = 220,
+  placement = 'anchor',
+  viewportTop = VIEWPORT_PADDING,
 }: HoverCardProps) {
   const anchorRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -220,14 +238,13 @@ export function HoverCard({
     const cardRect = cardRef.current?.getBoundingClientRect()
     if (!anchorRect || !cardRect) return
 
+    const measuredWidth = cardRect.width || estimatedWidth
     setPosition(
-      hoverCardPosition(
-        anchorRect,
-        cardRect.width || estimatedWidth,
-        cardRect.height || estimatedHeight
-      )
+      placement === 'viewport-right'
+        ? viewportRightHoverCardPosition(measuredWidth, viewportTop)
+        : hoverCardPosition(anchorRect, measuredWidth, cardRect.height || estimatedHeight)
     )
-  }, [estimatedHeight, estimatedWidth, open])
+  }, [estimatedHeight, estimatedWidth, open, placement, viewportTop])
 
   useEffect(() => {
     if (!position) return

@@ -27,6 +27,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral,
     collapseComposerWhenIdle,
     runtimeContext,
+    initialScrollPosition,
   }: {
     initialAddress: {
       deviceId: string
@@ -37,6 +38,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral: boolean
     collapseComposerWhenIdle: boolean
     runtimeContext?: { cloudProjectId?: string }
+    initialScrollPosition?: 'restore' | 'latest'
   }) => (
     <section
       data-testid={testId}
@@ -46,6 +48,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-collapse-composer={String(collapseComposerWhenIdle)}
       data-cloud-project-id={runtimeContext?.cloudProjectId}
       data-model-name={initialAddress.runtimeHandle?.modelSelection?.modelName}
+      data-initial-scroll-position={initialScrollPosition}
     >
       Shared task conversation
     </section>
@@ -497,6 +500,52 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-send-ephemeral', 'false')
     expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
     expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
+    expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
+  })
+
+  it('shows the current conversation goal and opens the side panel from the hover preview', async () => {
+    const onClick = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: true,
+            runtimeGoalLoaded: true,
+            runtimeGoal: {
+              threadId: 'thread-85',
+              objective: '让用户在看板悬浮态快速理解当前会话正在完成什么',
+              status: 'active',
+              tokenBudget: null,
+              tokensUsed: 1200,
+              timeUsedSeconds: 90,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          },
+        ]}
+        onClick={onClick}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+
+    expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-85-85')).toHaveTextContent(
+      '让用户在看板悬浮态快速理解当前会话正在完成什么'
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-open-WEG-85'))
+    expect(onClick).toHaveBeenCalledOnce()
   })
 
   it('forwards the bound task model to the shared hover conversation', async () => {

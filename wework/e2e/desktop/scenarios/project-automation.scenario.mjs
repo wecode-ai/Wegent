@@ -1219,6 +1219,46 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    const [moonshotPopupMetrics] = JSON.parse(
+      await control.command('getElementMetrics', moonshotProgressPopup)
+    )
+    const [bodyMetrics] = JSON.parse(await control.command('getElementMetrics', 'body'))
+    assert.ok(
+      Math.abs(moonshotPopupMetrics.top - 48) <= 1,
+      `The board popup did not keep its stable viewport top: ${JSON.stringify(moonshotPopupMetrics)}`
+    )
+    assert.ok(
+      Math.abs(bodyMetrics.right - moonshotPopupMetrics.right - 8) <= 1,
+      `The board popup did not stay at the viewport right edge: ${JSON.stringify({
+        bodyMetrics,
+        moonshotPopupMetrics,
+      })}`
+    )
+    const [popupScrollMetrics] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        `${moonshotPopupConversation} [data-testid="right-workspace-chat-scroll-area"]`
+      )
+    )
+    const popupDistanceFromBottom =
+      popupScrollMetrics.scrollOrigin === 'bottom'
+        ? Math.max(
+            0,
+            popupScrollMetrics.scrollHeight -
+              popupScrollMetrics.clientHeight +
+              popupScrollMetrics.scrollTop
+          )
+        : Math.max(
+            0,
+            popupScrollMetrics.scrollHeight -
+              popupScrollMetrics.clientHeight -
+              popupScrollMetrics.scrollTop
+          )
+    assert.ok(
+      popupDistanceFromBottom <= 2,
+      `The board popup did not start from the latest message: ${JSON.stringify(popupScrollMetrics)}`
+    )
+    await captureScreenshot(control, 'project-automation-board-hover-stable-latest.png')
     const followUpRequestOffset = upstreamResponseRequests.length
     await control.command('click', moonshotPopupInput, { visible: true })
     await waitForValue(
@@ -1259,6 +1299,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The board popup follow-up used the global default instead of the task model'
     )
     await control.command('press', 'body', { key: 'Escape' })
+    await control.command('hover', moonshotOverrideCard, { visible: true })
+    await control.command('waitFor', moonshotProgressPopup, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command(
+      'click',
+      `[data-testid="cloud-todo-card-progress-open-${moonshotOverrideIssue.id}"]`,
+      { visible: true }
+    )
+    await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-board-hover-open-half-screen.png')
+    await control.command('click', '[data-testid="ai-chat-modal-close"]', { visible: true })
 
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       timeoutMs: uiTimeoutMs,

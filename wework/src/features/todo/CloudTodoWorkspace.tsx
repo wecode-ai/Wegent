@@ -126,6 +126,7 @@ import type {
   ModelSelectionConfig,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
+  RuntimeGoal,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeTaskSummary,
@@ -1557,8 +1558,12 @@ export function CloudTodoWorkspace({
       }
     >
   >({})
+  const [runtimeGoalsByAddress, setRuntimeGoalsByAddress] = useState<
+    Record<string, RuntimeGoal | null>
+  >({})
   const runtimeConversationRequestsRef = useRef(new Set<string>())
   const runtimeConversationLatestSignatureRef = useRef(new Map<string, string>())
+  const runtimeGoalRequestsRef = useRef(new Set<string>())
   useEffect(() => {
     if (projectMenuId === null) return
 
@@ -1785,6 +1790,10 @@ export function CloudTodoWorkspace({
             })
             const runtimeTask = runtimeTaskByAddress.get(addressKey)
             const preview = runtimeConversationPreviews[addressKey]
+            const runtimeGoalLoaded = Object.prototype.hasOwnProperty.call(
+              runtimeGoalsByAddress,
+              addressKey
+            )
 
             return {
               id: binding.id,
@@ -1798,6 +1807,8 @@ export function CloudTodoWorkspace({
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
                 : null,
               finalResponsePreview: preview?.text ?? null,
+              runtimeGoal: runtimeGoalsByAddress[addressKey] ?? null,
+              runtimeGoalLoaded,
             }
           }),
         ])
@@ -1805,9 +1816,44 @@ export function CloudTodoWorkspace({
     [
       itemTaskBindings,
       runtimeConversationPreviews,
+      runtimeGoalsByAddress,
       runtimeTaskByAddress,
       runtimeTaskRunningByAddress,
     ]
+  )
+  const loadBoardTaskRuntimeGoal = useCallback(
+    async (address: RuntimeTaskAddress): Promise<void> => {
+      const runtimeWorkApi = services.runtimeWorkApi
+      if (!runtimeWorkApi) return
+      const addressKey = runtimeConversationKey(address)
+      if (
+        Object.prototype.hasOwnProperty.call(runtimeGoalsByAddress, addressKey) ||
+        runtimeGoalRequestsRef.current.has(addressKey)
+      ) {
+        return
+      }
+
+      runtimeGoalRequestsRef.current.add(addressKey)
+      try {
+        const response = await runtimeWorkApi.getRuntimeGoal({ address })
+        setRuntimeGoalsByAddress(current => ({
+          ...current,
+          [addressKey]: response.accepted ? response.goal : null,
+        }))
+      } catch (error) {
+        console.warn('[Wework project board] failed to load task goal', {
+          address,
+          error,
+        })
+        setRuntimeGoalsByAddress(current => ({
+          ...current,
+          [addressKey]: null,
+        }))
+      } finally {
+        runtimeGoalRequestsRef.current.delete(addressKey)
+      }
+    },
+    [runtimeGoalsByAddress, services.runtimeWorkApi]
   )
   const localProjectIdForItem = useCallback(
     (item: CloudLoopItem): number | null => {
@@ -5236,6 +5282,7 @@ export function CloudTodoWorkspace({
                                           work_item_id: item.id,
                                         })
                                       }}
+                                      onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}

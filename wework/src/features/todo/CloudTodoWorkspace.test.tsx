@@ -112,6 +112,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     testId,
     initialAddress,
     collapseComposerWhenIdle,
+    initialScrollPosition,
   }: {
     testId: string
     initialAddress?: {
@@ -120,6 +121,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       runtimeHandle?: { modelSelection?: { modelName?: string } }
     } | null
     collapseComposerWhenIdle?: boolean
+    initialScrollPosition?: 'restore' | 'latest'
   }) => (
     <div
       data-testid={testId}
@@ -127,6 +129,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-task-id={initialAddress?.taskId}
       data-model-name={initialAddress?.runtimeHandle?.modelSelection?.modelName}
       data-collapse-composer={String(collapseComposerWhenIdle)}
+      data-initial-scroll-position={initialScrollPosition}
     >
       <div
         data-testid={testId.replace('popup-conversation', 'popup-scroll')}
@@ -1042,6 +1045,23 @@ describe('CloudTodoWorkspace', () => {
 
   it('shows live process text and the unwrapped command on a running task card', async () => {
     const workbenchServices = services()
+    const getRuntimeGoal = vi.fn(async () => ({
+      accepted: true,
+      taskId: 'runtime-2',
+      goal: {
+        threadId: 'thread-runtime-2',
+        objective: '验证看板悬浮预览始终展示当前会话目标和最新进展',
+        status: 'active' as const,
+        tokenBudget: null,
+        tokensUsed: 800,
+        timeUsedSeconds: 60,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    }))
+    workbenchServices.runtimeWorkApi = {
+      getRuntimeGoal,
+    } as WorkbenchServices['runtimeWorkApi']
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
       {
         id: 2,
@@ -1060,6 +1080,21 @@ describe('CloudTodoWorkspace', () => {
       },
     ])
     const address = { deviceId: 'local-device', taskId: 'runtime-2' }
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-previous',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-previous',
+      itemId: 'assistant-previous',
+      content: '上一轮已经完成的回复，不应覆盖当前进展',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-previous',
+    })
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',
       taskId: address.taskId,
@@ -1108,6 +1143,9 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(await screen.findByTestId('cloud-todo-card-activity-WEG-1')).toBeInTheDocument()
     expect(screen.queryByText('Investigating board data flow')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent(
+      '上一轮已经完成的回复'
+    )
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass('text-xs')
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).not.toHaveClass(
       'h-[60px]',
@@ -1250,9 +1288,19 @@ describe('CloudTodoWorkspace', () => {
       'true'
     )
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-initial-scroll-position',
+      'latest'
+    )
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-model-name',
       'gpt-5.6-codex'
     )
+    expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-1-2')).toHaveTextContent(
+      '验证看板悬浮预览始终展示当前会话目标和最新进展'
+    )
+    expect(getRuntimeGoal).toHaveBeenCalledWith({
+      address: expect.objectContaining(address),
+    })
     expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
       'max-h-[min(68vh,42rem)]',
       'overflow-y-auto'
@@ -1266,7 +1314,7 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-open-WEG-1'))
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(await screen.findByTestId('ai-chat-modal')).toHaveAttribute(
