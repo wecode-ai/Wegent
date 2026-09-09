@@ -136,9 +136,9 @@ class Settings(BaseSettings):
     # Database connection pool configuration. Each Backend or Celery process owns
     # its own pool, so deployment capacity must account for every process.
     DB_POOL_SIZE: int = Field(default=20, ge=1)
-    DB_MAX_OVERFLOW: int = Field(default=20, ge=0)
-    DB_ASYNC_POOL_SIZE: int = Field(default=5, ge=1)
-    DB_ASYNC_MAX_OVERFLOW: int = Field(default=5, ge=0)
+    DB_MAX_OVERFLOW: int = Field(default=40, ge=0)
+    DB_ASYNC_POOL_SIZE: int = Field(default=10, ge=1)
+    DB_ASYNC_MAX_OVERFLOW: int = Field(default=20, ge=0)
     DB_POOL_TIMEOUT: int = Field(default=30, ge=1)
     DB_POOL_RECYCLE: int = Field(default=3600, ge=1)
 

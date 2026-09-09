@@ -64,9 +64,9 @@ class TestSettings:
         assert s.ALGORITHM == "HS256"
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 10080  # 7 days
         assert s.DB_POOL_SIZE == 20
-        assert s.DB_MAX_OVERFLOW == 20
-        assert s.DB_ASYNC_POOL_SIZE == 5
-        assert s.DB_ASYNC_MAX_OVERFLOW == 5
+        assert s.DB_MAX_OVERFLOW == 40
+        assert s.DB_ASYNC_POOL_SIZE == 10
+        assert s.DB_ASYNC_MAX_OVERFLOW == 20
         assert s.DB_POOL_TIMEOUT == 30
         assert s.DB_POOL_RECYCLE == 3600
 
