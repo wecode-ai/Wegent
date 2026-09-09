@@ -8,6 +8,12 @@ Wework 桌面应用使用 Electron。正式构建和发布由
 `.github/workflows/wework-app.yml` 负责；该工作流同时生成 macOS、Windows 和
 Linux 的 Electron 安装包。
 
+macOS x64 发布使用 `macos-15-intel` runner，arm64 发布使用 `macos-14`。
+安装依赖前，工作流校验 Node.js 架构与目标架构一致；Harness Runtime 的原生
+依赖按运行中的 Node.js 架构准备，仅指定 Electron Builder 的目标架构不足以
+交叉构建完整运行环境。架构不匹配时应修正 runner 并重新构建，不能复用错误架构
+的产物或仅重跑发布步骤。
+
 ## 版本与产物
 
 发布版本同时写入 `wework/package.json` 和 `wework/electron/package.json`。正式

@@ -188,7 +188,7 @@ jobs:
             cargo_target: aarch64-apple-darwin
             codex_target: aarch64-apple-darwin
           - name: macOS x64
-            runner: macos-14
+            runner: macos-15-intel
             platform: macos
             arch: x64
             cargo_target: x86_64-apple-darwin
@@ -233,6 +233,17 @@ jobs:
           cache-dependency-path: |
             pnpm-lock.yaml
             wework/electron/pnpm-lock.yaml
+
+      - name: Verify native build architecture
+        env:
+          WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          node -e '
+            const expected = process.env.WEWORK_RELEASE_ARCH
+            if (process.arch !== expected) {
+              throw new Error("Release target " + expected + " requires native Node.js; runner uses " + process.arch)
+            }
+          '
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
