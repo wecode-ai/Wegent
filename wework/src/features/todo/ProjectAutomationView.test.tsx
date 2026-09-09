@@ -1085,6 +1085,7 @@ describe('ProjectAutomationView', () => {
     const loopMain = screen.getByTestId(/^loop-node-main-/)
     expect(loopMain).toHaveTextContent('循环')
     expect(loopMain).toHaveTextContent('最多 5 次')
+    expect(screen.getByTestId('loop-node-name')).toHaveValue('循环')
   })
 
   test('inserts a branch node inside a loop and renders condition rows', async () => {
@@ -1911,7 +1912,6 @@ describe('ProjectAutomationView', () => {
             displayName: 'acme/app',
           },
           webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-1',
-          webhookSecret: null,
           pollIntervalSeconds: null,
           credentialRef: null,
           health: {},
@@ -1943,12 +1943,12 @@ describe('ProjectAutomationView', () => {
       expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-1')
     )
     expect(screen.getAllByText('acme/app').length).toBeGreaterThan(0)
-    expect(screen.queryByTestId('automation-create-subscription')).toBeNull()
+    expect(screen.getByTestId('automation-manage-event-subscriptions')).toBeInTheDocument()
     expect(screen.queryByTestId('automation-execution-target')).toBeNull()
     expect(
       screen
-        .getByTestId('automation-target-branches')
-        .compareDocumentPosition(screen.getByTestId('automation-event-subscription')) &
+        .getByTestId('automation-event-subscription')
+        .compareDocumentPosition(screen.getByTestId('automation-target-branches')) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
   })
@@ -1967,7 +1967,6 @@ describe('ProjectAutomationView', () => {
         displayName: 'acme/app',
       },
       webhookUrl: null,
-      webhookSecret: null,
       pollIntervalSeconds: 300,
       credentialRef: 'github',
       health: {},
@@ -2021,7 +2020,6 @@ describe('ProjectAutomationView', () => {
             displayName: 'acme/app',
           },
           webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-1',
-          webhookSecret: null,
           pollIntervalSeconds: null,
           credentialRef: null,
           health: {},
@@ -2055,9 +2053,8 @@ describe('ProjectAutomationView', () => {
       target: { value: '7' },
     })
     expect(screen.getByTestId('automation-trigger-poll-interval')).toHaveValue(7)
-    await waitFor(() =>
-      expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-2')
-    )
+    expect(screen.queryByTestId('automation-event-subscription')).toBeNull()
+    expect(screen.queryByTestId('automation-manage-event-subscriptions')).toBeNull()
   })
 
   test('configures a branch listener from upstream PR/MR deliveries without a project repository', async () => {
@@ -2096,7 +2093,6 @@ describe('ProjectAutomationView', () => {
             displayName: 'acme/app',
           },
           webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/gitlab-webhook',
-          webhookSecret: null,
           pollIntervalSeconds: null,
           credentialRef: null,
           health: {},
@@ -2141,6 +2137,7 @@ describe('ProjectAutomationView', () => {
     })
     fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
     expect(screen.queryByText(/当前项目未连接 GitHub\/GitLab 仓库/)).toBeNull()
+    expect(screen.queryByTestId('branch-manage-event-subscriptions')).toBeNull()
     fireEvent.change(screen.getByTestId('branch-condition-source-0'), {
       target: { value: 'gitlab' },
     })
@@ -2151,6 +2148,8 @@ describe('ProjectAutomationView', () => {
     await waitFor(() =>
       expect(screen.getByTestId('branch-event-subscription')).toHaveValue('gitlab-webhook')
     )
+    fireEvent.click(screen.getByTestId('branch-manage-event-subscriptions'))
+    expect(await screen.findByTestId('event-subscription-manager')).toBeInTheDocument()
     fireEvent.change(screen.getByTestId('branch-condition-event-0'), {
       target: { value: 'change_request.comment_created' },
     })
@@ -2174,7 +2173,7 @@ describe('ProjectAutomationView', () => {
     expect(branch.branch_conditions[0].source_type).toBe('gitlab')
   })
 
-  test('creates project subscriptions from the project-level subscription view', async () => {
+  test('creates and deletes webhook subscriptions inline from a trigger node', async () => {
     let created = false
     const createdHook = {
       id: 'sub-new',
@@ -2189,7 +2188,6 @@ describe('ProjectAutomationView', () => {
         displayName: 'acme/app',
       },
       webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-new',
-      webhookSecret: 'signing-secret',
       pollIntervalSeconds: null,
       credentialRef: null,
       health: {},
@@ -2227,14 +2225,29 @@ describe('ProjectAutomationView', () => {
       }),
       update: vi.fn(),
       rotate: vi.fn(),
-      remove: vi.fn(),
-      revealSecret: vi.fn(),
+      remove: vi.fn().mockResolvedValue(undefined),
       listEvents: vi.fn().mockResolvedValue([]),
     } as unknown as ReturnType<typeof createProjectIncomingHookApi>
 
     renderView({ incomingHookApi })
-    fireEvent.click(await screen.findByTestId('automation-open-event-subscriptions'))
-    fireEvent.click(await screen.findByTestId('event-subscription-add'))
+    await openRuleEditor()
+    expect(screen.queryByTestId('automation-open-event-subscriptions')).toBeNull()
+    fireEvent.change(screen.getByTestId('automation-trigger-type'), {
+      target: { value: 'webhook' },
+    })
+    const manageSubscriptions = await screen.findByTestId('automation-manage-event-subscriptions')
+    fireEvent.click(manageSubscriptions)
+    const subscriptionEditor = await screen.findByTestId('event-subscription-editor')
+    expect(manageSubscriptions).toHaveClass('shrink-0', 'whitespace-nowrap')
+    expect(screen.getByTestId('event-subscription-manager')).toHaveClass('min-w-0')
+    expect(screen.getByTestId('event-subscription-manager')).not.toHaveClass('overflow-hidden')
+    expect(screen.getByTestId('event-subscription-add')).toHaveClass(
+      'shrink-0',
+      'whitespace-nowrap'
+    )
+    expect(subscriptionEditor).toHaveClass('min-w-0')
+    expect(screen.queryByTestId('event-subscription-collection-mode')).toBeNull()
+    expect(screen.queryByText('Webhook + 轮询')).toBeNull()
     fireEvent.change(screen.getByTestId('event-subscription-name'), {
       target: { value: 'GitHub repository' },
     })
@@ -2244,6 +2257,7 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(screen.getByTestId('event-subscription-save'))
 
     await screen.findByTestId('event-subscription-card-sub-new')
+    expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-new')
     expect(incomingHookApi.create).toHaveBeenCalledWith('11', {
       name: 'GitHub repository',
       sourceType: 'github',
@@ -2257,6 +2271,16 @@ describe('ProjectAutomationView', () => {
     expect(
       screen.getAllByText('https://cloud.example/api/v1/incoming-hooks/sub-new').length
     ).toBeGreaterThan(0)
+    expect(screen.queryByText('todo.event_subscription_signing_secret')).toBeNull()
+    expect(screen.queryByTestId('event-subscription-reveal-sub-new')).toBeNull()
+
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(screen.getByTestId('event-subscription-actions-sub-new'))
+    fireEvent.click(await screen.findByTestId('event-subscription-delete-sub-new'))
+    await waitFor(() => expect(incomingHookApi.remove).toHaveBeenCalledWith('11', 'sub-new'))
+    expect(screen.queryByTestId('event-subscription-card-sub-new')).toBeNull()
+    expect(screen.getByTestId('automation-event-subscription')).toHaveValue('')
+    confirm.mockRestore()
   })
 
   test('keeps unsaved edits when a background rules refresh lands while editing', async () => {

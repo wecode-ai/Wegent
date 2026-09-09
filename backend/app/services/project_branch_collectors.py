@@ -228,7 +228,7 @@ def _create_collector(
         poll_interval_seconds=poll_interval if mode in {"poll", "hybrid"} else None,
         credential_ref=(MACHINE_CLI_CREDENTIAL if mode in {"poll", "hybrid"} else None),
     )
-    hook, _webhook_token = project_incoming_hook_service.create(
+    hook = project_incoming_hook_service.create(
         db,
         str(project.id),
         user_id,

@@ -243,7 +243,6 @@ const EVENT_SUBSCRIPTION = {
     displayName: 'acme/app',
   },
   webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/subscription-1',
-  webhookSecret: 'e2e-signing-secret',
   pollIntervalSeconds: null,
   credentialRef: null,
   health: { status: 'pending' },
@@ -1383,6 +1382,139 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await captureScreenshot(control, 'project-automation-unified-home.png')
+    const subscriptionDetailClose = `${activeBoard} [data-testid="cloud-todo-detail-close"]`
+    if (
+      Number(
+        await control.command('getElementCount', subscriptionDetailClose, {
+          visible: true,
+        })
+      ) > 0
+    ) {
+      await control.command('click', subscriptionDetailClose, { visible: true })
+      await control.command('waitFor', subscriptionDetailClose, {
+        visible: false,
+        stableMs: 250,
+      })
+    }
+    const automationHomeSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="project-automation-view"]')
+    )
+    assert.ok(
+      !automationHomeSnapshot.testIds.includes('automation-open-event-subscriptions'),
+      'The project automation home still exposed a standalone event subscription page'
+    )
+    await control.command('click', '[data-testid="automation-create-rule"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('select', '[data-testid="automation-trigger-type"]', {
+      value: 'webhook',
+    })
+    await control.command('waitFor', '[data-testid="automation-manage-event-subscriptions"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const [rightPanelBeforeSubscriptions] = JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="automation-editor-rightbar"]')
+    )
+    await control.command('click', '[data-testid="automation-manage-event-subscriptions"]', {
+      visible: true,
+    })
+    await control.command('scrollIntoView', '[data-testid="event-subscription-editor"]')
+    await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const subscriptionEditorSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="event-subscription-manager"]')
+    )
+    assert.ok(
+      !subscriptionEditorSnapshot.testIds.includes('event-subscription-collection-mode'),
+      'The inline webhook subscription editor still exposed hybrid collection modes'
+    )
+    const [rightPanelAfterSubscriptions] = JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="automation-editor-rightbar"]')
+    )
+    assert.equal(
+      rightPanelAfterSubscriptions.width,
+      rightPanelBeforeSubscriptions.width,
+      'Opening inline subscriptions changed the settings panel width'
+    )
+    assert.ok(
+      rightPanelAfterSubscriptions.scrollWidth <= rightPanelAfterSubscriptions.clientWidth + 1,
+      'The inline subscription manager overflowed the settings panel horizontally'
+    )
+    const [subscriptionManagerMetrics] = JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="event-subscription-manager"]')
+    )
+    assert.ok(
+      subscriptionManagerMetrics.scrollWidth <= subscriptionManagerMetrics.clientWidth + 1,
+      'The subscription manager content was clipped instead of fitting the settings panel'
+    )
+    const [addSubscriptionButtonMetrics] = JSON.parse(
+      await control.command('getElementMetrics', '[data-testid="event-subscription-add"]')
+    )
+    assert.ok(
+      addSubscriptionButtonMetrics.scrollHeight <= addSubscriptionButtonMetrics.clientHeight + 1,
+      'The add subscription button wrapped onto multiple lines'
+    )
+    await captureScreenshot(control, 'project-event-subscriptions-inline-editor-real.png')
+    await control.command('fill', '[data-testid="event-subscription-name"]', {
+      value: 'Real GitHub webhook',
+    })
+    await control.command('fill', '[data-testid="event-subscription-resource-url"]', {
+      value: 'https://github.com/wecode-ai/Wegent',
+    })
+    await control.command('clickWhenEnabled', '[data-testid="event-subscription-save"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const createdSubscription = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/incoming-hooks`),
+      hooks => hooks.find(hook => hook.name === 'Real GitHub webhook'),
+      'The inline subscription editor did not create a real project webhook',
+      uiTimeoutMs
+    ).then(hooks => hooks.find(hook => hook.name === 'Real GitHub webhook'))
+    await control.command('waitFor', '[data-testid="automation-event-subscription"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', '[data-testid="automation-event-subscription"]'),
+      createdSubscription.id,
+      'The newly created project webhook was not selected by the trigger node'
+    )
+    const createdSubscriptionCard = `[data-testid="event-subscription-card-${createdSubscription.id}"]`
+    const [createdSubscriptionCardMetrics] = JSON.parse(
+      await control.command('getElementMetrics', createdSubscriptionCard)
+    )
+    assert.ok(
+      createdSubscriptionCardMetrics.scrollWidth <= createdSubscriptionCardMetrics.clientWidth + 1,
+      'The newly created webhook URL overflowed its subscription card'
+    )
+    const createdSubscriptionSnapshot = JSON.parse(
+      await control.command('snapshot', createdSubscriptionCard)
+    )
+    assert.ok(
+      createdSubscriptionSnapshot.text.includes('Webhook 地址'),
+      'The created subscription did not render the localized webhook URL label'
+    )
+    assert.ok(
+      !createdSubscriptionSnapshot.testIds.some(testId =>
+        testId.startsWith('event-subscription-reveal-')
+      ),
+      'The unsigned webhook UI still exposed a signing-secret control'
+    )
+    await captureScreenshot(control, 'project-event-subscriptions-inline-real.png')
+    await control.command('click', '[data-testid="automation-editor-back"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-create-rule"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
 
     const workflowProject = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
     await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
@@ -2939,8 +3071,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             payload.collectionMode === 'webhook'
               ? `https://cloud.example/api/v1/incoming-hooks/subscription-${eventSubscriptions.length + 1}`
               : null,
-          webhookSecret:
-            payload.collectionMode === 'webhook' ? `secret-${eventSubscriptions.length + 1}` : null,
           version: 1,
           created_at: '2026-08-11T00:00:00',
           updated_at: '2026-08-11T00:00:00',
@@ -4337,15 +4467,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await control.command('click', '[data-testid="automation-open-event-subscriptions"]', {
+      await control.command('click', '[data-testid="automation-create-rule"]', {
         visible: true,
       })
-      await control.command('waitFor', '[data-testid="project-event-subscriptions"]', {
+      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await control.command('clickWhenEnabled', '[data-testid="event-subscription-add"]', {
+      await control.command('select', '[data-testid="automation-trigger-type"]', {
+        value: 'webhook',
+      })
+      await control.command('waitFor', '[data-testid="automation-manage-event-subscriptions"]', {
         timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-manage-event-subscriptions"]', {
+        visible: true,
       })
       await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
         timeoutMs: uiTimeoutMs,
@@ -4370,20 +4507,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           visible: true,
         }
       )
-      await captureScreenshot(control, 'project-event-subscriptions.png')
-      await control.command('click', '[data-testid="automation-back-from-event-subscriptions"]', {
-        visible: true,
-      })
-      await control.command('click', '[data-testid="automation-create-rule"]', {
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('select', '[data-testid="automation-trigger-type"]', {
-        value: 'github',
-      })
+      await captureScreenshot(control, 'project-event-subscriptions-inline.png')
       await control.command('waitFor', '[data-testid="automation-event-subscription"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,

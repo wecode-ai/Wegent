@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac
 import json
 import logging
 import secrets
@@ -19,10 +18,6 @@ from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.project_event_credentials import (
-    decrypt_subscription_secret,
-    encrypt_subscription_secret,
-)
 from app.db.session import SessionLocal
 from app.models.delivery import (
     CloudProject,
@@ -117,7 +112,7 @@ class ProjectIncomingHookService:
         values: ProjectIncomingHookCreate,
         *,
         validate: bool = True,
-    ) -> tuple[ProjectIncomingHook, str | None]:
+    ) -> ProjectIncomingHook:
         access = require_cloud_project_role(
             db,
             project_id,
@@ -183,19 +178,9 @@ class ProjectIncomingHookService:
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     str(exc),
                 ) from exc
-        webhook_secret = None
-        if values.collection_mode in {"webhook", "hybrid"}:
-            webhook_secret = secrets.token_urlsafe(32)
-            hook_metadata = self.metadata(hook)
-            hook_metadata["webhook_secret_encrypted"] = encrypt_subscription_secret(
-                webhook_secret,
-                project_id=str(access.project.id),
-                subscription_id=str(hook.id),
-            )
-            hook.metadata_json = hook_metadata
         db.commit()
         db.refresh(hook)
-        return hook, webhook_secret
+        return hook
 
     def update(
         self,
@@ -204,7 +189,7 @@ class ProjectIncomingHookService:
         hook_id: str,
         user_id: int,
         values: ProjectIncomingHookUpdate,
-    ) -> tuple[ProjectIncomingHook, str | None]:
+    ) -> ProjectIncomingHook:
         hook = self.get(db, project_id, hook_id, user_id, for_update=True)
         if hook.version != values.version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Event subscription changed")
@@ -248,17 +233,6 @@ class ProjectIncomingHookService:
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     str(exc),
                 ) from exc
-        webhook_secret = None
-        if collection_mode in {"webhook", "hybrid"} and not hook_metadata.get(
-            "webhook_secret_encrypted"
-        ):
-            webhook_secret = secrets.token_urlsafe(32)
-            hook_metadata["webhook_secret_encrypted"] = encrypt_subscription_secret(
-                webhook_secret,
-                project_id=str(hook.cloud_project_id),
-                subscription_id=str(hook.id),
-            )
-            hook.metadata_json = hook_metadata
         if values.name is not None:
             hook.name = values.name
         if values.status is not None:
@@ -274,7 +248,7 @@ class ProjectIncomingHookService:
         hook.version += 1
         db.commit()
         db.refresh(hook)
-        return hook, webhook_secret
+        return hook
 
     def rotate(
         self,
@@ -282,27 +256,20 @@ class ProjectIncomingHookService:
         project_id: str,
         hook_id: str,
         user_id: int,
-    ) -> tuple[ProjectIncomingHook, str]:
+    ) -> ProjectIncomingHook:
         hook = self.get(db, project_id, hook_id, user_id, for_update=True)
         hook_metadata = self.metadata(hook)
         if hook_metadata.get("collection_mode") not in {"webhook", "hybrid"}:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                "Only webhook subscriptions have signing secrets",
+                "Only webhook subscriptions have public addresses",
             )
         hook.public_id = secrets.token_urlsafe(24)
-        webhook_secret = secrets.token_urlsafe(32)
-        hook_metadata["webhook_secret_encrypted"] = encrypt_subscription_secret(
-            webhook_secret,
-            project_id=str(hook.cloud_project_id),
-            subscription_id=str(hook.id),
-        )
-        hook.metadata_json = hook_metadata
         hook.updated_by_user_id = user_id
         hook.version += 1
         db.commit()
         db.refresh(hook)
-        return hook, webhook_secret
+        return hook
 
     def delete(
         self,
@@ -318,32 +285,6 @@ class ProjectIncomingHookService:
         hook.updated_by_user_id = user_id
         hook.version += 1
         db.commit()
-
-    def reveal_webhook_token(
-        self,
-        db: Session,
-        project_id: str,
-        hook_id: str,
-        user_id: int,
-    ) -> str:
-        """Return the signing token without rotating it."""
-
-        hook = self.get(db, project_id, hook_id, user_id)
-        hook_metadata = self.metadata(hook)
-        encrypted = hook_metadata.get("webhook_secret_encrypted")
-        if (
-            hook_metadata.get("collection_mode") not in {"webhook", "hybrid"}
-            or not encrypted
-        ):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                "Only webhook subscriptions have signing secrets",
-            )
-        return decrypt_subscription_secret(
-            encrypted,
-            project_id=str(hook.cloud_project_id),
-            subscription_id=str(hook.id),
-        )
 
     def get(
         self,
@@ -399,7 +340,6 @@ class ProjectIncomingHookService:
                 status.HTTP_405_METHOD_NOT_ALLOWED,
                 "Event subscription does not accept webhook delivery",
             )
-        self._verify_signature(hook, source_type, raw_body, headers)
         try:
             payload = parse_incoming_body(raw_body, content_type)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -746,54 +686,6 @@ class ProjectIncomingHookService:
         if collection_mode not in {"poll", "hybrid"}:
             return None
         return utcnow() + timedelta(seconds=poll_interval_seconds or 300)
-
-    def _verify_signature(
-        self,
-        hook: ProjectIncomingHook,
-        source_type: str,
-        raw_body: bytes,
-        headers: Mapping[str, str],
-    ) -> None:
-        encrypted = self.metadata(hook).get("webhook_secret_encrypted")
-        try:
-            secret = decrypt_subscription_secret(
-                encrypted,
-                project_id=str(hook.cloud_project_id),
-                subscription_id=str(hook.id),
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED,
-                "Webhook signing secret unavailable",
-            ) from exc
-        if source_type == "gitlab":
-            valid = hmac.compare_digest(
-                str(headers.get("x-gitlab-token") or ""),
-                secret,
-            )
-        else:
-            header_name = (
-                "x-hub-signature-256"
-                if source_type == "github"
-                else "x-wegent-signature-256"
-            )
-            expected = (
-                "sha256="
-                + hmac.new(
-                    secret.encode(),
-                    raw_body,
-                    hashlib.sha256,
-                ).hexdigest()
-            )
-            valid = hmac.compare_digest(
-                str(headers.get(header_name) or ""),
-                expected,
-            )
-        if not valid:
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED,
-                "Invalid webhook signature",
-            )
 
     @staticmethod
     def _event_public_id(

@@ -5,8 +5,6 @@
 """End-to-end API tests for immutable TODO delivery snapshots."""
 
 import asyncio
-import hashlib
-import hmac
 import io
 import json
 import uuid
@@ -2175,18 +2173,13 @@ def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
 
 
 def _github_webhook_headers(
-    payload: dict[str, object],
-    secret: str,
     *,
     delivery_id: str,
 ) -> dict[str, str]:
-    body = json.dumps(payload, separators=(",", ":")).encode()
-    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return {
         "Content-Type": "application/json",
         "X-GitHub-Event": "check_run",
         "X-GitHub-Delivery": delivery_id,
-        "X-Hub-Signature-256": f"sha256={signature}",
     }
 
 
@@ -2321,11 +2314,7 @@ def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
     body = json.dumps(payload, separators=(",", ":"))
     delivered = test_client.post(
         str(hook["webhookUrl"]),
-        headers=_github_webhook_headers(
-            payload,
-            str(hook["webhookSecret"]),
-            delivery_id="delivery-unresolved",
-        ),
+        headers=_github_webhook_headers(delivery_id="delivery-unresolved"),
         content=body,
     )
     assert delivered.status_code == 202

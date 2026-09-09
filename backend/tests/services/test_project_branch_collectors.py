@@ -279,7 +279,7 @@ def test_ensure_creates_one_collector_per_selected_platform(test_db):
 
 def test_webhook_branch_reuses_selected_project_subscription(test_db):
     project = _project(test_db)
-    hook, _secret = project_incoming_hook_service.create(
+    hook = project_incoming_hook_service.create(
         test_db,
         str(project.id),
         1,

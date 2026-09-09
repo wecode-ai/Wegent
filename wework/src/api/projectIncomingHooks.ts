@@ -35,7 +35,6 @@ export interface ProjectIncomingHook {
   collectionMode: ProjectEventCollectionMode
   resource: ProjectObservedResource
   webhookUrl: string | null
-  webhookSecret: string | null
   pollIntervalSeconds: number | null
   credentialRef: string | null
   health: {
@@ -111,11 +110,6 @@ export function createProjectIncomingHookApi(client: HttpClient) {
     },
     remove(projectId: string, hookId: string) {
       return client.delete<void>(`/v1/cloud-projects/${projectId}/incoming-hooks/${hookId}`)
-    },
-    revealSecret(projectId: string, hookId: string) {
-      return client.get<{ webhookToken: string }>(
-        `/v1/cloud-projects/${projectId}/incoming-hooks/${hookId}/webhook-token`
-      )
     },
     listEvents(projectId: string, hookId: string, limit = 20) {
       const query = new URLSearchParams({ limit: String(limit) })

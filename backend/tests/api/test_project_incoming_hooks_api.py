@@ -4,8 +4,6 @@
 """API coverage for project event subscriptions."""
 
 import asyncio
-import hashlib
-import hmac
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -83,18 +81,13 @@ def _connect_github(test_db: Session, test_user: User) -> None:
 
 
 def _github_headers(
-    payload: dict[str, object],
-    secret: str,
     *,
     delivery_id: str,
 ) -> dict[str, str]:
-    body = json.dumps(payload, separators=(",", ":")).encode()
-    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return {
         "Content-Type": "application/json",
         "X-GitHub-Event": "check_run",
         "X-GitHub-Delivery": delivery_id,
-        "X-Hub-Signature-256": f"sha256={signature}",
     }
 
 
@@ -133,17 +126,13 @@ def test_subscription_persists_normalizes_and_deduplicates_input(
     assert hook["sourceType"] == "github"
     assert hook["collectionMode"] == "webhook"
     assert hook["webhookUrl"]
-    assert hook["webhookSecret"]
+    assert "webhookSecret" not in hook
 
     payload = _failed_check_payload()
     body = json.dumps(payload, separators=(",", ":"))
     first = test_client.post(
         str(hook["webhookUrl"]),
-        headers=_github_headers(
-            payload,
-            str(hook["webhookSecret"]),
-            delivery_id="delivery-1",
-        ),
+        headers=_github_headers(delivery_id="delivery-1"),
         content=body,
     )
     assert first.status_code == 202
@@ -163,11 +152,7 @@ def test_subscription_persists_normalizes_and_deduplicates_input(
 
     duplicate = test_client.post(
         str(hook["webhookUrl"]),
-        headers=_github_headers(
-            payload,
-            str(hook["webhookSecret"]),
-            delivery_id="delivery-1",
-        ),
+        headers=_github_headers(delivery_id="delivery-1"),
         content=body,
     )
     assert duplicate.status_code == 202
@@ -176,7 +161,7 @@ def test_subscription_persists_normalizes_and_deduplicates_input(
     assert test_db.query(ProjectIncomingEvent).count() == 1
 
 
-def test_subscription_rejects_invalid_signature(
+def test_subscription_accepts_delivery_without_signature(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -188,14 +173,13 @@ def test_subscription_rejects_invalid_signature(
         str(hook["webhookUrl"]),
         headers={
             "X-GitHub-Event": "check_run",
-            "X-GitHub-Delivery": "delivery-invalid",
-            "X-Hub-Signature-256": "sha256=invalid",
+            "X-GitHub-Delivery": "delivery-unsigned",
         },
         json=_failed_check_payload(),
     )
 
-    assert response.status_code == 401
-    assert test_db.query(ProjectIncomingEvent).count() == 0
+    assert response.status_code == 202
+    assert test_db.query(ProjectIncomingEvent).count() == 1
 
 
 def test_subscription_event_matches_external_rule_and_creates_one_run(
@@ -234,11 +218,7 @@ def test_subscription_event_matches_external_rule_and_creates_one_run(
     body = json.dumps(payload, separators=(",", ":"))
     response = test_client.post(
         str(hook["webhookUrl"]),
-        headers=_github_headers(
-            payload,
-            str(hook["webhookSecret"]),
-            delivery_id="delivery-rule-match",
-        ),
+        headers=_github_headers(delivery_id="delivery-rule-match"),
         content=body,
     )
     assert response.status_code == 202
@@ -273,7 +253,7 @@ def test_disabled_and_rotated_subscription_invalidates_old_address(
     )
     assert rotated.status_code == 200
     assert rotated.json()["webhookUrl"] != old_url
-    assert rotated.json()["webhookSecret"]
+    assert "webhookSecret" not in rotated.json()
     assert test_client.post(old_url, json={}).status_code == 404
 
     disabled = test_client.patch(
@@ -374,7 +354,7 @@ def test_public_api_cannot_select_machine_cli_credentials(
     )
 
 
-def test_poll_subscription_can_switch_to_hybrid_and_exposes_webhook_credentials(
+def test_poll_subscription_can_switch_to_hybrid_and_exposes_webhook_address(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -400,7 +380,7 @@ def test_poll_subscription_can_switch_to_hybrid_and_exposes_webhook_credentials(
     assert created.status_code == 201, created.text
     assert created.json()["collectionMode"] == "poll"
     assert created.json()["webhookUrl"] is None
-    assert created.json()["webhookSecret"] is None
+    assert "webhookSecret" not in created.json()
 
     updated = test_client.patch(
         f"/api/v1/cloud-projects/{project['id']}/incoming-hooks/{created.json()['id']}",
@@ -414,16 +394,12 @@ def test_poll_subscription_can_switch_to_hybrid_and_exposes_webhook_credentials(
     assert updated.status_code == 200, updated.text
     assert updated.json()["collectionMode"] == "hybrid"
     assert updated.json()["webhookUrl"]
-    assert updated.json()["webhookSecret"]
+    assert "webhookSecret" not in updated.json()
 
     payload = _failed_check_payload()
     delivery = test_client.post(
         str(updated.json()["webhookUrl"]),
-        headers=_github_headers(
-            payload,
-            str(updated.json()["webhookSecret"]),
-            delivery_id="delivery-after-upgrade",
-        ),
+        headers=_github_headers(delivery_id="delivery-after-upgrade"),
         content=json.dumps(payload, separators=(",", ":")),
     )
     assert delivery.status_code == 202
@@ -480,11 +456,7 @@ def test_hybrid_webhook_and_poll_inputs_share_one_automation_run(
     payload = _failed_check_payload()
     delivery = test_client.post(
         str(hook["webhookUrl"]),
-        headers=_github_headers(
-            payload,
-            str(hook["webhookSecret"]),
-            delivery_id="hybrid-delivery",
-        ),
+        headers=_github_headers(delivery_id="hybrid-delivery"),
         content=json.dumps(payload, separators=(",", ":")),
     )
     assert delivery.status_code == 202
@@ -639,11 +611,7 @@ def test_webhook_continue_binding_succeeds_with_preexisting_binding(
     body = json.dumps(payload, separators=(",", ":"))
     response = test_client.post(
         str(hook["webhookUrl"]),
-        headers=_github_headers(
-            payload,
-            str(hook["webhookSecret"]),
-            delivery_id="delivery-continue",
-        ),
+        headers=_github_headers(delivery_id="delivery-continue"),
         content=body,
     )
     assert response.status_code == 202
@@ -770,11 +738,7 @@ def test_webhook_continue_binding_preserves_bound_task_model(
     body = json.dumps(payload, separators=(",", ":"))
     response = test_client.post(
         str(hook["webhookUrl"]),
-        headers=_github_headers(
-            payload,
-            str(hook["webhookSecret"]),
-            delivery_id="delivery-continue-model",
-        ),
+        headers=_github_headers(delivery_id="delivery-continue-model"),
         content=body,
     )
     assert response.status_code == 202

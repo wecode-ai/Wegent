@@ -40,7 +40,7 @@ import { PopupMenu } from '@/components/common/MenuSelect'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
 import { eventTypeLabel } from './eventTypeLabel'
-import { EventSubscriptionManager, EventSubscriptionPicker } from './EventSubscriptionManager'
+import { EventSubscriptionPicker } from './EventSubscriptionManager'
 import {
   BRANCH_HANDLER_ROW_GAP,
   OUTER_NODE_GAP,
@@ -289,7 +289,7 @@ function createLoopNode(id = `loop-${Date.now()}`) {
   return createExecutionNode({
     id,
     kind: 'loop',
-    name: '修复循环',
+    name: '循环',
     prompt: '',
     dependencies: [],
     dependencyContext: {},
@@ -897,6 +897,7 @@ export function AutomationRulesView({
   eventSourceCatalog = [],
   projectIncomingHookApi,
   projectId,
+  project,
   executionCatalog: initialExecutionCatalog = EMPTY_EXECUTION_CATALOG,
   onReload,
   onLoadExecutionCatalog,
@@ -952,6 +953,7 @@ export function AutomationRulesView({
   const executionCatalogRequestRef = useRef(null)
   const executionPluginRequestRef = useRef(null)
   const runsRequestRef = useRef(null)
+  const pollingSubscriptionRef = useRef(null)
   const toastTimerRef = useRef(null)
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
@@ -1096,6 +1098,54 @@ export function AutomationRulesView({
     setPanelTab('settings')
     setView('editor')
     refreshExecutionCatalog()
+  }
+
+  const ensureTriggerPollingSubscription = async trigger => {
+    if (
+      !projectIncomingHookApi ||
+      !projectId ||
+      trigger.collectionMode !== 'poll' ||
+      trigger.subscriptionId
+    ) {
+      return
+    }
+    const repository = project?.provider_config?.repository?.trim()
+    const domain = project?.provider_config?.domain?.trim()
+    if (!repository || project?.task_provider !== trigger.source) return
+    const defaultDomain = trigger.source === 'github' ? 'github.com' : 'gitlab.com'
+    const resourceUrl = `https://${domain || defaultDomain}/${repository}`
+    try {
+      const existing = (await projectIncomingHookApi.list(projectId)).find(
+        item =>
+          item.collectionMode === 'poll' &&
+          item.sourceType === trigger.source &&
+          item.resource?.url === resourceUrl
+      )
+      if (existing) {
+        pollingSubscriptionRef.current = existing
+        updateDraft(current =>
+          current.trigger.subscriptionId === existing.id
+            ? current
+            : { ...current, trigger: { ...current.trigger, subscriptionId: existing.id } }
+        )
+        return
+      }
+      const created = await projectIncomingHookApi.create(projectId, {
+        name: `${project.name} 轮询`,
+        sourceType: trigger.source,
+        collectionMode: 'poll',
+        resource: { url: resourceUrl },
+        pollIntervalSeconds: 300,
+        credentialRef: 'project-provider',
+      })
+      pollingSubscriptionRef.current = created
+      updateDraft(current => ({
+        ...current,
+        trigger: { ...current.trigger, subscriptionId: created.id },
+      }))
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const applyTemplate = template => {
@@ -1483,6 +1533,7 @@ export function AutomationRulesView({
           editorSection={editorSection}
           selectedNode={selectedNode}
           panelTab={panelTab}
+          canManage={canManage}
           canRun={canManage && Boolean(onRunRule)}
           running={runningIds.has(draft.id)}
           onRun={() => runRule(draft)}
@@ -1500,6 +1551,9 @@ export function AutomationRulesView({
           onAddStep={addStep}
           onRemoveStep={removeStep}
           onOpenPluginMenu={preparePluginMenu}
+          onTriggerCollectionModeChange={() =>
+            void ensureTriggerPollingSubscription(draftRef.current.trigger)
+          }
         />
       </div>
     )
@@ -1523,31 +1577,15 @@ export function AutomationRulesView({
     <main className={automationClass('project-content')}>
       <div className={automationClass('project-page-title')}>
         <div>
-          <h1>
-            {homeTab === 'rules'
-              ? '自动化'
-              : homeTab === 'subscriptions'
-                ? t('todo.event_subscription_title')
-                : '运行记录'}
-          </h1>
+          <h1>{homeTab === 'rules' ? '自动化' : '运行记录'}</h1>
           <p>
             {homeTab === 'rules'
               ? '统一配置触发规则和执行流程，查看每条自动化的运行状态。'
-              : homeTab === 'subscriptions'
-                ? t('todo.event_subscription_project_description')
-                : '查看当前项目内所有自动化的执行过程、结果与耗时。'}
+              : '查看当前项目内所有自动化的执行过程、结果与耗时。'}
           </p>
         </div>
         {homeTab === 'rules' ? (
           <div className={automationClass('project-page-actions')}>
-            <button
-              className={automationClass('project-secondary-action')}
-              data-testid="automation-open-event-subscriptions"
-              onClick={() => setHomeTab('subscriptions')}
-            >
-              <Webhook size={15} />
-              {t('todo.event_subscription_title')}
-            </button>
             <button
               className={automationClass('project-secondary-action')}
               data-testid="automation-open-runs"
@@ -1682,23 +1720,6 @@ export function AutomationRulesView({
               <span>换个搜索词或筛选条件。</span>
             </div>
           ) : null}
-        </section>
-      ) : homeTab === 'subscriptions' ? (
-        <section className={automationClass('project-runs-section')}>
-          <button
-            className={automationClass('back-to-automation')}
-            data-testid="automation-back-from-event-subscriptions"
-            onClick={() => setHomeTab('rules')}
-          >
-            <ArrowLeft size={14} />
-            返回自动化规则
-          </button>
-          <EventSubscriptionManager
-            api={projectIncomingHookApi}
-            projectId={projectId}
-            catalog={eventSourceCatalog}
-            canManage={canManage}
-          />
         </section>
       ) : (
         <section className={automationClass('project-runs-section')}>
@@ -2147,6 +2168,7 @@ function WorkflowEditor({
   editorSection,
   selectedNode,
   panelTab,
+  canManage,
   canRun,
   running,
   onRun,
@@ -2164,6 +2186,7 @@ function WorkflowEditor({
   onRemoveStep,
   onOpenPluginMenu,
   onEditorSectionChange,
+  onTriggerCollectionModeChange,
 }) {
   const { t } = useTranslation('common')
   const [runStatus, setRunStatus] = useState('all')
@@ -3074,8 +3097,10 @@ function WorkflowEditor({
                         eventSourceCatalog={eventSourceCatalog}
                         projectIncomingHookApi={projectIncomingHookApi}
                         projectId={projectId}
+                        canManage={canManage}
                         onChange={updateTrigger}
                         onRuleChange={updateRule}
+                        onCollectionModeChange={onTriggerCollectionModeChange}
                       />
                     ) : selectedDagStage ? (
                       <>
@@ -3119,6 +3144,7 @@ function WorkflowEditor({
                         eventSourceCatalog={eventSourceCatalog}
                         projectIncomingHookApi={projectIncomingHookApi}
                         projectId={projectId}
+                        canManage={canManage}
                         onChange={updateStep}
                         onDelete={() => onRemoveStep()}
                       />
@@ -3130,6 +3156,7 @@ function WorkflowEditor({
                         eventSourceCatalog={eventSourceCatalog}
                         projectIncomingHookApi={projectIncomingHookApi}
                         projectId={projectId}
+                        canManage={canManage}
                         onChange={updateLoopBodyStep}
                         onDelete={() => removeLoopBodyStep()}
                       />
@@ -3388,8 +3415,10 @@ function TriggerSettings({
   eventSourceCatalog,
   projectIncomingHookApi,
   projectId,
+  canManage,
   onChange,
   onRuleChange,
+  onCollectionModeChange,
 }) {
   const { t } = useTranslation('common')
   const trigger = draft.trigger
@@ -3449,6 +3478,23 @@ function TriggerSettings({
     onChange('event', selectedSource?.eventTypes[0] ?? 'change_request.checks_failed')
   }
 
+  const handlePollIntervalChange = value => {
+    onChange('pollIntervalSeconds', value)
+    const subscriptionId = trigger.subscriptionId
+    if (!subscriptionId || !projectIncomingHookApi || !projectId) return
+    const subscription = pollingSubscriptionRef.current
+    if (!subscription || subscription.id !== subscriptionId) return
+    void projectIncomingHookApi
+      .update(projectId, subscriptionId, {
+        version: subscription.version,
+        pollIntervalSeconds: value,
+      })
+      .then(updated => {
+        pollingSubscriptionRef.current = updated
+      })
+      .catch(() => undefined)
+  }
+
   const applyPlatform = sourceType => {
     const source = eventSourceCatalog.find(item => item.sourceType === sourceType)
     onChange('source', sourceType)
@@ -3478,6 +3524,7 @@ function TriggerSettings({
         : (platforms[0]?.sourceType ?? 'github')
     onChange('collectionMode', value)
     applyPlatform(nextSource)
+    onCollectionModeChange?.()
   }
 
   return (
@@ -3639,14 +3686,26 @@ function TriggerSettings({
               testId="automation-trigger-poll-interval"
               value={trigger.pollIntervalSeconds}
               index={hasPlatformStep ? 3 : 2}
-              onChange={value => onChange('pollIntervalSeconds', value)}
+              onChange={handlePollIntervalChange}
+            />
+          ) : null}
+          {collectionMode === 'webhook' ? (
+            <EventSubscriptionPicker
+              key={`${collectionMode}:${trigger.source}`}
+              api={projectIncomingHookApi}
+              projectId={projectId}
+              catalog={eventSourceCatalog}
+              sourceTypes={[trigger.source]}
+              collectionMode="webhook"
+              cascadeIndex={hasPlatformStep ? 3 : 2}
+              canManage={canManage}
+              value={trigger.subscriptionId}
+              onChange={handleSubscriptionChange}
             />
           ) : null}
           <label className={automationClass('panel-field')}>
             <span>
-              <i className={automationClass('cascade-index')}>
-                {hasPlatformStep ? (collectionMode === 'poll' ? 4 : 3) : 2}
-              </i>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 4 : 3}</i>
               {t('todo.automation_target_branches')}
             </span>
             <input
@@ -3664,35 +3723,9 @@ function TriggerSettings({
               placeholder="main, release"
             />
           </label>
-          <EventSubscriptionPicker
-            key={`${collectionMode}:${trigger.source}`}
-            api={projectIncomingHookApi}
-            projectId={projectId}
-            sourceTypes={[trigger.source]}
-            collectionMode={collectionMode}
-            cascadeIndex={
-              hasPlatformStep
-                ? collectionMode === 'poll'
-                  ? 5
-                  : 4
-                : collectionMode === 'poll'
-                  ? 4
-                  : 3
-            }
-            value={trigger.subscriptionId}
-            onChange={handleSubscriptionChange}
-          />
           <label className={automationClass('panel-field')}>
             <span>
-              <i className={automationClass('cascade-index')}>
-                {hasPlatformStep
-                  ? collectionMode === 'poll'
-                    ? 6
-                    : 5
-                  : collectionMode === 'poll'
-                    ? 5
-                    : 4}
-              </i>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 5 : 4}</i>
               {t('todo.automation_event_type')}
             </span>
             <select
@@ -4173,6 +4206,7 @@ function BranchSettings({
   eventSourceCatalog = [],
   projectIncomingHookApi,
   projectId,
+  canManage,
   onChange,
   onDelete,
 }) {
@@ -4283,10 +4317,12 @@ function BranchSettings({
           <EventSubscriptionPicker
             api={projectIncomingHookApi}
             projectId={projectId}
+            catalog={eventSourceCatalog}
             sourceTypes={[...new Set(conditions.map(condition => condition.sourceType))]}
             collectionMode="webhook"
             cascadeIndex={3}
             testIdPrefix="branch"
+            canManage={canManage}
             value={eventWait.subscriptionId ?? null}
             onChange={subscriptionId => onChange('eventWait', { ...eventWait, subscriptionId })}
           />

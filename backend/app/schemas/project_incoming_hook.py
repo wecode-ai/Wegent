@@ -72,7 +72,6 @@ class ProjectIncomingHookView(ProjectChatSchema):
     collection_mode: EventCollectionMode
     resource: ObservedResource
     webhook_url: str | None = None
-    webhook_secret: str | None = Field(default=None, alias="webhookSecret")
     poll_interval_seconds: int | None = None
     credential_ref: str | None = None
     health: dict[str, Any] = Field(default_factory=dict)

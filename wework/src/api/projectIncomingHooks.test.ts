@@ -26,7 +26,6 @@ describe('createProjectIncomingHookApi', () => {
     await api.create('project-1', input)
     await api.update('project-1', 'hook-1', { version: 1, status: 'disabled' })
     await api.rotate('project-1', 'hook-1')
-    await api.revealSecret('project-1', 'hook-1')
     await api.listEvents('project-1', 'hook-1')
     await api.remove('project-1', 'hook-1')
 
@@ -45,10 +44,6 @@ describe('createProjectIncomingHookApi', () => {
     )
     expect(client.get).toHaveBeenNthCalledWith(
       3,
-      '/v1/cloud-projects/project-1/incoming-hooks/hook-1/webhook-token'
-    )
-    expect(client.get).toHaveBeenNthCalledWith(
-      4,
       '/v1/cloud-projects/project-1/incoming-hooks/hook-1/events?limit=20'
     )
     expect(client.delete).toHaveBeenCalledWith('/v1/cloud-projects/project-1/incoming-hooks/hook-1')

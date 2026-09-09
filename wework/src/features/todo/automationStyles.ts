@@ -203,7 +203,7 @@ const recipes: Record<string, string> = {
   'canvas-viewport-controls':
     '!bottom-4 !right-[calc(var(--automation-panel-gap)+var(--automation-right-panel-width)+16px)] !m-0 flex h-9 items-center overflow-hidden rounded-xl border border-border/80 bg-background/95 px-1 shadow-md [&_button]:grid [&_button]:size-7 [&_button]:place-items-center [&_button]:rounded-lg [&_button]:text-text-muted [&_button]:transition-colors [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_span]:min-w-12 [&_span]:text-center [&_span]:text-sm [&_span]:text-text-secondary',
   'editor-rightbar':
-    'absolute bottom-[var(--automation-panel-gap)] right-[var(--automation-panel-gap)] top-[var(--automation-right-panel-top)] z-20 flex w-[var(--automation-right-panel-width)] min-h-0 flex-col overflow-hidden rounded-2xl border border-border/80 bg-background/95 text-text-primary shadow-lg',
+    'absolute bottom-[var(--automation-panel-gap)] right-[var(--automation-panel-gap)] top-[var(--automation-right-panel-top)] z-20 flex w-[var(--automation-right-panel-width)] max-w-[calc(100%_-_24px)] min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/80 bg-background/95 text-text-primary shadow-lg',
   'editor-global-actions':
     'absolute right-[var(--automation-panel-gap)] top-[var(--automation-panel-gap)] z-30 flex h-9 items-center justify-end gap-2',
   'editor-save-state':
@@ -217,10 +217,10 @@ const recipes: Record<string, string> = {
     'grid size-8 place-items-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25',
   'panel-tabs':
     'flex h-12 shrink-0 items-end gap-6 border-b border-border px-5 [&_button]:h-full [&_button]:border-b-2 [&_button]:border-transparent [&_button]:text-base [&_button]:font-medium [&_button]:text-text-muted [&_button]:transition-colors [&_button:hover]:text-text-primary [&_button.active]:border-focus [&_button.active]:text-text-primary',
-  'panel-content': 'min-h-0 flex-1 overflow-y-auto bg-background',
+  'panel-content': 'min-h-0 min-w-0 flex-1 overflow-y-auto bg-background',
   'last-run-panel':
     'm-5 grid place-items-center gap-2 rounded-xl bg-muted/45 px-5 py-8 text-center [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted [&_button]:mt-2 h-8 rounded-lg bg-background px-3 text-xs shadow-sm hover:bg-muted',
-  'panel-settings': 'grid gap-4 p-5',
+  'panel-settings': 'grid min-w-0 gap-4 p-5',
   'panel-section': 'grid gap-4 border-b border-border/60 px-5 py-5',
   'panel-section-title':
     'flex items-center gap-2 [&>small]:text-xs [&>small]:font-normal [&>small]:text-text-muted [&>small:last-child]:ml-1 [&>span]:text-focus',

@@ -87,8 +87,6 @@ def _normalized_resource(value: object, source_type: str) -> dict[str, Any]:
 def _view(
     request: Request,
     hook: ProjectIncomingHook,
-    *,
-    webhook_secret: str | None = None,
 ) -> ProjectIncomingHookView:
     metadata = project_incoming_hook_service.metadata(hook)
     source_type = _normalized_source_type(metadata.get("source_type") or hook.source)
@@ -109,7 +107,6 @@ def _view(
             if collection_mode in {"webhook", "hybrid"} and hook.public_id
             else None
         ),
-        webhook_secret=webhook_secret,
         poll_interval_seconds=(
             int(poll.get("interval_seconds"))
             if isinstance(poll, dict) and isinstance(poll.get("interval_seconds"), int)
@@ -202,13 +199,13 @@ def create_incoming_hook(
     current_user: User = Depends(get_current_user),
 ) -> ProjectIncomingHookView:
     _reject_machine_cli_credential(values)
-    hook, webhook_secret = project_incoming_hook_service.create(
+    hook = project_incoming_hook_service.create(
         db,
         project_id,
         current_user.id,
         values,
     )
-    return _view(request, hook, webhook_secret=webhook_secret)
+    return _view(request, hook)
 
 
 @router.patch(
@@ -224,14 +221,14 @@ def update_incoming_hook(
     current_user: User = Depends(get_current_user),
 ) -> ProjectIncomingHookView:
     _reject_machine_cli_credential(values)
-    hook, webhook_secret = project_incoming_hook_service.update(
+    hook = project_incoming_hook_service.update(
         db,
         project_id,
         hook_id,
         current_user.id,
         values,
     )
-    return _view(request, hook, webhook_secret=webhook_secret)
+    return _view(request, hook)
 
 
 @router.post(
@@ -245,10 +242,10 @@ def rotate_incoming_hook(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectIncomingHookView:
-    hook, webhook_secret = project_incoming_hook_service.rotate(
+    hook = project_incoming_hook_service.rotate(
         db, project_id, hook_id, current_user.id
     )
-    return _view(request, hook, webhook_secret=webhook_secret)
+    return _view(request, hook)
 
 
 @router.delete(
@@ -267,24 +264,6 @@ def delete_incoming_hook(
         hook_id,
         current_user.id,
     )
-
-
-@router.get(
-    "/{project_id}/incoming-hooks/{hook_id}/webhook-token",
-)
-def get_incoming_hook_webhook_token(
-    project_id: str,
-    hook_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict[str, str]:
-    token = project_incoming_hook_service.reveal_webhook_token(
-        db,
-        project_id,
-        hook_id,
-        current_user.id,
-    )
-    return {"webhook_token": token}
 
 
 @router.get(

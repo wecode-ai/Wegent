@@ -708,6 +708,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
       eventSourceCatalog={eventSourceCatalog}
       projectIncomingHookApi={projectIncomingHookApi}
       projectId={projectId}
+      project={project}
       onReload={reload}
       onLoadExecutionCatalog={loadExecutionCatalog}
       onLoadExecutionPlugins={loadExecutionPlugins}
