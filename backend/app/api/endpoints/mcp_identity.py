@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Public endpoint that resolves the Wegent user behind an MCP identity token."""
+"""Public endpoint that resolves the Wegent user behind a task token."""
 
 from typing import Optional
 
@@ -14,11 +14,7 @@ from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.rate_limit import get_limiter
 from app.models.user import User
-from app.services.auth import (
-    WEGENT_TOKEN_HEADER,
-    extract_token_from_header,
-    verify_mcp_identity_token,
-)
+from app.services.auth import extract_token_from_header, verify_task_token
 
 router = APIRouter(prefix="/external/mcp-identity", tags=["mcp-identity"])
 
@@ -26,7 +22,7 @@ limiter = get_limiter()
 
 
 class McpIdentityUserInfo(BaseModel):
-    """Basic current user info resolvable from a Wegent MCP identity token."""
+    """Basic current user info resolvable from a Wegent task token."""
 
     id: int
     user_name: str
@@ -38,24 +34,23 @@ class McpIdentityUserInfo(BaseModel):
 async def read_mcp_identity_userinfo(
     request: Request,
     authorization: Optional[str] = Header(default=None),
-    x_wegent_token: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> McpIdentityUserInfo:
-    """Return the Wegent user bound to an injected MCP identity token.
+    """Return the Wegent user bound to an MCP caller's task token.
 
-    Business MCP servers receive this token in the ``X-Wegent-Token`` header
-    of inbound calls when their Ghost ``mcpServers`` entry enables
-    ``inject_wegent_token`` and can pass it back here either as
-    ``X-Wegent-Token`` or as ``Authorization: Bearer``. Only tokens minted for
-    MCP calls are accepted. The response carries basic user information and
-    never exposes git credentials.
+    Business MCP servers receive a task-scoped token as
+    ``Authorization: Bearer ${{task_token}}`` on inbound calls when their
+    Ghost ``mcpServers`` headers configure it, and can pass it back here as
+    ``Authorization: Bearer <token>`` to resolve the current user. The
+    response carries basic user information and never exposes git
+    credentials.
     """
-    token = x_wegent_token or extract_token_from_header(authorization or "")
-    token_info = verify_mcp_identity_token(token or "")
+    token = extract_token_from_header(authorization or "")
+    token_info = verify_task_token(token or "")
     if token_info is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Wegent MCP identity token",
+            detail="Invalid Wegent task token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

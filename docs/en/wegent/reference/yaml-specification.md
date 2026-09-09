@@ -71,10 +71,10 @@ spec:
 ### Business MCP Server Identity
 
 When `spec.mcpServers` points to a remote MCP server hosted by a business
-partner, you can enable `inject_wegent_token: true` on that server. Wegent
-then mints a token bound to the current task user when building the task
-request and sends it as the `X-Wegent-Token` header, leaving any statically
-configured `Authorization` header untouched:
+partner, the server can authenticate the calling Wegent user with the task
+token Wegent injects into outbound requests. Configure the server's static
+headers with the `${{task_token}}` placeholder; Wegent replaces it with a
+signed task token when building the request:
 
 ```yaml
 spec:
@@ -82,18 +82,16 @@ spec:
     business:
       type: streamable-http
       url: https://mcp.business.example.com/mcp
-      inject_wegent_token: true
+      headers:
+        Authorization: "Bearer ${{task_token}}"
 ```
 
-The option is enabled per server (opt-in) so the token is never leaked to
-servers that do not need it. The business side can validate the token by
-calling
-`GET /api/external/mcp-identity/userinfo`, which returns the current user's basic
-information (`id`, `user_name`, `email`) and never exposes git credentials.
-The token can be passed back either as the `X-Wegent-Token` header or as
-`Authorization: Bearer <token>`.
-Token lifetime is controlled by `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES`
-(default 1 day) and is independent of the Skill identity token setting.
+The task token is scoped to the current task (24 hours by default). The
+business side can resolve the current user by calling
+`GET /api/external/mcp-identity/userinfo` with the same
+`Authorization: Bearer <token>` header; the response contains only the user's
+basic information (`id`, `user_name`, `email`) and never exposes git
+credentials.
 
 ---
 

@@ -2,39 +2,24 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.services.auth import (
-    create_mcp_identity_token,
-    create_skill_identity_token,
-)
+"""Tests for the public task-token userinfo endpoint."""
+
+from fastapi.testclient import TestClient
+
+from app.models.user import User
+from app.services.auth import create_task_token
 
 
-def _mcp_identity_token(
-    user_id: int,
-    user_name: str,
-) -> str:
-    """Create an MCP identity token for tests."""
-    return create_mcp_identity_token(
-        user_id=user_id,
-        user_name=user_name,
-        server_name="business-server",
-    )
-
-
-def _skill_identity_token(user_id: int, user_name: str) -> str:
-    """Create a Skill identity token (wrong token type) for tests."""
-    return create_skill_identity_token(
-        user_id=user_id,
-        user_name=user_name,
-        runtime_type="executor",
-        runtime_name="business-server",
-    )
-
-
-def test_get_mcp_identity_user_returns_basic_info(
-    test_client,
-    test_user,
+def test_get_mcp_identity_user_returns_task_user_info(
+    test_client: TestClient,
+    test_user: User,
 ) -> None:
-    token = _mcp_identity_token(test_user.id, test_user.user_name)
+    token = create_task_token(
+        task_id=1,
+        subtask_id=2,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
 
     response = test_client.get(
         "/api/external/mcp-identity/userinfo",
@@ -42,68 +27,72 @@ def test_get_mcp_identity_user_returns_basic_info(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "id": test_user.id,
-        "user_name": test_user.user_name,
-        "email": test_user.email,
-    }
+    body = response.json()
+    assert body["id"] == test_user.id
+    assert body["user_name"] == test_user.user_name
+    assert body["email"] == test_user.email
+    assert "git_info" not in body
+    assert "git_token" not in body
 
 
-def test_get_mcp_identity_user_accepts_x_wegent_token_header(
-    test_client,
-    test_user,
+def test_get_mcp_identity_user_rejects_invalid_token(
+    test_client: TestClient,
 ) -> None:
-    token = _mcp_identity_token(test_user.id, test_user.user_name)
-
     response = test_client.get(
         "/api/external/mcp-identity/userinfo",
-        headers={"X-Wegent-Token": token},
+        headers={"Authorization": "Bearer not-a-valid-token"},
     )
 
-    assert response.status_code == 200
-    assert response.json()["user_name"] == test_user.user_name
+    assert response.status_code == 401
 
 
-def test_get_mcp_identity_user_never_exposes_git_credentials(
-    test_client,
-    test_user,
+def test_get_mcp_identity_user_rejects_expired_token(
+    test_client: TestClient,
+    test_user: User,
 ) -> None:
-    token = _mcp_identity_token(test_user.id, test_user.user_name)
+    token = create_task_token(
+        task_id=1,
+        subtask_id=2,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        expires_delta_minutes=-1,
+    )
 
     response = test_client.get(
         "/api/external/mcp-identity/userinfo",
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    payload = response.json()
-    assert "git_info" not in payload
-    assert "git_token" not in payload
+    assert response.status_code == 401
 
 
-def test_get_mcp_identity_user_rejects_missing_token(test_client) -> None:
+def test_get_mcp_identity_user_rejects_missing_token(
+    test_client: TestClient,
+) -> None:
     response = test_client.get("/api/external/mcp-identity/userinfo")
 
     assert response.status_code == 401
 
 
-def test_get_mcp_identity_user_rejects_invalid_token(test_client) -> None:
-    response = test_client.get(
-        "/api/external/mcp-identity/userinfo",
-        headers={"Authorization": "Bearer not-a-valid-jwt"},
-    )
-
-    assert response.status_code == 401
-
-
-def test_get_mcp_identity_user_rejects_non_mcp_token_type(
-    test_client,
-    test_user,
+def test_get_mcp_identity_user_returns_404_for_inactive_user(
+    test_client: TestClient,
+    test_user: User,
+    test_db,
 ) -> None:
-    token = _skill_identity_token(test_user.id, test_user.user_name)
+    test_user.is_active = False
+    test_db.add(test_user)
+    test_db.commit()
+
+    token = create_task_token(
+        task_id=1,
+        subtask_id=2,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
 
     response = test_client.get(
         "/api/external/mcp-identity/userinfo",
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 404

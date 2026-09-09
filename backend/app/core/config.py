@@ -173,15 +173,6 @@ class Settings(BaseSettings):
     WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     WEWORK_REFRESH_TOKEN_EXPIRE_MINUTES: int = 365 * 24 * 60
     SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
-    MCP_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 24 * 60  # 1 day in minutes
-
-    @field_validator("MCP_IDENTITY_TOKEN_EXPIRE_MINUTES")
-    @classmethod
-    def _validate_mcp_identity_token_expire_minutes(cls, value: int) -> int:
-        """Reject non-positive MCP identity token lifetimes."""
-        if value < 1:
-            raise ValueError("MCP_IDENTITY_TOKEN_EXPIRE_MINUTES must be at least 1")
-        return value
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"

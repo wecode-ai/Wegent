@@ -70,11 +70,10 @@ spec:
 
 ### 业务方 MCP 服务器身份校验
 
-当 `spec.mcpServers` 配置的是业务方提供的远程 MCP 服务器时，可以在单个
-server 上开启 `inject_wegent_token: true`，让 Wegent 在构建任务请求时为
-该 server 签发一个绑定当前任务用户的 Wegent token，并通过
-`X-Wegent-Token` 请求头发送给业务方，业务方已有 `Authorization` 等静态
-header 不受影响：
+当 `spec.mcpServers` 配置的是业务方提供的远程 MCP 服务器时，业务方可以用
+Wegent 在出站请求中注入的任务 token 校验当前用户。在 server 的 headers 里
+配置 `${{task_token}}` 占位符，Wegent 构建请求时会把它替换为签发的任务
+token：
 
 ```yaml
 spec:
@@ -82,16 +81,14 @@ spec:
     business:
       type: streamable-http
       url: https://mcp.business.example.com/mcp
-      inject_wegent_token: true
+      headers:
+        Authorization: "Bearer ${{task_token}}"
 ```
 
-该选项按 server 逐个开启（opt-in），避免把 token 扩散给未配置的服务器。
-业务方收到请求后，可用 `X-Wegent-Token` 头里的 token 调用
-`GET /api/external/mcp-identity/userinfo` 校验并获取当前用户基本信息（`id`、
-`user_name`、`email`）；回调时 token 可用 `X-Wegent-Token` 或
-`Authorization: Bearer` 任一方式携带。该接口不会返回 git 凭据。
-token 有效期与 Skill
-identity token 独立，由 `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES` 控制（默认 1 天）。
+任务 token 绑定当前任务（默认 24 小时）。业务方收到请求后，可用同一个
+`Authorization: Bearer <token>` 头调用 `GET /api/external/mcp-identity/userinfo`
+校验并获取当前用户基本信息（`id`、`user_name`、`email`）；接口不会返回
+git 凭据。
 
 ---
 

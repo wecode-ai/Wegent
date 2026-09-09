@@ -26,11 +26,7 @@ from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
-from app.services.auth import (
-    WEGENT_TOKEN_HEADER,
-    create_mcp_identity_token,
-    create_skill_identity_token,
-)
+from app.services.auth import create_skill_identity_token
 from app.services.execution.git_credentials import (
     build_execution_git_user_info,
     classify_git_auth_transport,
@@ -1994,12 +1990,6 @@ Response template:
                         {"name": name, **config}
                         for name, config in mcp_servers_dict.items()
                     ]
-                    # Identity-token injection is applied to the top-level
-                    # ExecutionRequest MCP list, not these runtime bot copies.
-                    # Strip the opt-in flag so it never reaches the executor.
-                    for server in ghost_mcp_servers:
-                        if isinstance(server, dict):
-                            server.pop("inject_wegent_token", None)
                     ghost_skills = ghost_crd.spec.skills or []
                     ghost_skill_refs = {
                         name: ref.model_dump()
@@ -2133,8 +2123,6 @@ Response template:
                     # Convert "headers" to "auth" for chat_shell compatibility
                     if "headers" in server_config:
                         server_entry["auth"] = server_config["headers"]
-                    if server_config.get("inject_wegent_token"):
-                        server_entry["inject_wegent_token"] = True
                     servers_list.append(server_entry)
 
             if servers_list:
@@ -2239,8 +2227,6 @@ Response template:
                             # Convert "headers" to "auth" for chat_shell compatibility
                             if "headers" in server_config:
                                 server_entry["auth"] = server_config["headers"]
-                            if server_config.get("inject_wegent_token"):
-                                server_entry["inject_wegent_token"] = True
                             # Include stdio-specific fields (command, args, env)
                             if "command" in server_config:
                                 server_entry["command"] = server_config["command"]
@@ -2280,96 +2266,7 @@ Response template:
                 [s["name"] for s in merged_servers],
             )
 
-        return self._inject_wegent_identity_tokens(merged_servers, user)
-
-    @staticmethod
-    def _inject_wegent_identity_tokens(servers: list[dict], user: Any) -> list[dict]:
-        """Inject Wegent identity tokens into opted-in MCP servers.
-
-        A Ghost ``mcpServers`` entry can opt in with
-        ``inject_wegent_token: true``. When enabled, the business MCP server
-        receives a freshly signed Wegent identity token under the
-        ``X-Wegent-Token`` header when building the task request, so it can
-        resolve the current user through
-        ``GET /api/external/mcp-identity/userinfo``. The token is stored in the
-        server's ``auth`` map, the canonical header map of the execution
-        request contract; a dedicated header is used so the business server's
-        own ``Authorization`` configuration is preserved.
-        The option is consumed here and never forwarded to the executor.
-
-        Args:
-            servers: Merged MCP server configuration list
-            user: User the identity token should represent
-
-        Returns:
-            The same list, with opted-in servers carrying an X-Wegent-Token
-            header bound to a freshly issued identity token
-        """
-        for server in servers:
-            if not isinstance(server, dict) or not server.pop(
-                "inject_wegent_token", False
-            ):
-                continue
-            server_name = server.get("name") or "server"
-            if server.get("type") == "stdio":
-                logger.warning(
-                    "[TaskRequestBuilder] inject_wegent_token is not supported "
-                    "for stdio MCP server '%s'; skipping",
-                    server_name,
-                )
-                continue
-            token = create_mcp_identity_token(
-                user_id=user.id,
-                user_name=user.user_name,
-                server_name=server_name,
-            )
-            TaskRequestBuilder._set_identity_token_header(
-                server, "auth", token, server_name
-            )
-            logger.info(
-                "[TaskRequestBuilder] Injected Wegent identity token into MCP "
-                "server '%s' for user %s",
-                server_name,
-                user.id,
-            )
-        return servers
-
-    @staticmethod
-    def _set_identity_token_header(
-        server: dict, field: str, token: str, server_name: str
-    ) -> None:
-        """Write the Wegent identity token into a server header map.
-
-        The token is stored under ``X-Wegent-Token`` so a statically
-        configured ``Authorization`` header is preserved. A non-dict ``field``
-        value (an invalid config) is replaced.
-
-        Args:
-            server: MCP server configuration dict (modified in place)
-            field: Header map field name (``auth`` or ``headers``)
-            token: Wegent identity token
-            server_name: MCP server name for log context
-        """
-        existing = server.get(field)
-        if isinstance(existing, dict):
-            if WEGENT_TOKEN_HEADER in existing:
-                logger.warning(
-                    "[TaskRequestBuilder] inject_wegent_token overrides the "
-                    "statically configured X-Wegent-Token in '%s' of MCP "
-                    "server '%s'",
-                    field,
-                    server_name,
-                )
-            existing[WEGENT_TOKEN_HEADER] = token
-            return
-        if existing is not None:
-            logger.warning(
-                "[TaskRequestBuilder] inject_wegent_token replaces the invalid "
-                "non-dict '%s' value of MCP server '%s'",
-                field,
-                server_name,
-            )
-        server[field] = {WEGENT_TOKEN_HEADER: token}
+        return merged_servers
 
     @staticmethod
     def _extract_prompt_text(message: Union[str, list]) -> str:

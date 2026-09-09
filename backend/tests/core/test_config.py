@@ -120,14 +120,6 @@ class TestSettings:
         ):
             build_settings(WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS=0)
 
-    def test_mcp_identity_token_expire_minutes_must_be_positive(self) -> None:
-        """Prevent a non-positive MCP identity token lifetime from disabling auth."""
-        with pytest.raises(
-            ValidationError,
-            match="MCP_IDENTITY_TOKEN_EXPIRE_MINUTES must be at least 1",
-        ):
-            build_settings(MCP_IDENTITY_TOKEN_EXPIRE_MINUTES=0)
-
     def test_wework_plugin_publication_settings_load_from_environment(
         self, monkeypatch
     ):
