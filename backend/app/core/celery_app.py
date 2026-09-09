@@ -69,6 +69,30 @@ def build_beat_schedule() -> dict:
             "task": "app.tasks.project_automation_tasks.check_due_project_automations",
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
+        "check-pending-project-incoming-events": {
+            "task": (
+                "app.tasks.project_automation_tasks."
+                "check_pending_project_incoming_events"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "check-due-project-event-subscriptions": {
+            "task": (
+                "app.tasks.project_automation_tasks."
+                "check_due_project_event_subscriptions"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-workflow-loop-timeouts": {
+            "task": (
+                "app.tasks.project_automation_tasks." "scan_workflow_loop_timeouts"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-branch-collectors": {
+            "task": ("app.tasks.project_automation_tasks." "scan_branch_collectors"),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
         "scan-stale-index-tasks": {
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes

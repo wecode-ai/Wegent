@@ -1,4 +1,7 @@
 import type { ComponentType } from 'react'
+import type { ProjectEventSourceCatalogItem } from '@/api/projectIncomingHooks'
+import type { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
+import type { CloudProject } from '@/api/deliveries'
 import type {
   AutomationExecutionCatalog,
   AutomationUiRule,
@@ -12,6 +15,10 @@ export interface AutomationRulesViewProps {
   error?: string
   canManage?: boolean
   projectTags?: string[]
+  eventSourceCatalog?: ProjectEventSourceCatalogItem[]
+  projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
+  projectId?: string
+  project?: CloudProject
   executionCatalog?: AutomationExecutionCatalog
   onReload?: () => Promise<void>
   onLoadExecutionCatalog?: () => Promise<AutomationExecutionCatalog>
