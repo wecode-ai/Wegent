@@ -509,14 +509,21 @@ where
                         &self.client.config.backend_url,
                         &self.client.config.device_id,
                     ));
-                    retry_delay = self.client.config.reconnect_delay;
-                    self.heartbeat_until_reconnect().await;
+                    let stable_connection = self.heartbeat_until_reconnect().await;
                     self.connection_status.store(false, Ordering::Release);
                     if let Err(error) = self.client.transport.disconnect().await {
                         write_executor_error_line(&format_executor_log(
                             "local backend stale connection cleanup failed",
                             &[("error", error)],
                         ));
+                    }
+                    if stable_connection {
+                        retry_delay = self.client.config.reconnect_delay;
+                    } else {
+                        sleep(retry_delay).await;
+                        retry_delay = retry_delay
+                            .saturating_mul(2)
+                            .min(self.client.config.reconnect_delay_max);
                     }
                 }
                 Err(error) => {
@@ -625,8 +632,9 @@ where
         }
     }
 
-    async fn heartbeat_until_reconnect(&self) {
+    async fn heartbeat_until_reconnect(&self) -> bool {
         let mut consecutive_failures = 0_u32;
+        let mut observed_successful_heartbeat = false;
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
         let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
             handler
@@ -646,7 +654,7 @@ where
                         &[("error", error)],
                     ));
                     let _ = self.client.disconnect().await;
-                    return;
+                    return observed_successful_heartbeat;
                 }
             }
             if let Some(handler) = &self.session_handler {
@@ -658,6 +666,7 @@ where
             let failure = match self.client.emit_liveness_heartbeat().await {
                 Ok(()) => {
                     consecutive_failures = 0;
+                    observed_successful_heartbeat = true;
                     self.trigger_runtime_work_poll();
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
@@ -672,7 +681,7 @@ where
             ));
             if consecutive_failures >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES {
                 let _ = self.client.disconnect().await;
-                return;
+                return observed_successful_heartbeat;
             }
             next_heartbeat_at = Instant::now() + self.client.config.heartbeat_timeout;
         }

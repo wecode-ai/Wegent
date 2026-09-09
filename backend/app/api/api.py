@@ -38,6 +38,7 @@ from app.api.endpoints import (
     knowledge_video_upload,
     local_executor,
     loop_item_executions,
+    mcp_identity,
     mcp_providers,
     oauth_clients,
     oauth_provider,
@@ -404,6 +405,7 @@ api_router.include_router(
     system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
+api_router.include_router(mcp_identity.router, tags=["mcp-identity"])
 api_router.include_router(
     prompt_optimization.router,
     prefix="/prompt-optimization",

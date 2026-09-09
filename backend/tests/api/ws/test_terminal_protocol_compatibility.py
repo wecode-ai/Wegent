@@ -91,9 +91,10 @@ async def test_new_backend_relays_old_and_new_endpoint_combinations(
     assert result["protocol_version"] == selected
     assert relay.session["terminal_protocol_version"] == selected
     sent = relay.sio.call.await_args.args[1]
-    assert sent == (
+    expected_attach = (
         V2_ATTACH if new_browser else {**LEGACY_ATTACH, "protocol_version": 1}
     )
+    assert sent == {**expected_attach, "browser_socket_id": "browser-sid"}
     assert relay.session["terminal_consumer_id"] == (
         "consumer-1" if selected == 2 else None
     )
@@ -164,7 +165,11 @@ async def test_v2_fields_never_upgrade_a_legacy_request(relay, explicit_version)
     relay.sio.call.return_value = {"success": True, "protocol_version": 1}
     result = await relay.browser.on_terminal_attach("browser-sid", request)
     assert result["protocol_version"] == 1
-    assert relay.sio.call.await_args.args[1] == {**LEGACY_ATTACH, "protocol_version": 1}
+    assert relay.sio.call.await_args.args[1] == {
+        **LEGACY_ATTACH,
+        "protocol_version": 1,
+        "browser_socket_id": "browser-sid",
+    }
 
 
 async def test_disabled_v2_offers_explicit_v1_without_consumer(relay, monkeypatch):
@@ -174,7 +179,11 @@ async def test_disabled_v2_offers_explicit_v1_without_consumer(relay, monkeypatc
     relay.sio.call.return_value = {"success": True, "protocol_version": 1}
     result = await relay.browser.on_terminal_attach("browser-sid", V2_ATTACH)
     assert result["protocol_version"] == 1
-    assert relay.sio.call.await_args.args[1] == {**LEGACY_ATTACH, "protocol_version": 1}
+    assert relay.sio.call.await_args.args[1] == {
+        **LEGACY_ATTACH,
+        "protocol_version": 1,
+        "browser_socket_id": "browser-sid",
+    }
     assert relay.session["terminal_consumer_id"] is None
 
 
@@ -282,7 +291,11 @@ async def test_selected_v1_reconnect_remains_v1_when_v2_is_enabled(relay):
         "browser-sid", {**LEGACY_ATTACH, "protocol_version": 1}
     )
     assert result["protocol_version"] == 1
-    assert relay.sio.call.await_args.args[1] == {**LEGACY_ATTACH, "protocol_version": 1}
+    assert relay.sio.call.await_args.args[1] == {
+        **LEGACY_ATTACH,
+        "protocol_version": 1,
+        "browser_socket_id": "browser-sid",
+    }
 
 
 @pytest.mark.parametrize("version", [1, None, True, "2", 3])

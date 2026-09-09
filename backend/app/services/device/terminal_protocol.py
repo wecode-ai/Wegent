@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 CONSUMER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+BROWSER_SOCKET_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 V2_FIELDS = {"consumer_id", "sequence", "last_acked_sequence"}
 
 
@@ -24,6 +25,15 @@ def get_consumer_id(data: dict) -> str:
         return ""
     value = value.strip()
     return value if CONSUMER_ID_PATTERN.fullmatch(value) else ""
+
+
+def get_browser_socket_id(data: dict) -> str:
+    """Return a validated server-issued terminal namespace socket ID."""
+    value = data.get("browser_socket_id") if isinstance(data, dict) else None
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    return value if BROWSER_SOCKET_ID_PATTERN.fullmatch(value) else ""
 
 
 def get_sequence(data: dict, key: str, minimum: int = 1) -> Optional[int]:
@@ -74,8 +84,18 @@ class TerminalAttachRequest:
             )
         return version
 
-    def payload(self, session_id: str, offered: int) -> dict:
-        payload = {"session_id": session_id, "protocol_version": offered}
+    def payload(
+        self,
+        session_id: str,
+        offered: int,
+        *,
+        browser_socket_id: str,
+    ) -> dict:
+        payload = {
+            "session_id": session_id,
+            "protocol_version": offered,
+            "browser_socket_id": browser_socket_id,
+        }
         if offered == 2:
             payload.update(
                 consumer_id=self.consumer_id,
@@ -99,7 +119,12 @@ def parse_terminal_event(data: dict, *, output: bool) -> dict:
     if output:
         if not isinstance(data.get("data"), str):
             raise ValueError("Invalid terminal output")
-        allowed = {"session_id", "data", "protocol_version"}
+        allowed = {
+            "session_id",
+            "data",
+            "protocol_version",
+            "browser_socket_id",
+        }
     else:
         if "exit_code" not in data or (
             data["exit_code"] is not None and type(data["exit_code"]) is not int
@@ -107,7 +132,13 @@ def parse_terminal_event(data: dict, *, output: bool) -> dict:
             raise ValueError("Invalid terminal exit_code")
         if "error" in data and not isinstance(data["error"], str):
             raise ValueError("Invalid terminal error")
-        allowed = {"session_id", "exit_code", "error", "protocol_version"}
+        allowed = {
+            "session_id",
+            "exit_code",
+            "error",
+            "protocol_version",
+            "browser_socket_id",
+        }
     payload = dict(data)
     if version == 2:
         consumer_id = get_consumer_id(data)
@@ -117,4 +148,7 @@ def parse_terminal_event(data: dict, *, output: bool) -> dict:
         allowed.update({"consumer_id", "sequence"})
     if data.keys() - allowed:
         raise ValueError("Invalid terminal event fields")
+    if "browser_socket_id" in data and not get_browser_socket_id(data):
+        raise ValueError("Invalid terminal browser socket")
+    payload.pop("browser_socket_id", None)
     return payload

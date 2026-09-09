@@ -1063,6 +1063,8 @@ struct RecordedCall {
 struct RecordingTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     emits: Arc<Mutex<Vec<RecordedCall>>>,
+    connects: Arc<Mutex<usize>>,
+    disconnects: Arc<Mutex<usize>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
     terminal_responses: Arc<Mutex<VecDeque<Result<Value, String>>>>,
@@ -1101,11 +1103,17 @@ impl LocalBackendTransport for RecordingTransport {
         &'a self,
         _config: &'a LocalBackendConfig,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            *self.connects.lock().unwrap() += 1;
+            Ok(())
+        })
     }
 
     fn disconnect<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            *self.disconnects.lock().unwrap() += 1;
+            Ok(())
+        })
     }
 
     fn call<'a>(

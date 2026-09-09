@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extract } from 'tar'
 
 const CORE_COMPONENT_PATTERN = /^WeworkComponent_coreDsh_.+\.tar\.gz$/
 
@@ -25,7 +25,13 @@ export async function collectHarnessRuntimeReleaseAssets(inputDirectory, outputD
 async function collectComponentArchive(archive, output) {
   const temporary = await mkdtemp(join(tmpdir(), 'wework-harness-runtime-release-'))
   try {
-    await extract({ cwd: temporary, file: archive, strict: true })
+    const extraction = spawnSync('tar', ['-xzf', archive, '-C', temporary], {
+      stdio: 'inherit',
+    })
+    if (extraction.error) throw extraction.error
+    if (extraction.status !== 0) {
+      throw new Error(`Failed to extract Harness Runtime component: ${archive}`)
+    }
     const catalog = JSON.parse(await readFile(join(temporary, 'runtimes.json'), 'utf8'))
     if (!Array.isArray(catalog.runtimes) || catalog.runtimes.length === 0) {
       throw new Error(`Harness Runtime catalog is invalid: ${archive}`)
