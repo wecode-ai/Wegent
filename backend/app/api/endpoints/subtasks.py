@@ -68,16 +68,6 @@ def list_subtasks(
         before_message_id=before_message_id,
     )
 
-    # DEBUG: Log contexts for table types
-    for item in items:
-        if hasattr(item, "contexts") and item.contexts:
-            for ctx in item.contexts:
-                if ctx.context_type == "table":
-                    logger.info(
-                        f"[list_subtasks] Table context in response: subtask_id={item.id}, "
-                        f"ctx_id={ctx.id}, name={ctx.name}, source_config={ctx.source_config}"
-                    )
-
     total = subtask_store.count_by_task_for_user(
         db,
         task_id=task_id,
