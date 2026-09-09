@@ -547,6 +547,80 @@ describe('SmartAppsMarketplacePage', () => {
     expect(screen.getByTestId('smart-app-created-item-research-desk')).not.toHaveClass('min-h-64')
   })
 
+  test.each([true, false])(
+    'keeps a market installation separate from a removed same-name import (market visible: %s)',
+    async marketVisible => {
+      const previousPublication = item({
+        id: 8,
+        accessRole: 'owner',
+        displayName: '旧测试工作台',
+        summary: '旧导入简介',
+        iconUrl: 'https://example.test/old.png',
+        tags: ['old-tag'],
+      })
+      const marketItem = item({
+        displayName: '市场工作台',
+        summary: '市场发布简介',
+        iconUrl: 'https://example.test/market.png',
+      })
+      const smartAppsApi = api(marketVisible ? [marketItem] : [])
+      vi.mocked(smartAppsApi.listOwned).mockResolvedValue({ items: [previousPublication] })
+      listInstalled.mockResolvedValue([
+        {
+          ...importedInstallation,
+          id: 'market-7',
+          source: 'market',
+          smartAppId: 7,
+          releaseId: 17,
+        },
+      ])
+
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+      await screen.findByText('市场安装')
+      expect(screen.getByTestId('smart-apps-owned-filter-created')).toHaveTextContent('0')
+      expect(screen.getByTestId('smart-apps-owned-filter-installed')).toHaveTextContent('1')
+      expect(screen.queryByText('旧测试工作台')).not.toBeInTheDocument()
+      expect(screen.queryByText('旧导入简介')).not.toBeInTheDocument()
+      expect(screen.queryByText('old-tag')).not.toBeInTheDocument()
+      expect(screen.queryByText('管理范围')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('smart-app-visibility-8')).not.toBeInTheDocument()
+      expect(document.querySelector(`img[src="${previousPublication.iconUrl}"]`)).toBeNull()
+      expect(
+        screen.getByText(
+          marketVisible ? marketItem.summary : importedInstallation.manifest.description
+        )
+      ).toBeInTheDocument()
+      if (marketVisible) {
+        expect(screen.getByTestId('smart-app-owned-item-7').querySelector('img')).toHaveAttribute(
+          'src',
+          marketItem.iconUrl
+        )
+      }
+      fireEvent.click(screen.getByTestId('smart-app-actions-market-7'))
+      expect(screen.queryByTestId('smart-app-manage-access-market-7')).not.toBeInTheDocument()
+    }
+  )
+
+  test('matches an owned market installation by ID ahead of another same-name publication', async () => {
+    const publication = item({ accessRole: 'owner', summary: '当前发布简介' })
+    const smartAppsApi = api([publication])
+    vi.mocked(smartAppsApi.listOwned).mockResolvedValue({
+      items: [item({ id: 8, accessRole: 'owner', summary: '旧导入简介' }), publication],
+    })
+    listInstalled.mockResolvedValue([
+      { ...importedInstallation, id: 'market-7', source: 'market', smartAppId: 7, releaseId: 17 },
+    ])
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+    const card = await screen.findByTestId('smart-app-created-item-market-7')
+    expect(card).toHaveTextContent('当前发布简介')
+    expect(card).toHaveTextContent('我创建')
+    expect(card).not.toHaveTextContent('旧导入简介')
+    expect(within(card).getByTestId('smart-app-visibility-7')).toBeInTheDocument()
+  })
+
   test('identifies a folder-linked workbench separately from an imported package', async () => {
     listInstalled.mockResolvedValue([
       {
