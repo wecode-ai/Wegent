@@ -44,7 +44,16 @@ export function instantiateIssueWorkflow(
     current_stage_id: null,
     nodes: (stageMode === 'dag' ? definition.nodes : []).map(node => ({
       ...node,
-      status: node.depends_on.length === 0 ? 'ready' : 'blocked',
+      status:
+        node.node_type === 'event' && node.role === 'start'
+          ? ('completed' as const)
+          : !node.loop_id && node.depends_on.length === 0
+            ? ('ready' as const)
+            : ('blocked' as const),
+      loop_state: node.node_type === 'loop' ? ('idle' as const) : undefined,
+      attempts: 0,
+      active_condition: null,
+      pending_events: [],
       task_binding_id: null,
       task_ids: [],
       task_statuses: {},
@@ -63,6 +72,7 @@ function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[
       .map(node => node.id)
   )
   return nodes.map(node => {
+    if (node.loop_id) return node
     if (node.status !== 'blocked') return node
     return node.depends_on.every(dependency => completed.has(dependency))
       ? { ...node, status: 'ready' }
@@ -164,14 +174,18 @@ export function updateIssueWorkflowForRuntime(
 }
 
 export function workflowBoardStatus(workflow: IssueWorkflowInstance): CloudLoopItem['status'] {
-  const required = workflow.nodes.filter(node => node.required)
+  const required = workflow.nodes.filter(node => node.required && !node.loop_id)
   if (
     required.length > 0 &&
     required.every(node => ['completed', 'forced_completed'].includes(node.status))
   ) {
     return 'in_review'
   }
-  if (workflow.nodes.some(node => ['running', 'changes_requested'].includes(node.status))) {
+  if (
+    workflow.nodes.some(node =>
+      ['running', 'changes_requested', 'waiting', 'reacting'].includes(node.status)
+    )
+  ) {
     return 'in_progress'
   }
   return 'pending'

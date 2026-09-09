@@ -34,6 +34,23 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('projects an unfinished empty assistant turn deterministically', () => {
+    const turns: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-streaming',
+        items: [],
+        status: 'streaming',
+      },
+    ]
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-31T00:00:00.000Z'))
+    const first = JSON.stringify(projectRuntimeConversationTurns(turns))
+    vi.setSystemTime(new Date('2026-08-31T00:00:00.010Z'))
+    const second = JSON.stringify(projectRuntimeConversationTurns(turns))
+    vi.useRealTimers()
+    expect(second).toBe(first)
+  })
+
   test('settles a stale reconnecting block when the turn resumes with new work', () => {
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
       type: 'block_created',

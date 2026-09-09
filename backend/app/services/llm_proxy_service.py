@@ -59,11 +59,11 @@ LLM_PROXY_STREAM_HEADERS = {
 }
 
 
-def _resolve_upstream_target(
+def resolve_llm_proxy_protocol(
     model_name: str,
     model_config: dict[str, Any],
-) -> tuple[str, dict[str, str]]:
-    """Choose the upstream endpoint path and auth headers from model config.
+) -> str:
+    """Resolve the shared wire protocol for Runtime conversion and forwarding.
 
     Supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages.
     The model's DB configuration is the single source of truth; if it cannot be
@@ -73,7 +73,6 @@ def _resolve_upstream_target(
     api_format = str(model_config.get("api_format") or "").strip().lower()
     protocol = str(model_config.get("protocol") or "").strip().lower()
     wire_api = str(model_config.get("wire_api") or "").strip().lower()
-    provider_api_key = str(model_config.get("api_key") or "").strip()
 
     is_anthropic = protocol in {"claude", "anthropic-messages"}
     is_chat_completions = (
@@ -107,22 +106,13 @@ def _resolve_upstream_target(
         )
 
     if is_anthropic:
-        auth_headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
-        if provider_api_key:
-            auth_headers["x-api-key"] = provider_api_key
-        return "/v1/messages", auth_headers
+        return "anthropic-messages"
 
     if is_responses:
-        auth_headers = {}
-        if provider_api_key:
-            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
-        return "/responses", auth_headers
+        return "openai-responses"
 
     if is_chat_completions:
-        auth_headers = {}
-        if provider_api_key:
-            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
-        return "/chat/completions", auth_headers
+        return "openai-chat-completions"
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -136,6 +126,26 @@ def _resolve_upstream_target(
             "'claude'/'anthropic-messages' for Anthropic Messages."
         ),
     )
+
+
+def _resolve_upstream_target(
+    model_name: str,
+    model_config: dict[str, Any],
+) -> tuple[str, dict[str, str]]:
+    """Choose the provider endpoint and authentication for the resolved protocol."""
+    protocol = resolve_llm_proxy_protocol(model_name, model_config)
+    provider_api_key = str(model_config.get("api_key") or "").strip()
+    if protocol == "anthropic-messages":
+        auth_headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
+        if provider_api_key:
+            auth_headers["x-api-key"] = provider_api_key
+        return "/v1/messages", auth_headers
+
+    auth_headers = {}
+    if provider_api_key:
+        auth_headers["Authorization"] = f"Bearer {provider_api_key}"
+    endpoint = "/responses" if protocol == "openai-responses" else "/chat/completions"
+    return endpoint, auth_headers
 
 
 def _join_upstream_url(base_url: str, endpoint_path: str) -> str:

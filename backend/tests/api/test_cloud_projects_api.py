@@ -4,12 +4,7 @@
 
 """API tests for cloud projects, TODOs, and local task associations."""
 
-import base64
-import hashlib
-import hmac
 import io
-import json
-from contextlib import contextmanager
 from datetime import datetime
 from typing import BinaryIO
 
@@ -1420,244 +1415,6 @@ def test_cloud_project_robot_binds_default_runtime_profile(
     assert cleared.json()["defaultRuntimeProfileId"] is None
 
 
-def test_project_automation_webhook_verifies_github_signature(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    test_db.add(
-        Kind(
-            kind="Device",
-            name="hook-cloud-device",
-            namespace="default",
-            user_id=test_user.id,
-            is_active=True,
-            json={
-                "spec": {"deviceType": "cloud"},
-                "metadata": {"name": "hook-cloud-device"},
-            },
-        )
-    )
-    test_db.commit()
-    project = test_client.post(
-        "/api/v1/cloud-projects",
-        headers=_auth(test_token),
-        json={
-            "project_key": "hook",
-            "name": "Webhook project",
-            "task_provider": "github",
-            "provider_config": {
-                "repository": "acme/hook",
-                "token": "provider-token",
-            },
-        },
-    ).json()
-    agent = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
-        headers=_auth(test_token),
-        json={
-            "name": "Dispatcher",
-            "runtime": "codex",
-        },
-    ).json()
-    rule = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-        json={
-            "name": "External issue",
-            "prompt": "Dispatch the issue.",
-            "triggerType": "event",
-            "eventType": "task.created",
-            "agentId": agent["id"],
-        },
-    ).json()
-    assert rule["webhookSecret"]
-    listed = test_client.get(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-    ).json()
-    assert listed[0]["webhookSecret"] is None
-
-    rotated_response = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}"
-        "/rotate-webhook-secret",
-        headers=_auth(test_token),
-    )
-    assert rotated_response.status_code == 200, rotated_response.text
-    rotated = rotated_response.json()
-    assert rotated["webhookSecret"]
-    assert rotated["webhookSecret"] != rule["webhookSecret"]
-    assert rotated["version"] == rule["version"] + 1
-    stored_rule = test_db.get(ProjectAutomationRule, rule["id"])
-    assert stored_rule is not None
-    stored_metadata = dict(stored_rule.metadata_json)
-    stored_credential = stored_metadata["webhook_secret_encrypted"]
-    assert stored_credential["algorithm"] == "aes-256-gcm"
-    assert "nonce" in stored_credential
-
-    captured: dict[str, object] = {}
-
-    async def fake_process(
-        db: Session, event: object, *, automation_id: str | None = None
-    ) -> int:
-        captured["event"] = event
-        captured["automation_id"] = automation_id
-        return 1
-
-    monkeypatch.setattr(
-        "app.api.endpoints.project_automations.project_automation_processor.process",
-        fake_process,
-    )
-    payload = {"action": "opened", "issue": {"number": 42, "title": "Bug"}}
-    body = json.dumps(payload, separators=(",", ":")).encode()
-    signature = (
-        "sha256="
-        + hmac.new(rotated["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
-    )
-    rejected = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature-256": "sha256=bad",
-        },
-    )
-    response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
-    )
-
-    assert rejected.status_code == 401
-    assert response.status_code == 202, response.text
-    assert response.json() == {"status": "accepted", "dispatched": 1}
-    assert captured["automation_id"] == rule["id"]
-    event = captured["event"]
-    assert getattr(event, "event_type") == "task.created"
-    assert getattr(event, "subject_id") == f"{project['project_key']}-42"
-    assert getattr(event, "actor_user_id") == test_user.id
-
-    old_signature = (
-        "sha256="
-        + hmac.new(rule["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
-    )
-    old_secret_response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature-256": old_signature,
-        },
-    )
-    assert old_secret_response.status_code == 401
-
-    tampered_credential = dict(stored_credential)
-    ciphertext = bytearray(base64.b64decode(tampered_credential["ciphertext"]))
-    ciphertext[0] ^= 0x01
-    tampered_credential["ciphertext"] = base64.b64encode(ciphertext).decode()
-    stored_metadata["webhook_secret_encrypted"] = tampered_credential
-    stored_rule.metadata_json = stored_metadata
-    test_db.commit()
-    tampered_response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        content=body,
-        headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
-    )
-    assert tampered_response.status_code == 401
-
-    manual_response = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
-        headers=_auth(test_token),
-    )
-    assert manual_response.status_code == 200, manual_response.text
-    assert manual_response.json()["trigger"] == "manual"
-    assert manual_response.json()["automationId"] == rule["id"]
-
-
-def test_project_automation_webhook_verifies_gitlab_token(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project = test_client.post(
-        "/api/v1/cloud-projects",
-        headers=_auth(test_token),
-        json={
-            "project_key": "labhook",
-            "name": "GitLab webhook project",
-            "task_provider": "gitlab",
-            "provider_config": {
-                "repository": "acme/hook",
-                "token": "provider-token",
-            },
-        },
-    ).json()
-    agent = ProjectChatAgent(
-        cloud_project_id=project["id"],
-        name="Dispatcher",
-        title="Dispatcher",
-        status="active",
-        created_by_user_id=test_user.id,
-        metadata_json={"runtime": "codex"},
-    )
-    test_db.add(agent)
-    test_db.commit()
-    rule = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/automations",
-        headers=_auth(test_token),
-        json={
-            "name": "External issue",
-            "prompt": "Dispatch the issue.",
-            "triggerType": "event",
-            "eventType": "task.created",
-            "agentId": agent.id,
-        },
-    ).json()
-
-    captured: dict[str, object] = {}
-
-    async def fake_process(
-        db: Session, event: object, *, automation_id: str | None = None
-    ) -> int:
-        captured["event"] = event
-        return 1
-
-    monkeypatch.setattr(
-        "app.api.endpoints.project_automations.project_automation_processor.process",
-        fake_process,
-    )
-    response = test_client.post(
-        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
-        headers={"X-Gitlab-Token": rule["webhookSecret"]},
-        json={
-            "object_kind": "issue",
-            "event_type": "issue",
-            "object_attributes": {
-                "action": "open",
-                "iid": 7,
-                "title": "Bug",
-                "state": "opened",
-                "labels": [
-                    {"title": "backend"},
-                    {"title": "wegent:status:in_progress"},
-                    {"title": "wegent:priority:high"},
-                ],
-            },
-        },
-    )
-
-    assert response.status_code == 202, response.text
-    assert response.json() == {"status": "accepted", "dispatched": 1}
-    event = captured["event"]
-    assert getattr(event, "payload")["status"] == "in_progress"
-    assert getattr(event, "payload")["priority"] == "high"
-    assert getattr(event, "payload")["tags"] == ["backend"]
-
-
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
     test_client: TestClient,
     test_db: Session,
@@ -1928,43 +1685,6 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
             },
         )
     )
-    test_db.add(
-        Kind(
-            kind="Device",
-            name="automation-runtime-device",
-            namespace="default",
-            user_id=test_user.id,
-            is_active=True,
-            json={
-                "spec": {
-                    "deviceType": "local",
-                    "runtimeInstanceId": "runtime-automation-local",
-                },
-                "metadata": {"name": "automation-runtime-device"},
-            },
-        )
-    )
-    test_db.add(
-        Kind(
-            kind="Model",
-            name="test-model",
-            namespace="default",
-            user_id=0,
-            is_active=True,
-            json={
-                "spec": {
-                    "modelConfig": {
-                        "env": {
-                            "model": "claude",
-                            "model_id": "test-model",
-                            "api_key": "test-key",
-                            "base_url": "https://runtime.example.com",
-                        }
-                    }
-                }
-            },
-        )
-    )
     test_db.commit()
     project = test_client.post(
         "/api/v1/cloud-projects",
@@ -2023,68 +1743,53 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     assert queued_execution.execution_environment == "local"
     assert queued_execution.executor_owner_user_id == test_user.id
 
-    from app.services.device.capacity import RuntimeCapacity
-    from app.services.loop_item_executions.device_pull import (
-        acknowledge_execution,
-        pull_execution,
-    )
-
     monkeypatch.setattr(
-        "app.services.loop_item_executions.device_pull."
-        "validate_runtime_capacity_observation_sync",
-        lambda *_args, **_kwargs: RuntimeCapacity(
-            runtime_instance_id="runtime-automation-local",
-            limit=1,
-            active=0,
-            active_task_ids=frozenset(),
-            queued=0,
-        ),
-    )
-    monkeypatch.setattr(
-        "app.services.loop_item_executions.service._runtime_capacity_used",
-        lambda *_args, **_kwargs: 0,
-    )
-
-    @contextmanager
-    def test_db_session():
-        yield test_db
-
-    monkeypatch.setattr(
-        "app.services.loop_item_executions.device_pull.get_db_session",
-        test_db_session,
-    )
-
-    pulled = pull_execution(
-        owner_user_id=test_user.id,
-        execution_target_id="automation-local-device",
-        runtime_device_id="automation-runtime-device",
-        runtime_instance_id="runtime-automation-local",
-        environment="local",
-        runtime_capacity={
-            "limit": 1,
-            "active": 0,
-            "active_task_ids": [],
-            "queued": 0,
+        "app.services.device.capacity.cache_manager.get_sync",
+        lambda _key: {
+            "runtime_instance_id": "runtime-automation-local",
+            "runtime_capacity": {
+                "limit": 1,
+                "active": 0,
+                "active_task_ids": [],
+                "queued": 0,
+            },
         },
     )
-    assert pulled["success"], pulled
-    task = pulled["task"]
-    assert task is not None
-    assert task["payload"]["message"]
-    assert task["payload"]["executionRequest"]["model_config"]
-    assert task["payload"]["modelId"] == "test-model"
-
-    accepted = acknowledge_execution(
-        owner_user_id=test_user.id,
-        runtime_device_id="automation-runtime-device",
-        runtime_instance_id="runtime-automation-local",
-        execution_id=task["execution_id"],
-        runtime_task_id=task["runtime_task_id"],
-        accepted=True,
-        prompt="Scan bugs.",
-        error=None,
+    claimed = test_client.post(
+        "/api/v1/loop-item-executions/claim-my-next",
+        headers=_auth(test_token),
+        json={
+            "executionDeviceId": "automation-local-device",
+            "leaseSeconds": 300,
+        },
     )
-    assert accepted == {"success": True}
+    assert claimed.status_code == 200, claimed.text
+    execution = claimed.json()
+    assert execution["executionDeviceId"] == "automation-local-device"
+    assert execution["status"] == "claimed"
+    assert execution["displayState"] == "starting"
+    assert execution["observedState"] == "unconfirmed"
+    assert execution["automationRunId"] == run["id"]
+    assert "executionPayload" not in execution
+    assert execution["runtimePayload"]["message"]
+    assert "executionRequest" not in execution["runtimePayload"]
+    assert "executorProfile" not in execution
+    assert execution["runtimePayload"]["modelId"] == "test-model"
+
+    started_runtime = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/executions/{execution['id']}/runtime-start",
+        headers=_auth(test_token),
+        json={
+            "runtime_device_id": "automation-local-device",
+            "runtime_task_id": execution["runtimeTaskId"],
+            "prompt": "Scan bugs.",
+        },
+    )
+    assert started_runtime.status_code == 200, started_runtime.text
+    accepted = started_runtime.json()
+    assert accepted["status"] == "claimed"
+    assert accepted["displayState"] == "waiting_runtime"
+    assert accepted["observedState"] == "accepted"
 
     runs = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",

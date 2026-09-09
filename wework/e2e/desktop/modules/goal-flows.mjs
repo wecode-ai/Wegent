@@ -43,6 +43,7 @@ import {
   selectE2EModel,
   sendPromptUntilScenarioRequest,
   waitForExecutorRuntimeEvidence,
+  waitForLogPattern,
   withTimeout,
 } from './shared.mjs'
 
@@ -137,7 +138,11 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     DEFAULT_STEP_TIMEOUT_MS,
     'The active Goal did not start its automatic continuation'
   )
-  const goalExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  const goalExecutorLog = (
+    await waitForLogPattern(executorLogPath, /codex shared goal turn awaiting/, {
+      fromOffset: executorLogOffset,
+    })
+  ).slice(executorLogOffset)
   assert.equal(
     (goalExecutorLog.match(/codex shared goal turn awaiting/g) ?? []).length,
     1,
@@ -439,7 +444,11 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
     DEFAULT_STEP_TIMEOUT_MS,
     'The queued Goal did not start after the planning turn completed'
   )
-  const handoffExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  const handoffExecutorLog = (
+    await waitForLogPattern(executorLogPath, /codex shared goal turn awaiting/, {
+      fromOffset: executorLogOffset,
+    })
+  ).slice(executorLogOffset)
   assert.equal(
     (handoffExecutorLog.match(/codex shared turn request started/g) ?? []).length,
     1,

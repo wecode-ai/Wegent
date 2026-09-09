@@ -281,6 +281,8 @@ jobs:
             exit 1
           }
           echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          # Reuse one keychain so parallel electron-builder processes do not race during cleanup.
+          echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
           echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
 
       - name: Prepare Apple notarization key
@@ -311,8 +313,6 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          CSC_LINK: ${{ matrix.platform == 'macos' && secrets.MACOS_CERTIFICATE_BASE64 || '' }}
           VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
           VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           VITE_WEWORK_RUNTIME_MODE: local-first
@@ -342,11 +342,9 @@ jobs:
             --parallel-segments release-package-startup,component-update,app-update-differential
           pnpm --filter wework e2e:desktop -- --segment app-update-baseline
 
-      - name: Prepare installer and legacy bridge assets
+      - name: Prepare desktop release assets
         shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           WEWORK_USE_COMPONENTIZED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
         run: |
           node wework/scripts/prepare-desktop-release-assets.mjs \
@@ -403,7 +401,7 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Generate Electron and legacy updater manifests
+      - name: Generate desktop update manifests
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
@@ -474,18 +472,31 @@ jobs:
             gh release create wework-updater \
               --target "$RELEASE_SHA" \
               --title "Wework shared dependencies and updater manifests" \
-              --notes "Content-addressed shared dependencies plus rolling Electron, component, and legacy Tauri update manifests." \
+              --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests." \
               --prerelease
           fi
           gh release edit wework-updater \
             --target "$RELEASE_SHA" \
             --title "Wework shared dependencies and updater manifests" \
-            --notes "Content-addressed shared dependencies plus rolling Electron, component, and legacy Tauri update manifests."
+            --notes "Content-addressed shared dependencies plus rolling Electron and component update manifests."
 
           existing_component_assets="$RUNNER_TEMP/existing-component-assets.txt"
           gh release view wework-updater \
             --json assets \
             --jq '.assets[].name' > "$existing_component_assets"
+          harness_runtime_assets="$RUNNER_TEMP/harness-runtime-assets"
+          node wework/scripts/collect-harness-runtime-release-assets.mjs \
+            release-assets \
+            "$harness_runtime_assets"
+          while IFS= read -r runtime_asset; do
+            runtime_name="$(basename "$runtime_asset")"
+            if grep -Fqx "$runtime_name" "$existing_component_assets"; then
+              echo "Reusing immutable Harness Runtime asset $runtime_name."
+              continue
+            fi
+            gh release upload wework-updater "$runtime_asset"
+            echo "$runtime_name" >> "$existing_component_assets"
+          done < <(find "$harness_runtime_assets" -maxdepth 1 -type f | sort)
           while IFS= read -r component_asset; do
             component_name="$(basename "$component_asset")"
             if grep -Fqx "$component_name" "$existing_component_assets"; then
@@ -505,17 +516,18 @@ jobs:
             local channel="$1"
             local electron_channel="$channel"
             local current_assets="$RUNNER_TEMP/current-${channel}-assets.json"
-            local current_manifest="$RUNNER_TEMP/current-${channel}.json"
+            local current_manifest="$RUNNER_TEMP/current-${channel}.yml"
             [[ "$channel" == "stable" ]] && electron_channel="latest"
 
             gh release view wework-updater --json assets > "$current_assets"
             if gh release download wework-updater \
-              --pattern "${channel}-darwin-aarch64.json" \
+              --pattern "${electron_channel}-mac.yml" \
               --output "$current_manifest" \
               --clobber >/dev/null 2>&1; then
-              current_version="$(node -e \
-                "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version)" \
-                "$current_manifest")"
+              current_version="$(
+                node wework/scripts/update-channel-manifests.mjs \
+                  read-electron-version "$current_manifest"
+              )"
               if [[ "$RELEASE_KIND" == "component" ]]; then
                 if [[ "$current_version" != "$RELEASE_VERSION" ]]; then
                   if [[ "$channel" == "$RELEASE_CHANNEL" ]]; then
@@ -557,11 +569,6 @@ jobs:
               "release-manifests/components-${channel}-macos-x64.json" \
               "release-manifests/components-${channel}-windows-x64.json" \
               "release-manifests/components-${channel}-linux-x64.json" \
-              --clobber
-            gh release upload wework-updater \
-              "release-manifests/${channel}-darwin-aarch64.json" \
-              "release-manifests/${channel}-darwin-x86_64.json" \
-              "release-manifests/${channel}-windows-x86_64.json" \
               --clobber
             gh release upload wework-updater \
               "release-manifests/${electron_channel}.yml" \

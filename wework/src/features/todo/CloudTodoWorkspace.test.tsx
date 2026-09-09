@@ -944,35 +944,42 @@ describe('CloudTodoWorkspace', () => {
     expect(workbenchServices.deliveryApi!.listCloudProjectMembers).not.toHaveBeenCalled()
   })
 
-  it('marks an unread Issue as read when its detail opens', async () => {
-    const workbenchServices = services()
-    const unreadItem = { ...item, is_unread: true, content_revision: 2 }
-    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
-      items: [unreadItem],
-    })
-    vi.mocked(workbenchServices.deliveryApi!.markLoopItemRead).mockResolvedValue({
-      ...unreadItem,
-      is_unread: false,
-    })
+  it.each(['cloud', 'local'] as const)(
+    'marks an unread %s Issue as read when its detail opens',
+    async location => {
+      const workbenchServices = services()
+      workbenchServices.projectSpaceApis = {
+        [location]: workbenchServices.deliveryApi!,
+        defaultLocation: location,
+      }
+      const unreadItem = { ...item, is_unread: true, content_revision: 2 }
+      vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+        items: [unreadItem],
+      })
+      vi.mocked(workbenchServices.deliveryApi!.markLoopItemRead).mockResolvedValue({
+        ...unreadItem,
+        is_unread: false,
+      })
 
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+        />
+      )
 
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(await screen.findByTestId('cloud-todo-card-unread-WEG-1')).toBeInTheDocument()
+      await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+      expect(await screen.findByTestId('cloud-todo-card-unread-WEG-1')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
+      await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
 
-    await waitFor(() => {
-      expect(workbenchServices.deliveryApi!.markLoopItemRead).toHaveBeenCalledWith('WEG-1')
-    })
-    expect(screen.queryByTestId('cloud-todo-card-unread-WEG-1')).not.toBeInTheDocument()
-  })
+      await waitFor(() => {
+        expect(workbenchServices.deliveryApi!.markLoopItemRead).toHaveBeenCalledWith('WEG-1')
+      })
+      expect(screen.queryByTestId('cloud-todo-card-unread-WEG-1')).not.toBeInTheDocument()
+    }
+  )
 
   it('shows only the current runtime task and hides child-task lists and actions', async () => {
     const child = {
@@ -1170,7 +1177,10 @@ describe('CloudTodoWorkspace', () => {
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
-    expect(progressPopup).toHaveTextContent('当前任务进展')
+    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(progressPopup).not.toHaveTextContent('当前任务进展')
     expect(progressPopup).toHaveTextContent('验证完整工作流')
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-task-id',
@@ -1260,7 +1270,10 @@ describe('CloudTodoWorkspace', () => {
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
-    expect(progressPopup).toHaveTextContent('当前任务进展')
+    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(progressPopup).not.toHaveTextContent('当前任务进展')
     expect(progressResponse).toHaveAttribute('data-task-id', 'runtime-review')
   })
 

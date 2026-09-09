@@ -117,10 +117,10 @@ function isNativeOpenAIResponsesModel(model: UnifiedModel, upstreamApiFormat: st
     const match = candidate
       ?.trim()
       .toLowerCase()
-      .match(/^gpt-(\d+)\.(\d+)(?:-|$)/)
+      .match(/^gpt-(\d+)(?:\.(\d+))?(?:-|$)/)
     if (!match) return false
     const major = Number(match[1])
-    const minor = Number(match[2])
+    const minor = Number(match[2] ?? 0)
     return major > 5 || (major === 5 && minor >= 4)
   })
 }

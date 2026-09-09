@@ -593,7 +593,6 @@ def test_minio_macos_build_uses_electron_only_release_assets() -> None:
     assert "WEWORK_SKIP_MACOS_NOTARIZATION" in script
     assert "package-prebuilt-macos-release.mjs" in script
     assert 'pnpm --dir "$WEWORK_DIR/electron" install --frozen-lockfile' in script
-    assert "WEWORK_INCLUDE_LEGACY_TAURI_BRIDGE=false" in script
     assert "WEWORK_PREVIOUS_COMPONENT_MANIFEST" in script
     assert "wework_configure_internal_updater_key" not in script
     assert "sync-desktop-release-version.mjs" not in script
@@ -603,7 +602,7 @@ def test_minio_macos_build_uses_electron_only_release_assets() -> None:
     assert "pnpm exec tauri build" not in script
 
 
-def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> None:
+def test_minio_windows_build_uses_native_electron_release() -> None:
     script = (SCRIPT_DIR / "build-minio-windows-release.sh").read_text(encoding="utf-8")
     preparer = (SCRIPT_DIR / "prepare-desktop-release-assets.mjs").read_text(
         encoding="utf-8"
@@ -634,8 +633,8 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert 'if [ "$UNSIGNED" = "true" ]' in script
     assert "export CSC_IDENTITY_AUTO_DISCOVERY=false" in script
     assert "unset WIN_CSC_LINK" in script
-    assert "wework_configure_internal_updater_key" in script
-    assert "Legacy Tauri updater bridge signing is preserved." in script
+    assert "wework_configure_internal_updater_key" not in script
+    assert "Tauri updater bridge" not in script
     assert "node -p process.platform" in script
     assert "sync-desktop-release-version.mjs" not in script
     assert "VERSION_BACKUP_DIR" not in script

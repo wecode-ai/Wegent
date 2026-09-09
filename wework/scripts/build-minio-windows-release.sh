@@ -6,8 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 
-# shellcheck source=lib/wework-updater-signing.sh
-source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 # shellcheck source=lib/wework-release-notes.sh
 source "$SCRIPT_DIR/lib/wework-release-notes.sh"
 # shellcheck source=lib/wework-update-channel.sh
@@ -61,7 +59,6 @@ S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
 S3_PREFIX="${WEWORK_WINDOWS_RELEASE_S3_PREFIX:-wework/windows}"
 COMPONENT_S3_PREFIX="${WEWORK_COMPONENT_S3_PREFIX:-wework/components}"
 OUTPUT_DIR="${WEWORK_WINDOWS_RELEASE_OUTPUT_DIR:-$WEWORK_DIR/electron/release-minio}"
-UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
 WINDOWS_BUILD_TARGET="${WINDOWS_BUILD_TARGET:-x86_64-pc-windows-msvc}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
@@ -91,15 +88,11 @@ Options:
   --brand-config <path>     Brand identity and internal runtime defaults.
                             Default: wework/branding/weibo.json.
   --unsigned                Build without Windows Authenticode signing.
-                            Legacy Tauri updater bridge signing is preserved.
   --upload                  Upload artifacts and rolling manifests.
   -h, --help                Show this help message.
 
 Windows Authenticode signing environment unless --unsigned:
   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD
-
-The Tauri updater private key signs only the Electron installer for clients
-installed before the Electron migration.
 EOF
 }
 
@@ -262,7 +255,6 @@ require_command node
 require_command pnpm
 require_command uv
 require_command curl
-wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
 COMPONENTIZED_HOST_UPDATE="$(
   wework_resolve_componentized_host_update \
     "$UPDATE_BASE_URL/components-$CHANNEL-windows-x64.json"
@@ -277,7 +269,7 @@ if [ "$UNSIGNED" = "true" ]; then
   export CSC_IDENTITY_AUTO_DISCOVERY=false
   unset WIN_CSC_LINK
   unset WIN_CSC_KEY_PASSWORD
-  echo "Windows Authenticode signing is disabled; Tauri updater bridge signing remains enabled."
+  echo "Windows Authenticode signing is disabled."
 else
   require_env WIN_CSC_LINK
 fi

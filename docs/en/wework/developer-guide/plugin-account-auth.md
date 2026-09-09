@@ -9,8 +9,9 @@ title: Plugin account authentication
 
 The implementation includes the Backend, native Executor, background account connections,
 Python SDK 0.7.1, and email and DWS native adapters. Isolated real Backend, Electron and
-remote-executor E2E tests cover 17 assertions, including runtime-copy execution, password
-updates, offline OAuth refresh, recoverable DWS handoff and device revocation. Email 0.2.3
+remote-executor E2E tests cover 20 assertions, including runtime-copy execution, password
+updates, offline OAuth refresh, recoverable DWS handoff, device revocation, and managed
+status, logout and relogin through the original local entry. Email 0.2.3
 has also passed a real-account read on a simulated remote device in a local test environment.
 Five-platform adapter packaging, public-repository build CI and internal declarative plugin
 builds are connected. Production publication, real-provider OAuth and native Windows
@@ -74,6 +75,28 @@ is sufficient; plugin authors need no additional installation hook or device int
 callbacks must only read existing state and fail without initiating login when no credential exists.
 After an exclusive DWS handoff, Wework commands detect the durable transfer receipt and use the
 account broker, requiring backend connectivity. The original external CLI grant is removed.
+
+### Existing local login entry and managed connections
+
+Managed plugins declaring both `localAuth` and `accountAuth` retain their original login entry.
+Health checks first probe authentication still owned locally, preserving offline local use. When
+that authentication has been removed or is unavailable, the native executor checks the account
+connection and current device grant. Local-auth children also receive the existing business broker
+environment, allowing SDK-based local calls with managed authentication.
+
+Logout first suspends synchronization for the plugin provenance and connector, disconnects its
+account connections so subsequent cloud calls lose authorization, and then runs local cleanup.
+Provider OAuth revocation uses the existing background queue. Failed local cleanup can be retried
+without restoring cloud access. A staged exclusive handoff returns `plugin_auth_transfer_pending`:
+its recovery must finish before logout can proceed. Plugin logout commands must clean up local
+state idempotently even when the provider token is already invalid.
+
+A successful login through the original entry records a synchronization intent bound to the source
+device instance, permitting fresh authentication to reconnect a disconnected account. Ordinary
+background probes cannot authorize this transition. Expired intents can be renewed; enrollment
+clears the pending marker, and logout fences existing intents. This integration uses the existing
+export, exclusive handoff, refresh and revoke contracts. It adds no plugin authentication protocol
+and exposes no account-management operations through the business broker.
 
 ## Backend configuration
 

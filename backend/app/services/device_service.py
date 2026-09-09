@@ -37,6 +37,7 @@ from app.services.device.identity import (
     RuntimeInstanceMismatchError,
     find_registration_device,
     owned_active_device,
+    resolve_owned_device_alias,
     validate_persistent_runtime_instance_id,
 )
 from shared.telemetry.decorators import trace_sync
@@ -601,17 +602,16 @@ class DeviceService:
         user_id: int,
         device_id: str,
     ) -> Optional[Kind]:
-        """Get a device CRD by device_id.
-
-        Args:
-            db: Database session
-            user_id: Device owner user ID
-            device_id: Device unique identifier (stored in Kind.name)
+        """Get one unambiguous Device CRD by any registered identity.
 
         Returns:
             Kind model instance or None if not found
         """
-        return owned_active_device(db, user_id, device_id)
+        return resolve_owned_device_alias(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+        )
 
     @staticmethod
     def get_default_device_for_type(

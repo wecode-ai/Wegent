@@ -558,6 +558,10 @@ describe('CloudTodoBoardCard', () => {
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
     expect(popup).toHaveClass('w-[480px]', 'overflow-x-hidden')
     expect(popup).toHaveAttribute('role', 'dialog')
+    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-85')).toHaveTextContent(
+      'Keep the pull request popup visible'
+    )
+    expect(popup).not.toHaveTextContent('当前任务进展')
     expect(popup).toHaveTextContent('Fix the board popup')
     expect(popup).toHaveTextContent('Verify the hover behavior')
 

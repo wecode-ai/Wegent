@@ -11,6 +11,7 @@ Provides decorators to add tracing to functions without modifying business logic
 import functools
 import logging
 import os
+from contextlib import aclosing
 from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
 logger = logging.getLogger(__name__)
@@ -466,14 +467,16 @@ def trace_async_generator(
         async def wrapper(*args, **kwargs):
             # Check if telemetry is enabled
             if not _is_telemetry_enabled():
-                async for item in func(*args, **kwargs):
-                    yield item
+                async with aclosing(func(*args, **kwargs)) as generator:
+                    async for item in generator:
+                        yield item
                 return
 
             tracer = _get_tracer(tracer_name)
             if tracer is None:
-                async for item in func(*args, **kwargs):
-                    yield item
+                async with aclosing(func(*args, **kwargs)) as generator:
+                    async for item in generator:
+                        yield item
                 return
 
             # Determine span name
@@ -499,16 +502,18 @@ def trace_async_generator(
                     name, kind=trace.SpanKind.INTERNAL, attributes=span_attributes
                 ) as span:
                     try:
-                        async for item in func(*args, **kwargs):
-                            yield item
+                        async with aclosing(func(*args, **kwargs)) as generator:
+                            async for item in generator:
+                                yield item
                         span.set_status(trace.Status(trace.StatusCode.OK))
                     except Exception as e:
                         span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                         span.record_exception(e)
                         raise
             except ImportError:
-                async for item in func(*args, **kwargs):
-                    yield item
+                async with aclosing(func(*args, **kwargs)) as generator:
+                    async for item in generator:
+                        yield item
 
         return wrapper  # type: ignore
 
