@@ -496,7 +496,7 @@ describe('DocumentDetailDialog original file preview', () => {
   })
 
   it.each(['file', 'external'] as const)(
-    'hides original-file download actions for organization %s documents',
+    'hides the original-file preview when download is disabled for %s documents',
     sourceType => {
       render(
         <DocumentDetailDialog
@@ -505,19 +505,15 @@ describe('DocumentDetailDialog original file preview', () => {
           document={{ ...officeDocument, source_type: sourceType }}
           knowledgeBaseId={21}
           isOrganization={true}
+          allowDownload={false}
         />
       )
 
+      expect(screen.queryByTestId('knowledge-document-source-tab')).not.toBeInTheDocument()
       expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
-      expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toBeInTheDocument()
-      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
-        'data-allow-download',
-        'false'
-      )
-      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
-        'data-protected-knowledge-base-id',
-        '21'
-      )
+      expect(screen.queryByTestId('knowledge-source-preview-fullscreen')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
+      expect(screen.getByText('plain text content')).toBeInTheDocument()
     }
   )
 
@@ -556,8 +552,7 @@ describe('DocumentDetailDialog original file preview', () => {
     }
   )
 
-  it('shows derived summaries while protecting organization document content', async () => {
-    const user = userEvent.setup()
+  it('shows derived summaries while protecting download-disabled document content', () => {
     mockDocumentSummary = {
       status: 'completed',
       short_summary: 'Organization document summary',
@@ -570,14 +565,13 @@ describe('DocumentDetailDialog original file preview', () => {
         document={officeDocument}
         knowledgeBaseId={21}
         isOrganization={true}
+        allowDownload={false}
       />
     )
 
     expect(screen.getByTestId('knowledge-document-summary-toggle')).toBeInTheDocument()
     expect(screen.getByText('document.document.detail.statusValues.completed')).toBeInTheDocument()
     expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
-
-    await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
 
     expect(screen.getByText('Organization document summary')).toBeInTheDocument()
     expect(screen.queryByText('document.document.detail.copy')).not.toBeInTheDocument()
