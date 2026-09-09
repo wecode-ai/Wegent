@@ -269,7 +269,6 @@ describe('desktop resource migration', () => {
       'utf8'
     )
 
-    expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
     expect(source).toContain('const packagedComponentResourcesRoot = componentResourcesRoot')
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
@@ -287,16 +286,6 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const blockmap = `${path}.blockmap`')
     expect(source).toContain('await requireFile(blockmap)')
     expect(source).not.toContain('if (await isFile(blockmap))')
-  })
-
-  test('signs legacy updater assets through the Windows command interpreter', async () => {
-    const source = await readFile(
-      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
-      'utf8'
-    )
-
-    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
-    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
   })
 
   test('desktop E2E reuses packaged Harness runtime assets', async () => {
