@@ -193,7 +193,7 @@ export interface ElectronE2EHost {
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
-  traySnapshot: () => TraySnapshot | null
+  traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   popoutWindowSnapshot: () => {
