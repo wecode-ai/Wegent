@@ -39,6 +39,7 @@ from app.api.endpoints import (
     pet,
     plugin_publications,
     project_automations,
+    project_event_center,
     project_incoming_hooks,
     projects,
     prompt_optimization,
@@ -447,4 +448,10 @@ api_router.include_router(
     api_keys_internal_router,
     prefix="/internal",
     tags=["internal-api-keys"],
+)
+
+api_router.include_router(
+    project_event_center.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-event-center"],
 )

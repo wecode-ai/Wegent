@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 def check_due_project_automations_sync() -> int:
     db = SessionLocal()
     try:
+        from app.services.project_event_handoff import recover_handoffs
+
+        asyncio.run(recover_handoffs(db))
         return asyncio.run(project_automation_service.check_due(db))
     except Exception:
         db.rollback()

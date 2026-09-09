@@ -235,9 +235,11 @@ validate_registered_checkpoint_coverage() {
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local repository_root
   repository_root="$(cd "$script_dir/../.." && pwd)"
-  local registered
-  while IFS= read -r registered; do
-    [[ "$registered" == "cloud-git-worktree" || "$registered" == "browser-annotation" ]] && continue
+  local registered composite
+  while read -r registered composite; do
+    if [[ -n "$composite" && -n "${covered[$composite]+set}" ]]; then
+      continue
+    fi
     if [[ -z "${covered[$registered]+set}" ]]; then
       printf 'Registered desktop checkpoint missing from CI catalogs: %s\n' "$registered" >&2
       return 1
@@ -245,7 +247,12 @@ validate_registered_checkpoint_coverage() {
   done < <(
     cd "$repository_root"
     node --input-type=module -e \
-      "import { DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.join('\\n'))"
+      "import { COMPOSITE_CHECKPOINTS, DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs';
+       for (const checkpoint of DESKTOP_CHECKPOINTS) {
+         if (COMPOSITE_CHECKPOINTS.has(checkpoint)) continue;
+         const parent = [...COMPOSITE_CHECKPOINTS].find(([, members]) => members.includes(checkpoint))?.[0] ?? '';
+         console.log(checkpoint + ' ' + parent);
+       }"
   )
 }
 

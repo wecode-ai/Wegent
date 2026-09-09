@@ -460,12 +460,9 @@ class LoopItemService:
         team_id = payload.get("assignee_team_id")
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
-        if explicit_workflow is not None:
-            task_metadata["workflow"] = explicit_workflow.model_dump()
-        elif values.parent_id is None:
-            project_metadata = (
-                project.metadata_json if isinstance(project.metadata_json, dict) else {}
-            )
+        workflow = explicit_workflow
+        if workflow is None and values.parent_id is None:
+            project_metadata = project.metadata_json or {}
             raw_definition = project_metadata.get("workflow_definition")
             if isinstance(raw_definition, dict):
                 definition = ProjectWorkflowDefinition.model_validate(raw_definition)
@@ -474,27 +471,30 @@ class LoopItemService:
                     or definition.advancement_policy == "ai"
                 ):
                     workflow = instantiate_workflow(definition)
-                    if (
-                        workflow.advancement_policy == "ai"
-                        and workflow.ai_automation_rule_id
-                    ):
-                        rule = db.get(
-                            ProjectAutomationRule,
-                            workflow.ai_automation_rule_id,
-                        )
-                        if rule is not None:
-                            from app.services.issue_execution_configuration import (
-                                project_automation_execution_config,
-                            )
+        if workflow is not None:
+            if (
+                workflow.advancement_policy == "ai"
+                and workflow.execution_config is None
+            ):
+                rule = db.get(ProjectAutomationRule, workflow.ai_automation_rule_id)
+                if rule is not None:
+                    from app.services.issue_execution_configuration import (
+                        project_automation_execution_config,
+                    )
 
-                            workflow.execution_config = (
-                                project_automation_execution_config(
-                                    db,
-                                    rule,
-                                    issue_creator_user_id=user_id,
-                                )
-                            )
-                    task_metadata["workflow"] = workflow.model_dump()
+                    if str(rule.cloud_project_id) != str(project.id):
+                        raise ValueError("The experience belongs to another project")
+                    workflow.execution_config = project_automation_execution_config(
+                        db,
+                        rule,
+                        issue_creator_user_id=user_id,
+                    )
+            task_metadata["workflow"] = workflow.model_dump(mode="json")
+        if "workflow" in task_metadata:
+            task_metadata["workflow"]["intent"] = "\n\n".join(
+                filter(None, [values.title, values.description])
+            )
+            task_metadata["workflow"]["coordinator_user_id"] = user_id
         if explicit_execution_config is not None:
             task_metadata["execution_config"] = explicit_execution_config.model_dump(
                 mode="json"

@@ -22,14 +22,12 @@ from app.models.delivery import (
 )
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import LoopItemCreate, LoopItemResponse
 from app.schemas.project_incoming_hook import (
     ProjectIncomingHookCreate,
     ProjectIncomingHookUpdate,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
-from app.services.loop_items.provider_router import loop_item_provider_router
-from app.services.loop_items.service import loop_item_service
+from shared.telemetry.decorators import trace_async
 
 MAX_BODY_BYTES = 1_048_576
 MAX_STORED_PAYLOAD_BYTES = 65_536
@@ -231,10 +229,7 @@ def _generic(payload: Mapping[str, Any]) -> IncomingDecision:
     )
     external_id = _first_text(
         payload,
-        ("event_id",),
-        ("eventId",),
-        ("id",),
-        ("uuid",),
+        ("external_id",),
         ("issue", "id"),
         ("alert", "id"),
     )
@@ -250,6 +245,45 @@ def _generic(payload: Mapping[str, Any]) -> IncomingDecision:
     )
 
 
+def _review_event(
+    payload: Mapping[str, Any], headers: Mapping[str, str]
+) -> IncomingDecision | None:
+    """Keep all events about one code review on its canonical artifact URL."""
+    merge_request = _mapping(payload.get("merge_request"))
+    if payload.get("object_kind") == "merge_request":
+        merge_request = _mapping(payload.get("object_attributes"))
+    pull_request = _mapping(payload.get("pull_request"))
+    artifact = merge_request or pull_request
+    if not artifact:
+        return None
+    provider = "gitlab" if merge_request else "github"
+    url = _text(artifact.get("url" if merge_request else "html_url"))
+    details = (
+        _mapping(payload.get("object_attributes"))
+        if merge_request
+        else (
+            _mapping(payload.get("review"))
+            or _mapping(payload.get("comment"))
+            or pull_request
+        )
+    )
+    content = (
+        _text(details.get("note"))
+        or _text(details.get("body"))
+        or _text(details.get("description"))
+    )
+    return IncomingDecision(
+        IncomingCandidate(
+            provider=provider,
+            title=_text(artifact.get("title")) or "Code review event",
+            description="\n\n".join(filter(None, [content, url])),
+            source_url=url or None,
+            external_id=url or None,
+        ),
+        provider,
+    )
+
+
 def normalize_incoming_payload(
     payload: Mapping[str, Any],
     headers: Mapping[str, str],
@@ -258,6 +292,7 @@ def normalize_incoming_payload(
     gitlab_event = _text(headers.get("x-gitlab-event")).lower()
     sentry_resource = _text(headers.get("sentry-hook-resource")).lower()
     for decision in (
+        _review_event(payload, headers),
         _github(payload, github_event),
         _gitlab(payload, gitlab_event),
         _sentry(payload, sentry_resource),
@@ -391,6 +426,7 @@ class ProjectIncomingHookService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Incoming hook not found")
         return hook
 
+    @trace_async()
     async def receive(
         self,
         db: Session,
@@ -444,119 +480,43 @@ class ProjectIncomingHookService:
                 "loop_item_id": existing.loop_item_id or None,
                 "reason": None,
             }
-        if decision.candidate is None:
-            return self._record_outcome(
-                db,
-                hook,
-                raw_body,
-                headers,
-                provider=decision.provider,
-                outcome="ignored",
-                reason=decision.reason,
-                public_id=event_public_id,
-            )
+        from app.services.project_event_center import project_event_center_service
+
         candidate = decision.candidate
-        if not candidate.title:
-            return self._record_outcome(
-                db,
-                hook,
-                raw_body,
-                headers,
-                provider=candidate.provider,
-                outcome="failed",
-                reason="title is empty",
-                public_id=event_public_id,
-            )
-
-        project_metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
+        title = candidate.title if candidate and candidate.title else "外部事件"
+        content = (
+            candidate.description
+            if candidate and candidate.description
+            else json.dumps(payload, ensure_ascii=False)
         )
-        board_config = project_metadata.get("board_config")
-        board_config = board_config if isinstance(board_config, dict) else {}
-        statuses = board_config.get("statuses")
-        statuses = statuses if isinstance(statuses, list) else []
-        inbox_status = (
-            str(statuses[0].get("id"))
-            if statuses and isinstance(statuses[0], dict)
-            else None
+        reference_id = (
+            (candidate.source_url or candidate.external_id) if candidate else None
         )
-        description_parts = [candidate.description]
-        if candidate.source_url:
-            description_parts.append(f"来源：{candidate.source_url}")
-        created = loop_item_provider_router.create(
+        event, created = project_event_center_service.accept(
             db,
-            project,
-            creator,
-            LoopItemCreate(
-                title=candidate.title[:255],
-                description="\n\n".join(part for part in description_parts if part),
-                status=inbox_status,
+            project_id=str(project.id),
+            user_id=creator.id,
+            identity=event_public_id,
+            hook_id=str(hook.id),
+            title=title,
+            content=content,
+            provider=decision.provider,
+            reference=(
+                {
+                    "provider": decision.provider,
+                    "external_id": reference_id,
+                    "url": candidate.source_url,
+                }
+                if candidate and reference_id
+                else None
             ),
-            automation_context={
-                "trigger": "incoming_hook",
-                "hook_id": str(hook.id),
-                "provider": candidate.provider,
-                "external_id": candidate.external_id,
-                "source_url": candidate.source_url,
-            },
-            assign_creator_if_unassigned=False,
+            payload_metadata=self._event_metadata(raw_body, headers),
         )
-        response = LoopItemResponse.model_validate(created.values)
-        event = ProjectIncomingEvent(
-            public_id=event_public_id,
-            cloud_project_id=str(project.id),
-            parent_id=str(hook.id),
-            loop_item_id=str(created.values["id"]),
-            title=candidate.title[:255],
-            source=candidate.provider[:20],
-            status="created",
-            created_by_user_id=creator.id,
-            metadata_json=self._event_metadata(
-                raw_body,
-                headers,
-                external_id=candidate.external_id,
-                source_url=candidate.source_url,
-            ),
-        )
-        db.add(event)
-        db.commit()
-        db.refresh(event)
-
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
-        )
-
-        try:
-            await project_automation_processor.process(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.created",
-                    project_id=str(project.id),
-                    subject_id=str(created.values["id"]),
-                    source="incoming_hook",
-                    actor_user_id=creator.id,
-                    payload=response.model_dump(mode="json"),
-                ),
-            )
-        except Exception:
-            db.rollback()
-            logger.exception(
-                "Project automation processing failed after incoming hook "
-                "project=%s task=%s hook=%s",
-                project.id,
-                created.values.get("id"),
-                hook.id,
-            )
-
-        if created.internal_item is not None:
-            db.refresh(created.internal_item)
-            loop_item_service.response_values(db, created.internal_item, creator.id)
         return {
-            "status": "created",
-            "provider": candidate.provider,
+            "status": "received" if created else "duplicate",
+            "provider": decision.provider,
             "event_id": str(event.id),
-            "loop_item_id": str(created.values["id"]),
+            "loop_item_id": event.loop_item_id or None,
             "reason": None,
         }
 
@@ -633,8 +593,7 @@ class ProjectIncomingHookService:
             ),
             "",
         )
-        candidate_id = decision.candidate.external_id if decision.candidate else None
-        identity = external_delivery or candidate_id
+        identity = external_delivery
         if not identity:
             return self._body_public_id(hook, raw_body)
         digest = hashlib.sha256(

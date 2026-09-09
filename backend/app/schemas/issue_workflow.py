@@ -22,6 +22,7 @@ WorkflowOrchestrationStatus = Literal[
     "dispatching",
     "running",
     "awaiting_review",
+    "waiting_human",
     "paused",
     "completed",
     "failed",
@@ -230,6 +231,7 @@ class WorkflowNodeDefinition(BaseModel):
     # nodes are task categories, not executor kinds.
     kind: Literal["my_task", "automation", "ai"] | None = None
     execution_mode: Literal["human", "robot"] = "human"
+    assignee_user_id: int | None = Field(default=None, ge=1)
     depends_on: list[str] = Field(default_factory=list, max_length=50)
     dependency_context: dict[str, list[WorkflowContextSource]] = Field(
         default_factory=dict
@@ -293,19 +295,14 @@ class ProjectWorkflowDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_dag(self) -> "ProjectWorkflowDefinition":
-        if self.advancement_policy == "ai" and not self.ai_automation_rule_id:
-            raise ValueError("AI advancement requires an AI automation rule")
-        if self.advancement_policy == "ai":
-            configured_nodes = [
-                node.id
-                for node in self.nodes
-                if node.execution_config is not None or node.execution_config_override
-            ]
-            if configured_nodes:
-                raise ValueError(
-                    "AI stage constraints cannot define execution configuration: "
-                    + ", ".join(configured_nodes)
-                )
+        if (
+            self.advancement_policy == "ai"
+            and not self.ai_automation_rule_id
+            and not (self.execution_config and self.execution_config.is_complete())
+        ):
+            raise ValueError(
+                "AI advancement requires an automation rule or complete Issue execution configuration"
+            )
         node_ids = [node.id for node in self.nodes]
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("workflow node ids must be unique")
@@ -371,6 +368,8 @@ class WorkflowNodeDecisionRequest(BaseModel):
 
 
 class IssueWorkflowInstance(BaseModel):
+    semantics_version: int = Field(default=2, ge=1)
+    migration_required: bool = False
     version: int = Field(default=1, ge=1)
     definition_version: int = Field(default=1, ge=1)
     stage_mode: Literal["none", "dag"] = "none"
@@ -383,6 +382,13 @@ class IssueWorkflowInstance(BaseModel):
     active_run_id: str | None = Field(default=None, max_length=64)
     active_plan_version: int | None = Field(default=None, ge=1)
     current_stage_id: str | None = Field(default=None, max_length=64)
+    initial_stage_id: str | None = Field(default=None, max_length=64)
+    intent: str = Field(default="", max_length=100_000)
+    current_work: str = Field(default="", max_length=100_000)
+    assignment_version: int = Field(default=0, ge=0)
+    coordinator_user_id: int | None = Field(default=None, ge=1)
+    assignment: dict[str, Any] | None = None
+    incoming_events: list[dict[str, Any]] = Field(default_factory=list)
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
@@ -401,6 +407,7 @@ class IssueWorkflowInstance(BaseModel):
                     prompt=node.prompt,
                     kind=node.kind,
                     execution_mode=node.execution_mode,
+                    assignee_user_id=node.assignee_user_id,
                     depends_on=node.depends_on,
                     dependency_context=node.dependency_context,
                     required=node.required,
@@ -429,7 +436,7 @@ class IssueWorkflowInstance(BaseModel):
 
     def node_needs_execution_config(self, node: WorkflowNodeDefinition) -> bool:
         if node.execution_mode != "robot":
-            return False
+            return not node.assignee_user_id
         return bool(
             not (
                 self.execution_config_for(node)
@@ -475,18 +482,6 @@ class WorkflowPlanItemCreate(BaseModel):
     rationale: str = Field(default="", max_length=4000)
 
 
-class WorkflowPlanSubmit(BaseModel):
-    summary: str = Field(default="", max_length=10_000)
-    items: list[WorkflowPlanItemCreate] = Field(min_length=1, max_length=100)
-
-    @model_validator(mode="after")
-    def validate_keys(self) -> "WorkflowPlanSubmit":
-        keys = [item.client_key for item in self.items]
-        if len(keys) != len(set(keys)):
-            raise ValueError("workflow plan item keys must be unique")
-        return self
-
-
 class WorkflowPlanItemView(WorkflowPlanItemCreate):
     id: str
     stage_id: str = Field(min_length=1, max_length=64)
@@ -518,17 +513,3 @@ class WorkflowPlanView(BaseModel):
     summary: str
     items: list[WorkflowPlanItemView]
     manager_run: WorkflowManagerRunView | None = None
-
-
-class WorkflowTaskOutcomeSubmit(BaseModel):
-    verdict: Literal["passed", "needs_rework"]
-    summary: str = Field(min_length=1, max_length=10_000)
-    findings: list[str] = Field(default_factory=list, max_length=100)
-
-    @model_validator(mode="after")
-    def normalize_text(self) -> "WorkflowTaskOutcomeSubmit":
-        self.summary = self.summary.strip()
-        self.findings = [value.strip() for value in self.findings if value.strip()]
-        if not self.summary:
-            raise ValueError("workflow outcome summary cannot be empty")
-        return self

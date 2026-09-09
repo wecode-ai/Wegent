@@ -331,7 +331,7 @@ class ProjectChatAgentStart(ProjectChatSchema):
     project_id: str = Field(min_length=1, max_length=64)
     task_id: str | None = Field(default=None, max_length=64)
     trigger_message_id: str | None = Field(default=None, min_length=1, max_length=64)
-    agent_id: str = Field(min_length=1, max_length=128)
+    agent_id: str | None = Field(default=None, min_length=1, max_length=128)
     runtime_device_id: str = Field(min_length=1, max_length=255)
     runtime_task_id: str = Field(min_length=1, max_length=255)
     prompt: str | None = Field(default=None, max_length=100_000)

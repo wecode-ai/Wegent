@@ -49,6 +49,7 @@ interface WorkflowTaskBinding {
 }
 
 interface IssueWorkflowDagProps {
+  currentRoleId?: string | null
   nodes: WorkflowNodeInstance[]
   tasks: WorkflowTaskBinding[]
   deliveries?: Delivery[]
@@ -158,6 +159,7 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
 const nodeTypes = { runtimeStage: RuntimeStageNodeCard }
 
 export function IssueWorkflowDag({
+  currentRoleId,
   nodes,
   tasks,
   deliveries = [],
@@ -191,7 +193,11 @@ export function IssueWorkflowDag({
   } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement | null>(null)
   const flowInstanceRef = useRef<ReactFlowInstance<RuntimeStageFlowNode, Edge> | null>(null)
-  const currentStageId = useMemo(() => getCurrentWorkflowNode(nodes)?.id ?? null, [nodes])
+  const currentStageId = useMemo(
+    () =>
+      currentRoleId !== undefined ? currentRoleId : (getCurrentWorkflowNode(nodes)?.id ?? null),
+    [nodes, currentRoleId]
+  )
   const effectiveSelectedStageId =
     stageSelection?.currentStageId === currentStageId &&
     nodes.some(stage => stage.id === stageSelection.stageId)

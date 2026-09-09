@@ -610,6 +610,36 @@ class LoopItemExecutionService:
             requires_approval=False,
         )
 
+    def enqueue_event_router(
+        self, db: Session, *, event, profile: RuntimeProfile, instruction: str
+    ) -> LoopItemExecution:
+        """Run event clarification and routing on the ordinary device queue."""
+        selection = dict(profile.metadata_json or {})
+        return self._enqueue(
+            db,
+            loop_item_id=event.id,
+            cloud_project_id=str(event.cloud_project_id),
+            executor_type="event_router",
+            owner_user_id=int(profile.user_id),
+            assigner_user_id=int(event.created_by_user_id),
+            agent_id="",
+            team_id=None,
+            environment=selection["execution_environment"],
+            execution_device_id=profile.device_id,
+            priority="medium",
+            requires_approval=False,
+            automation_context={
+                "event_id": event.id,
+                "instruction": f"project_id: {event.cloud_project_id}\nevent_id: {event.id}\n\n{instruction}",
+                "workspace_binding": {"type": "standalone"},
+            },
+            runtime_selection={
+                **selection,
+                "executor_kind": "event_router",
+                "runtime_profile_id": profile.id,
+            },
+        )
+
     def enqueue_automation_manager(
         self,
         db: Session,
@@ -759,7 +789,10 @@ class LoopItemExecutionService:
         # A custom manager has no robot entity, so the rule target is
         # its only source of truth and must be validated here as well as when
         # the rule is saved.
-        if executor_type == "automation_manager" and not waiting_runtime:
+        if (
+            executor_type in {"automation_manager", "event_router"}
+            and not waiting_runtime
+        ):
             validate_wework_execution_target(
                 db,
                 user_id=owner_user_id,
@@ -1703,6 +1736,9 @@ class LoopItemExecutionService:
     ) -> None:
         """Create the Issue TaskBinding before Runtime delivery."""
 
+        if execution.executor_type == "event_router":
+            return
+
         if not execution.runtime_device_id or not execution.runtime_task_id:
             return
         run, _ = self._automation_run_and_rule(db, execution)
@@ -2011,6 +2047,8 @@ class LoopItemExecutionService:
         key is (project, task, agent, runtime ids), making this idempotent.
         """
 
+        if execution.executor_type == "event_router":
+            return None
         current = db.get(
             LoopItemExecution,
             execution.id,
@@ -2708,6 +2746,12 @@ class LoopItemExecutionService:
         )
         from app.services.project_chat.service import project_chat_service
 
+        if execution.executor_type == "event_router":
+            from app.services.project_event_center import project_event_center_service
+
+            project_event_center_service.finish_execution(db, execution, error)
+            return None
+
         activity = self._linked_activity(db, execution)
         manager_assignment_recorded = bool(
             execution.executor_type == "automation_manager"
@@ -3278,6 +3322,23 @@ class LoopItemExecutionService:
         )
 
         project = db.get(CloudProject, execution.cloud_project_id)
+        from app.models.delivery import ProjectIncomingEvent
+
+        event = db.get(ProjectIncomingEvent, execution.loop_item_id)
+        if event is not None and event.cloud_project_id == execution.cloud_project_id:
+            return TaskContext(
+                id=event.id,
+                cloud_project_id=str(event.cloud_project_id),
+                title=event.title or "Event center",
+                description=event.description or "",
+                status=event.status,
+                priority="medium",
+                parent_id=None,
+                tags=[],
+                assignee_user_id=None,
+                assignee_agent_id=None,
+                created_by_user_id=event.created_by_user_id,
+            )
         if project is not None and project.task_provider in {"github", "gitlab"}:
             view = external_loop_item_provider.task_view(
                 db, execution.loop_item_id, user_id
@@ -3451,6 +3512,29 @@ class LoopItemExecutionService:
     ) -> tuple[WeworkExecutionProfile, dict[str, Any]]:
         """Resolve live executor configuration from its canonical record."""
 
+        if execution.executor_type == "event_router":
+            from app.schemas.project_chat import ProjectChatWorkspaceBindingView
+
+            selection = execution.runtime_selection
+            context = dict(execution.runtime_origin_context)
+            return (
+                WeworkExecutionProfile(
+                    owner_user_id=execution.executor_owner_user_id,
+                    display_name="事件中心",
+                    instruction=context["instruction"],
+                    execution_prompt="",
+                    model=str(selection.get("model") or ""),
+                    model_type=selection.get("model_type"),
+                    model_options=selection.get("model_options") or {},
+                    manager_mode=True,
+                    event_router=True,
+                    workspace_binding_override=ProjectChatWorkspaceBindingView(
+                        type="standalone", status="ready"
+                    ),
+                ),
+                context,
+            )
+
         run, rule = self._automation_run_and_rule(db, execution)
         if execution.executor_type == "project_robot":
             if not execution.agent_id:
@@ -3565,7 +3649,14 @@ class LoopItemExecutionService:
             raise WeworkRuntimeConfigurationError(
                 f"Unknown Wework executor type '{execution.executor_type}'"
             )
-        if run is None or rule is None:
+        issue_coordinator = bool(
+            run is not None
+            and isinstance(run.metadata_json, dict)
+            and run.metadata_json.get("issue_coordinator") is True
+            and str(run.parent_id) == execution.loop_item_id
+            and str(run.task_id) == execution.loop_item_id
+        )
+        if run is None or (rule is None and not issue_coordinator):
             raise WeworkRuntimeConfigurationError(
                 "AI manager automation run or rule is unavailable"
             )
@@ -3573,7 +3664,7 @@ class LoopItemExecutionService:
         owner_user_id = int(
             runtime_profile.user_id
             if runtime_profile is not None
-            else getattr(rule, "created_by_user_id", 0) or 0
+            else run.created_by_user_id or 0
         )
         if owner_user_id != execution.executor_owner_user_id:
             raise WeworkRuntimeConfigurationError(
@@ -3581,7 +3672,7 @@ class LoopItemExecutionService:
             )
         rule_metadata = getattr(rule, "metadata_json", None)
         rule_metadata = rule_metadata if isinstance(rule_metadata, dict) else {}
-        if (
+        if not issue_coordinator and (
             assignment_mode(rule_metadata) != "ai_managed"
             or manager_type(rule_metadata) != "custom"
         ):

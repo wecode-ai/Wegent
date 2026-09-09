@@ -52,7 +52,7 @@ def workflow(*, advancement_policy: str = "manual") -> dict:
                 {
                     "id": "human",
                     "name": "Human",
-                    "depends_on": [],
+                    "depends_on": ["automated"],
                     "required": True,
                     "workspace_policy": "composer",
                     "automation_rule_id": None,
@@ -61,7 +61,7 @@ def workflow(*, advancement_policy: str = "manual") -> dict:
                 {
                     "id": "blocked",
                     "name": "Blocked",
-                    "depends_on": ["automated"],
+                    "depends_on": ["human"],
                     "required": True,
                     "workspace_policy": "none",
                     "automation_rule_id": "blocked-rule",
@@ -111,7 +111,7 @@ async def test_start_runs_only_ready_automated_stages(
         cloud_project_id="11",
         metadata_json={"workflow": workflow()},
     )
-    db = SimpleNamespace()
+    db = MagicMock()
 
     started = await issue_workflow_start_service.start(
         db,
@@ -146,7 +146,7 @@ async def test_start_accepts_custom_robot_without_runtime_profile(
     )
 
     started = await issue_workflow_start_service.start(
-        SimpleNamespace(),
+        MagicMock(),
         item=item,
         project=SimpleNamespace(id=11, task_provider="local"),
         user_id=7,
@@ -189,7 +189,7 @@ async def test_start_dispatches_direct_robot_without_automation_rule(
         cloud_project_id="11",
         metadata_json={"workflow": snapshot},
     )
-    db = SimpleNamespace()
+    db = MagicMock()
 
     started = await issue_workflow_start_service.start(
         db,
@@ -251,7 +251,7 @@ async def test_continue_dispatches_newly_ready_robot_stage(
         cloud_project_id="11",
         metadata_json={"workflow": snapshot},
     )
-    db = SimpleNamespace()
+    db = MagicMock()
 
     started = await issue_workflow_start_service.continue_ready_stages(
         db,
@@ -283,7 +283,7 @@ async def test_continue_does_not_restart_ai_orchestration(
     )
 
     started = await issue_workflow_start_service.continue_ready_stages(
-        SimpleNamespace(),
+        MagicMock(),
         item=item,
         user_id=7,
         stage_ids={"stage-1"},
@@ -330,9 +330,13 @@ async def test_start_dispatches_ai_coordinator_once(
         metadata_json={"workflow": snapshot, "tags": []},
     )
     project = SimpleNamespace(id=11, task_provider="local")
+    db = MagicMock()
+    db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.return_value.one.return_value = (
+        item
+    )
 
     started = await issue_workflow_start_service.start(
-        SimpleNamespace(),
+        db,
         item=item,
         project=project,
         user_id=7,
@@ -347,7 +351,7 @@ async def test_start_dispatches_ai_coordinator_once(
     monkeypatch.setattr(issue_workflow_start_service, "_has_run", lambda *_args: True)
     assert (
         await issue_workflow_start_service.start(
-            SimpleNamespace(),
+            db,
             item=item,
             project=project,
             user_id=7,
@@ -379,7 +383,7 @@ async def test_start_keeps_ai_coordinator_waiting_for_issue_runtime_configuratio
     )
 
     started = await issue_workflow_start_service.start(
-        SimpleNamespace(),
+        MagicMock(),
         item=item,
         project=SimpleNamespace(id=11, task_provider="local"),
         user_id=7,
@@ -405,7 +409,7 @@ async def test_start_keeps_ready_stage_waiting_when_execution_config_is_missing(
     )
 
     started = await issue_workflow_start_service.start(
-        SimpleNamespace(),
+        MagicMock(),
         item=item,
         project=SimpleNamespace(id=11, task_provider="local"),
         user_id=7,
@@ -429,7 +433,7 @@ async def test_start_without_ai_rule_does_not_create_planning_run(
             cloud_project_id="11",
         ),
         SimpleNamespace(id=11, task_provider="local"),
-        SimpleNamespace(ai_automation_rule_id=None),
+        SimpleNamespace(ai_automation_rule_id=None, execution_config=None),
         7,
     )
 

@@ -70,6 +70,8 @@ import { AITableTaskFields } from './AITableTaskFields'
 import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 import { TaskActivityView } from './TaskActivityView'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
+import { IssueAssignmentPanel } from './IssueAssignmentPanel'
+import { IssueExperienceMigration } from './IssueExperienceMigration'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 import './task-detail-layout.css'
 import {
@@ -86,12 +88,7 @@ function supportsAssignApi(api: DeliveryApi): boolean {
   return typeof (api as { assignLoopItem?: unknown }).assignLoopItem === 'function'
 }
 
-type WorkflowPlanAction =
-  | 'approveWorkflowPlan'
-  | 'approveWorkflowReview'
-  | 'pauseWorkflowPlan'
-  | 'resumeWorkflowPlan'
-  | 'replanWorkflowPlan'
+type WorkflowPlanAction = 'pauseWorkflowPlan' | 'resumeWorkflowPlan' | 'replanWorkflowPlan'
 
 type WorkflowPlanMethod = (itemId: string) => Promise<WorkflowPlan>
 
@@ -552,7 +549,6 @@ export type TodoEditorProps = {
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   teamApi?: WorkbenchServices['teamApi']
   projectChatClient?: ProjectChatClient
-  selfManagedExecution?: boolean
   currentUserId?: string | number
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
@@ -955,24 +951,20 @@ export function TodoEditor(props: TodoEditorProps) {
     : tasks
   const executionChildItems = showChildren ? [] : childItems
   const executionTaskCount = executionChildItems.length + displayedTasks.length
-  const workflowPlanStatus = workflowPlan?.status ?? item?.workflow?.orchestration_status ?? 'idle'
+  const workflowPlanStatus = item?.workflow?.orchestration_status ?? workflowPlan?.status ?? 'idle'
   const workflowPlanStatusLabel = {
     idle: t('todo.workflow_plan_idle', '等待触发'),
-    planning: t('todo.workflow_plan_planning', 'AI 正在生成方案'),
+    planning: t('todo.workflow_plan_planning', 'AI 正在判断下一步'),
     awaiting_approval: t('todo.workflow_plan_awaiting_approval', '等待人工确认'),
-    dispatching: t('todo.workflow_plan_dispatching', '正在创建并分配任务'),
-    running: t('todo.workflow_plan_running', '子任务执行中'),
+    dispatching: t('todo.workflow_plan_dispatching', '正在交办工作'),
+    running: t('todo.workflow_plan_running', '当前工作执行中'),
     awaiting_review: t('todo.workflow_plan_awaiting_review', '等待统一验收'),
+    waiting_human: t('todo.assignment_waiting_human'),
     paused: t('todo.workflow_plan_paused', '已暂停'),
     completed: t('todo.workflow_plan_completed', '已完成'),
-    failed: t('todo.workflow_plan_failed', '生成方案失败'),
+    failed: t('todo.workflow_plan_failed', 'AI 协调失败'),
   }[workflowPlanStatus]
-  const planItems = workflowPlan?.items ?? []
   const workflowManager = workflowPlan?.manager_run
-  const workflowManagerPlanConflict =
-    (workflowPlanStatus === 'awaiting_approval' && workflowManager?.status === 'failed') ||
-    (workflowPlanStatus === 'planning' &&
-      ['completed', 'succeeded'].includes(workflowManager?.status ?? ''))
   const registerWorkflowManagerExecution = useCallback((action: (() => void) | null) => {
     setOpenWorkflowManagerExecution(() => action)
   }, [])
@@ -1415,7 +1407,6 @@ export function TodoEditor(props: TodoEditorProps) {
         onTaskUpdated={editProps.onUpdated}
         projectChatAgentApi={props.projectChatAgentApi}
         localProjects={props.localProjects}
-        selfManagedExecution={props.selfManagedExecution}
         workflowManagerRunId={workflowManager?.id}
         onWorkflowManagerExecutionChange={registerWorkflowManagerExecution}
         onWorkflowManagerFinished={refreshWorkflowPlan}
@@ -2094,261 +2085,110 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
-                  {item.workflow?.advancement_policy === 'ai' ? (
-                    <section
-                      className="mt-6 rounded-xl border border-border bg-muted/20 p-3"
-                      data-testid="cloud-todo-workflow-plan"
-                    >
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                        <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" />
-                        <h3 className="shrink-0 whitespace-nowrap text-sm font-semibold text-text-primary">
-                          {t('todo.workflow_plan_title', 'AI 编排方案')}
-                        </h3>
-                        <span
-                          className="shrink-0 whitespace-nowrap text-xs text-text-muted"
-                          data-testid="cloud-todo-workflow-plan-status"
-                        >
-                          {workflowManagerPlanConflict
-                            ? t('todo.workflow_plan_failed', '生成方案失败')
-                            : workflowPlanStatusLabel}
+                  {item.workflow?.advancement_policy === 'ai' || item.workflow?.assignment ? (
+                    <>
+                      <div
+                        className="mt-4 flex items-center gap-2 text-sm"
+                        data-testid="cloud-todo-workflow-plan"
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        <span data-testid="cloud-todo-workflow-plan-status">
+                          {workflowPlanStatusLabel}
                         </span>
-                        <div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-                          {workflowManagerPlanConflict ? (
-                            <button
-                              type="button"
-                              data-testid="cloud-todo-workflow-replan"
-                              disabled={
-                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
-                              }
-                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
-                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
-                            >
-                              {t('todo.workflow_plan_retry', '重新生成')}
-                            </button>
-                          ) : workflowPlanStatus === 'awaiting_approval' ? (
-                            <>
-                              <button
-                                type="button"
-                                data-testid="cloud-todo-workflow-replan"
-                                disabled={
-                                  workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
-                                }
-                                onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
-                                className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
-                              >
-                                {t('todo.workflow_plan_replan', '要求重规划')}
-                              </button>
-                              <button
-                                type="button"
-                                data-testid="cloud-todo-workflow-approve"
-                                disabled={
-                                  workflowPlanBusy ||
-                                  !workflowPlanMethod(api, 'approveWorkflowPlan')
-                                }
-                                onClick={() => void mutateWorkflowPlan('approveWorkflowPlan')}
-                                className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
-                              >
-                                {t('todo.workflow_plan_approve', '确认并执行')}
-                              </button>
-                            </>
-                          ) : workflowPlanStatus === 'awaiting_review' ? (
-                            <>
-                              <button
-                                type="button"
-                                data-testid="cloud-todo-workflow-replan"
-                                disabled={
-                                  workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
-                                }
-                                onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
-                                className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
-                              >
-                                {t('todo.workflow_plan_replan', '要求重规划')}
-                              </button>
-                              <button
-                                type="button"
-                                data-testid="cloud-todo-workflow-review"
-                                disabled={
-                                  workflowPlanBusy ||
-                                  !workflowPlanMethod(api, 'approveWorkflowReview')
-                                }
-                                onClick={() => void mutateWorkflowPlan('approveWorkflowReview')}
-                                className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
-                              >
-                                {t('todo.workflow_plan_review', '验收并完成')}
-                              </button>
-                            </>
-                          ) : workflowPlanStatus === 'paused' ? (
-                            <button
-                              type="button"
-                              data-testid="cloud-todo-workflow-resume"
-                              disabled={
-                                workflowPlanBusy || !workflowPlanMethod(api, 'resumeWorkflowPlan')
-                              }
-                              onClick={() => void mutateWorkflowPlan('resumeWorkflowPlan')}
-                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
-                            >
-                              {t('todo.workflow_plan_resume', '继续执行')}
-                            </button>
-                          ) : workflowPlanStatus === 'planning' ||
-                            workflowPlanStatus === 'running' ? (
-                            <button
-                              type="button"
-                              data-testid="cloud-todo-workflow-pause"
-                              disabled={
-                                workflowPlanBusy || !workflowPlanMethod(api, 'pauseWorkflowPlan')
-                              }
-                              onClick={() => void mutateWorkflowPlan('pauseWorkflowPlan')}
-                              className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
-                            >
-                              {t('todo.workflow_plan_pause', '暂停')}
-                            </button>
-                          ) : workflowPlanStatus === 'failed' ? (
-                            <button
-                              type="button"
-                              data-testid="cloud-todo-workflow-replan"
-                              disabled={
-                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
-                              }
-                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
-                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
-                            >
-                              {t('todo.workflow_plan_retry', '重新生成')}
-                            </button>
-                          ) : workflowPlanStatus === 'completed' ? (
-                            <button
-                              type="button"
-                              data-testid="cloud-todo-workflow-rerun"
-                              disabled={
-                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
-                              }
-                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
-                              className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
-                            >
-                              {t('todo.workflow_plan_rerun', '再次执行')}
-                            </button>
-                          ) : null}
-                        </div>
+                        {openWorkflowManagerExecution ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-todo-workflow-manager-run"
+                            onClick={openWorkflowManagerExecution}
+                            className="ml-auto rounded-md p-1 hover:bg-muted"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                            {t('workbench.task_activity_view_execution')}
+                          </button>
+                        ) : null}
+                        {!item.workflow?.migration_required &&
+                        ['failed', 'paused'].includes(workflowPlanStatus) ? (
+                          <button
+                            type="button"
+                            data-testid={
+                              workflowPlanStatus === 'paused'
+                                ? 'cloud-todo-workflow-resume'
+                                : 'cloud-todo-workflow-replan'
+                            }
+                            disabled={
+                              workflowPlanBusy ||
+                              !workflowPlanMethod(
+                                api,
+                                workflowPlanStatus === 'paused'
+                                  ? 'resumeWorkflowPlan'
+                                  : 'replanWorkflowPlan'
+                              )
+                            }
+                            onClick={() =>
+                              void mutateWorkflowPlan(
+                                workflowPlanStatus === 'paused'
+                                  ? 'resumeWorkflowPlan'
+                                  : 'replanWorkflowPlan'
+                              )
+                            }
+                          >
+                            {t(
+                              workflowPlanStatus === 'paused'
+                                ? 'todo.workflow_plan_resume'
+                                : 'todo.workflow_plan_retry'
+                            )}
+                          </button>
+                        ) : null}
+                        {!item.workflow?.migration_required &&
+                        item.workflow?.advancement_policy === 'ai' &&
+                        ['planning', 'dispatching', 'running', 'waiting_human'].includes(
+                          workflowPlanStatus
+                        ) ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-todo-workflow-pause"
+                            disabled={
+                              workflowPlanBusy || !workflowPlanMethod(api, 'pauseWorkflowPlan')
+                            }
+                            onClick={() => void mutateWorkflowPlan('pauseWorkflowPlan')}
+                          >
+                            {t('todo.workflow_plan_pause')}
+                          </button>
+                        ) : null}
                       </div>
-                      {workflowPlan?.summary ? (
-                        <p className="mt-2 text-xs leading-5 text-text-secondary">
-                          {workflowPlan.summary}
+                      <IssueAssignmentPanel
+                        key={item.id}
+                        item={item}
+                        currentUserId={props.currentUserId}
+                        submitResult={
+                          'submitIssueAssignmentResult' in api
+                            ? api.submitIssueAssignmentResult
+                            : undefined
+                        }
+                        onUpdated={async () => {
+                          editProps?.onUpdated(await api.getLoopItem(item.id))
+                        }}
+                      />
+                      {workflowError ? (
+                        <p
+                          role="alert"
+                          data-testid="cloud-todo-workflow-error-summary"
+                          className="mt-2 text-xs text-destructive"
+                        >
+                          {workflowError}
                         </p>
                       ) : null}
-                      {workflowManager ||
-                      ['planning', 'failed', 'paused'].includes(workflowPlanStatus) ? (
-                        <button
-                          type="button"
-                          disabled={!openWorkflowManagerExecution}
-                          onClick={openWorkflowManagerExecution ?? undefined}
-                          className="mt-2 block w-full rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors enabled:cursor-pointer enabled:hover:bg-muted/40 disabled:cursor-default"
-                          data-testid="cloud-todo-workflow-manager-run"
-                        >
-                          <div className="flex items-center gap-2 text-xs">
-                            <Bot className="h-3.5 w-3.5 text-text-muted" />
-                            <span className="font-medium text-text-primary">
-                              {t('todo.workflow_manager')}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-text-muted">
-                              {workflowManager?.recent_activity ||
-                                (workflowPlanStatus === 'planning'
-                                  ? t('todo.workflow_manager_entering_queue')
-                                  : workflowPlanStatusLabel)}
-                            </span>
-                            {openWorkflowManagerExecution ? (
-                              <span
-                                data-testid="cloud-todo-workflow-manager-open-execution"
-                                className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                                {t('workbench.task_activity_view_execution')}
-                              </span>
-                            ) : null}
-                          </div>
-                          <p className="mt-1 truncate text-xs text-text-muted">
-                            {[workflowManager?.model, workflowManager?.device_id]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </p>
-                        </button>
-                      ) : null}
-                      {planItems.length > 0 ? (
-                        <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
-                          {planItems.map((planItem, index) => {
-                            const child = childItems.find(
-                              candidate => candidate.id === planItem.task_id
-                            )
-                            const planStatus =
-                              planItem.outcome_verdict === 'passed'
-                                ? t('todo.workflow_outcome_passed')
-                                : planItem.outcome_verdict === 'needs_rework'
-                                  ? t('todo.workflow_outcome_needs_rework')
-                                  : planItem.task_status
-                                    ? (statusOptions.find(
-                                        option => option.id === planItem.task_status
-                                      )?.name ?? planItem.task_status)
-                                    : t('todo.workflow_task_pending_creation')
-                            return (
-                              <div
-                                key={planItem.id}
-                                data-testid={`cloud-todo-workflow-plan-item-${planItem.id}`}
-                                className="flex gap-2 px-3 py-2"
-                              >
-                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-xs text-text-muted">
-                                  {index + 1}
-                                </span>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <p className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
-                                      {planItem.title}
-                                    </p>
-                                    <span className="shrink-0 text-xs text-text-muted">
-                                      {planStatus}
-                                    </span>
-                                  </div>
-                                  {!planItem.task_id ? (
-                                    <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
-                                      {planItem.description}
-                                    </p>
-                                  ) : null}
-                                  <p className="mt-1 text-xs text-text-secondary">
-                                    {planItem.assignee_name || planItem.assignee_id}
-                                    {planItem.rationale ? ` · ${planItem.rationale}` : ''}
-                                  </p>
-                                  {planItem.outcome_summary ? (
-                                    <p className="mt-1 line-clamp-2 text-xs text-text-muted">
-                                      {planItem.outcome_summary}
-                                    </p>
-                                  ) : null}
-                                </div>
-                                {child && props.onOpenChildTask ? (
-                                  <button
-                                    type="button"
-                                    data-testid={`cloud-todo-open-plan-task-${child.id}`}
-                                    onClick={() => props.onOpenChildTask?.(child)}
-                                    className="shrink-0 self-start rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-muted"
-                                  >
-                                    {t('todo.workflow_open_task')}
-                                  </button>
-                                ) : null}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ) : null}
-                      {workflowError ? (
-                        <details className="mt-2 text-xs text-destructive">
-                          <summary
-                            className={cn(rawWorkflowError && 'cursor-pointer')}
-                            data-testid="cloud-todo-workflow-error-summary"
-                          >
-                            {workflowError}
-                          </summary>
-                          {rawWorkflowError ? (
-                            <p className="mt-1 break-words text-text-muted">{rawWorkflowError}</p>
-                          ) : null}
-                        </details>
-                      ) : null}
-                    </section>
+                    </>
+                  ) : null}
+                  {item?.workflow?.migration_required && 'adoptIssueExperience' in api ? (
+                    <IssueExperienceMigration
+                      key={item.id}
+                      item={item}
+                      api={api}
+                      onUpdated={async () => {
+                        editProps?.onUpdated(await api.getLoopItem(item.id))
+                      }}
+                    />
                   ) : null}
                   <section className="task-detail-workspace-section" data-testid="cloud-todo-tasks">
                     <div className="task-detail-workspace-section-head">
@@ -2365,7 +2205,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       >
                         {displayedWorkflow?.nodes.length ?? executionTaskCount}
                       </span>
-                      {props.onCreateTask && !displayedWorkflow?.nodes.length ? (
+                      {props.onCreateTask ? (
                         <button
                           type="button"
                           data-testid="cloud-todo-create-task"
@@ -2380,12 +2220,25 @@ export function TodoEditor(props: TodoEditorProps) {
                     {displayedWorkflow?.nodes.length ? (
                       <IssueWorkflowDag
                         nodes={displayedWorkflow.nodes}
+                        currentRoleId={
+                          displayedWorkflow.advancement_policy === 'ai'
+                            ? (displayedWorkflow.current_stage_id ?? null)
+                            : undefined
+                        }
                         tasks={tasks}
                         deliveries={deliveries}
                         executionError={item?.execution_error}
                         selectedTaskId={props.selectedTaskId}
-                        onCreateTask={props.onCreateTask}
-                        onRunAutomation={props.onRunWorkflowNode}
+                        onCreateTask={
+                          displayedWorkflow.advancement_policy === 'ai'
+                            ? undefined
+                            : props.onCreateTask
+                        }
+                        onRunAutomation={
+                          displayedWorkflow.advancement_policy === 'ai'
+                            ? undefined
+                            : props.onRunWorkflowNode
+                        }
                         onOpenTask={props.onOpenTaskConversation}
                         onOpenDelivery={delivery =>
                           void api.getDelivery(delivery.id).then(setSelectedDelivery)

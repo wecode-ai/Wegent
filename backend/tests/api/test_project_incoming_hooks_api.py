@@ -23,7 +23,7 @@ def _project(test_client: TestClient, token: str) -> dict[str, object]:
     return response.json()
 
 
-def test_incoming_hook_creates_unassigned_issue_and_deduplicates(
+def test_incoming_hook_persists_event_before_routing_and_deduplicates(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -58,16 +58,16 @@ def test_incoming_hook_creates_unassigned_issue_and_deduplicates(
     )
     assert first.status_code == 202
     receipt = first.json()
-    assert receipt["status"] == "created"
+    assert receipt["status"] == "received"
     assert receipt["provider"] == "github"
-    assert receipt["loop_item_id"].startswith("HOOK-")
-
-    item = test_db.get(LoopItem, receipt["loop_item_id"])
-    assert item is not None
-    assert item.title == "External issue"
-    assert item.status == "inbox"
-    assert item.assignee_user_id is None
-    assert "https://github.example/acme/app/issues/7" in item.description
+    assert receipt["loop_item_id"] is None
+    event = test_db.get(ProjectIncomingEvent, receipt["event_id"])
+    assert event.title == "External issue"
+    assert event.status == "waiting_configuration"
+    assert (
+        event.metadata_json["reference"]["external_id"]
+        == "https://github.example/acme/app/issues/7"
+    )
 
     duplicate = test_client.post(
         hook["webhook_url"],
@@ -81,7 +81,7 @@ def test_incoming_hook_creates_unassigned_issue_and_deduplicates(
         test_db.query(LoopItem)
         .filter(LoopItem.cloud_project_id == project["id"])
         .count()
-        == 1
+        == 0
     )
     assert test_db.query(ProjectIncomingEvent).count() == 1
 
@@ -101,11 +101,11 @@ def test_incoming_hook_records_unrecognized_payload_without_creating_issue(
     response = test_client.post(hook["webhook_url"], json={"unknown": True})
 
     assert response.status_code == 202
-    assert response.json()["status"] == "ignored"
-    assert response.json()["reason"] == "no deterministic title field found"
+    assert response.json()["status"] == "received"
+    assert response.json()["reason"] is None
     assert test_db.query(LoopItem).count() == 0
     event = test_db.query(ProjectIncomingEvent).one()
-    assert event.status == "ignored"
+    assert event.status == "waiting_configuration"
 
 
 def test_disabled_and_rotated_incoming_hook_invalidates_old_address(

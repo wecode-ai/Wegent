@@ -1,3 +1,4 @@
+import { createProjectEventCenterApi } from '@/api/projectEventCenter'
 import { getToken } from '@/api/auth'
 import { createAttachmentApi } from '@/api/attachments'
 import { createDeviceApi } from '@/api/devices'
@@ -78,6 +79,7 @@ export function createBackendWorkbenchServices(
   const projectChatAgentApi = createProjectChatAgentApi(client)
   const projectAutomationApi = createProjectAutomationApi(client)
   const runtimeProfileApi = createRuntimeProfileApi(client)
+  const projectEventCenterApi = createProjectEventCenterApi(client)
   const projectIncomingHookApi = createProjectIncomingHookApi(client)
   const cloudPluginApi = createPluginApi(client, apiBaseUrl)
   const pluginApi = {
@@ -109,6 +111,7 @@ export function createBackendWorkbenchServices(
         projectAutomationApi,
         runtimeProfileApi,
         projectIncomingHookApi,
+        projectEventCenterApi,
         deviceApi,
         modelApi,
         teamApi,

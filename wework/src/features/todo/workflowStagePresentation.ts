@@ -1,4 +1,4 @@
-import type { WorkflowNodeInstance } from '@/api/deliveries'
+import type { IssueWorkflowInstance, WorkflowNodeInstance } from '@/api/deliveries'
 
 const CURRENT_STAGE_STATUS_PRIORITY: WorkflowNodeInstance['status'][] = [
   'running',
@@ -10,7 +10,13 @@ const CURRENT_STAGE_STATUS_PRIORITY: WorkflowNodeInstance['status'][] = [
   'ready',
 ]
 
-export function getCurrentWorkflowNode(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance | null {
+export function getCurrentWorkflowNode(
+  nodes: WorkflowNodeInstance[],
+  workflow?: IssueWorkflowInstance
+): WorkflowNodeInstance | null {
+  if (workflow?.advancement_policy === 'ai') {
+    return nodes.find(node => node.id === workflow.current_stage_id) ?? null
+  }
   for (const status of CURRENT_STAGE_STATUS_PRIORITY) {
     const currentNode = nodes.find(node => node.status === status)
     if (currentNode) return currentNode

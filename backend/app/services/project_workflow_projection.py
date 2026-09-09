@@ -20,6 +20,7 @@ from app.models.delivery import (
     loop_unset_datetime_for_connection,
 )
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.issue_workflow import (
     IssueWorkflowInstance,
     WorkflowNodeInstance,
@@ -320,6 +321,20 @@ def apply_workflow_nodes(
     nodes: list[dict],
     actor_user_id: int | None = None,
 ) -> LoopItem:
+    if workflow.get("migration_required"):
+        return item
+    if workflow.get("advancement_policy") == "ai":
+        metadata = dict(item.metadata_json or {})
+        metadata["workflow"] = {
+            **workflow,
+            "nodes": nodes,
+            "version": int(workflow.get("version") or 1) + 1,
+        }
+        item.metadata_json = advance_content_revision(
+            metadata, actor_user_id=actor_user_id
+        )
+        item.version += 1
+        return item
     completed = {
         str(node.get("id"))
         for node in nodes
@@ -339,11 +354,12 @@ def apply_workflow_nodes(
     metadata = dict(item.metadata_json or {})
     metadata["workflow"] = next_workflow
     item.metadata_json = advance_content_revision(metadata, actor_user_id=actor_user_id)
-    required = [node for node in nodes if node.get("required", True)]
+    required = nodes
     if required and all(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required
     ):
         projected_status = "in_review"
+        next_workflow["orchestration_status"] = "completed"
     elif any(node.get("status") in {"running", "changes_requested"} for node in nodes):
         projected_status = "in_progress"
     else:
@@ -387,6 +403,17 @@ def workflow_automation_run_state(
     if not isinstance(raw_workflow, dict):
         raise RuntimeError("Workflow automation Issue has no workflow snapshot")
     workflow = IssueWorkflowInstance.model_validate({**raw_workflow, "nodes": nodes})
+    if workflow.advancement_policy == "ai":
+        return (
+            (
+                "succeeded"
+                if workflow.orchestration_status == "completed"
+                else (
+                    "failed" if workflow.orchestration_status == "failed" else "running"
+                )
+            ),
+            "",
+        )
     required = [node for node in workflow.nodes if node.required]
     if not required:
         return "succeeded", ""
@@ -572,11 +599,36 @@ def sync_automation_workflow_node(
     db: Session, run: ProjectAutomationRun
 ) -> LoopItem | None:
     metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+    if metadata.get("issue_assignment_id"):
+        return _sync_assignment_run(db, run, metadata)
     node_id = metadata.get("workflow_node_id")
     if not isinstance(node_id, str) or not node_id:
         return _sync_ai_planning_run(db, run, metadata)
     if not run.task_id:
         return None
+    item = (
+        db.query(LoopItem).filter(LoopItem.id == run.task_id).with_for_update().first()
+    )
+    if item is None:
+        return None
+    issue_metadata = item.metadata_json or {}
+    workflow = issue_metadata.get("workflow") or {}
+    node = next(
+        (node for node in workflow.get("nodes", []) if node.get("id") == node_id), None
+    )
+    if workflow.get("migration_required") or workflow.get("advancement_policy") == "ai":
+        return item
+    if node and (
+        (
+            node.get("automation_run_id")
+            and str(node["automation_run_id"]) != str(run.id)
+        )
+        or (
+            (issue_metadata.get("experience_migration") or {}).get("adopted")
+            and str(node.get("automation_run_id") or "") != str(run.id)
+        )
+    ):
+        return item
     status_map = {
         "pending": "queued",
         "queued": "queued",
@@ -621,6 +673,48 @@ def sync_automation_workflow_node(
         automation_run_id=str(run.id),
         execution_error=run.description if node_status == "failed" else None,
     )
+
+
+def _sync_assignment_run(
+    db: Session, run: ProjectAutomationRun, metadata: dict
+) -> LoopItem | None:
+    from app.services.issue_assignment_state import finish_assignment
+    from app.services.issue_assignments import write_assignment
+
+    issue = (
+        db.query(LoopItem).filter(LoopItem.id == run.task_id).with_for_update().first()
+    )
+    if issue is None:
+        return None
+    workflow = (issue.metadata_json or {}).get("workflow") or {}
+    assignment = workflow.get("assignment") or {}
+    if assignment.get("id") != metadata["issue_assignment_id"]:
+        return issue
+    if (
+        assignment.get("status") == "completed"
+        or run.status not in TERMINAL_AUTOMATION_RUN_STATUSES
+    ):
+        return issue
+    activity = (
+        db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.task_id == str(issue.id),
+            ProjectChatMessage.metadata_json["automation_run_id"].as_string()
+            == str(run.id),
+        )
+        .order_by(ProjectChatMessage.id.desc())
+        .first()
+    )
+    summary = (activity.content if activity else "") or run.description or run.status
+    next_workflow = finish_assignment(workflow, assignment["id"], summary)
+    next_workflow["assignment"]["execution_status"] = run.status
+    if run.status != "succeeded":
+        for node in next_workflow.get("nodes", []):
+            if node["id"] == assignment.get("node_id"):
+                node["status"] = "failed"
+                node["execution_error"] = summary[:2000]
+    write_assignment(db, issue, next_workflow, summary)
+    return issue
 
 
 def _sync_ai_planning_run(

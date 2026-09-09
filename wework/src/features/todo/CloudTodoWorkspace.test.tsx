@@ -2509,7 +2509,7 @@ describe('CloudTodoWorkspace', () => {
         advancement_policy: 'ai' as const,
         approval_policy: 'required' as const,
         ai_automation_rule_id: 'manager-rule',
-        orchestration_status: 'planning' as const,
+        orchestration_status: 'failed' as const,
         active_run_id: 'workflow-run-1',
         active_plan_version: 1,
         current_stage_id: null,
@@ -2527,12 +2527,12 @@ describe('CloudTodoWorkspace', () => {
       items: [],
       manager_run: {
         id: 'manager-run-1',
-        status: 'succeeded',
+        status: 'failed',
         model: 'gpt-5-codex',
         execution_environment: 'cloud',
         device_id: 'cloud-device',
         recent_activity: '方案生成完成',
-        error: null,
+        error: 'Coordinator did not decide an assignment',
         updated_at: '2026-08-20T11:47:00Z',
       },
     }
@@ -2564,10 +2564,10 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
 
     expect(await screen.findByTestId('cloud-todo-workflow-plan-status')).toHaveTextContent(
-      '生成方案失败'
+      'AI 协调失败'
     )
     expect(screen.queryByTestId('cloud-todo-workflow-approve')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-replan')).toHaveTextContent('重新生成')
+    expect(screen.getByTestId('cloud-todo-workflow-replan')).toHaveTextContent('重新判断')
   })
 
   it('disables a workflow action when its API method is unavailable', async () => {
@@ -2580,7 +2580,7 @@ describe('CloudTodoWorkspace', () => {
         advancement_policy: 'ai' as const,
         approval_policy: 'required' as const,
         ai_automation_rule_id: 'manager-rule',
-        orchestration_status: 'awaiting_approval' as const,
+        orchestration_status: 'failed' as const,
         active_run_id: 'workflow-run-1',
         active_plan_version: 1,
         current_stage_id: null,
@@ -2605,12 +2605,9 @@ describe('CloudTodoWorkspace', () => {
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => managedItem)
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
     workbenchServices.deliveryApi!.getWorkflowPlan = vi.fn(async () => plan)
-    workbenchServices.deliveryApi!.replanWorkflowPlan = vi.fn(async () => plan)
     ;(
-      workbenchServices.deliveryApi as unknown as {
-        approveWorkflowPlan?: unknown
-      }
-    ).approveWorkflowPlan = undefined
+      workbenchServices.deliveryApi as unknown as { replanWorkflowPlan?: unknown }
+    ).replanWorkflowPlan = undefined
 
     render(
       <CloudTodoWorkspace
@@ -2623,120 +2620,8 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
 
-    expect(await screen.findByTestId('cloud-todo-workflow-approve')).toBeDisabled()
-    expect(screen.getByTestId('cloud-todo-workflow-replan')).toBeEnabled()
-  })
-
-  it('reviews all AI child tasks once and keeps them visible after completion', async () => {
-    const managedItem = {
-      ...item,
-      status: 'in_review' as const,
-      workflow: {
-        version: 1,
-        definition_version: 1,
-        stage_mode: 'none' as const,
-        advancement_policy: 'ai' as const,
-        approval_policy: 'required' as const,
-        ai_automation_rule_id: 'manager-rule',
-        orchestration_status: 'awaiting_review' as const,
-        active_run_id: 'workflow-run-1',
-        active_plan_version: 1,
-        current_stage_id: null,
-        nodes: [],
-      },
-    }
-    const child = {
-      ...item,
-      id: 'WEG-2',
-      sequence_number: 2,
-      parent_id: managedItem.id,
-      title: '实现快速排序',
-      status: 'in_review' as const,
-      assignee_agent_id: 'agent-1',
-      assignee_agent_name: '开发机器人',
-    }
-    const plan = {
-      run_id: 'workflow-run-1',
-      issue_id: managedItem.id,
-      stage_id: '__issue__',
-      plan_version: 1,
-      approval_policy: 'required' as const,
-      status: 'awaiting_review' as const,
-      summary: '实现并验证快速排序',
-      items: [
-        {
-          id: 'plan-item-1',
-          client_key: 'implement',
-          stage_id: '__issue__',
-          title: child.title,
-          description: '实现并验证',
-          assignee_type: 'agent' as const,
-          assignee_id: 'agent-1',
-          assignee_name: '开发机器人',
-          rationale: '适合开发任务',
-          task_id: child.id,
-          task_status: child.status,
-          outcome_verdict: 'passed' as const,
-          outcome_summary: '实现和测试均已通过',
-          status: 'materialized' as const,
-        },
-      ],
-    }
-    const completedPlan = {
-      ...plan,
-      status: 'completed' as const,
-    }
-    const workbenchServices = services()
-    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
-      items: [managedItem, child],
-    }))
-    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => managedItem)
-    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
-    workbenchServices.deliveryApi!.getWorkflowPlan = vi
-      .fn()
-      .mockResolvedValueOnce(plan)
-      .mockResolvedValue(completedPlan)
-    workbenchServices.deliveryApi!.approveWorkflowReview = vi.fn(async () => completedPlan)
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
-    expect(await screen.findByTestId('cloud-todo-workflow-plan-status')).toHaveTextContent(
-      '等待统一验收'
-    )
-    expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-plan-item-plan-item-1')).toHaveTextContent(
-      '实现和测试均已通过'
-    )
-    expect(screen.getByTestId('cloud-todo-open-plan-task-WEG-2')).toHaveTextContent('查看子任务')
-    expect(screen.getByTestId('cloud-todo-workflow-plan-status').parentElement).toHaveClass(
-      'flex-wrap'
-    )
-    expect(screen.getByTestId('cloud-todo-workflow-plan-status')).toHaveClass('whitespace-nowrap')
-    expect(screen.getByTestId('cloud-todo-workflow-review').parentElement).toHaveClass(
-      'shrink-0',
-      'whitespace-nowrap'
-    )
-
-    await userEvent.click(screen.getByTestId('cloud-todo-workflow-review'))
-
-    await waitFor(() =>
-      expect(workbenchServices.deliveryApi?.approveWorkflowReview).toHaveBeenCalledWith('WEG-1')
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('cloud-todo-workflow-plan-status')).toHaveTextContent('已完成')
-    )
-    expect(screen.queryByTestId('cloud-todo-workflow-review')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-rerun')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-plan-item-plan-item-1')).toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-todo-workflow-replan')).toBeDisabled()
+    expect(screen.queryByTestId('cloud-todo-workflow-approve')).not.toBeInTheDocument()
   })
 
   it('adds an attachment from the TODO edit dialog', async () => {

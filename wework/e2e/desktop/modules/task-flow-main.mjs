@@ -1393,7 +1393,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       return
     }
 
-    if (DESKTOP_SEGMENT === 'project-automation') {
+    if (DESKTOP_SEGMENT === 'project-automation-workflow') {
       phase = 'project-automation-scenario'
       assert.ok(
         desktopScenario,

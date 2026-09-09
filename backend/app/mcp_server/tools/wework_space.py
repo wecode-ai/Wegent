@@ -43,12 +43,13 @@ from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemUpdate,
 )
-from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowTaskOutcomeSubmit
+from app.schemas.issue_assignment import IssueAssignmentDecision
 from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
+from app.services.issue_assignments import issue_assignment_service
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -280,6 +281,43 @@ def get_current_context(token_info: MCPAuthInfo) -> dict[str, Any]:
             "space": _project_view(project),
             "item": _read_item(db, project, context["item_id"], token_info.user_id),
         }
+
+
+@mcp_tool(server="wework_space")
+def register_external_reference(
+    token_info: MCPAuthInfo,
+    provider: str,
+    external_id: str,
+    url: str = "",
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Associate an external artifact with its originating Issue for later events.
+
+    Use the canonical artifact URL as external_id when the provider supplies one.
+    """
+    from app.schemas.project_event_center import ExternalReference
+    from app.services.project_event_center import project_event_center_service
+
+    with SessionLocal() as db:
+        project_id = _space_id(db, token_info, space_id)
+        issue_id = _item_id(db, token_info, item_id)
+        context = _board_context(db, token_info)
+        if context and issue_id != context["item_id"]:
+            raise ValueError(
+                "External artifacts must be registered to the originating Issue"
+            )
+        result = project_event_center_service.bind_reference(
+            db,
+            project_id,
+            issue_id,
+            token_info.user_id,
+            ExternalReference(
+                provider=provider, external_id=external_id, url=url or None
+            ),
+        )
+        db.commit()
+        return result
 
 
 @mcp_tool(server="wework_space")
@@ -521,119 +559,28 @@ def get_assignment_candidates(
 
 
 @mcp_tool(server="wework_space")
-async def submit_workflow_plan(
+async def decide_issue_assignment(
     token_info: MCPAuthInfo,
-    plan: dict[str, Any],
+    decision: dict[str, Any],
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Submit a child-task plan; the server binds its active planning scope."""
-
-    execution_ids: list[int] = []
+    """Assign the current Issue to a role or person, execute, or complete it."""
     with SessionLocal() as db:
-        try:
-            project = _project(
-                db, _space_id(db, token_info, space_id), token_info.user_id
-            )
-            resolved_item_id = _item_id(db, token_info, item_id)
-            context = _board_context(db, token_info)
-            run_id = context.get("project_automation_run_id")
-            if (
-                context.get("source") != "project_automation"
-                or not run_id
-                or resolved_item_id != context.get("item_id")
-            ):
-                raise ValueError(
-                    "submit_workflow_plan is only available to the current AI manager"
-                )
-            view = project_automation_execution.submit_manager_workflow_plan(
-                db,
-                run_id=run_id,
-                issue_id=resolved_item_id,
-                user_id=token_info.user_id,
-                values=WorkflowPlanSubmit.model_validate(plan),
-            )
-            if view.approval_policy == "automatic":
-                view = issue_workflow_planning_service.approve(
-                    db,
-                    issue_id=resolved_item_id,
-                    user_id=token_info.user_id,
-                )
-                from app.services.board_team_execution import (
-                    workflow_plan_execution_ids,
-                )
-
-                execution_ids = workflow_plan_execution_ids(db, view)
-            result = {
-                **view.model_dump(mode="json"),
-                "project_id": str(project.id),
-            }
-        except Exception:
-            db.rollback()
-            raise
-    from app.services.board_team_execution import (
-        schedule_board_robot_execution_by_id,
-    )
-
-    for execution_id in execution_ids:
-        try:
-            schedule_board_robot_execution_by_id(execution_id)
-        except Exception:
-            logger.exception(
-                "Workflow plan execution scheduling failed execution_id=%s",
-                execution_id,
-            )
-    return result
-
-
-@mcp_tool(server="wework_space")
-async def report_workflow_outcome(
-    token_info: MCPAuthInfo,
-    verdict: str,
-    summary: str,
-    findings: list[str] | None = None,
-    space_id: str = "",
-    item_id: str = "",
-) -> dict[str, Any]:
-    """Report a planned child task as passed or needing AI replanning."""
-
-    with SessionLocal() as db:
-        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         context = _board_context(db, token_info)
-        if context.get("source") not in {
-            "board_team_assignment",
-            "board_team_continuation",
-        } or resolved_item_id != context.get("item_id"):
-            raise ValueError(
-                "report_workflow_outcome is only available to the current "
-                "workflow child task"
-            )
-        values = WorkflowTaskOutcomeSubmit(
-            verdict=verdict,
-            summary=summary,
-            findings=findings or [],
-        )
-        view = issue_workflow_planning_service.report_outcome(
+        if context.get(
+            "source"
+        ) != "project_automation" or resolved_item_id != context.get("item_id"):
+            raise ValueError("Only the current Issue coordinator can assign work")
+        return await issue_assignment_service.decide(
             db,
-            child_id=resolved_item_id,
+            issue_id=resolved_item_id,
             user_id=token_info.user_id,
-            values=values,
+            decision=IssueAssignmentDecision.model_validate(decision),
+            manager_run_id=context.get("project_automation_run_id") or "",
         )
-        if values.verdict == "needs_rework" and view.status == "planning":
-            parent = db.get(LoopItem, view.issue_id)
-            if parent is None:
-                raise ValueError("Workflow parent Issue is unavailable")
-            await issue_workflow_start_service.start(
-                db,
-                item=parent,
-                project=project,
-                user_id=token_info.user_id,
-            )
-        return {
-            **view.model_dump(mode="json"),
-            "project_id": str(project.id),
-        }
 
 
 @mcp_tool(server="wework_space")
@@ -1107,7 +1054,7 @@ async def finalize_delivery(
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         item = _read_item(db, project, resolved_item_id, token_info.user_id)
-        ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
+        ready_before = issue_workflow_start_service.ready_stage_ids(item)
         _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
         delivery = delivery_service.finalize(
             db,
@@ -1116,9 +1063,7 @@ async def finalize_delivery(
             DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
         )
         db.refresh(item)
-        newly_ready = (
-            issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-        )
+        newly_ready = issue_workflow_start_service.ready_stage_ids(item) - ready_before
         if newly_ready:
             started = await issue_workflow_start_service.continue_ready_stages(
                 db,

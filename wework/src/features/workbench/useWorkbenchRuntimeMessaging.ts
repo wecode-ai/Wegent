@@ -16,6 +16,7 @@ import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   resolveRuntimeTaskWorkspaceBinding,
+  runtimeTaskProjectUiId,
   withoutRuntimeTaskWorkspaceBinding,
 } from '@/lib/runtime-task-workspace-binding'
 import {
@@ -68,6 +69,7 @@ import {
   createRuntimeTaskId,
   createRuntimeTaskIdFromSeed,
   findProjectDeviceWorkspace,
+  findSelectableProject,
   findRuntimeTask,
   getCommandStdoutObject,
   isRecord,
@@ -1784,10 +1786,23 @@ export function useWorkbenchRuntimeMessaging({
       }
 
       const taskRequest = options.taskRequest
+      const configuredProjectId = runtimeTaskProjectUiId(state.runtimeWork, taskRequest)
+      const configuredProject =
+        configuredProjectId == null
+          ? null
+          : findSelectableProject(state.projects, state.runtimeWork, configuredProjectId)
+      if (
+        !options.project &&
+        (taskRequest?.projectId != null || taskRequest?.runtimeProjectKey) &&
+        !configuredProject
+      ) {
+        reportSendBlocked('无法解析任务运行项目', undefined, options)
+        return false
+      }
       const prepared = buildSendPayload(
         message,
         options.attachments,
-        options.project,
+        options.project ?? configuredProject,
         taskRequest?.additionalSkills ? false : undefined,
         taskRequest?.additionalSkills,
         taskRequest?.deviceId ?? options.deviceId,
@@ -1820,7 +1835,20 @@ export function useWorkbenchRuntimeMessaging({
           }
         : options.executionModel
       const baseIntent = taskRequest
-        ? { ...prepared.intent, execution: taskRequest.execution }
+        ? {
+            ...prepared.intent,
+            execution: taskRequest.execution,
+            attachmentIds: [
+              ...new Set([
+                ...(taskRequest.attachmentIds ?? []),
+                ...(prepared.intent.attachmentIds ?? []),
+              ]),
+            ],
+            attachments: [
+              ...(taskRequest.attachments ?? []),
+              ...(prepared.intent.attachments ?? []),
+            ],
+          }
         : prepared.intent
       const intent = executionModel
         ? applyExecutionModelOverride(baseIntent, executionModel)
@@ -1859,7 +1887,14 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane: false,
       })
     },
-    [buildSendPayload, reportSendBlocked, sendPreparedRuntimeMessage, state.devices]
+    [
+      buildSendPayload,
+      reportSendBlocked,
+      sendPreparedRuntimeMessage,
+      state.devices,
+      state.projects,
+      state.runtimeWork,
+    ]
   )
 
   const loadTurnFileChangesDiff = useCallback(

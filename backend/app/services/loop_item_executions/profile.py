@@ -55,6 +55,7 @@ def build_project_robot_user_input(
             f"execution_id: {execution_id}"
         ),
         f"看板任务数据位于 {task_url}，请通过看板工具自行查看。",
+        "创建 MR、PR 或其他外部事项后，使用 register_external_reference 将其 provider 和规范 URL（external_id）登记到当前工单，以便后续事件返回原上下文。",
     ]
     normalized_prompt = execution_prompt.strip()
     normalized_stage_instruction = stage_instruction.strip()
@@ -150,6 +151,7 @@ class WeworkExecutionProfile:
     local_project_id: int = 0
     max_concurrent_executions: int = 1
     manager_mode: bool = False
+    event_router: bool = False
     workspace_policy: str = "project"
     plugins: tuple[dict[str, str], ...] = ()
     workspace_binding_override: ProjectChatWorkspaceBindingView | None = None
@@ -437,7 +439,11 @@ class WeworkExecutionProfile:
         bot_id: int | str = self.agent_id or 0
         origin = {
             **origin_context,
-            "type": "project_automation" if self.manager_mode else "board_task",
+            "type": (
+                "project_event"
+                if self.event_router
+                else "project_automation" if self.manager_mode else "board_task"
+            ),
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
             "executionId": execution_id,
@@ -455,7 +461,7 @@ class WeworkExecutionProfile:
                     target_stage.get("name") or workflow_stage_id
                 )
         origin["workspacePolicy"] = workspace_policy or self.workspace_policy
-        if self.manager_mode:
+        if self.manager_mode and not self.event_router:
             origin["automationRole"] = "manager"
         bot = [
             {

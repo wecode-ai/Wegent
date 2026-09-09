@@ -49,7 +49,13 @@ export function buildWorkItemRuntimeContext(
                         advancementPolicy: task.workflow.advancement_policy ?? 'manual',
                         stageMode:
                           task.workflow.stage_mode ?? (task.workflow.nodes.length ? 'dag' : 'none'),
-                        currentStageId: workflowNodeId ?? null,
+                        currentStageId: workflowNodeId ?? task.workflow.current_stage_id ?? null,
+                        intent: task.workflow.intent ?? '',
+                        initialRoleId: task.workflow.initial_stage_id ?? null,
+                        currentWork: task.workflow.current_work ?? '',
+                        assignment: task.workflow.assignment ?? null,
+                        semantics:
+                          'Automation is experience. Nodes are working roles. Assigning a role starts concrete work. AI may skip or revisit roles; Issue requirements determine completion.',
                         stages: task.workflow.nodes.map(node => ({
                           id: node.id,
                           name: node.name,

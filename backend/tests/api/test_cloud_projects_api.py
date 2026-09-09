@@ -288,6 +288,48 @@ def test_cloud_project_card_display_is_shared_through_project_metadata(
     assert match["card_display"]["show_assignee"] is False
 
 
+def test_clearing_legacy_workflow_stops_inheritance_but_preserves_existing_issues(
+    test_client: TestClient, test_token: str
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "clearwf", "name": "Legacy experience"},
+    ).json()
+    path = f"/api/v1/cloud-projects/{project['id']}"
+    configured = test_client.patch(
+        path,
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "workflow_definition": {
+                "stage_mode": "dag",
+                "nodes": [{"id": "review", "name": "Review"}],
+            },
+        },
+    )
+    assert configured.status_code == 200
+    original = test_client.post(
+        f"{path}/loop-items", headers=_auth(test_token), json={"title": "Original"}
+    ).json()
+    assert original["workflow"]["nodes"][0]["id"] == "review"
+    cleared = test_client.patch(
+        path,
+        headers=_auth(test_token),
+        json={"version": configured.json()["version"], "workflow_definition": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["workflow_definition"]["nodes"] == []
+    new_issue = test_client.post(
+        f"{path}/loop-items", headers=_auth(test_token), json={"title": "New"}
+    ).json()
+    assert new_issue["workflow"] is None
+    retained = test_client.get(
+        f"/api/v1/loop-items/{original['id']}", headers=_auth(test_token)
+    ).json()
+    assert retained["workflow"] == original["workflow"]
+
+
 def test_cloud_project_board_config_supports_custom_statuses(
     test_client: TestClient, test_db: Session, test_token: str
 ) -> None:

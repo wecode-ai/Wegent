@@ -23,7 +23,6 @@ from app.models.delivery import (
 )
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
-from app.schemas.issue_workflow import WorkflowPlanSubmit
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 
 
@@ -294,7 +293,7 @@ def test_project_details_expose_assignable_members(
     ]
 
 
-async def test_ai_manager_submits_structured_plan_for_current_issue(
+async def test_ai_coordinator_assigns_same_issue_to_a_person(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
@@ -324,24 +323,29 @@ async def test_ai_manager_submits_structured_plan_for_current_issue(
         },
     )
 
-    submitted = await wework_space.submit_workflow_plan(
+    submitted = await wework_space.decide_issue_assignment(
         _token(test_user),
-        _workflow_plan(robot),
+        {
+            "request_id": "assign-member",
+            "expected_version": 0,
+            "action": "assign_user",
+            "assignee_user_id": test_user.id,
+            "instruction": "Verify release",
+            "reason": "Human confirmation required",
+        },
     )
 
     test_db.refresh(workflow_run)
     test_db.refresh(activity)
-    assert submitted["run_id"] == workflow_run.id
-    assert submitted["stage_id"] == "__issue__"
-    assert submitted["items"][0]["stage_id"] == "__issue__"
-    assert submitted["status"] == "awaiting_approval"
-    assert submitted["items"][0]["task_id"] is None
+    assert submitted["assignment"]["assignee_user_id"] == test_user.id
+    assert submitted["orchestration_status"] == "waiting_human"
+    assert test_db.query(LoopItem).filter(LoopItem.parent_id == item.id).count() == 0
     assert workflow_run.metadata_json["project_automation_run_id"] == manager_run.id
     assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
     assert activity.metadata_json["workflow_plan_version"] == 1
 
 
-async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
+async def test_inactive_coordinator_cannot_assign_issue(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
@@ -372,10 +376,17 @@ async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
         },
     )
 
-    with pytest.raises(RuntimeError, match="not active"):
-        await wework_space.submit_workflow_plan(
+    with pytest.raises(ValueError, match="not active"):
+        await wework_space.decide_issue_assignment(
             _token(test_user),
-            _workflow_plan(robot),
+            {
+                "request_id": "assign-member",
+                "expected_version": 0,
+                "action": "assign_user",
+                "assignee_user_id": test_user.id,
+                "instruction": "Verify release",
+                "reason": "Human confirmation required",
+            },
         )
 
     test_db.expire_all()
@@ -388,54 +399,6 @@ async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
     assert restored.run_id == workflow_run.id
     assert restored.status == "planning"
     assert restored.items == []
-
-
-async def test_workflow_child_reports_one_parent_review_outcome(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    project = _project(test_db, test_user, provider="local")
-    item, robot = _workflow_issue(test_db, project, test_user)
-    issue_workflow_planning_service.ensure_run(
-        test_db,
-        issue=item,
-        user_id=test_user.id,
-    )
-    test_db.commit()
-    issue_workflow_planning_service.submit(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-        values=WorkflowPlanSubmit.model_validate(_workflow_plan(robot)),
-    )
-    approved = issue_workflow_planning_service.approve(
-        test_db,
-        issue_id=item.id,
-        user_id=test_user.id,
-    )
-    child_id = approved.items[0].task_id
-    assert child_id is not None
-    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
-    monkeypatch.setattr(
-        wework_space,
-        "_board_context",
-        lambda *_args, **_kwargs: {
-            "source": "board_team_assignment",
-            "space_id": str(project.id),
-            "item_id": child_id,
-            "board_team_execution_id": "42",
-        },
-    )
-
-    reported = await wework_space.report_workflow_outcome(
-        _token(test_user),
-        "passed",
-        "Implementation and tests passed.",
-    )
-
-    assert reported["issue_id"] == item.id
-    assert reported["status"] == "awaiting_review"
-    assert test_db.get(LoopItem, child_id).status == "in_review"
-    assert test_db.get(LoopItem, item.id).status == "in_review"
 
 
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(

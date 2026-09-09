@@ -1922,6 +1922,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         f"execution_id: {claimed.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
         "请通过看板工具自行查看。\n\n"
+        "创建 MR、PR 或其他外部事项后，使用 register_external_reference 将其 provider 和规范 URL（external_id）登记到当前工单，以便后续事件返回原上下文。\n\n"
         "Verify before reporting completion."
     )
     assert execution_request["prompt"].endswith(visible_prompt)
@@ -4323,8 +4324,8 @@ def test_local_runtime_payload_materializes_only_for_executor_pull(
     assert executor_model_config["base_url"]
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
-        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
-        assert "submit_workflow_plan" in payload["message"]
+        assert "你像领导一样负责分活" in payload["message"]
+        assert "decide_issue_assignment" in payload["message"]
         assert f"task_id: {item.id}" in payload["message"]
         assert f"automation_run_id: {run.id}" in payload["message"]
         assert "Handle the task" in payload["message"]
@@ -4788,6 +4789,7 @@ async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
         f"execution_id: {execution.id}\n\n"
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
         "请通过看板工具自行查看。\n\n"
+        "创建 MR、PR 或其他外部事项后，使用 register_external_reference 将其 provider 和规范 URL（external_id）登记到当前工单，以便后续事件返回原上下文。\n\n"
         "Robot-defined execution prompt."
     )
 
@@ -5285,7 +5287,7 @@ def test_manager_does_not_treat_default_creator_as_a_submitted_plan(
     assert activity.metadata_json.get("selected_assignee_id") is None
 
 
-def test_manager_completion_recovers_persisted_workflow_plan_binding(
+def test_manager_completion_cannot_treat_historical_plan_as_new_assignment(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -5303,7 +5305,7 @@ def test_manager_completion_recovers_persisted_workflow_plan_binding(
         parent_id=rule.id,
         task_id=item.id,
         title="Managed run",
-        description="AI manager finished without submitting a workflow plan.",
+        description="AI coordinator finished without deciding the Issue assignment.",
         status="failed",
         created_by_user_id=test_user.id,
         metadata_json={},
@@ -5407,12 +5409,11 @@ def test_manager_completion_recovers_persisted_workflow_plan_binding(
     test_db.refresh(workflow_run)
     assert plan is not None
     assert plan.manager_run is not None
-    assert plan.manager_run.status == "succeeded"
-    assert run.status == "succeeded"
-    assert activity.status == "completed"
-    assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
-    assert activity.metadata_json["workflow_plan_version"] == 2
-    assert workflow_run.metadata_json["project_automation_run_id"] == run.id
+    assert plan.manager_run.status == "failed"
+    assert run.status == "failed"
+    assert activity.status == "failed"
+    assert activity.metadata_json.get("workflow_plan_run_id") is None
+    assert workflow_run.metadata_json.get("project_automation_run_id") is None
 
 
 def test_manager_completion_rejects_empty_trigger_created_workflow_run(
@@ -5479,7 +5480,10 @@ def test_manager_completion_rejects_empty_trigger_created_workflow_run(
     test_db.refresh(run)
     test_db.refresh(activity)
     assert run.status == "failed"
-    assert run.description == "AI manager finished without submitting a workflow plan."
+    assert (
+        run.description
+        == "AI coordinator finished without deciding the Issue assignment."
+    )
     assert activity.status == "failed"
 
 

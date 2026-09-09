@@ -95,7 +95,7 @@ from app.services.project_incoming_hooks import (
             {},
             "generic",
             "Customer escalation",
-            "custom-1",
+            None,
         ),
     ],
 )

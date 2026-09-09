@@ -2215,6 +2215,27 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let create = task_input::<LocalCommentCreate>(&params, "comment")?;
             serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)
         }
+        "todos.comment.start" => {
+            let create = task_input::<LocalCommentCreate>(&params, "comment")?;
+            serialize_task_value(
+                runtime
+                    .start_runtime_comment(create)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.comment.fail" => serialize_task_value(
+            runtime
+                .fail_runtime_comment(
+                    required_task_string(&params, "project_id")?,
+                    required_task_string(&params, "task_id")?,
+                    required_task_string(&params, "message_id")?,
+                    params
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )
+                .map_err(task_runtime_error)?,
+        ),
         "executions.enqueue" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;

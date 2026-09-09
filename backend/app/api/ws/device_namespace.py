@@ -741,9 +741,7 @@ def _project_execution_workflow_status(
     )
     if item is None:
         return None
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
+    newly_ready = issue_workflow_start_service.ready_stage_ids(item) - ready_before
     logger.info(
         "[IssueWorkflowContinuation] detected item=%s execution=%s event_status=%s "
         "ready_before=%s newly_ready=%s",
@@ -784,7 +782,7 @@ def _workflow_status_for_runtime_event(
     return None
 
 
-def _execution_ready_robot_stage_ids(
+def _execution_ready_stage_ids(
     db: Session,
     execution: object | None,
 ) -> set[str]:
@@ -798,7 +796,7 @@ def _execution_ready_robot_stage_ids(
     item = db.get(LoopItem, loop_item_id)
     if item is None:
         return set()
-    return issue_workflow_start_service.ready_robot_stage_ids(item)
+    return issue_workflow_start_service.ready_stage_ids(item)
 
 
 def _project_bound_runtime_event_status(
@@ -839,6 +837,8 @@ def _project_bound_runtime_event_status(
             task_id,
             event_name,
         )
+        return None
+    if (binding.metadata_json or {}).get("conversation_only") is True:
         return None
     item_before = db.get(LoopItem, binding.loop_item_id)
     if item_before is None:
@@ -952,7 +952,7 @@ def _project_bound_runtime_event_status(
             "stage_ids": [],
         }
 
-    ready_before = issue_workflow_start_service.ready_robot_stage_ids(item_before)
+    ready_before = issue_workflow_start_service.ready_stage_ids(item_before)
     item = update_workflow_task_status(
         db,
         user_id=user_id,
@@ -962,9 +962,7 @@ def _project_bound_runtime_event_status(
     )
     if item is None:
         return None
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
+    newly_ready = issue_workflow_start_service.ready_stage_ids(item) - ready_before
     logger.info(
         "[IssueTaskRuntimeSync] projected source=binding user=%s device=%s "
         "task=%s event=%s status=%s item=%s node=%s newly_ready=%s",
@@ -985,7 +983,7 @@ def _project_bound_runtime_event_status(
 
 
 async def _continue_projected_workflow(intent: dict[str, Any] | None) -> None:
-    if not intent or not intent.get("stage_ids"):
+    if not intent:
         return
     from app.models.delivery import LoopItem
 
@@ -998,6 +996,26 @@ async def _continue_projected_workflow(intent: dict[str, Any] | None) -> None:
                 intent["item_id"],
                 intent["stage_ids"],
             )
+            return
+        workflow = (item.metadata_json or {}).get("workflow") or {}
+        if (
+            workflow.get("advancement_policy") == "ai"
+            and workflow.get("orchestration_status") == "planning"
+        ):
+            from app.models.delivery import CloudProject
+
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is not None:
+                await issue_workflow_start_service.start(
+                    db,
+                    item=item,
+                    project=project,
+                    user_id=int(
+                        workflow.get("coordinator_user_id") or intent["user_id"]
+                    ),
+                )
+            return
+        if not intent.get("stage_ids"):
             return
         logger.info(
             "[IssueWorkflowContinuation] dispatching item=%s stages=%s user=%s",
@@ -1085,7 +1103,7 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
         )
         ready_before = (
-            _execution_ready_robot_stage_ids(db, execution)
+            _execution_ready_stage_ids(db, execution)
             if projected_status is not None
             else set()
         )
@@ -1199,7 +1217,7 @@ def _execution_runtime_event_sync(
             )
             projected_status = _workflow_status_for_runtime_event(event_name, payload)
             ready_before = (
-                _execution_ready_robot_stage_ids(db, execution)
+                _execution_ready_stage_ids(db, execution)
                 if projected_status is not None
                 else set()
             )

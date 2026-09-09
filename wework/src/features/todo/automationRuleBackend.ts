@@ -26,6 +26,7 @@ export interface AutomationUiDeliverable {
 }
 
 export interface AutomationUiStep {
+  assigneeUserId?: number | null
   id: string
   name: string
   prompt: string
@@ -59,7 +60,7 @@ export interface AutomationUiGraph {
 }
 
 export interface AutomationUiTrigger {
-  type: 'event' | 'schedule'
+  type: 'event' | 'schedule' | 'workflow'
   source: 'issue'
   startMode: 'immediate' | 'status'
   event: 'created' | 'status_changed'
@@ -73,6 +74,8 @@ export interface AutomationUiTrigger {
 }
 
 export interface AutomationUiRule {
+  advancement: 'sequential' | 'ai'
+  coordinator: AutomationUiStep | null
   id: string
   persisted: boolean
   origin: 'automation' | 'legacy_workflow'
@@ -132,7 +135,9 @@ interface StoredAutomationFlowV1 {
 }
 
 interface StoredAutomationFlowV2 {
-  version: 2
+  version: 3
+  advancement: 'sequential' | 'ai'
+  coordinator: unknown
   description: string
   graph: {
     nodes: unknown[]
@@ -143,6 +148,8 @@ interface NormalizedAutomationFlowV2 {
   version: 2
   description: string
   graph: AutomationUiGraph
+  advancement?: 'sequential' | 'ai'
+  coordinator?: AutomationUiStep | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -251,6 +258,7 @@ function normalizeStoredStep(
     y: typeof item.y === 'number' ? item.y : 226,
     deliverables: normalizeDeliverables(item.deliverables),
     executionMode,
+    assigneeUserId: typeof item.assigneeUserId === 'number' ? item.assigneeUserId : null,
     environment:
       typeof item.environment === 'string' ? item.environment : inherited?.environment || '',
     executionEnvironment,
@@ -320,12 +328,17 @@ function storedFlow(rule: ProjectAutomationRule): NormalizedAutomationFlowV2 | n
     return null
   }
   if (
-    candidate.version === 2 &&
+    (candidate.version === 2 || candidate.version === 3) &&
     isRecord(candidate.graph) &&
     Array.isArray(candidate.graph.nodes)
   ) {
     return {
       version: 2,
+      advancement:
+        candidate.advancement === 'ai' ? 'ai' : candidate.version === 3 ? 'sequential' : undefined,
+      coordinator: isRecord(candidate.coordinator)
+        ? normalizeStoredStep(candidate.coordinator, 0)
+        : null,
       description: typeof candidate.description === 'string' ? candidate.description : rule.prompt,
       graph: {
         nodes: candidate.graph.nodes.map((step, index) => normalizeStoredStep(step, index)),
@@ -340,7 +353,13 @@ function storedFlow(rule: ProjectAutomationRule): NormalizedAutomationFlowV2 | n
     version: 2,
     description: typeof legacy.description === 'string' ? legacy.description : rule.prompt,
     graph: {
-      nodes: legacy.steps.map((step, index) => normalizeStoredStep(step, index)),
+      nodes: legacy.steps.map((step, index) => {
+        const node = normalizeStoredStep(step, index)
+        if (index > 0 && isRecord(step) && !Array.isArray(step.dependencies)) {
+          node.dependencies = [normalizeStoredStep(legacy.steps[index - 1], index - 1).id]
+        }
+        return node
+      }),
     },
   }
 }
@@ -429,9 +448,36 @@ function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
 
 export function automationRuleFromBackend(rule: ProjectAutomationRule): AutomationUiRule {
   const flow = storedFlow(rule)
+  const definition =
+    !flow && rule.eventConfig.runtime_workflow_definition
+      ? (rule.eventConfig.runtime_workflow_definition as ProjectWorkflowDefinition)
+      : null
+  const config = definition?.execution_config
+  const generatedCoordinator =
+    definition?.advancement_policy === 'ai'
+      ? {
+          ...fallbackStep(rule),
+          kind: 'task' as const,
+          subgraph: null,
+          prompt: definition.coordinator_prompt ?? rule.prompt,
+          automationRuleId: rule.id,
+          executionConfig: config ?? null,
+          executionDeviceId: config?.execution_device_id ?? null,
+          runtimeProfileId: config?.runtime_profile_id ?? null,
+          model: config?.model ?? '',
+          modelType: config?.model_type ?? null,
+          modelOptions: config?.model_options ?? {},
+        }
+      : null
+  const storedNodes = flow ? flow.graph.nodes : [fallbackStep(rule)]
+  const oldCoordinator =
+    storedNodes.length === 1 && storedNodes[0]?.kind === 'dynamic' ? storedNodes[0] : null
   const schedule = parseCron(rule.cronExpression)
   const startMode = rule.eventType === 'task.status_changed' ? 'status' : 'immediate'
   return {
+    advancement:
+      flow?.advancement ?? (generatedCoordinator || oldCoordinator ? 'ai' : 'sequential'),
+    coordinator: flow?.coordinator ?? generatedCoordinator ?? oldCoordinator,
     id: rule.id,
     persisted: true,
     origin: 'automation',
@@ -444,7 +490,7 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     lastRunAt: rule.lastRunAt,
     lastRunStatus: rule.lastRunStatus,
     trigger: {
-      type: rule.triggerType === 'schedule' ? 'schedule' : 'event',
+      type: rule.triggerType,
       source: 'issue',
       startMode,
       event: startMode === 'status' ? 'status_changed' : 'created',
@@ -456,8 +502,12 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
         timezone: rule.timezone,
       },
     },
-    steps: flow?.graph.nodes.length ? flow.graph.nodes : [fallbackStep(rule)],
-    legacyDefinition: null,
+    steps: definition
+      ? workflowNodesFromLegacy(definition, [rule])
+      : oldCoordinator
+        ? (oldCoordinator.subgraph?.nodes ?? [])
+        : storedNodes,
+    legacyDefinition: definition,
   }
 }
 
@@ -546,6 +596,7 @@ function workflowNodesFromLegacy(
           : null,
       })),
       executionMode: node.execution_mode === 'robot' ? 'automatic' : 'manual',
+      assigneeUserId: node.assignee_user_id ?? null,
       environment: config?.execution_device_id
         ? `执行设备 ${config.execution_device_id}`
         : node.execution_mode === 'robot'
@@ -633,6 +684,8 @@ export function automationRuleFromLegacyWorkflow(
       : workflowNodes
   return {
     id: `legacy-workflow-${project.id}`,
+    advancement: advancementPolicy === 'ai' ? 'ai' : 'sequential',
+    coordinator: advancementPolicy === 'ai' ? { ...steps[0]!, kind: 'task', subgraph: null } : null,
     persisted: false,
     origin: 'legacy_workflow',
     version: project.version,
@@ -660,7 +713,7 @@ export function automationRuleFromLegacyWorkflow(
         timezone: 'Asia/Shanghai',
       },
     },
-    steps,
+    steps: workflowNodes,
     legacyDefinition: definition,
   }
 }
@@ -726,6 +779,7 @@ function workflowNodeFromUi(
     name: node.name,
     prompt: node.prompt,
     execution_mode: node.executionMode === 'automatic' ? 'robot' : 'human',
+    assignee_user_id: node.assigneeUserId ?? null,
     depends_on: [...node.dependencies],
     dependency_context: Object.fromEntries(
       node.dependencies.map(dependencyId => [
@@ -758,19 +812,18 @@ function workflowNodeFromUi(
 export function legacyWorkflowFromAutomationRule(
   rule: AutomationUiRule
 ): ProjectWorkflowDefinition {
-  const dynamicNode =
-    rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic' ? rule.steps[0] : null
+  const coordinator = rule.advancement === 'ai' ? rule.coordinator : null
   const previous = rule.legacyDefinition
-  if (dynamicNode) {
+  if (coordinator) {
     return {
       version: Math.max(1, previous?.version ?? 1),
-      stage_mode: dynamicNode.subgraph?.nodes.length ? 'dag' : 'none',
+      stage_mode: rule.steps.length ? 'dag' : 'none',
       advancement_policy: 'ai',
-      coordinator_prompt: dynamicNode.prompt,
-      approval_policy: dynamicNode.approvalPolicy ?? previous?.approval_policy ?? 'required',
-      ai_automation_rule_id: dynamicNode.automationRuleId,
-      execution_config: executionConfigFromUiNode(dynamicNode),
-      nodes: (dynamicNode.subgraph?.nodes ?? []).map(node => workflowNodeFromUi(node, false)),
+      coordinator_prompt: coordinator.prompt,
+      approval_policy: 'automatic',
+      ai_automation_rule_id: coordinator.automationRuleId,
+      execution_config: executionConfigFromUiNode(coordinator),
+      nodes: rule.steps.map(node => workflowNodeFromUi(node)),
     }
   }
   return {
@@ -782,28 +835,6 @@ export function legacyWorkflowFromAutomationRule(
     ai_automation_rule_id: null,
     execution_config: previous?.execution_config ?? null,
     nodes: rule.steps.map(node => workflowNodeFromUi(node)),
-  }
-}
-
-function storedStageConstraint(node: AutomationUiStep): Record<string, unknown> {
-  return {
-    id: node.id,
-    name: node.name,
-    prompt: node.prompt,
-    kind: 'task',
-    dependencies: [...(node.dependencies ?? [])],
-    dependencyContext: Object.fromEntries(
-      Object.entries(node.dependencyContext ?? {}).map(([dependencyId, sources]) => [
-        dependencyId,
-        [...sources],
-      ])
-    ),
-    x: node.x,
-    y: node.y,
-    deliverables: (node.deliverables ?? []).map(deliverable => ({ ...deliverable })),
-    executionMode: node.executionMode,
-    required: node.required,
-    automationRuleId: node.automationRuleId,
   }
 }
 
@@ -821,17 +852,12 @@ function storedStepFromUi(node: AutomationUiStep): Record<string, unknown> {
     plugins: [...(node.plugins ?? [])],
     projectPlugins: (node.projectPlugins ?? []).map(plugin => ({ ...plugin })),
     modelOptions: { ...(node.modelOptions ?? {}) },
-    subgraph:
-      node.kind === 'dynamic'
-        ? {
-            nodes: (node.subgraph?.nodes ?? []).map(storedStageConstraint),
-          }
-        : null,
+    subgraph: null,
   }
 }
 
 function flowPrompt(rule: AutomationUiRule): string {
-  const describeNodes = (nodes: AutomationUiStep[], depth = 0): string[] =>
+  const describeNodes = (nodes: AutomationUiStep[]): string[] =>
     nodes.map((step, index) => {
       const deliverables = step.deliverables.length
         ? `\n交付物：${step.deliverables.map(item => item.name).join('、')}`
@@ -839,17 +865,15 @@ function flowPrompt(rule: AutomationUiRule): string {
       const dependencies = (step.dependencies ?? []).length
         ? `\n前置节点：${step.dependencies.join('、')}`
         : ''
-      const subgraph =
-        step.kind === 'dynamic' && step.subgraph?.nodes.length
-          ? `\n子图：\n${describeNodes(step.subgraph.nodes, depth + 1).join('\n')}`
-          : ''
-      return `${'  '.repeat(depth)}${index + 1}. ${step.name}\n${'  '.repeat(depth)}${step.prompt}${deliverables}${dependencies}${subgraph}`
+      return `${index + 1}. ${step.name}\n${step.prompt}${deliverables}${dependencies}`
     })
   const steps = describeNodes(rule.steps)
   const description = rule.description.trim()
   return [
     ...(description ? [`自动化目标：${description}`] : []),
-    '按照以下流程完成任务：',
+    rule.advancement === 'ai'
+      ? '以下节点代表可交办工作的角色，连线是协作经验。按工单要求选择角色，允许跳过和退回，以满足要求为完成标准。'
+      : '严格按以下顺序交办工作，当前角色完成后再启动下一角色：',
     ...steps,
   ].join('\n\n')
 }
@@ -862,13 +886,26 @@ export function automationInputFromUi(
   if (!Number.isInteger(runtimeUserId) || runtimeUserId <= 0) {
     throw new Error('当前用户缺少可用的 Runtime 身份，无法保存自动化')
   }
+  if (rule.steps.some(node => node.kind !== 'task')) {
+    throw new Error('请删除旧的嵌套 AI 节点，并在自动化层设置推进方式与协调者，再配置执行角色')
+  }
   const eventTrigger = rule.trigger.type === 'event'
-  const isAiDynamicWorkflow = rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic'
+  const isAiDynamicWorkflow = rule.advancement === 'ai'
+  if (isAiDynamicWorkflow && !rule.coordinator) throw new Error('AI 推进需要配置协调者')
+  if (
+    !isAiDynamicWorkflow &&
+    rule.steps.some(
+      (node, index) =>
+        node.dependencies.length !== (index === 0 ? 0 : 1) ||
+        (index > 0 && node.dependencies[0] !== rule.steps[index - 1]?.id)
+    )
+  )
+    throw new Error('流程推进必须按串行顺序交办，请重新排列角色')
   const description = rule.description.trim()
   return {
     name: rule.name.trim(),
     prompt: flowPrompt(rule),
-    triggerType: eventTrigger ? 'event' : 'schedule',
+    triggerType: rule.trigger.type,
     eventType: eventTrigger
       ? rule.trigger.startMode === 'status'
         ? 'task.status_changed'
@@ -879,14 +916,18 @@ export function automationInputFromUi(
       ...(rule.trigger.startMode === 'status' ? { transition: 'entered_processing' } : {}),
       runtime_workflow_definition: legacyWorkflowFromAutomationRule(rule),
       [FLOW_KEY]: {
-        version: 2,
+        version: 3,
+        advancement: rule.advancement,
+        coordinator: rule.coordinator
+          ? storedStepFromUi({ ...rule.coordinator, kind: 'task', subgraph: null })
+          : null,
         description,
         graph: {
           nodes: rule.steps.map(storedStepFromUi),
         },
       } satisfies StoredAutomationFlowV2,
     },
-    cronExpression: eventTrigger ? null : buildCron(rule.trigger),
+    cronExpression: rule.trigger.type === 'schedule' ? buildCron(rule.trigger) : null,
     timezone: rule.trigger.schedule.timezone,
     enabled: rule.enabled,
     assignmentMode: isAiDynamicWorkflow ? 'ai_managed' : 'manual',

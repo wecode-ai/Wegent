@@ -419,6 +419,7 @@ export interface WorkflowExecutionConfig {
 }
 
 export interface WorkflowNodeDefinition {
+  assignee_user_id?: number | null
   id: string
   name: string
   prompt?: string
@@ -464,6 +465,8 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
 }
 
 export interface IssueWorkflowInstance {
+  semantics_version?: number
+  migration_required?: boolean
   version: number
   definition_version: number
   stage_mode?: IssueStageMode
@@ -479,12 +482,26 @@ export interface IssueWorkflowInstance {
     | 'dispatching'
     | 'running'
     | 'awaiting_review'
+    | 'waiting_human'
     | 'paused'
     | 'completed'
     | 'failed'
   active_run_id?: string | null
   active_plan_version?: number | null
   current_stage_id?: string | null
+  initial_stage_id?: string | null
+  intent?: string
+  current_work?: string
+  assignment_version?: number
+  assignment?: {
+    id: string
+    node_id: string | null
+    assignee_user_id: number | null
+    status: string
+    result: string | null
+    decision: { reason: string; instruction: string }
+    automation_run_id?: string
+  } | null
   nodes: WorkflowNodeInstance[]
 }
 
@@ -933,11 +950,28 @@ export function createDeliveryApi(client: HttpClient) {
     getWorkflowPlan(itemId: string): Promise<WorkflowPlan | null> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan`)
     },
-    approveWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/approve`, {})
+    listIssueExperiences(itemId: string): Promise<Array<{ id: string; name: string }>> {
+      return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/assignment/experiences`)
     },
-    approveWorkflowReview(itemId: string): Promise<WorkflowPlan> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/review`, {})
+    adoptIssueExperience(
+      itemId: string,
+      automationId: string,
+      intent: string
+    ): Promise<IssueWorkflowInstance> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/assignment/adopt`, {
+        automation_id: automationId,
+        intent,
+      })
+    },
+    submitIssueAssignmentResult(
+      itemId: string,
+      assignmentId: string,
+      summary: string
+    ): Promise<IssueWorkflowInstance> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/assignment/result`, {
+        assignment_id: assignmentId,
+        summary,
+      })
     },
     pauseWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/pause`, {})

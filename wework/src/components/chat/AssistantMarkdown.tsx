@@ -9,9 +9,8 @@ import {
   useState,
 } from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
-import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
-import { Streamdown } from 'streamdown'
+import { Streamdown, type ExtraProps } from 'streamdown'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
 import {
@@ -376,9 +375,9 @@ function estimateMarkdownChunkHeight(content: string): number {
 }
 
 type MarkdownCodeProps = {
-  node?: HastElement
   compact?: boolean
-} & HTMLAttributes<HTMLElement>
+} & ExtraProps &
+  HTMLAttributes<HTMLElement>
 
 function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
   const isStreaming = useContext(MarkdownStreamingContext)

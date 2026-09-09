@@ -157,53 +157,38 @@ export function createLocalProjectChatClient(
         reply_to_message_id: input.replyToMessageId ?? null,
       },
     })
-    const agentMention = mentions.find(mention => mention.type === 'agent')
-    if (agentMention) {
-      void request('executions.enqueue', {
-        project_id: input.projectId,
-        task_id: input.taskId ?? '',
-        agent_id: agentMention.id,
-        trigger_message_id: created.message_id,
-        payload: {
-          text: input.text,
-          trigger_message_id: created.message_id,
-          ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
-        },
-      })
-    }
     return commentToMessage(created)
   }
 
   const startAgentResponse: ProjectChatClient['startAgentResponse'] = async input => {
-    return {
-      sequenceNumber: 0,
-      messageId: input.triggerMessageId ?? `agent-${input.agentId}`,
-      projectId: input.projectId,
-      taskId: input.taskId ?? null,
-      sender: { type: 'agent', id: input.agentId, name: 'AI' },
-      type: 'agent_status',
-      content: '',
-      metadata: {},
-      status: 'streaming',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    const record = await request<LocalCommentRecord>('todos.comment.start', {
+      comment: {
+        project_id: input.projectId,
+        task_id: input.taskId ?? '',
+        client_message_id: `runtime:${input.runtimeDeviceId}:${input.runtimeTaskId}:${input.triggerMessageId ?? 'initial'}`,
+        sender_type: 'agent',
+        sender_id: input.agentId ?? input.runtimeTaskId,
+        sender_name: 'AI',
+        content: '',
+        metadata: {
+          runtime_address: { deviceId: input.runtimeDeviceId, taskId: input.runtimeTaskId },
+          model: input.model ?? null,
+          conversation_only: true,
+        },
+        reply_to_message_id: input.triggerMessageId ?? null,
+      },
+    })
+    return commentToMessage(record)
   }
 
   const failAgentResponse: ProjectChatClient['failAgentResponse'] = async input => {
-    return {
-      sequenceNumber: 0,
-      messageId: input.messageId,
-      projectId: input.projectId,
-      taskId: input.taskId ?? null,
-      sender: { type: 'agent', id: 'agent', name: 'AI' },
-      type: 'agent_status',
-      content: '',
-      metadata: { error: input.error ?? '执行失败' },
-      status: 'failed',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    const record = await request<LocalCommentRecord>('todos.comment.fail', {
+      project_id: input.projectId,
+      task_id: input.taskId ?? '',
+      message_id: input.messageId,
+      error: input.error ?? '',
+    })
+    return commentToMessage(record)
   }
 
   return {

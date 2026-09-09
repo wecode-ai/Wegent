@@ -207,7 +207,9 @@ function CloudTodoWorkflowStage({
   onConfigureExecution?: () => void
 }) {
   const { t } = useTranslation('common')
-  const currentWorkflowNode = item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
+  const currentWorkflowNode = item.workflow
+    ? getCurrentWorkflowNode(item.workflow.nodes, item.workflow)
+    : null
   const needsExecutionConfiguration =
     processingStatus && itemNeedsExecutionConfiguration(item) && Boolean(onConfigureExecution)
 
@@ -335,7 +337,9 @@ export function CloudTodoBoardCard({
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
   const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<number | null>(null)
-  const currentWorkflowNode = item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
+  const currentWorkflowNode = item.workflow
+    ? getCurrentWorkflowNode(item.workflow.nodes, item.workflow)
+    : null
   const needsExecutionConfiguration =
     processingStatus && itemNeedsExecutionConfiguration(item) && Boolean(onConfigureExecution)
   const showWorkflowRow = Boolean(currentWorkflowNode || needsExecutionConfiguration)

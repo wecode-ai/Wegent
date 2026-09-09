@@ -629,6 +629,24 @@ impl TaskRuntime {
         self.local_store.create_comment(&create)
     }
 
+    pub fn start_runtime_comment(
+        &self,
+        create: LocalCommentCreate,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        self.local_store.start_runtime_comment(&create)
+    }
+
+    pub fn fail_runtime_comment(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        message_id: &str,
+        error: &str,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        self.local_store
+            .fail_runtime_comment(project_id, task_id, message_id, error)
+    }
+
     pub fn enqueue_execution(
         &self,
         project_id: &str,

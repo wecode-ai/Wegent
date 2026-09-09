@@ -1634,33 +1634,6 @@ def test_runtime_completion_survives_workflow_projection_database_failure(
         ),
     )
 
-    projection_calls: list[str] = []
-
-    def fail_projection(db: Session, *, child_id: str) -> None:
-        projection_calls.append(child_id)
-        db.add(
-            ProjectChatMessage(
-                message_id=response.message_id,
-                client_message_id=str(uuid.uuid4()),
-                project_id=project.id,
-                task_id=task.id,
-                sender_type="agent",
-                sender_id="12",
-                sender_name="Code Reviewer",
-                message_type="text",
-                content="Duplicate projection row",
-                metadata_json={},
-                status="completed",
-            )
-        )
-        db.flush()
-
-    monkeypatch.setattr(
-        "app.services.issue_workflow_planning."
-        "issue_workflow_planning_service.sync_from_child",
-        fail_projection,
-    )
-
     completed = project_chat_service.project_runtime_event(
         test_db,
         device_id="local-device",
@@ -1671,7 +1644,8 @@ def test_runtime_completion_survives_workflow_projection_database_failure(
 
     assert completed is not None
     assert completed[0].status == "completed"
-    assert projection_calls == [task.id]
+    test_db.refresh(issue)
+    assert issue.status == "in_progress"
     test_db.refresh(task)
     assert task.status == "in_review"
     assert task.metadata_json["ai_state"]["status"] == "completed"
@@ -3011,3 +2985,103 @@ def test_agent_response_dedup_matches_mysql_empty_trigger_sentinel(
         .all()
     )
     assert len(rows) == 1
+
+
+def test_activity_task_without_robot_preserves_completed_issue_and_reply_session(
+    test_db: Session, test_user: User
+) -> None:
+    from app.api.ws.device_namespace import _project_bound_runtime_event_status
+
+    project = create_project(test_db, test_user)
+    test_db.query(ProjectChatAgent).filter(
+        ProjectChatAgent.cloud_project_id == project.id
+    ).delete()
+    issue = LoopItem(
+        id="ACTIVITY-COMPLETED",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Finished Issue",
+        description="",
+        status="completed",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=project.id,
+        loop_item_id=issue.id,
+        task_user_id=test_user.id,
+        device_id="activity-device",
+        task_id="activity-task",
+        linked_by_user_id=test_user.id,
+    )
+    test_db.add_all([issue, binding])
+    test_db.commit()
+    root = None
+    for index in range(2):
+        trigger = project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                clientMessageId=str(uuid.uuid4()),
+                projectId=project.id,
+                taskId=issue.id,
+                content=f"Turn {index}",
+                replyToMessageId=root,
+            ),
+        ).message
+        root = root or trigger.message_id
+        request = ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=issue.id,
+            triggerMessageId=trigger.message_id,
+            runtimeDeviceId="activity-device",
+            runtimeTaskId="activity-task",
+        )
+        response = project_chat_service.start_agent_response(
+            test_db,
+            user_id=test_user.id,
+            request=request,
+        )
+        duplicate = project_chat_service.start_agent_response(
+            test_db,
+            user_id=test_user.id,
+            request=request,
+        )
+        assert duplicate.message_id == response.message_id
+        assert response.root_message_id == root
+        assert (
+            _project_bound_runtime_event_status(
+                test_db,
+                user_id=test_user.id,
+                device_id="activity-device",
+                task_id="activity-task",
+                event_name="response.created",
+                payload={"eventSeq": index + 1},
+            )
+            is None
+        )
+        completed = project_chat_service.project_runtime_event(
+            test_db,
+            device_id="activity-device",
+            runtime_task_id="activity-task",
+            event_name="response.completed",
+            payload={"data": {"value": f"Answer {index}"}},
+        )
+        assert completed is not None
+        assert completed[0].content == f"Answer {index}"
+        test_db.refresh(issue)
+        assert issue.status == "completed"
+    with pytest.raises(HTTPException) as rejected:
+        project_chat_service.start_agent_response(
+            test_db,
+            user_id=test_user.id,
+            request=ProjectChatAgentStart(
+                projectId=project.id,
+                taskId=issue.id,
+                runtimeDeviceId="activity-device",
+                runtimeTaskId="unbound-task",
+            ),
+        )
+    assert rejected.value.status_code == 409

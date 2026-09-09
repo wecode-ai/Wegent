@@ -884,7 +884,9 @@ async def test_scheduled_workflow_creates_issue_binds_dag_and_queues_automatic_n
 
 
 @pytest.mark.asyncio
-async def test_complete_flow_adopts_existing_legacy_issue_snapshot(
+@pytest.mark.parametrize("migration_required", [False, True])
+async def test_complete_flow_preserves_snapshot_and_requires_explicit_migration(
+    migration_required,
     test_db,
     test_user,
     monkeypatch: pytest.MonkeyPatch,
@@ -905,6 +907,7 @@ async def test_complete_flow_adopts_existing_legacy_issue_snapshot(
         created_by_user_id=test_user.id,
         metadata_json={
             "workflow": {
+                "migration_required": migration_required,
                 "version": 2,
                 "definition_version": 2,
                 "stage_mode": "dag",
@@ -982,9 +985,15 @@ async def test_complete_flow_adopts_existing_legacy_issue_snapshot(
     assert [node["id"] for node in item.metadata_json["workflow"]["nodes"]] == [
         "legacy-node"
     ]
-    assert item.metadata_json["workflow_automation"]["run_id"] == str(run.id)
-    assert run.status == "running"
-    start.assert_awaited_once()
+    if migration_required:
+        assert run.status == "failed"
+        assert "reviewed experience" in run.description
+        assert "workflow_automation" not in item.metadata_json
+        start.assert_not_awaited()
+    else:
+        assert item.metadata_json["workflow_automation"]["run_id"] == str(run.id)
+        assert run.status == "waiting_runtime"
+        start.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

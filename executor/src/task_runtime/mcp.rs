@@ -43,6 +43,10 @@ pub(crate) struct SpaceContextGrant {
     device_id: Option<String>,
     automation_run_id: Option<String>,
     automation_manager: bool,
+    #[serde(default)]
+    event_id: Option<String>,
+    #[serde(default)]
+    event_execution_id: Option<u64>,
     expires_at_unix: i64,
 }
 
@@ -156,6 +160,14 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
             .and_then(id_value)
             .filter(|value| !value.is_empty()),
         automation_manager,
+        event_id: origin
+            .filter(|value| value.get("type").and_then(Value::as_str) == Some("project_event"))
+            .and_then(|value| value.get("event_id"))
+            .and_then(id_value),
+        event_execution_id: origin
+            .filter(|value| value.get("type").and_then(Value::as_str) == Some("project_event"))
+            .and_then(|value| value.get("executionId"))
+            .and_then(Value::as_u64),
         expires_at_unix: Local::now().timestamp() + SPACE_CONTEXT_GRANT_TTL_SECONDS,
     };
     let encoded = serde_json::to_vec(&grant)
@@ -704,6 +716,14 @@ async fn call_tool_with_runtime_context(
     backend_url: Option<&str>,
     auth_token: Option<&str>,
 ) -> Value {
+    if grant.as_ref().is_some_and(|value| value.event_id.is_some())
+        && !matches!(name, "get_event_context" | "decide_event")
+    {
+        return text_result(
+            "Event routers can only read their event and record its routing decision".to_owned(),
+            true,
+        );
+    }
     if is_automation_manager(grant.as_ref()) && !is_automation_manager_tool(name) {
         return text_result(
             format!("AI-managed automation cannot call wework_space tool: {name}"),
@@ -879,12 +899,11 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "get_assignment_candidates"
-        | "submit_workflow_plan"
-        | "report_workflow_outcome"
-        | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
-            "AI-managed orchestration requires a backend project space".to_owned(),
-        )),
+        "get_assignment_candidates" | "decide_issue_assignment" | "assign_board_item" => {
+            Err(super::TaskRuntimeError::Invalid(
+                "AI-managed orchestration requires a backend project space".to_owned(),
+            ))
+        }
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
             let input = parse(
@@ -1496,6 +1515,20 @@ async fn call_backend_tool(
             }));
         }
         "get_board_item" => client.get(format!("{base}/loop-items/{}", encode_segment(task_id()?))),
+        "get_event_context" | "decide_event" => {
+            let context = grant.ok_or_else(|| "An event router context is required".to_owned())?;
+            let event_id = context.event_id.as_deref().ok_or_else(|| "Event identity is missing".to_owned())?;
+            let execution_id = context.event_execution_id.ok_or_else(|| "Event execution identity is missing".to_owned())?;
+            let endpoint = format!("{base}/cloud-projects/{project_id}/events/{}/{}", encode_segment(event_id),
+                if name == "get_event_context" { "context" } else { "decision" });
+            let request = if name == "get_event_context" { client.get(endpoint) } else {
+                client.post(endpoint).json(arguments.get("decision").unwrap_or(arguments))
+            };
+            request.header("X-Event-Execution-Id", execution_id.to_string())
+        }
+        "register_external_reference" => client.post(format!(
+            "{base}/cloud-projects/{project_id}/events/references/{}", encode_segment(task_id()?)
+        )).json(arguments.get("reference").unwrap_or(arguments)),
         "get_assignment_candidates" => {
             let members = backend_json(
                 client
@@ -1517,25 +1550,12 @@ async fn call_backend_tool(
             .await?;
             return Ok(normalize_assignment_candidates(members, robots));
         }
-        "submit_workflow_plan" => {
+        "decide_issue_assignment" => {
             let request = client
-                .post(format!(
-                    "{base}/loop-items/{}/workflow-plan",
-                    encode_segment(task_id()?)
-                ))
-                .json(arguments.get("plan").unwrap_or(arguments));
+                .post(format!("{base}/loop-items/{}/assignment", encode_segment(task_id()?)))
+                .json(arguments.get("decision").unwrap_or(arguments));
             with_automation_run_header(request, grant)
         }
-        "report_workflow_outcome" => client
-            .post(format!(
-                "{base}/loop-items/{}/workflow-outcome",
-                encode_segment(task_id()?)
-            ))
-            .json(&json!({
-                "verdict": arguments.get("verdict").and_then(Value::as_str).unwrap_or_default(),
-                "summary": arguments.get("summary").and_then(Value::as_str).unwrap_or_default(),
-                "findings": arguments.get("findings").cloned().unwrap_or_else(|| json!([])),
-            })),
         "assign_board_item" => {
             let run_id = grant
                 .and_then(|grant| grant.automation_run_id.clone())
@@ -2355,59 +2375,29 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
-            "submit_workflow_plan",
-            "Submit the AI manager's structured child-task plan; the platform binds the active planning scope",
+            "decide_issue_assignment",
+            "Assign concrete work on this Issue to a role or person, execute outside the reference graph, or complete when the Issue requirements are met. Roles can be skipped or revisited.",
             json!({
                 "type": "object",
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "plan": {
+                    "decision": {
                         "type": "object",
+                        "additionalProperties": false,
                         "properties": {
-                            "summary": {"type": "string"},
-                            "items": {
-                                "type": "array",
-                                "minItems": 1,
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "client_key": {"type": "string"},
-                                        "title": {"type": "string"},
-                                        "description": {"type": "string"},
-                                        "assignee_type": {"enum": ["user", "agent", "team"]},
-                                        "assignee_id": {"type": "string"},
-                                        "assignee_name": {"type": "string"},
-                                        "rationale": {"type": "string"}
-                                    },
-                                    "required": [
-                                        "client_key",
-                                        "title",
-                                        "assignee_type",
-                                        "assignee_id"
-                                    ]
-                                }
-                            }
+                            "request_id": {"type": "string"},
+                            "expected_version": {"type": "integer", "minimum": 0},
+                            "action": {"enum": ["assign_role", "assign_user", "execute", "complete"]},
+                            "node_id": {"type": ["string", "null"]},
+                            "assignee_user_id": {"type": ["integer", "null"]},
+                            "instruction": {"type": "string"},
+                            "reason": {"type": "string"}
                         },
-                        "required": ["items"]
+                        "required": ["request_id", "expected_version", "action", "reason"]
                     }
                 },
-                "required": ["space_id", "item_id", "plan"]
-            }),
-        ),
-        tool(
-            "report_workflow_outcome",
-            "Report the current workflow child task as passed or needing replanning",
-            json!({
-                "type": "object",
-                "properties": {
-                    "space_id": {"type": "string"},
-                    "item_id": {"type": "string"},
-                    "verdict": {"enum": ["passed", "needs_rework"]},
-                    "summary": {"type": "string"},
-                    "findings": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": ["space_id", "item_id", "verdict", "summary"]
+                "required": ["space_id", "item_id", "decision"]
             }),
         ),
         tool(
@@ -2778,6 +2768,17 @@ fn tools() -> Vec<Value> {
 }
 
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
+    if context
+        .grant()
+        .is_some_and(|grant| grant.event_id.is_some())
+    {
+        return vec![
+            tool("get_event_context", "Read this event, clarification history, related Issue, available experiences and decision schema", json!({"type":"object","properties":{}})),
+            tool("decide_event", "Persist one routing decision using the schema returned by get_event_context. Clarify, route to an existing Issue, select an experience, create an Issue-only workflow, or ignore", json!({
+                "type":"object", "properties":{"decision":{"type":"object"}}, "required":["decision"]
+            })),
+        ];
+    }
     if is_automation_manager(context.grant()) {
         return tools()
             .into_iter()
@@ -2804,13 +2805,26 @@ fn is_automation_manager_tool(name: &str) -> bool {
         "get_current_context"
             | "get_board_item"
             | "get_assignment_candidates"
-            | "submit_workflow_plan"
+            | "decide_issue_assignment"
     )
 }
 
 fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> Vec<Value> {
-    let _ = (runtime, project_id);
-    tools()
+    let mut result = tools();
+    if project_id
+        .is_none_or(|id| is_locally_routed_project(runtime, id, "register_external_reference"))
+    {
+        return result;
+    }
+    result.push(tool("register_external_reference", "After creating an external artifact, register its provider and stable external_id with this Issue so later webhook events return to it. Prefer the canonical artifact URL as external_id", json!({
+        "type":"object", "properties": {
+            "space_id":{"type":"string"}, "item_id":{"type":"string"},
+            "reference":{"type":"object", "properties":{
+                "provider":{"type":"string"}, "external_id":{"type":"string"}, "url":{"type":"string"}
+            }, "required":["provider","external_id"]}
+        }, "required":["reference"]
+    })));
+    result
 }
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
@@ -2949,6 +2963,52 @@ mod tests {
         let encoded = encoded_space_context_grant(request).expect("space context grant");
         let decoded = STANDARD.decode(encoded).expect("base64 grant");
         serde_json::from_slice(&decoded).expect("JSON grant")
+    }
+
+    #[tokio::test]
+    async fn event_router_grant_restricts_tools_and_project_scope() {
+        let mut request = ExecutionRequest {
+            task_id: "router-runtime".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert("origin".to_owned(), json!({
+            "type": "project_event", "cloudProjectId": "board-42", "event_id": "event-7", "executionId": 93
+        }));
+        let grant = decode_grant(&request);
+        assert_eq!(grant.event_id.as_deref(), Some("event-7"));
+        assert_eq!(grant.event_execution_id, Some(93));
+        assert_eq!(grant.space_id.as_deref(), Some("board-42"));
+        let directory = tempfile::tempdir().unwrap();
+        let runtime =
+            TaskRuntime::new(LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap())
+                .unwrap();
+        let context = SpaceMcpRequestContext::new(Some(grant.clone()), None, None);
+        let names: Vec<String> = visible_tools(&runtime, &context)
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(names, vec!["get_event_context", "decide_event"]);
+        let denied = call_tool_with_runtime_context(
+            &runtime,
+            "create_board_item",
+            json!({}),
+            Some(grant.clone()),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(denied["isError"], true);
+        let forged = call_tool_with_runtime_context(
+            &runtime,
+            "get_event_context",
+            json!({"space_id": "another-board"}),
+            Some(grant),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(forged["isError"], true);
+        assert!(forged.to_string().contains("outside this Agent session"));
     }
 
     #[test]
@@ -3114,6 +3174,8 @@ mod tests {
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
+            event_id: None,
+            event_execution_id: None,
             expires_at_unix: Local::now().timestamp() + 60,
         };
 
@@ -3141,6 +3203,8 @@ mod tests {
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
+            event_id: None,
+            event_execution_id: None,
             expires_at_unix: Local::now().timestamp() - 1,
         };
         let encoded = STANDARD.encode(serde_json::to_vec(&grant).unwrap());
@@ -3393,8 +3457,7 @@ mod tests {
             "list_spaces",
             "get_board_item",
             "get_assignment_candidates",
-            "submit_workflow_plan",
-            "report_workflow_outcome",
+            "decide_issue_assignment",
             "assign_board_item",
             "list_item_attachments",
             "read_item_attachment",
@@ -3406,7 +3469,7 @@ mod tests {
     }
 
     #[test]
-    fn automation_manager_has_only_read_and_plan_tools() {
+    fn automation_manager_has_only_read_and_assignment_tools() {
         let names = tools()
             .into_iter()
             .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
@@ -3419,7 +3482,7 @@ mod tests {
                 "get_current_context",
                 "get_board_item",
                 "get_assignment_candidates",
-                "submit_workflow_plan",
+                "decide_issue_assignment",
             ]
         );
         for forbidden in [
@@ -3767,6 +3830,8 @@ mod tests {
             device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
+            event_id: None,
+            event_execution_id: None,
             expires_at_unix: Local::now().timestamp() + 60,
         };
 

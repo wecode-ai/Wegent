@@ -22,6 +22,7 @@ import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationRulesView } from './AutomationRulesView.jsx'
+import { AutomationRoleMembers } from './automationRoleMembers'
 import {
   automationInputFromUi,
   automationRuleFromLegacyWorkflow,
@@ -60,6 +61,7 @@ interface ProjectAutomationViewProps {
   canManageAgents: boolean
   onOpenTask?: (item: CloudLoopItem) => void
   onProjectUpdated?: (project: CloudProject) => void
+  onBackToBoard?: () => void
 }
 
 interface ProjectAutomationRuleSnapshot {
@@ -274,6 +276,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     deviceApi,
     modelApi,
     pluginApi,
+    projectMembers,
     currentUserId = project.current_user_id,
     canManageAgents,
     onProjectUpdated,
@@ -281,7 +284,6 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   const projectId = String(project.id)
   const cacheKey = `${projectId}:${String(currentUserId ?? '')}`
   const projectRef = useRef(project)
-  const onProjectUpdatedRef = useRef(onProjectUpdated)
   const initialCache = readProjectAutomationRuleCache(cacheKey, projectAutomationApi)
   const [rules, setRules] = useState<AutomationUiRule[]>(() => initialCache?.rules ?? [])
   const [runs, setRuns] = useState<AutomationUiRun[]>([])
@@ -296,10 +298,6 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   useEffect(() => {
     projectRef.current = project
   }, [project])
-
-  useEffect(() => {
-    onProjectUpdatedRef.current = onProjectUpdated
-  }, [onProjectUpdated])
 
   const load = useCallback(
     async ({ force = false }: { force?: boolean } = {}) => {
@@ -320,37 +318,9 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
         let request = projectAutomationRuleLoads.get(cacheKey)
         if (!request || request.source !== projectAutomationApi) {
           const loadProject = projectRef.current
-          const promise = projectAutomationApi.list(projectId).then(async backendRules => {
-            const legacyRule = loadProject.workflow_automation_id
-              ? null
-              : automationRuleFromLegacyWorkflow(loadProject, backendRules)
-            if (!legacyRule) {
-              return buildAutomationRuleSnapshot(loadProject, backendRules)
-            }
-            if (!canManageAgents || currentUserId == null) {
-              throw new Error(
-                t(
-                  'cloud_project.legacy_workflow_upgrade_required',
-                  '旧版 Issue 编排需要由项目管理员完成自动升级'
-                )
-              )
-            }
-            const workflowDefinition = legacyWorkflowFromAutomationRule(legacyRule)
-            const result = await projectAutomationApi.migrateWorkflow(projectId, {
-              projectVersion: loadProject.version,
-              automation: automationInputFromUi(legacyRule, currentUserId),
-              workflowDefinition,
-            })
-            const updatedProject: CloudProject = {
-              ...loadProject,
-              workflow_automation_id: result.workflowAutomationId,
-              workflow_definition: clearedLegacyWorkflow(workflowDefinition),
-              version: result.projectVersion,
-            }
-            projectRef.current = updatedProject
-            onProjectUpdatedRef.current?.(updatedProject)
-            return buildAutomationRuleSnapshot(updatedProject, [result.automation, ...backendRules])
-          })
+          const promise = projectAutomationApi
+            .list(projectId)
+            .then(backendRules => buildAutomationRuleSnapshot(loadProject, backendRules))
           request = { source: projectAutomationApi, promise }
           projectAutomationRuleLoads.set(cacheKey, request)
           const clearRequest = () => {
@@ -377,7 +347,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
         setLoading(false)
       }
     },
-    [cacheKey, canManageAgents, currentUserId, projectAutomationApi, projectId, t]
+    [cacheKey, projectAutomationApi, projectId]
   )
 
   useEffect(() => {
@@ -660,33 +630,59 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     [persistRule]
   )
 
+  if (!projectAutomationApi) {
+    return (
+      <section
+        data-testid="project-automation-view"
+        className="flex min-h-60 flex-col items-center justify-center gap-3 p-5 text-center"
+      >
+        <h2 className="heading-small">{t('todo.automation_requires_cloud_title')}</h2>
+        <p className="max-w-md text-sm text-text-secondary">
+          {t('todo.automation_requires_cloud_description')}
+        </p>
+        {props.onBackToBoard ? (
+          <button
+            type="button"
+            data-testid="automation-back-to-board"
+            onClick={props.onBackToBoard}
+            className="rounded-lg bg-text-primary px-3 py-2 text-sm text-background"
+          >
+            {t('todo.automation_back_to_board')}
+          </button>
+        ) : null}
+      </section>
+    )
+  }
+
   return (
-    <AutomationRulesView
-      rules={rules}
-      runs={runs}
-      loading={loading}
-      error={error}
-      canManage={canManageAgents}
-      projectTags={project.tags}
-      onReload={reload}
-      onLoadExecutionCatalog={loadExecutionCatalog}
-      onLoadExecutionPlugins={loadExecutionPlugins}
-      onLoadRuns={refreshRuns}
-      onRunRule={
-        projectAutomationApi
-          ? async rule => {
-              const run = await projectAutomationApi.runNow(projectId, rule.id)
-              setRuns(current => [
-                automationRunFromBackend(run, rule),
-                ...current.filter(item => item.id !== run.id),
-              ])
-            }
-          : undefined
-      }
-      onSaveRule={persistRule}
-      onToggleRule={toggleRule}
-      onDuplicateRule={duplicateRule}
-      onDeleteRule={deleteRule}
-    />
+    <AutomationRoleMembers.Provider value={projectMembers ?? []}>
+      <AutomationRulesView
+        rules={rules}
+        runs={runs}
+        loading={loading}
+        error={error}
+        canManage={canManageAgents}
+        projectTags={project.tags}
+        onReload={reload}
+        onLoadExecutionCatalog={loadExecutionCatalog}
+        onLoadExecutionPlugins={loadExecutionPlugins}
+        onLoadRuns={refreshRuns}
+        onRunRule={
+          projectAutomationApi
+            ? async rule => {
+                const run = await projectAutomationApi.runNow(projectId, rule.id)
+                setRuns(current => [
+                  automationRunFromBackend(run, rule),
+                  ...current.filter(item => item.id !== run.id),
+                ])
+              }
+            : undefined
+        }
+        onSaveRule={persistRule}
+        onToggleRule={toggleRule}
+        onDuplicateRule={duplicateRule}
+        onDeleteRule={deleteRule}
+      />
+    </AutomationRoleMembers.Provider>
   )
 }

@@ -143,6 +143,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
 
     assert {tool["name"] for tool in listed["result"]["tools"]} == {
         "get_current_context",
+        "register_external_reference",
         "list_spaces",
         "create_space",
         "update_space",
@@ -151,8 +152,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
         "create_board_item",
         "get_board_item",
         "get_assignment_candidates",
-        "submit_workflow_plan",
-        "report_workflow_outcome",
+        "decide_issue_assignment",
         "assign_board_item",
         "update_board_item",
         "add_board_item_comment",

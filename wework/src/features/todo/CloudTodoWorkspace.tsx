@@ -1,3 +1,4 @@
+import { ProjectEventCenterView } from './ProjectEventCenterView'
 import {
   useCallback,
   useContext,
@@ -190,7 +191,7 @@ import {
 } from './workItemTaskInput'
 import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 
-type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
+type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'events' | 'manage'
 type RootView = 'projects' | 'my-work' | 'settings'
 type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
 
@@ -1924,7 +1925,6 @@ export function CloudTodoWorkspace({
       : selectedProjectServices?.deliveryApi
   const selectedProjectAgentApi = selectedProjectServices?.projectChatAgentApi
   const selectedProjectChatClient = selectedProjectServices?.projectChatClient
-  const selectedProjectSelfManagedExecution = selectedProject?.location === 'local'
   const selectedProjectLocation = selectedProject?.location
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
   const isExternalGitBoard =
@@ -4380,6 +4380,23 @@ export function CloudTodoWorkspace({
                         自动化
                       </button>
                     ) : null}
+                    {selectedProjectServices?.projectEventCenterApi &&
+                    selectedProject.task_provider === 'local' &&
+                    selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                      <button
+                        type="button"
+                        data-testid="cloud-project-events-view"
+                        onClick={() => setProjectView('events')}
+                        className={cn(
+                          'rounded-md px-3.5 py-1 text-sm',
+                          projectView === 'events'
+                            ? 'bg-background font-medium text-text-primary shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary'
+                        )}
+                      >
+                        {t('todo.event_center_title')}
+                      </button>
+                    ) : null}
                     {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') && (
                       <button
                         type="button"
@@ -4417,6 +4434,10 @@ export function CloudTodoWorkspace({
                       {selectedProject.access_role !== 'RestrictedAnalyst' &&
                       selectedProjectAutomationSupported ? (
                         <option value="automation">自动化</option>
+                      ) : null}
+                      {selectedProjectServices?.projectEventCenterApi &&
+                      selectedProject.task_provider === 'local' ? (
+                        <option value="events">{t('todo.event_center_title')}</option>
                       ) : null}
                       {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') ? (
                         <option value="manage">管理</option>
@@ -4585,7 +4606,28 @@ export function CloudTodoWorkspace({
                   />
                 ) : null}
               </header>
-              {projectView === 'files' && selectedProjectApi ? (
+              {projectView === 'events' &&
+              selectedProjectServices?.projectEventCenterApi &&
+              selectedProjectServices.runtimeProfileApi &&
+              selectedProjectApi ? (
+                <ProjectEventCenterView
+                  key={selectedProject.id}
+                  api={selectedProjectServices.projectEventCenterApi}
+                  runtimeProfileApi={selectedProjectServices.runtimeProfileApi}
+                  projectId={String(selectedProject.id)}
+                  canManage={['Owner', 'Maintainer'].includes(
+                    selectedProject.access_role ?? 'Owner'
+                  )}
+                  canSubmit={['Owner', 'Maintainer', 'Developer'].includes(
+                    selectedProject.access_role ?? 'Owner'
+                  )}
+                  onOpenHooks={() => setProjectView('manage')}
+                  onOpenIssue={async issueId => {
+                    const item = await selectedProjectApi.getLoopItem(issueId)
+                    setSelectedItem({ ...item, project_store: selectedProject.project_store })
+                  }}
+                />
+              ) : projectView === 'files' && selectedProjectApi ? (
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
               ) : projectView === 'table' && isAITableProject && aitableApi ? (
                 <AITableView api={aitableApi} project={selectedProject} />
@@ -4628,6 +4670,7 @@ export function CloudTodoWorkspace({
                     setSelectedItem(item)
                   }}
                   onProjectUpdated={updated => replaceProject(selectedProject, updated)}
+                  onBackToBoard={() => setProjectView('board')}
                 />
               ) : projectView === 'manage' && selectedProjectApi ? (
                 <CloudProjectManageView
@@ -5422,8 +5465,11 @@ export function CloudTodoWorkspace({
                 projectChatAgentApi={selectedProjectAgentApi}
                 teamApi={services.teamApi}
                 projectChatClient={selectedProjectChatClient}
-                selfManagedExecution={selectedProjectSelfManagedExecution}
-                currentUserId={user.id}
+                currentUserId={
+                  selectedItemProject?.project_store === 'backend'
+                    ? selectedItemProject.current_user_id
+                    : user.id
+                }
                 localProjects={localProjects}
                 aitableApi={
                   selectedItemProject?.task_provider === 'dingtalk_aitable'
