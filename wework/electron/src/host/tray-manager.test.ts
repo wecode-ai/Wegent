@@ -44,7 +44,6 @@ function setup(
     setToolTip: vi.fn(),
     setTitle: vi.fn(),
     getGUID: vi.fn(() => guid),
-    destroy: vi.fn(),
   }
   const dispatchAction = vi.fn<(action: TrayAction) => void>()
   const buildMenu = vi.fn((template: TrayMenuTemplateItem[]) => ({ template }))
@@ -74,7 +73,7 @@ function findItem(template: TrayMenuTemplateItem[], id: string): TrayMenuTemplat
 }
 
 describe('ElectronTrayManager', () => {
-  test('creates and destroys one tray while applying the latest state', () => {
+  test('creates one process-lifetime tray while applying the latest state', () => {
     const { buildMenu, dependencies, guid, manager, tray } = setup()
     manager.setState(state())
 
@@ -89,12 +88,6 @@ describe('ElectronTrayManager', () => {
     expect(tray.setToolTip).toHaveBeenCalledWith('Codex: 42%')
     expect(tray.setTitle).toHaveBeenCalledWith('42%')
     expect(manager.snapshot()).toMatchObject({ created: true, guid })
-
-    manager.destroy()
-    manager.destroy()
-
-    expect(tray.destroy).toHaveBeenCalledTimes(1)
-    expect(manager.snapshot()).toMatchObject({ created: false, guid: null })
   })
 
   test('builds localized running, unread, pinned, recent, and action menus', () => {
