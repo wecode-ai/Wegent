@@ -2101,12 +2101,15 @@ impl LocalTaskStore {
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
-        let metadata = json!({
+        let mut metadata = json!({
             "external_item_id": external_item_id,
             "project_id": project_id,
             "workflow_node_id": input.workflow_node_id,
             "workflow_stage_input": workflow_stage_input,
         });
+        if let Some(model_selection) = input.model_selection.as_ref() {
+            metadata["model_selection"] = model_selection.clone();
+        }
         if let Some(active) = active {
             let target_item_id = item_id.or(external_item_id);
             let same_target = active.cloud_project_id == project_id
@@ -2115,9 +2118,16 @@ impl LocalTaskStore {
             if same_target {
                 transaction.execute(
                     "UPDATE loop_items SET task_title = ?1, backend_task_id = ?2,
-                            updated_at = ?3
-                     WHERE id = ?4",
-                    params![input.task_title, input.backend_task_id, now(), active.id],
+                            metadata = json_patch(COALESCE(metadata, '{}'), ?3),
+                            updated_at = ?4
+                     WHERE id = ?5",
+                    params![
+                        input.task_title,
+                        input.backend_task_id,
+                        metadata.to_string(),
+                        now(),
+                        active.id
+                    ],
                 )?;
                 transaction.commit()?;
                 drop(connection);
@@ -2275,7 +2285,8 @@ impl LocalTaskStore {
                         THEN 'system'
                         ELSE 'user'
                     END,
-                    linked_at
+                    linked_at,
+                    json_extract(metadata, '$.model_selection')
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
                AND (
@@ -2464,7 +2475,8 @@ impl LocalTaskStore {
                             THEN 'system'
                             ELSE 'user'
                         END,
-                        linked_at
+                        linked_at,
+                        json_extract(metadata, '$.model_selection')
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
                 [id],
                 map_task_binding,
@@ -2519,7 +2531,8 @@ fn get_effective_binding(
                         THEN 'system'
                         ELSE 'user'
                     END,
-                    linked_at
+                    linked_at,
+                    json_extract(metadata, '$.model_selection')
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2559,7 +2572,8 @@ fn get_binding_by_kind(
                         THEN 'system'
                         ELSE 'user'
                     END,
-                    linked_at
+                    linked_at,
+                    json_extract(metadata, '$.model_selection')
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2639,6 +2653,9 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
             .and_then(|value| serde_json::from_str(&value).ok()),
         binding_type: row.get(10)?,
         linked_at: row.get(11)?,
+        model_selection: row
+            .get::<_, Option<String>>(12)?
+            .and_then(|value| serde_json::from_str(&value).ok()),
     })
 }
 
@@ -6424,12 +6441,25 @@ mod tests {
                     task_id: "runtime-1".to_owned(),
                     task_title: Some("Runtime".to_owned()),
                     backend_task_id: None,
+                    model_selection: Some(json!({
+                        "modelName": "gpt-5.6-sol",
+                        "modelType": "public",
+                        "options": {"reasoning": "high"},
+                    })),
                     workflow_node_id: None,
                 },
             )
             .unwrap();
 
         assert_eq!(binding.loop_item_id.as_deref(), Some(task.id.as_str()));
+        assert_eq!(
+            binding.model_selection,
+            Some(json!({
+                "modelName": "gpt-5.6-sol",
+                "modelType": "public",
+                "options": {"reasoning": "high"},
+            }))
+        );
         assert_eq!(store.list_task_bindings(&task.id).unwrap().len(), 1);
         assert_eq!(
             store
@@ -6475,6 +6505,7 @@ mod tests {
                     task_id: "runtime-status-1".to_owned(),
                     task_title: task.title.clone(),
                     backend_task_id: None,
+                    model_selection: None,
                     workflow_node_id: None,
                 },
             )
@@ -6812,6 +6843,7 @@ mod tests {
                         task_id: runtime_task_id.to_owned(),
                         task_title: item.title.clone(),
                         backend_task_id: None,
+                        model_selection: None,
                         workflow_node_id: None,
                     },
                 )
@@ -6873,6 +6905,7 @@ mod tests {
             task_id: "runtime-1".to_owned(),
             task_title: Some("Runtime".to_owned()),
             backend_task_id: None,
+            model_selection: None,
             workflow_node_id: None,
         };
 
@@ -6993,6 +7026,7 @@ mod tests {
                     task_id: "runtime-1".to_owned(),
                     task_title: Some("Develop".to_owned()),
                     backend_task_id: None,
+                    model_selection: None,
                     workflow_node_id: Some("develop".to_owned()),
                 },
             )
@@ -7008,6 +7042,7 @@ mod tests {
                     task_id: "runtime-2".to_owned(),
                     task_title: Some("Additional develop".to_owned()),
                     backend_task_id: None,
+                    model_selection: None,
                     workflow_node_id: Some("develop".to_owned()),
                 },
             )
@@ -7038,6 +7073,7 @@ mod tests {
                     task_id: "runtime-correction".to_owned(),
                     task_title: Some("Correct develop".to_owned()),
                     backend_task_id: None,
+                    model_selection: None,
                     workflow_node_id: Some("develop".to_owned()),
                 },
             )
@@ -7053,6 +7089,7 @@ mod tests {
                 task_id: "runtime-3".to_owned(),
                 task_title: Some("Test".to_owned()),
                 backend_task_id: None,
+                model_selection: None,
                 workflow_node_id: Some("test".to_owned()),
             },
         );
@@ -7264,6 +7301,7 @@ mod tests {
             task_id: "runtime-1".to_owned(),
             task_title: Some("Implement".to_owned()),
             backend_task_id: None,
+            model_selection: None,
             workflow_node_id: Some("develop".to_owned()),
         };
         store
