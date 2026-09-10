@@ -264,3 +264,6 @@ adapter to offer a login button. An accountAuth-only connection never queries
 the cloud OAuth app catalog; the UI directs users to the original local login
 flow. Package parsing, local catalog conversion, and compact caches preserve
 group metadata.
+For local plugins, the package manifest owns connector declarations. A nonempty
+`plugin/read` connector list must not overwrite host extension fields from that
+manifest. An explicit empty manifest array also takes effect, removing connectors.

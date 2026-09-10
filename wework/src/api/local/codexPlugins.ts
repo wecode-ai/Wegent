@@ -2099,10 +2099,11 @@ async function readPluginDetail(
       }
     )
     const connectors = manifest?.connectors
-    if (!connectors || connectors.length === 0) return response.plugin
+    if (!Array.isArray(connectors)) return response.plugin
     return {
       ...response.plugin,
-      connectors: response.plugin.connectors?.length ? response.plugin.connectors : connectors,
+      // The package owns host-specific fields that plugin/read may not preserve.
+      connectors,
     }
   } catch (error) {
     console.warn('[Wework plugins] failed to read local plugin manifest', {

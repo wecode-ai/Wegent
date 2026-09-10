@@ -242,3 +242,5 @@ pnpm --filter wework e2e:desktop --cloud-only --segment plugin-account-auth
 需要登录按钮时同时声明现有 `localAuth` 命令和 `accountAuth` 导出适配器。
 只有 `accountAuth` 的连接不会查询云端 OAuth 应用目录；页面提示通过原本机登录
 流程完成认证。包解析、本机目录转换及精简缓存都保留分组信息。
+本机插件的连接器声明以包内原始清单为准；即使 `plugin/read` 返回非空连接器列表，
+也不能覆盖清单中的宿主扩展字段。清单中的空数组同样有效，表示已移除连接器。
