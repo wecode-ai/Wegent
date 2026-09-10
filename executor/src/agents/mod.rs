@@ -20,7 +20,7 @@ mod image_validator;
 pub mod interactive_mcp;
 mod pnpm_worktree;
 pub(crate) mod runtime_capabilities;
-mod skill_download;
+pub(crate) mod skill_download;
 mod task_identity;
 
 use crate::{

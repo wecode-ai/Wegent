@@ -9,6 +9,7 @@ use std::{
     path::{Component, Path, PathBuf},
     pin::Pin,
     sync::atomic::{AtomicU64, Ordering},
+    time::Instant,
 };
 
 use reqwest::Url;
@@ -17,7 +18,15 @@ use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
 use crate::{
-    agents::wework_codex_home,
+    agents::{
+        skill_download::{
+            encoded_skill_name, response_milliseconds, response_request_id,
+            SkillDownloadObservation, SkillDownloadOutcome, BACKEND_TIME_HEADER,
+            CACHE_SOURCE_HEADER, GATEWAY_UPSTREAM_TIME_HEADER, REQUEST_ID_HEADER, SKILL_ID_HEADER,
+            SKILL_NAME_HEADER,
+        },
+        wework_codex_home,
+    },
     local::capabilities::{
         default_manifest_path, CapabilityPackageProvider, CapabilitySyncError,
         CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
@@ -116,35 +125,119 @@ impl HttpPackageProvider {
         }
     }
 
-    async fn get_bytes(&self, path: &str) -> Result<Vec<u8>, CapabilitySyncError> {
+    async fn get_bytes(
+        &self,
+        path: &str,
+        skill: Option<&SkillSyncSpec>,
+    ) -> Result<Vec<u8>, CapabilitySyncError> {
         let url = self.resolve_backend_url(path)?;
         let backend = parse_url_with_trailing_slash(&self.backend_url)?;
         let should_send_backend_auth = same_origin(&backend, &url);
         let mut request = self.client.get(url);
+        let mut observation =
+            skill.map(|spec| SkillDownloadObservation::begin(spec.skill_id, &spec.name));
         let auth_token = self.auth_token.trim();
         if should_send_backend_auth && !auth_token.is_empty() {
             request = request.bearer_auth(auth_token);
         }
-        let response = request.send().await.map_err(|error| {
-            CapabilitySyncError::invalid_payload(format!(
-                "Capability package download failed: {error}"
-            ))
-        })?;
+        if let (Some(observation), Some(spec)) = (observation.as_ref(), skill) {
+            request = request
+                .header(REQUEST_ID_HEADER, observation.request_id())
+                .header(SKILL_ID_HEADER, spec.skill_id.to_string())
+                .header(SKILL_NAME_HEADER, encoded_skill_name(&spec.name));
+        }
+        let upstream_started_at = Instant::now();
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(observation) = observation.take() {
+                    let result = if error.is_timeout() {
+                        "timeout"
+                    } else if error.is_connect() {
+                        "connection_error"
+                    } else {
+                        "request_error"
+                    };
+                    observation.finish(SkillDownloadOutcome {
+                        cache_source: "none",
+                        bytes: 0,
+                        result,
+                        upstream_time_ms: upstream_started_at.elapsed().as_secs_f64() * 1000.0,
+                        upstream_status: None,
+                        backend_time_ms: None,
+                        response_request_id: None,
+                    });
+                }
+                return Err(CapabilitySyncError::invalid_payload(format!(
+                    "Capability package download failed: {error}"
+                )));
+            }
+        };
         let status = response.status();
+        let upstream_time_ms =
+            response_milliseconds(response.headers().get(GATEWAY_UPSTREAM_TIME_HEADER))
+                .unwrap_or_else(|| upstream_started_at.elapsed().as_secs_f64() * 1000.0);
+        let backend_time_ms = response_milliseconds(response.headers().get(BACKEND_TIME_HEADER));
+        let request_id = response_request_id(response.headers().get(REQUEST_ID_HEADER));
+        let cache_source = if response
+            .headers()
+            .get(CACHE_SOURCE_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some("skill_binary")
+        {
+            "skill_binary"
+        } else if status.is_success() {
+            "backend"
+        } else {
+            "none"
+        };
         if !status.is_success() {
+            if let Some(observation) = observation.take() {
+                observation.finish(SkillDownloadOutcome {
+                    cache_source,
+                    bytes: 0,
+                    result: "http_error",
+                    upstream_time_ms,
+                    upstream_status: Some(status.as_u16()),
+                    backend_time_ms,
+                    response_request_id: request_id.as_deref(),
+                });
+            }
             return Err(CapabilitySyncError::invalid_payload(format!(
                 "Capability package download failed with HTTP {status}"
             )));
         }
-        response
-            .bytes()
-            .await
-            .map(|bytes| bytes.to_vec())
-            .map_err(|error| {
-                CapabilitySyncError::invalid_payload(format!(
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes.to_vec(),
+            Err(error) => {
+                if let Some(observation) = observation.take() {
+                    observation.finish(SkillDownloadOutcome {
+                        cache_source,
+                        bytes: 0,
+                        result: "body_read_error",
+                        upstream_time_ms,
+                        upstream_status: Some(status.as_u16()),
+                        backend_time_ms,
+                        response_request_id: request_id.as_deref(),
+                    });
+                }
+                return Err(CapabilitySyncError::invalid_payload(format!(
                     "Capability package read failed: {error}"
-                ))
-            })
+                )));
+            }
+        };
+        if let Some(observation) = observation.take() {
+            observation.finish(SkillDownloadOutcome {
+                cache_source,
+                bytes: bytes.len(),
+                result: "success",
+                upstream_time_ms,
+                upstream_status: Some(status.as_u16()),
+                backend_time_ms,
+                response_request_id: request_id.as_deref(),
+            });
+        }
+        Ok(bytes)
     }
 
     fn resolve_backend_url(&self, path: &str) -> Result<Url, CapabilitySyncError> {
@@ -173,7 +266,9 @@ impl CapabilityPackageProvider for HttpPackageProvider {
         target: &'a Path,
     ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
         Box::pin(async move {
-            let package = self.get_bytes(&skill_download_path(spec)?).await?;
+            let package = self
+                .get_bytes(&skill_download_path(spec)?, Some(spec))
+                .await?;
             extract_skill_zip(&package, target)
         })
     }
@@ -182,7 +277,7 @@ impl CapabilityPackageProvider for HttpPackageProvider {
         &'a self,
         download_path: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
-        Box::pin(async move { self.get_bytes(download_path).await })
+        Box::pin(async move { self.get_bytes(download_path, None).await })
     }
 }
 

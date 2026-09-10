@@ -49,6 +49,11 @@ from app.services.auth.internal_service_token import (
     require_internal_service_token_configured,
 )
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from app.services.skill_download_observability import (
+    add_skill_download_headers,
+    begin_skill_download,
+    get_skill_download_metadata,
+)
 from shared.telemetry.context.large_data import log_json_body
 
 # Redis lock key for startup operations (migrations + YAML init)
@@ -779,8 +784,33 @@ def create_app():
             logger.info(request_log_message)
 
         # Process request
-        response = await call_next(request)
+        skill_download_observation = begin_skill_download(request.url.path)
+        try:
+            response = await call_next(request)
+        except BaseException:
+            if skill_download_observation is not None:
+                skill_download_observation.finish(
+                    metadata=get_skill_download_metadata(request),
+                    status_code=500,
+                    request_id=request_id,
+                    result="handler_error",
+                )
+            raise
         process_time = (time.time() - start_time) * 1000
+
+        if skill_download_observation is not None:
+            skill_download_metadata = get_skill_download_metadata(request)
+            backend_time_ms = skill_download_observation.finish(
+                metadata=skill_download_metadata,
+                status_code=response.status_code,
+                request_id=request_id,
+            )
+            add_skill_download_headers(
+                response,
+                observation=skill_download_observation,
+                metadata=skill_download_metadata,
+                backend_time_ms=backend_time_ms,
+            )
 
         # Capture response headers and body if OTEL is enabled
         if otel_config.enabled:
@@ -877,7 +907,15 @@ def create_app():
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Content-Disposition", "X-Request-ID"],
+        expose_headers=[
+            "Content-Disposition",
+            "X-Request-ID",
+            "X-Wegent-Skill-Id",
+            "X-Wegent-Skill-Name",
+            "X-Wegent-Skill-Cache-Source",
+            "X-Wegent-Skill-Bytes",
+            "X-Wegent-Backend-Time-Ms",
+        ],
     )
 
     # Register exception handlers

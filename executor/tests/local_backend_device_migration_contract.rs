@@ -261,6 +261,16 @@ async fn http_capability_provider_supports_signed_external_package_urls_without_
             .contains("authorization: bearer secret-token"),
         "{request}"
     );
+    let request_lower = request.to_ascii_lowercase();
+    assert!(
+        request_lower.contains("x-request-id: skill-download-"),
+        "{request}"
+    );
+    assert!(request_lower.contains("x-wegent-skill-id: 42"), "{request}");
+    assert!(
+        request_lower.contains("x-wegent-skill-name: browser"),
+        "{request}"
+    );
 
     let external_requests = Arc::new(Mutex::new(Vec::new()));
     let external_url =

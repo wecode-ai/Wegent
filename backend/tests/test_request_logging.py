@@ -90,6 +90,38 @@ def test_cors_exposes_request_id_header(test_client):
     assert response.headers["X-Request-ID"]
 
 
+def test_skill_download_error_is_observed_without_credentials(test_client, caplog):
+    with caplog.at_level(
+        logging.INFO,
+        logger="app.services.skill_download_observability",
+    ):
+        response = test_client.get(
+            "/api/v1/kinds/skills/42/download",
+            headers={
+                "X-Request-ID": "skill-download-42",
+                "Authorization": "Bearer must-not-be-logged",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.headers["X-Wegent-Skill-Id"] == "42"
+    assert response.headers["X-Wegent-Skill-Name"] == "unknown"
+    assert response.headers["X-Wegent-Skill-Cache-Source"] == "none"
+    assert response.headers["X-Wegent-Skill-Bytes"] == "0"
+    assert response.headers["X-Wegent-Backend-Time-Ms"]
+
+    observations = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("skill download observed")
+    ]
+    assert observations
+    assert "skill_id=42" in observations[-1]
+    assert "result=http_error" in observations[-1]
+    assert "inflight=" in observations[-1]
+    assert "must-not-be-logged" not in observations[-1]
+
+
 def test_access_logs_redact_sensitive_query_parameters(test_client, caplog):
     with caplog.at_level(logging.INFO, logger="app.main"):
         response = test_client.get("/api/health?token=opencut-secret&probe=visible")
