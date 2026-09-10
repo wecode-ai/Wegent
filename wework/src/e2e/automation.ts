@@ -812,12 +812,21 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   return element.textContent?.trim() ?? ''
 }
 
-function pressDesktopControlPointer(selector: string): string {
-  const element = findDesktopControlElements(selector)[0]
+function pressDesktopControlPointer(selector: string, click = false): string {
+  const elements = findDesktopControlElements(selector)
+  const element = click ? elements.find(desktopControlElementVisible) : elements[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  if (click && !desktopControlElementEnabled(element))
+    throw new Error(`Pointer target is disabled: "${selector}"`)
   const options = desktopControlEventOptions(element)
   dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
   dispatchDesktopControlPointerEvent(element, 'pointerup', options)
+  if (click) {
+    if (!element.isConnected) throw new Error(`Pointer target detached before click: "${selector}"`)
+    if (!desktopControlElementEnabled(element))
+      throw new Error(`Pointer target is disabled: "${selector}"`)
+    element.click()
+  }
   return element.textContent?.trim() ?? ''
 }
 
@@ -2421,6 +2430,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerClick':
+      // Keep one gesture together across transient hover UI, without transport gaps.
+      return pressDesktopControlPointer(command.selector, true)
     case 'pointerDownOnly': {
       await invokeDesktopHost('e2e.focusMainWindow')
       const result = startDesktopControlPointer(command.selector)
