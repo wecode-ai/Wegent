@@ -163,6 +163,27 @@ async function selectTask(control, sidebar, task, completion, timeoutMs) {
   )
 }
 
+async function waitForUnreadBadge(control, count, timeoutMs) {
+  const { platform } = JSON.parse(await control.command('getNativeWindowState', 'body'))
+  const deadline = Date.now() + timeoutMs
+  let latest
+  while (Date.now() < deadline) {
+    latest = JSON.parse(await control.command('getTraySnapshot', 'body'))
+    const unreadHeading = latest.menu.findIndex(item => item.id === 'heading:unread')
+    const unreadItems = []
+    if (unreadHeading >= 0) {
+      for (const item of latest.menu.slice(unreadHeading + 1)) {
+        if (item.type === 'separator') break
+        if (item.id?.startsWith('task:')) unreadItems.push(item)
+      }
+    }
+    const expectedBadge = platform === 'darwin' ? (count > 0 ? String(count) : '') : null
+    if (unreadItems.length === count && latest.dockBadge === expectedBadge) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`Expected ${count} unread tasks and matching Dock badge: ${JSON.stringify(latest)}`)
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   const requests = []
@@ -224,7 +245,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       response.flushHeaders()
       for (const event of streamStart(id)) response.write(sse(event))
       streams.set(prompt, { id, itemId, response })
-      emitBurstAndCompletions()
       return true
     },
 
@@ -270,13 +290,41 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="project-row-${createdProjectId}"] ` +
         '[data-testid="project-new-conversation-button"]'
       await control.command('waitFor', newConversationSelector, { timeoutMs: uiTimeoutMs })
+      await waitForUnreadBadge(control, 0, uiTimeoutMs)
       const quiet = await sendTask(control, newConversationSelector, PROMPTS.quiet, uiTimeoutMs)
       await waitForRequestCount(requests, 1, uiTimeoutMs)
       const noisy = await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
       await waitForRequestCount(requests, 2, uiTimeoutMs)
       const burstSettleTimeoutMs = Math.max(uiTimeoutMs, BURST_RENDER_TIMEOUT_MS)
 
+      await control.command('clickWhenEnabled', newConversationSelector, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      emitBurstAndCompletions()
+      await waitForUnreadBadge(control, 2, burstSettleTimeoutMs)
+
+      for (const enabled of [false, true]) {
+        await control.command('click', '[data-testid="settings-button"]')
+        await control.command('click', '[data-testid="settings-menu-button"]')
+        await control.command('clickWhenEnabled', '[data-testid="general-tray-unread-toggle"]', {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command(
+          'waitFor',
+          `[data-testid="general-tray-unread-toggle"][aria-pressed="${enabled}"]`,
+          { timeoutMs: uiTimeoutMs }
+        )
+        await control.command('click', '[data-testid="settings-back-button"]')
+        await waitForUnreadBadge(control, enabled ? 2 : 0, uiTimeoutMs)
+      }
+
+      const readyCountBeforeReload = control.readyCount
+      await control.command('reloadApp', 'body')
+      await control.awaitReadyAfter(readyCountBeforeReload)
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForUnreadBadge(control, 2, uiTimeoutMs)
+
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
+      let remainingUnread = 2
       for (const [task, completion] of [
         [quiet, COMPLETIONS.quiet],
         [noisy, COMPLETIONS.noisy],
@@ -287,7 +335,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
           { text: completion, timeoutMs: uiTimeoutMs }
         )
+        remainingUnread -= 1
+        await waitForUnreadBadge(control, remainingUnread, uiTimeoutMs)
       }
+
+      await selectTask(control, sidebar, quiet, COMPLETIONS.quiet, uiTimeoutMs)
+      await waitForUnreadBadge(control, 0, uiTimeoutMs)
 
       await captureScreenshot(control, 'codex-notification-isolation-complete.png', 'body')
       active = false

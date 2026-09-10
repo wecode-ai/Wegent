@@ -2801,7 +2801,7 @@
     "general_settings_tray_display_content": "托盘显示内容",
     "general_settings_tray_display_content_description": "选择托盘图标和菜单里展示的状态。",
     "general_settings_tray_unread": "未读任务",
-    "general_settings_tray_unread_description": "未读完成任务会在托盘图标内显示绿色数字提醒。",
+    "general_settings_tray_unread_description": "在托盘菜单中列出未读完成任务，并在 macOS 应用图标上显示未读数量。",
     "general_settings_tray_running": "进行中任务",
     "general_settings_tray_running_description": "进行中的任务会在图标和额度之间显示竖条状态。",
     "general_settings_tray_usage": "Codex 额度",

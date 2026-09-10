@@ -2803,7 +2803,7 @@
     "general_settings_tray_display_content": "Tray display content",
     "general_settings_tray_display_content_description": "Choose which statuses appear in the tray icon and menu.",
     "general_settings_tray_unread": "Unread tasks",
-    "general_settings_tray_unread_description": "Unread completed tasks show a green numeric reminder inside the tray icon.",
+    "general_settings_tray_unread_description": "List unread completed tasks in the tray menu and show their count on the macOS app icon.",
     "general_settings_tray_running": "Running tasks",
     "general_settings_tray_running_description": "Running tasks show a vertical status bar between the icon and quota text.",
     "general_settings_tray_usage": "Codex quota",
