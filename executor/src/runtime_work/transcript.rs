@@ -215,11 +215,10 @@ impl<'a> TurnTranscriptProjector<'a> {
             item_type if is_codex_context_compaction_item_type(item_type) => {
                 self.push_workbench_block(item)
             }
-            "agentmessage" | "agentmessageevent" => {
-                if !self.project_subagent_message(item) {
-                    self.project_assistant_message(item, has_later_process);
-                }
+            "agentmessage" | "agentmessageevent" if !self.project_subagent_message(item) => {
+                self.project_assistant_message(item, has_later_process);
             }
+            "agentmessage" | "agentmessageevent" => {}
             "message" => self.project_role_message(item, has_later_process),
             _ if is_default_tool_output_item(item) => merge_tool_output(
                 &mut self.assistant.blocks,

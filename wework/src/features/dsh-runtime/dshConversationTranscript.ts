@@ -114,6 +114,19 @@ function projectConversationBlock(block: ProcessingBlock): WeworkConversationBlo
       status: block.status,
     }
   }
+  if (block.type === 'subagent') {
+    const content =
+      block.output?.trim() ||
+      block.summary?.trim() ||
+      block.description?.trim() ||
+      block.title?.trim() ||
+      ''
+    return {
+      type: 'text',
+      content,
+      status: block.status,
+    }
+  }
   return {
     type: block.type,
     content: block.content,

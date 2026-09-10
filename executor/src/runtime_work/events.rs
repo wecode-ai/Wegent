@@ -4430,7 +4430,7 @@ mod tests {
         assert_eq!(event["event"], "response.subagent.activity");
         assert_eq!(event["payload"]["data"]["agent_path"], "/root/worker");
         assert_eq!(event["payload"]["data"]["agent_id"], "thread-worker");
-        assert!(event["payload"]["data"].get("agent_name").is_none());
+        assert_eq!(event["payload"]["data"]["agent_name"], "worker");
         assert_eq!(event["payload"]["data"]["agent_thread_id"], "thread-worker");
         assert_eq!(event["payload"]["data"]["kind"], "started");
         assert_eq!(event["payload"]["data"]["status"], "running");

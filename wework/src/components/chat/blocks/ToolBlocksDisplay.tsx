@@ -332,6 +332,12 @@ export function ToolBlocksDisplay({
                 row={item}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
               />
+            ) : item.block.type === 'subagent' ? (
+              <SubagentActivityGroup
+                key={item.id}
+                blocks={[item.block]}
+                onOpenSubagent={onOpenSubagent}
+              />
             ) : isContextCompactionToolBlock(item.block) ? (
               <ContextCompactionIndicator key={item.id} block={item.block} />
             ) : (

@@ -341,6 +341,9 @@ function ScrollableMessagePaneContent({
         if (block.type === 'file_changes') {
           return `${block.id}:${block.status}:${block.fileChanges.file_count}:${block.fileChanges.diff?.length ?? 0}`
         }
+        if (block.type === 'subagent') {
+          return `${block.id}:${block.status}:${block.agentStatus ?? ''}:${block.output?.length ?? 0}:${block.summary?.length ?? 0}:${block.children?.length ?? 0}`
+        }
         return `${block.id}:${block.status}:${String(block.toolOutput ?? '').length}`
       })
       .join('|')
