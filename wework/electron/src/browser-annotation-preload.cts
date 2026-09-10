@@ -56,6 +56,7 @@ interface RuntimeCommand {
   type: 'sync'
   state?: RuntimeState
   point?: { x: number; y: number } | null
+  renderRequestId?: number | null
 }
 
 const ROOT_ID = '__wework_browser_annotation_root__'
@@ -1223,6 +1224,9 @@ ipcRenderer.on('wework:browser-annotation-command', (_event: unknown, command: R
       }
     }
     renderImmediately()
+    if (command.renderRequestId !== null && command.renderRequestId !== undefined) {
+      emit('runtime-rendered', { renderRequestId: command.renderRequestId })
+    }
   }
 })
 
