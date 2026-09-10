@@ -258,6 +258,7 @@ COMPONENTIZED_HOST_UPDATE="$(
   wework_resolve_componentized_host_update \
     "$UPDATE_BASE_URL/components-$CHANNEL-windows-x64.json"
 )"
+export WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"
 if [ "$COMPONENTIZED_HOST_UPDATE" = "true" ]; then
   export WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS=false
 else
@@ -292,7 +293,6 @@ notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows-x64.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
-WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE" \
 WEWORK_RELEASE_TARGETS=windows-x64 \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \

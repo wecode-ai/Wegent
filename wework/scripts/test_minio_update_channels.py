@@ -558,7 +558,11 @@ def test_minio_macos_build_uses_electron_only_release_assets() -> None:
     assert "WeWorkHostUpdate_${VERSION}_$(release_platform).zip" in script
     assert "WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS" in script
     assert "WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app" in script
-    assert 'WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"' in script
+    assert (
+        'export WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"'
+        in script
+    )
+    assert script.count("WEWORK_USE_COMPONENTIZED_HOST_UPDATE") == 1
     assert "components-$CHANNEL-macos-$arch.json" in script
     assert "const releaseBaseName = `WeWork_${version}_${releasePlatform}`" in preparer
     assert "cp(dmg, join(output, basename(dmg)))" not in preparer
@@ -615,7 +619,11 @@ def test_minio_windows_build_uses_native_electron_release() -> None:
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
     assert "WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS" in script
-    assert 'WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"' in script
+    assert (
+        'export WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"'
+        in script
+    )
+    assert script.count("WEWORK_USE_COMPONENTIZED_HOST_UPDATE") == 1
     assert "components-$CHANNEL-windows-x64.json" in script
     assert '--unsigned) UNSIGNED="true"' in script
     assert 'if [ "$UNSIGNED" = "true" ]' in script
