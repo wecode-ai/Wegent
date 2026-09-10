@@ -347,6 +347,11 @@ async def lifespan(app: FastAPI):
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
 
+    from app.core.cache import cache_manager
+
+    await cache_manager.start()
+    logger.info("✓ Redis cache connection pool initialized")
+
     if settings.SCHEDULED_TASKS_ENABLED:
         logger.info("Starting background jobs...")
         start_background_jobs(app)
@@ -605,8 +610,6 @@ async def lifespan(app: FastAPI):
         logger.info("✓ Device heartbeat monitor stopped")
 
         # Close the process-owned Redis cache pool after all cache consumers stop.
-        from app.core.cache import cache_manager
-
         try:
             await cache_manager.aclose()
             logger.info("✓ Redis cache connection pools closed")

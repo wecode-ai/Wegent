@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import orjson
@@ -12,8 +13,9 @@ from app.core.cache import RedisCache
 
 
 @pytest.mark.asyncio
-async def test_get_client_reuses_one_process_owned_pool() -> None:
+async def test_get_client_reuses_application_owned_pool() -> None:
     cache = RedisCache("redis://localhost:6379/0")
+    await cache.start()
 
     first = await cache._get_client()
     second = await cache._get_client()
@@ -25,10 +27,51 @@ async def test_get_client_reuses_one_process_owned_pool() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_client_isolates_short_lived_event_loops() -> None:
+    cache = RedisCache("redis://localhost:6379/0")
+    await cache.start()
+    owner_client = await cache._get_client()
+
+    async def get_and_close_client() -> object:
+        client = await cache._get_client()
+        await client.aclose()
+        return client
+
+    transient_client = await asyncio.to_thread(
+        lambda: asyncio.run(get_and_close_client())
+    )
+
+    assert transient_client is not owner_client
+    await cache.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cache_command_closes_short_lived_loop_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = RedisCache("redis://localhost:6379/0")
+    await cache.start()
+    transient_client = AsyncMock()
+    transient_client.get.return_value = orjson.dumps({"status": "online"})
+    from_url = MagicMock(return_value=transient_client)
+    monkeypatch.setattr("app.core.cache.Redis.from_url", from_url)
+
+    result = await asyncio.to_thread(
+        lambda: asyncio.run(cache.get("device:online:7:device-1"))
+    )
+
+    assert result == {"status": "online"}
+    from_url.assert_called_once()
+    transient_client.aclose.assert_awaited_once_with()
+    await cache.aclose()
+
+
+@pytest.mark.asyncio
 async def test_get_does_not_close_client_after_each_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cache = RedisCache("redis://localhost:6379/0")
+    await cache.start()
     client = AsyncMock()
     client.get.return_value = orjson.dumps({"status": "online"})
     monkeypatch.setattr(cache, "_get_client", AsyncMock(return_value=client))
@@ -40,6 +83,7 @@ async def test_get_does_not_close_client_after_each_command(
     assert second == first
     assert client.get.await_count == 2
     client.aclose.assert_not_awaited()
+    await cache.aclose()
 
 
 @pytest.mark.asyncio
@@ -82,6 +126,7 @@ async def test_aclose_closes_owned_pools_and_resets_clients() -> None:
     sync_pool = MagicMock()
     cache._client = async_client
     cache._pool = async_pool
+    cache._owner_loop = asyncio.get_running_loop()
     cache._sync_client = sync_client
     cache._sync_pool = sync_pool
 
@@ -93,5 +138,6 @@ async def test_aclose_closes_owned_pools_and_resets_clients() -> None:
     sync_pool.disconnect.assert_called_once_with()
     assert cache._client is None
     assert cache._pool is None
+    assert cache._owner_loop is None
     assert cache._sync_client is None
     assert cache._sync_pool is None

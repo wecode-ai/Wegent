@@ -15,6 +15,7 @@ async def test_pop_atomically_gets_and_deletes_cached_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cache = RedisCache("redis://localhost:6379/0")
+    await cache.start()
     client = AsyncMock()
     client.eval.return_value = orjson.dumps({"value": "one-time"})
     monkeypatch.setattr(cache, "_get_client", AsyncMock(return_value=client))
@@ -27,3 +28,4 @@ async def test_pop_atomically_gets_and_deletes_cached_json(
     assert "redis.call('DEL', KEYS[1])" in script
     assert (key_count, key) == (1, "oauth:one-time")
     client.aclose.assert_not_awaited()
+    await cache.aclose()

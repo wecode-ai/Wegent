@@ -2,7 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
@@ -39,18 +42,49 @@ class RedisCache:
         }
         self._pool: Optional[ConnectionPool] = None
         self._client: Optional[Redis] = None
+        self._owner_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._async_client_lock = Lock()
         self._sync_pool: Optional[SyncConnectionPool] = None
         self._sync_client: Optional[SyncRedis] = None
         self._sync_client_lock = Lock()
 
-    async def _get_client(self) -> Redis:
-        """Return the process-owned client, creating its pool lazily."""
-        if self._client is None:
+    async def start(self) -> None:
+        """Bind the reusable asynchronous client to the application loop."""
+        loop = asyncio.get_running_loop()
+        with self._async_client_lock:
+            if self._owner_loop is loop and self._client is not None:
+                return
+            if self._owner_loop is not None:
+                raise RuntimeError("Redis cache is already bound to another event loop")
             self._pool = ConnectionPool.from_url(self._url, **self._connection_params)
-            # Passing an explicit pool keeps client.aclose() from disconnecting
-            # the process-owned pool in lower-level Redis consumers.
+            # Passing an explicit pool keeps lower-level client.aclose() calls
+            # from disconnecting the application-owned pool.
             self._client = Redis(connection_pool=self._pool)
-        return self._client
+            self._owner_loop = loop
+
+    async def _get_client(self) -> Redis:
+        """Return the shared owner client or an isolated caller-owned client."""
+        loop = asyncio.get_running_loop()
+        with self._async_client_lock:
+            if self._owner_loop is loop and self._client is not None:
+                return self._client
+        # Redis asyncio connections are bound to the loop where they perform I/O.
+        # Synchronous services use asyncio.run() on short-lived worker loops, so
+        # those loops must never borrow connections from the application pool.
+        return Redis.from_url(self._url, **self._connection_params)
+
+    @asynccontextmanager
+    async def _client_context(self) -> AsyncIterator[Redis]:
+        """Close clients created outside the application-owned event loop."""
+        loop = asyncio.get_running_loop()
+        client = await self._get_client()
+        with self._async_client_lock:
+            application_owned = self._owner_loop is loop
+        try:
+            yield client
+        finally:
+            if not application_owned:
+                await client.aclose()
 
     def _get_sync_client(self) -> SyncRedis:
         """Return the process-owned synchronous Redis client."""
@@ -72,12 +106,19 @@ class RedisCache:
 
     async def aclose(self) -> None:
         """Close process-owned asynchronous and synchronous connection pools."""
-        client = self._client
-        pool = self._pool
+        loop = asyncio.get_running_loop()
+        with self._async_client_lock:
+            if self._owner_loop is not None and self._owner_loop is not loop:
+                raise RuntimeError(
+                    "Redis cache must be closed from its owning event loop"
+                )
+            client = self._client
+            pool = self._pool
+            self._client = None
+            self._pool = None
+            self._owner_loop = None
         sync_client = self._sync_client
         sync_pool = self._sync_pool
-        self._client = None
-        self._pool = None
         self._sync_client = None
         self._sync_pool = None
 
@@ -109,8 +150,8 @@ class RedisCache:
 
     async def get_or_raise(self, key: str) -> Optional[Any]:
         """Get a value while keeping Redis failures distinct from cache misses."""
-        client = await self._get_client()
-        data = await client.get(key)
+        async with self._client_context() as client:
+            data = await client.get(key)
         if data is None:
             return None
         return self._decode(data)
@@ -137,8 +178,8 @@ class RedisCache:
         """Get values while keeping Redis failures distinct from missing keys."""
         if not keys:
             return {}
-        client = await self._get_client()
-        values = await client.mget(keys)
+        async with self._client_context() as client:
+            values = await client.mget(keys)
         return {
             key: self._decode(data)
             for key, data in zip(keys, values)
@@ -215,12 +256,12 @@ class RedisCache:
         expire: int | None = settings.REPO_CACHE_EXPIRED_TIME,
     ) -> bool:
         """Set a value without hiding Redis failures."""
-        client = await self._get_client()
-        payload = orjson.dumps(value)
-        if expire is None:
-            ok = await client.set(key, payload)
-        else:
-            ok = await client.set(key, payload, ex=expire)
+        async with self._client_context() as client:
+            payload = orjson.dumps(value)
+            if expire is None:
+                ok = await client.set(key, payload)
+            else:
+                ok = await client.set(key, payload, ex=expire)
         return bool(ok)
 
     async def setnx(
@@ -228,9 +269,9 @@ class RedisCache:
     ) -> bool:
         """Set value to cache only if key doesn't exist (SETNX operation)"""
         try:
-            client = await self._get_client()
-            payload = orjson.dumps(value)
-            ok = await client.set(key, payload, ex=expire, nx=True)
+            async with self._client_context() as client:
+                payload = orjson.dumps(value)
+                ok = await client.set(key, payload, ex=expire, nx=True)
             return bool(ok)
         except Exception as e:
             logger.error("Error setting cache key %s with SETNX: %s", key, e)
@@ -246,15 +287,15 @@ class RedisCache:
 
     async def delete_or_raise(self, key: str) -> bool:
         """Delete a key without hiding Redis failures."""
-        client = await self._get_client()
-        deleted = await client.delete(key)
+        async with self._client_context() as client:
+            deleted = await client.delete(key)
         return deleted > 0
 
     async def pop(self, key: str) -> Optional[Any]:
         """Atomically return and delete one cache value."""
         try:
-            client = await self._get_client()
-            data = await client.eval(ATOMIC_POP_SCRIPT, 1, key)
+            async with self._client_context() as client:
+                data = await client.eval(ATOMIC_POP_SCRIPT, 1, key)
             if data is None:
                 return None
             return self._decode(data)
@@ -269,8 +310,8 @@ class RedisCache:
     async def get_cache_size(self) -> int:
         """Get approximate number of keys in current DB"""
         try:
-            client = await self._get_client()
-            return await client.dbsize()
+            async with self._client_context() as client:
+                return await client.dbsize()
         except Exception as e:
             logger.error("Error getting cache size: %s", e)
             return 0
