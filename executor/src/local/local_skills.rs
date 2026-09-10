@@ -329,7 +329,7 @@ fn plugin_source_priority(provider: Option<&str>) -> i64 {
     }
 }
 
-fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
+pub(super) fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
     let mut metadata = HashMap::new();
     let content = match fs::read(path) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),

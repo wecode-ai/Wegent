@@ -98,6 +98,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "executor.codex_home",
     "executor.harnesses",
     "executor.health",
+    "executor.skills.manage",
     "executor.plugins",
     "executor.plugin_auth",
     "runtime.archives",
@@ -135,6 +136,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.harnesses.list",
     "executor.harnesses.prepare_launch",
     "executor.health",
+    "executor.skills.manage",
     "executor.plugins.initialize_bundled_marketplace",
     "executor.plugins.import_package",
     "executor.plugins.import_package.finalize",
@@ -581,6 +583,12 @@ impl AppIpcServer {
                 .map_err(|error| AppIpcError::new("bundled_plugins_initialize_failed", error))?;
             return serde_json::to_value(marketplace)
                 .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.skills.manage" {
+            return crate::local::skill_install::handle(params)
+                .await
+                .map_err(|error| AppIpcError::new("skill_operation_failed", error));
         }
 
         if method == "executor.plugins.import_package.preview" {

@@ -3054,6 +3054,9 @@ fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
         "config/value/write",
         "skills/list",
         "skills/config/write",
+        "mcpServerStatus/list",
+        "mcpServer/oauth/login",
+        "config/mcpServer/reload",
         "app/list",
     ] {
         assert!(

@@ -1,3 +1,4 @@
+import { CapabilityWorkspace } from './capabilities/CapabilityWorkspace'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
@@ -250,7 +251,18 @@ function selectPrimaryPublication(
   )
 }
 
-export function PluginsWorkspace({
+export function PluginsWorkspace(props: PluginsWorkspaceProps) {
+  return (
+    <CapabilityWorkspace
+      topBarLeftActions={props.topBarLeftActions}
+      showPluginDetail={Boolean(props.pluginReference)}
+    >
+      <PluginMarketplaceWorkspace {...props} topBarLeftActions={undefined} />
+    </CapabilityWorkspace>
+  )
+}
+
+function PluginMarketplaceWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
   cloudMarketplaceAvailable = true,

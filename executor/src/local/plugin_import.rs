@@ -1182,7 +1182,7 @@ fn read_plugin_archive(path: &Path) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|error| format!("Unable to read selected plugin ZIP: {error}"))
 }
 
-fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, String> {
+pub(super) fn extract_capability_archive(package: &[u8], destination: &Path) -> Result<(), String> {
     reject_duplicate_zip_paths(package)?;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package))
         .map_err(|error| format!("Plugin package is not a valid ZIP: {error}"))?;
@@ -1240,7 +1240,19 @@ fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, Stri
         expanded_size = expanded_size
             .checked_add(copied)
             .ok_or_else(|| "Plugin expanded size overflow".to_owned())?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            // Preserve executability without restoring privileged or world-writable bits.
+            fs::set_permissions(&output, fs::Permissions::from_mode(0o644 | (mode & 0o111)))
+                .map_err(|error| format!("Failed to set permissions for {normalized}: {error}"))?;
+        }
     }
+    Ok(())
+}
+
+fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, String> {
+    extract_capability_archive(package, destination)?;
     let manifest_bytes = fs::read(destination.join(".codex-plugin/plugin.json"))
         .map_err(|_| "Local plugin copy is missing .codex-plugin/plugin.json".to_owned())?;
     let manifest = serde_json::from_slice::<Value>(&manifest_bytes)
