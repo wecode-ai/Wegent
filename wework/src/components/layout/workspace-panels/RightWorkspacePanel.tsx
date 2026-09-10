@@ -56,7 +56,7 @@ import {
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import type { GitPatchAction } from '@/api/environment'
 import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
-import { isEditableShortcutTarget } from '@/lib/keybindings'
+import { shouldIgnoreWorkbenchShortcut } from '@/lib/keybindings'
 import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
@@ -633,7 +633,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     if (!visible) return
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
+      if (event.defaultPrevented || shouldIgnoreWorkbenchShortcut(event)) return
 
       const key = event.key.toLowerCase()
       const primaryPressed =
@@ -643,6 +643,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
       if (primaryPressed && !event.altKey && key === 't') {
         event.preventDefault()
+        event.stopPropagation()
         onSelectBrowser()
         return
       }
@@ -651,18 +652,21 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
       if (key === 'r' && canOpenReview) {
         event.preventDefault()
+        event.stopPropagation()
         onSelectReview()
       } else if (key === 's' && allowTemporaryChat) {
         event.preventDefault()
+        event.stopPropagation()
         onSelectChat()
       } else if (key === 'f' && canBrowseFiles) {
         event.preventDefault()
+        event.stopPropagation()
         onSelectFiles()
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [
     allowTemporaryChat,
     canBrowseFiles,

@@ -87,7 +87,7 @@ import {
   dispatchStepFontSizeShortcut,
   dispatchResetFontSizeShortcut,
   dispatchBuiltinShortcutCommand,
-  isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
   isBuiltinShortcutCommand,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -1014,8 +1014,9 @@ function AppShell() {
       if (!command) return
       const executable = isBuiltinShortcutCommand(command) || isDshCommandEnabled(command)
       if (!executable) return
-      if (isEditableShortcutTarget(event.target)) return
+      if (shouldIgnoreWorkbenchShortcut(event)) return
       event.preventDefault()
+      event.stopPropagation()
       executeShortcutCommand(command, 'keybinding')
     }
 
@@ -1033,14 +1034,15 @@ function AppShell() {
     }
 
     const unsubscribeExtensions = subscribeDshExtensions(applyKeybindings)
-    window.addEventListener('keydown', handleKeyDown)
+    // Run registered commands before ProseMirror suppresses native formatting keys.
+    window.addEventListener('keydown', handleKeyDown, true)
     window.addEventListener('mouseup', handleMouseUp)
     window.addEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     void loadKeybindings()
 
     return () => {
       disposed = true
-      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleKeyDown, true)
       window.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
       unsubscribeExtensions()
