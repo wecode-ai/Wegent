@@ -121,14 +121,6 @@ class IMInteractionService:
             message_context,
         )
         if pending_runtime_target is not None:
-            await im_session_service.bind_active_runtime_task(
-                db,
-                session=im_session,
-                runtime_task=self._merge_active_runtime_task_context(
-                    im_session.active_runtime_task,
-                    pending_runtime_target,
-                ),
-            )
             await port.execute_private_im_continue_task(
                 db=db,
                 user=user,
@@ -263,8 +255,10 @@ class IMInteractionService:
             is not None
         ):
             return None
-        return await im_session_service.pop_runtime_notification_reply_target(
-            session=im_session
+        return (
+            await im_session_service.consume_and_bind_runtime_notification_reply_target(
+                session=im_session
+            )
         )
 
     async def _clear_superseded_runtime_notification_target(

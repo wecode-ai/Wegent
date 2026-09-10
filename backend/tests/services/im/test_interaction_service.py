@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -356,6 +357,58 @@ async def test_dingtalk_notification_reply_switches_and_keeps_runtime_task(
         await im_session_service.pop_runtime_notification_reply_target(session=session)
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_dingtalk_notification_replies_use_notified_runtime_task(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = await _dingtalk_session(test_db, test_user)
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={"deviceId": "device-old", "localTaskId": "runtime-old"},
+    )
+    notification_target = {
+        "deviceId": "device-new",
+        "localTaskId": "runtime-new",
+    }
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=notification_target,
+    )
+    first_session = IMPrivateSession.from_dict(session.to_dict())
+    second_session = IMPrivateSession.from_dict(session.to_dict())
+    first_port = FakeInteractionPort()
+    second_port = FakeInteractionPort()
+    _stub_task_lists(monkeypatch)
+
+    handled = await asyncio.gather(
+        im_interaction_service.route_private_message(
+            db=test_db,
+            user=test_user,
+            im_session=first_session,
+            message_context=_context("第一条回复"),
+            port=first_port,
+        ),
+        im_interaction_service.route_private_message(
+            db=test_db,
+            user=test_user,
+            im_session=second_session,
+            message_context=_context("第二条回复"),
+            port=second_port,
+        ),
+    )
+
+    assert handled == [True, True]
+    assert first_session.active_runtime_task == notification_target
+    assert second_session.active_runtime_task == notification_target
+    assert first_port.continued_tasks == [(None, "第一条回复")]
+    assert second_port.continued_tasks == [(None, "第二条回复")]
+    assert first_port.continued_runtime_tasks == [None]
+    assert second_port.continued_runtime_tasks == [None]
 
 
 @pytest.mark.asyncio
