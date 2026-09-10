@@ -320,6 +320,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
     )
+    expect(source).toContain('await requireDirectory(appPath)')
+    expect(source).toContain('async function requireDirectory(path)')
+    expect(source).toContain('Required application directory is missing')
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
     expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
