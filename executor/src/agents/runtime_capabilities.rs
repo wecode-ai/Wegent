@@ -464,7 +464,7 @@ async fn deploy_request_skills(
     request: &ExecutionRequest,
     skills_dir: &Path,
 ) -> Result<(), String> {
-    let required_skills = required_skill_names(request);
+    let required_skills = hard_required_skill_names(request);
     let Some(primary_bot) = primary_bot(request) else {
         return required_skills
             .is_empty()
@@ -490,6 +490,7 @@ async fn deploy_request_skills(
 
     let api_base_url = request_api_base_url(request);
     let report = deploy_skills(&plan, &api_base_url).await?;
+    log_degraded_preload_skills(request, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
         return Err(required_skill_failure_message(&missing_required, &report));
@@ -498,7 +499,7 @@ async fn deploy_request_skills(
 }
 
 pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value, String> {
-    let required_skills = required_skill_names(&request);
+    let required_skills = hard_required_skill_names(&request);
     let Some(primary_bot) = primary_bot(&request) else {
         return required_skills
             .is_empty()
@@ -530,6 +531,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
 
     let api_base_url = request_api_base_url(&request);
     let report = deploy_skills(&plan, &api_base_url).await?;
+    log_degraded_preload_skills(&request, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
         return Err(required_skill_failure_message(&missing_required, &report));
@@ -547,21 +549,56 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
     }))
 }
 
-fn required_skill_names(request: &ExecutionRequest) -> Vec<String> {
+/// Names declared under `required_skills` only. Preloaded Skills are a
+/// performance optimization: when their download fails we degrade to
+/// on-demand loading instead of failing the whole turn.
+fn hard_required_skill_names(request: &ExecutionRequest) -> Vec<String> {
+    extra_skill_names(request, "required_skills")
+}
+
+fn extra_skill_names(request: &ExecutionRequest, key: &str) -> Vec<String> {
     let mut names = BTreeSet::new();
-    for key in ["required_skills", "preload_skills"] {
-        if let Some(values) = request.extra.get(key).and_then(Value::as_array) {
-            names.extend(
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned),
-            );
-        }
+    if let Some(values) = request.extra.get(key).and_then(Value::as_array) {
+        names.extend(
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+        );
     }
     names.into_iter().collect()
+}
+
+fn log_degraded_preload_skills(request: &ExecutionRequest, report: &SkillDeploymentReport) {
+    let preload_skills = extra_skill_names(request, "preload_skills");
+    let degraded: Vec<_> = preload_skills
+        .iter()
+        .filter(|skill| report.failed_skills.contains(skill))
+        .collect();
+    if degraded.is_empty() {
+        return;
+    }
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push((
+        "skills",
+        degraded
+            .iter()
+            .map(|skill| {
+                report
+                    .failed_skill_reasons
+                    .get(*skill)
+                    .map(|reason| format!("{} ({})", skill, safe_skill_deployment_reason(reason)))
+                    .unwrap_or_else(|| (*skill).clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    ));
+    log_executor_event(
+        "preload Skill deployment degraded to on-demand loading",
+        &fields,
+    );
 }
 
 fn missing_required_skills(

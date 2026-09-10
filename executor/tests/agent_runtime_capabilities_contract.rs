@@ -350,7 +350,10 @@ async fn claude_runtime_does_not_start_when_required_skill_download_fails() {
                     }
                 }),
             ),
-            ("preload_skills".to_owned(), json!(["abtest-file-analyzer"])),
+            (
+                "required_skills".to_owned(),
+                json!(["abtest-file-analyzer"]),
+            ),
         ]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
         ..ExecutionRequest::default()
@@ -365,6 +368,71 @@ async fn claude_runtime_does_not_start_when_required_skill_download_fails() {
         }
     );
     assert!(!log_path.exists());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn claude_runtime_degrades_to_on_demand_loading_when_preload_skill_download_fails() {
+    let _lock = env_lock().await;
+    let home = unique_dir("claude-preload-skill-failure-home");
+    let workspace_root = unique_dir("claude-preload-skill-failure-workspace");
+    let log_path = unique_dir("claude-preload-skill-failure-log").join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _ = read_http_request_headers(&mut stream).await;
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "7798".to_owned(),
+        subtask_id: "103".to_owned(),
+        prompt: json!("use preloaded skill"),
+        auth_token: Some("task-token".to_owned()),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode",
+            "skills": ["abtest-file-analyzer"]
+        }]),
+        extra: serde_json::Map::from_iter([
+            (
+                "skill_refs".to_owned(),
+                json!({
+                    "abtest-file-analyzer": {
+                        "skill_id": 237510,
+                        "namespace": "default"
+                    }
+                }),
+            ),
+            ("preload_skills".to_owned(), json!(["abtest-file-analyzer"])),
+        ]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "ok".to_owned()
+        }
+    );
+    assert!(log_path.exists());
+    assert!(!home.join(".claude/skills/abtest-file-analyzer").exists());
     server.await.unwrap();
 }
 
@@ -491,7 +559,7 @@ async fn claude_runtime_reports_missing_skill_md_without_exposing_token() {
                     }
                 }),
             ),
-            ("preload_skills".to_owned(), json!(["requested-skill"])),
+            ("required_skills".to_owned(), json!(["requested-skill"])),
         ]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
         ..ExecutionRequest::default()
