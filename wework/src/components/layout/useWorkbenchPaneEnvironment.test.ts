@@ -90,6 +90,62 @@ describe('resolveConversationSummaryIsGitRepository', () => {
     ).toBe(true)
   })
 
+  test('uses fresh environment inspection for the active Runtime worktree', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        activeWorkspacePath: '/workspace/worktrees/output-summary',
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: true,
+          workspacePath: '/workspace/worktrees/output-summary',
+        },
+        project: {
+          id: 8,
+          name: 'Repository',
+          tasks: [],
+          config: {
+            workspace: { source: 'local_path', localPath: '/workspace/repository' },
+          },
+        },
+        projectWorkspace: {
+          repoRootFingerprint: null,
+          repoUrl: null,
+          workspacePath: '/workspace/repository',
+        },
+      })
+    ).toBe(true)
+  })
+
+  test('ignores environment inspection for a different Runtime worktree', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        activeWorkspacePath: '/workspace/worktrees/active-task',
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: true,
+          workspacePath: '/workspace/worktrees/other-task',
+        },
+        project: {
+          id: 8,
+          name: 'Repository',
+          tasks: [],
+          config: {
+            workspace: { source: 'local_path', localPath: '/workspace/repository' },
+          },
+        },
+        projectWorkspace: {
+          repoRootFingerprint: null,
+          repoUrl: null,
+          workspacePath: '/workspace/repository',
+        },
+      })
+    ).toBe(false)
+  })
+
   test('recognizes local Git projects from repository metadata', () => {
     expect(
       resolveConversationSummaryIsGitRepository({

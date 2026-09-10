@@ -57,10 +57,12 @@ export interface WorkbenchPaneEnvironment {
 }
 
 export function resolveConversationSummaryIsGitRepository({
+  activeWorkspacePath,
   environmentInfo,
   project,
   projectWorkspace,
 }: {
+  activeWorkspacePath?: string | null
   environmentInfo: EnvironmentInfo
   project: ProjectWithTasks | null
   projectWorkspace: Pick<
@@ -80,6 +82,7 @@ export function resolveConversationSummaryIsGitRepository({
     ? normalizeRuntimeWorkspacePath(rawEnvironmentWorkspacePath)
     : ''
   const projectWorkspacePaths = [
+    activeWorkspacePath,
     project?.config?.workspace?.localPath,
     projectWorkspace?.workspacePath,
   ].flatMap(path => (path ? [normalizeRuntimeWorkspacePath(path)] : []))
@@ -222,6 +225,7 @@ export function useWorkbenchPaneEnvironment({
     return workspaces.length === 1 ? workspaces[0] : null
   }, [projectWork.selectedDeviceWorkspaceId, selectedWorkspaceProject, state.runtimeWork?.projects])
   const conversationSummaryIsGitRepository = resolveConversationSummaryIsGitRepository({
+    activeWorkspacePath: runtimeWorkspaceContext?.workspaceTarget?.path,
     environmentInfo,
     project: selectedWorkspaceProject ?? activeConversationProject,
     projectWorkspace: selectedProjectDeviceWorkspace,
