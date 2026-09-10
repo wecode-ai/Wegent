@@ -129,6 +129,12 @@ pub(crate) struct WorktreePruneBatch {
     pub errors: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorktreeSnapshotSource {
+    pub git_common_dir: PathBuf,
+    pub reference: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct WorktreeSettings {
@@ -222,6 +228,18 @@ pub(crate) struct WorktreeManager {
 }
 
 impl WorktreeManager {
+    pub fn snapshot_source_for(&self, workspace_path: &Path) -> Option<WorktreeSnapshotSource> {
+        let record = self
+            .load()
+            .records
+            .get(&normalized_path_key(workspace_path))?
+            .clone();
+        Some(WorktreeSnapshotSource {
+            git_common_dir: PathBuf::from(record.git_common_dir?),
+            reference: record.snapshot_ref?,
+        })
+    }
+
     pub fn source_path_for(&self, workspace_path: &str) -> Option<String> {
         let normalized_path = normalized_path_key(Path::new(workspace_path));
         self.load()
@@ -2766,6 +2784,21 @@ mod tests {
         let deleted = manager.delete(&path, true).unwrap();
         assert_eq!(deleted.state, "restorable");
         assert!(!path.exists());
+        assert_eq!(
+            manager.snapshot_source_for(&path),
+            Some(WorktreeSnapshotSource {
+                git_common_dir: PathBuf::from(
+                    deleted
+                        .git_common_dir
+                        .clone()
+                        .expect("snapshot must retain its Git common directory")
+                ),
+                reference: deleted
+                    .snapshot_ref
+                    .clone()
+                    .expect("snapshot must retain its reference"),
+            })
+        );
         assert!(
             !path.parent().unwrap().exists(),
             "deleting a worktree must remove its empty runtime container"
