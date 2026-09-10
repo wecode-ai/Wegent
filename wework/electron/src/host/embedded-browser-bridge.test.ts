@@ -38,6 +38,10 @@ describe('EmbeddedBrowserBridge', () => {
       address: expect.stringMatching(/^127\.0\.0\.1:\d+$/),
       token: expect.any(String),
     })
+    expect(bridge.environment()).toEqual({
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: `http://${identity.address}`,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
+    })
     expect((await stat(runtimePath)).mode & 0o777).toBe(0o600)
 
     const unauthorized = await fetch(`http://${identity.address}/browser`, {
