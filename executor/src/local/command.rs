@@ -31,6 +31,8 @@ pub trait DeviceCommandHandler: Send + Sync {
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandRequest {
+    #[serde(default)]
+    pub command_key: Option<String>,
     pub command: String,
     #[serde(default)]
     pub argv: Vec<String>,
@@ -79,6 +81,7 @@ impl CommandRequest {
             .unwrap_or_default();
 
         Self {
+            command_key: string_field(&value, "command_key"),
             command,
             argv,
             cwd,
@@ -158,6 +161,10 @@ impl DeviceCommandHandler for CommandHandler {
 impl CommandHandler {
     pub async fn execute(&self, request: CommandRequest) -> CommandResult {
         let started_at = Instant::now();
+        #[cfg(windows)]
+        if let Some(result) = execute_windows_builtin_command(&request) {
+            return result;
+        }
         if request.command.trim().is_empty() {
             return CommandResult::error(
                 "command is required".to_owned(),
@@ -230,6 +237,66 @@ impl CommandHandler {
             error: None,
         }
     }
+}
+
+pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(dirs::home_dir)
+}
+
+#[cfg(windows)]
+fn execute_windows_builtin_command(request: &CommandRequest) -> Option<CommandResult> {
+    match request.command_key.as_deref() {
+        Some("home_dir") => Some(CommandResult::ok(
+            configured_home_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| ".".to_owned()),
+        )),
+        Some("pwd") => Some(CommandResult::ok(
+            std::env::current_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|_| ".".to_owned()),
+        )),
+        Some("project_workspace_root") => Some(match project_workspace_root_path() {
+            Ok(path) => CommandResult::ok(path),
+            Err(error) => CommandResult::error(error, 0.0, false),
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn project_workspace_root_path() -> Result<String, String> {
+    if let Some(path) = non_empty_env_path("WEGENT_EXECUTOR_PROJECTS_DIR") {
+        return Ok(path.display().to_string());
+    }
+    if let Some(path) = non_empty_env_path("WECODE_HOME") {
+        return Ok(path
+            .join("wegent-executor")
+            .join("workspace")
+            .join("projects")
+            .display()
+            .to_string());
+    }
+    configured_home_dir()
+        .map(|home| {
+            home.join(".wecode")
+                .join("wegent-executor")
+                .join("workspace")
+                .join("projects")
+                .display()
+                .to_string()
+        })
+        .ok_or_else(|| "Home directory is not available".to_owned())
+}
+
+#[cfg(windows)]
+fn non_empty_env_path(key: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
 }
 
 pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String> {

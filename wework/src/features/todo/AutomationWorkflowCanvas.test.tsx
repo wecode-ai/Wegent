@@ -129,4 +129,33 @@ describe('AutomationWorkflowCanvas viewport', () => {
       { duration: 240 }
     )
   })
+
+  test('keeps the selected trigger visible when the editor panel opens', () => {
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={emptyDraft}
+        selectedNode={{ type: 'none' }}
+        rightPanelInset={0}
+      />
+    )
+
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={emptyDraft}
+        selectedNode={{ type: 'trigger' }}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).toHaveBeenCalledWith(
+      {
+        x: 394 - 230 * 0.99,
+        y: 400 - 270 * 0.99,
+        zoom: 0.99,
+      },
+      { duration: 240 }
+    )
+  })
 })

@@ -1362,6 +1362,7 @@ async fn app_ipc_resolves_configured_device_command() {
     assert_eq!(
         *seen_request.lock().unwrap(),
         Some(CommandRequest {
+            command_key: Some("ls_dirs".to_owned()),
             command: "ls -a -p".to_owned(),
             argv: vec!["ls".to_owned(), "-a".to_owned(), "-p".to_owned()],
             cwd: Some("/tmp/project".to_owned()),

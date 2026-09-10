@@ -60,7 +60,10 @@ export function createDesktopScenario({ resultDir }) {
           value: '/sites?app_type=smart_app&view=owned',
         })
         const modelSelector = `[data-testid="harness-app-model-${workbench.id}"]`
-        await control.command('waitFor', modelSelector, { enabled: true })
+        await control.command('waitFor', modelSelector, {
+          enabled: true,
+          text: MODEL_LABEL,
+        })
         await control.command('select', modelSelector, {
           by: 'label',
           value: MODEL_LABEL,

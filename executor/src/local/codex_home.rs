@@ -182,7 +182,8 @@ fn external_content_home_path() -> Result<PathBuf, String> {
                 .ok_or_else(|| "Native Codex home parent is unavailable".to_owned());
         }
     }
-    dirs::home_dir().ok_or_else(|| "Unable to resolve home directory".to_owned())
+    crate::local::command::configured_home_dir()
+        .ok_or_else(|| "Unable to resolve home directory".to_owned())
 }
 
 fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConfig, String> {
