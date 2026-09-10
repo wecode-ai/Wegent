@@ -12,7 +12,7 @@ import {
   Target,
   UserRound,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
@@ -67,6 +67,8 @@ export interface BoardCardDisplaySettings {
 }
 
 export type BoardCardProgressDisplay = 'compact' | 'focused'
+
+const MARK_READ_PREVIEW_DELAY_MS = 3000
 
 const priorityLabels: Record<CloudLoopItem['priority'], string> = {
   none: '普通',
@@ -302,6 +304,7 @@ interface CloudTodoBoardCardProps {
   onArchive: () => void
   previewPinned?: boolean
   onPreviewPinnedChange?: (pinned: boolean) => void
+  onMarkRead?: (item: CloudLoopItem) => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
   display: BoardCardDisplaySettings
   processingStatus: boolean
@@ -325,6 +328,7 @@ export function CloudTodoBoardCard({
   onArchive,
   previewPinned = false,
   onPreviewPinnedChange,
+  onMarkRead,
   onLoadRuntimeGoal,
   display,
   processingStatus,
@@ -339,6 +343,11 @@ export function CloudTodoBoardCard({
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
   const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<number | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const itemRef = useRef(item)
+  useEffect(() => {
+    itemRef.current = item
+  }, [item])
   const currentWorkflowNode = item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
   const needsExecutionConfiguration =
     processingStatus && itemNeedsExecutionConfiguration(item) && Boolean(onConfigureExecution)
@@ -376,6 +385,12 @@ export function CloudTodoBoardCard({
     disabled: item.can_edit === false || dragDisabled,
   })
   const { isOver, setNodeRef: setDropRef } = useDroppable({ id: `todo-card:${item.id}` })
+
+  useEffect(() => {
+    if (!previewOpen || !item.is_unread || !onMarkRead) return
+    const timer = window.setTimeout(() => onMarkRead(itemRef.current), MARK_READ_PREVIEW_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [item.is_unread, onMarkRead, previewOpen])
 
   const card = (
     <article
@@ -526,6 +541,7 @@ export function CloudTodoBoardCard({
       pinOnInteractionSelector="[data-hover-card-pin-region], [data-hover-card-pin-trigger]"
       pinned={previewPinned}
       onPinnedChange={onPreviewPinnedChange}
+      onOpenChange={setPreviewOpen}
       closeLabel={t('common.close', '关闭')}
       estimatedWidth={480}
       estimatedHeight={620}
