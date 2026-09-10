@@ -66,6 +66,31 @@ async fn active_thread_tracking_counts_each_thread_independently() {
 }
 
 #[tokio::test]
+async fn auth_mutation_is_rejected_while_a_turn_is_active() {
+    let client = CodexAppServerClient::new("codex-auth-mutation-active-test");
+    client.mark_thread_active("thread-1").await;
+    let mutation_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mutation_observer = std::sync::Arc::clone(&mutation_called);
+
+    let result = client
+        .mutate_auth_if_idle(move || {
+            mutation_observer.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+
+    assert_eq!(
+        result,
+        Err(CodexAuthMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0,
+        })
+    );
+    assert!(!mutation_called.load(std::sync::atomic::Ordering::SeqCst));
+    client.mark_thread_idle("thread-1", false).await;
+}
+
+#[tokio::test]
 async fn idle_thread_tracking_evicts_the_oldest_subscription_over_capacity() {
     let client = CodexAppServerClient::new("codex-idle-capacity-test");
 

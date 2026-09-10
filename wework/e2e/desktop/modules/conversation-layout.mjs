@@ -1,4 +1,5 @@
 import { sendPrompt } from './conversation-navigation.mjs'
+import { verifyConversationShortcuts } from './conversation-shortcuts.mjs'
 
 import { ensureTaskRowVisible, waitForScenarioRequestCount } from './memory-tool-flows.mjs'
 
@@ -261,6 +262,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     DEFAULT_STEP_TIMEOUT_MS,
     'Opening an existing conversation after app startup did not focus the composer'
   )
+  await verifyConversationShortcuts(control, composerSelector)
   await control.command(
     'hover',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="message-hover-region"]`

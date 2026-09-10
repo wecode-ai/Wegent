@@ -277,3 +277,22 @@ already received remain available after timeout or cancellation.
 The email plugin must also emit this protocol and relay Windows stderr. Updating
 only the host cannot recover output discarded by the plugin launcher. Diagnostics
 do not include accounts, passwords, command arguments, or raw exception text.
+
+## Grouping authentication sources
+
+Connectors may declare `displayName`, `description`, and `authorizationGroup`
+(with `id` and `displayName`). Within one plugin, connectors with the same group
+ID share one visible entry. The source picker invokes authentication using the
+original connector slug. Sources in a group must be independent alternatives:
+one connected source is sufficient to use the plugin.
+Grouping does not change account identity, credential storage, or device grants;
+existing connections do not need migration.
+
+Provide the existing `localAuth` commands alongside the `accountAuth` export
+adapter to offer a login button. An accountAuth-only connection never queries
+the cloud OAuth app catalog; the UI directs users to the original local login
+flow. Package parsing, local catalog conversion, and compact caches preserve
+group metadata.
+For local plugins, the package manifest owns connector declarations. A nonempty
+`plugin/read` connector list must not overwrite host extension fields from that
+manifest. An explicit empty manifest array also takes effect, removing connectors.

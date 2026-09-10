@@ -99,7 +99,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
-  isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
   keybindingFromKeyboardEvent,
   TOGGLE_PRIORITY_FILTER_COMMAND,
 } from '@/lib/keybindings'
@@ -3932,17 +3932,18 @@ export function DesktopSidebar({
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (
         event.defaultPrevented ||
-        isEditableShortcutTarget(event.target) ||
+        shouldIgnoreWorkbenchShortcut(event) ||
         !priorityFilterShortcut ||
         keybindingFromKeyboardEvent(event) !== priorityFilterShortcut
       )
         return
       event.preventDefault()
+      event.stopPropagation()
       togglePriorityFilter()
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [priorityFilterShortcut, togglePriorityFilter])
 
   useEffect(() => {

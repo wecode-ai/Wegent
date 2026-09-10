@@ -479,6 +479,9 @@ class WikiService:
                 succeeded=succeeded,
                 error_message=(summary.error_message if summary else "") or "",
                 head_commit=(summary.head_commit if summary else "") or "",
+                tracked_file_count=(
+                    summary.tracked_file_count if summary is not None else None
+                ),
             )
         except Exception as exc:
             wiki_db.rollback()

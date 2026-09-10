@@ -79,11 +79,13 @@ pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {
         Some("executor.plugin_auth.migrate") => 280,
         Some("executor.plugin_auth.run") => 200,
+        Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
         _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
     }
 }
@@ -3586,9 +3588,21 @@ mod tests {
     use tokio::time::Duration;
 
     use super::{
-        app_ipc_request_metadata, is_bulk_app_ipc_event, local_app_command, AppIpcServer,
-        BlockingSingleFlight,
+        app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
+        local_app_command, AppIpcServer, BlockingSingleFlight,
     };
+
+    #[test]
+    fn transcript_export_allows_large_snapshot_packaging() {
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.transcript.export")),
+            10 * 60
+        );
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
+            75
+        );
+    }
 
     #[test]
     fn app_ipc_request_metadata_includes_device_command_key() {

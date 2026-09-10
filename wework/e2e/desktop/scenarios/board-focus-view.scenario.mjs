@@ -179,6 +179,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         text: '专注视图',
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="cloud-todo-board-loading"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
 
       await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
       await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
@@ -344,6 +348,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
+      const [popupScrollMetrics] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${progressPopup} [data-testid="right-workspace-chat-scroll-area"]`
+        )
+      )
+      assert.equal(
+        popupScrollMetrics.scrollOrigin,
+        'bottom',
+        `The progress popup did not use bottom-origin scrolling: ${JSON.stringify(popupScrollMetrics)}`
+      )
+      assert.ok(
+        Math.abs(popupScrollMetrics.scrollTop) <= 2,
+        `The progress popup did not start at position zero: ${JSON.stringify(popupScrollMetrics)}`
+      )
       const popupText = await control.command('getText', progressPopup)
       assert.ok(popupText.includes("'正在验证运行中卡片'"))
       assert.ok(

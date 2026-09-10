@@ -45,7 +45,7 @@ export function localConnectorAuthStatusText(
       return t('workbench.plugins_local_browser_verifying', '正在验证本机登录状态…')
     }
     if (status?.status === 'waiting_browser') {
-      return t('workbench.plugins_local_browser_waiting', '请在浏览器中确认授权，完成后会自动继续')
+      return t('workbench.plugins_local_browser_waiting', '请完成弹出的授权流程，完成后会自动继续')
     }
     return status?.hint || t('workbench.plugins_local_browser_preparing', '正在准备本机授权工具…')
   }

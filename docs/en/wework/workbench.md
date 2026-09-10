@@ -109,6 +109,8 @@ The new-task page uses compact suggestion buttons to help choose a task directio
 
 Project selection, message input, quick phrases, and model selection share one composer surface. The composer shows a blue border while focused, and the simplified launcher preserves project, attachment, quick-phrase, and model controls.
 
+After startup, the active task composer receives focus when it becomes available. Returning to the window restores composer focus if no other control holds it. Configured `Command` / `Control` shortcuts remain available while the composer is focused; ordinary text, IME composition, and Option-only text input stay with the editor.
+
 ## Use the Popout Window composer
 
 When no task is running, the Wework Popout Window uses a compact composer with a fixed height. After the message exceeds three lines, the text scrolls inside the editor while attachment, model, and send controls remain visible.

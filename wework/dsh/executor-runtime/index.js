@@ -14,6 +14,7 @@ const BASE_PATH = '/wework/executor/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
 const MAX_EVENT_FRAME_BYTES = 16 * 1024 * 1024
 const SLOW_CONSUMER_TIMEOUT_MS = 30_000
+const TRANSCRIPT_EXPORT_TIMEOUT_MS = 10 * 60 * 1000
 
 export async function apply(ctx) {
   const client = ExecutorRuntimeClient.fromEnvironment()
@@ -84,14 +85,18 @@ export async function exportExecutorTranscript(client, turn, options = {}) {
   const summarized = options.summary
     ? { ...turn, payload: options.summary }
     : await readExecutorTurn(client, turn)
-  const exported = await client.request('runtime.tasks.transcript.export', {
-    transcriptId: turn.transcriptId,
-    taskId: turn.taskId,
-    baseSequence: options.baseSequence,
-    sequence: options.sequence,
-    snapshot: options.snapshot === true,
-    encryptionKey: options.encryptionKey,
-  })
+  const exported = await client.request(
+    'runtime.tasks.transcript.export',
+    {
+      transcriptId: turn.transcriptId,
+      taskId: turn.taskId,
+      baseSequence: options.baseSequence,
+      sequence: options.sequence,
+      snapshot: options.snapshot === true,
+      encryptionKey: options.encryptionKey,
+    },
+    TRANSCRIPT_EXPORT_TIMEOUT_MS
+  )
   return { ...turn, ...exported, summary: summarized.payload }
 }
 

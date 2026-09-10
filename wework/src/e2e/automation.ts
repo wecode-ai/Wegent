@@ -848,7 +848,7 @@ async function pressNativeDesktopControlKey(selector: string, key: string): Prom
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
   const received: KeyboardEvent[] = []
   const recordKey = (event: KeyboardEvent) => received.push(event)
-  document.addEventListener('keydown', recordKey, true)
+  window.addEventListener('keydown', recordKey, true)
   try {
     await invokeDesktopHost('e2e.pressKey', { windowLabel, key })
     await waitForDesktopControlTick()
@@ -860,7 +860,7 @@ async function pressNativeDesktopControlKey(selector: string, key: string): Prom
       )
     }
   } finally {
-    document.removeEventListener('keydown', recordKey, true)
+    window.removeEventListener('keydown', recordKey, true)
   }
   return document.activeElement?.getAttribute('data-testid') ?? ''
 }
