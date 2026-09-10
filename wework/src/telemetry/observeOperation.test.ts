@@ -46,4 +46,23 @@ describe('business operation observation', () => {
       stop()
     }
   })
+  test('preserves a resolved response when its telemetry classifier throws', async () => {
+    const response = { status: 'saved', privateData: 'not an event property' }
+    const results: OperationResult[] = []
+    const stop = subscribeOperationResults(result => results.push(result))
+    try {
+      await expect(
+        observeOperation(
+          'plugin.share',
+          async () => response,
+          () => {
+            throw new Error('private classification failure')
+          }
+        )
+      ).resolves.toBe(response)
+      expect(results).toEqual([{ key: 'plugin.share', outcome: 'failed', failureStage: 'confirm' }])
+    } finally {
+      stop()
+    }
+  })
 })

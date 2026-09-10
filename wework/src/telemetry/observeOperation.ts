@@ -14,7 +14,12 @@ export async function observeOperation<T>(
     attempt.fail('request')
     throw error
   }
-  if (succeeded(result)) attempt.succeed()
-  else attempt.fail('confirm')
+  try {
+    if (succeeded(result)) attempt.succeed()
+    else attempt.fail('confirm')
+  } catch {
+    // Classification is telemetry-only and must preserve the resolved business result.
+    attempt.fail('confirm')
+  }
   return result
 }
