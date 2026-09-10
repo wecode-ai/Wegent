@@ -112,7 +112,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     testId,
     initialAddress,
     collapseComposerWhenIdle,
-    initialScrollPosition,
+    scrollOrigin,
   }: {
     testId: string
     initialAddress?: {
@@ -121,7 +121,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       runtimeHandle?: { modelSelection?: { modelName?: string } }
     } | null
     collapseComposerWhenIdle?: boolean
-    initialScrollPosition?: 'restore' | 'latest'
+    scrollOrigin?: 'top' | 'bottom'
   }) => (
     <div
       data-testid={testId}
@@ -129,7 +129,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-task-id={initialAddress?.taskId}
       data-model-name={initialAddress?.runtimeHandle?.modelSelection?.modelName}
       data-collapse-composer={String(collapseComposerWhenIdle)}
-      data-initial-scroll-position={initialScrollPosition}
+      data-scroll-origin={scrollOrigin}
     >
       <div
         data-testid={testId.replace('popup-conversation', 'popup-scroll')}
@@ -1297,8 +1297,8 @@ describe('CloudTodoWorkspace', () => {
       'true'
     )
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
-      'data-initial-scroll-position',
-      'latest'
+      'data-scroll-origin',
+      'bottom'
     )
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-model-name',
