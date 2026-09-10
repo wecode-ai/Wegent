@@ -490,6 +490,7 @@ async fn deploy_request_skills(
     };
 
     let api_base_url = request_api_base_url(request);
+    ensure_required_skills_in_plan(request, &required_skills, &plan)?;
     let report = deploy_skills(&plan, &api_base_url).await?;
     log_degraded_preload_skills(request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
@@ -531,6 +532,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
     };
 
     let api_base_url = request_api_base_url(&request);
+    ensure_required_skills_in_plan(&request, &required_skills, &plan)?;
     let report = deploy_skills(&plan, &api_base_url).await?;
     log_degraded_preload_skills(&request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
@@ -632,6 +634,35 @@ fn missing_required_skills(
         .collect()
 }
 
+/// Rejects `required_skills` names the deployment plan never covers.
+///
+/// The plan is built from `bot.skills`, `skill_names` and `preload_skills`, so
+/// a required Skill outside those sets can never be downloaded. Reporting that
+/// disagreement explicitly keeps it distinct from a failed download, which
+/// otherwise surfaces with no reason at all.
+fn ensure_required_skills_in_plan(
+    request: &ExecutionRequest,
+    required_skills: &[String],
+    plan: &SkillDeploymentPlan,
+) -> Result<(), String> {
+    let outside_plan: Vec<String> = required_skills
+        .iter()
+        .filter(|skill| !plan.skills.contains(skill))
+        .cloned()
+        .collect();
+    if outside_plan.is_empty() {
+        return Ok(());
+    }
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push(("skills", outside_plan.join(", ")));
+    log_executor_event("required Skills are outside the deployment plan", &fields);
+    Err(format!(
+        "required Skills are outside the deployment plan: {} \
+         (required_skills must also be listed in bot.skills, skill_names or preload_skills)",
+        outside_plan.join(", ")
+    ))
+}
+
 fn required_skill_failure_message(
     missing_required: &[String],
     report: &SkillDeploymentReport,
@@ -643,7 +674,7 @@ fn required_skill_failure_message(
                 .failed_skill_reasons
                 .get(skill)
                 .map(|reason| format!("{skill} ({reason})"))
-                .unwrap_or_else(|| skill.clone())
+                .unwrap_or_else(|| format!("{skill} (deployed Skill is missing SKILL.md)"))
         })
         .collect::<Vec<_>>();
     format!("required Skill deployment failed: {}", details.join(", "))

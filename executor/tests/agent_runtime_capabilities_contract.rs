@@ -531,6 +531,77 @@ async fn claude_runtime_does_not_report_required_skill_as_degraded() {
 }
 
 #[tokio::test]
+async fn claude_runtime_rejects_required_skill_outside_the_deployment_plan() {
+    let _lock = env_lock().await;
+    let home = unique_dir("claude-required-outside-plan-home");
+    let workspace_root = unique_dir("claude-required-outside-plan-workspace");
+    let log_path = unique_dir("claude-required-outside-plan-log").join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let executor_log_dir = unique_dir("claude-required-outside-plan-executor-log");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _executor_log_dir = EnvGuard::set(
+        "WEGENT_EXECUTOR_LOG_DIR",
+        &executor_log_dir.display().to_string(),
+    );
+    let _file_log = EnvGuard::remove("WEGENT_EXECUTOR_DISABLE_FILE_LOG");
+    init_executor_logging(&DeviceConfig::default());
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "7802".to_owned(),
+        subtask_id: "105".to_owned(),
+        prompt: json!("use a required skill that is not part of the deployment plan"),
+        auth_token: Some("task-token".to_owned()),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode",
+            "skills": ["planned-skill"]
+        }]),
+        extra: serde_json::Map::from_iter([
+            (
+                "skill_refs".to_owned(),
+                json!({
+                    "planned-skill": {
+                        "skill_id": 237510,
+                        "namespace": "default"
+                    },
+                    "required-skill": {
+                        "skill_id": 237511,
+                        "namespace": "default"
+                    }
+                }),
+            ),
+            ("required_skills".to_owned(), json!(["required-skill"])),
+        ]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: concat!(
+                "required Skills are outside the deployment plan: required-skill ",
+                "(required_skills must also be listed in bot.skills, skill_names or preload_skills)"
+            )
+            .to_owned()
+        }
+    );
+    assert!(!log_path.exists());
+    let executor_log = fs::read_to_string(executor_log_dir.join("executor.log")).unwrap();
+    assert!(
+        executor_log.contains("required Skills are outside the deployment plan"),
+        "{executor_log}"
+    );
+}
+
+#[tokio::test]
 async fn claude_runtime_remaps_historical_skill_zip_root_to_skill_name() {
     let _lock = env_lock().await;
     let home = unique_dir("claude-historical-skill-root-home");
