@@ -430,6 +430,12 @@ impl RuntimeWorkRpcHandler {
         };
         let mut messages = transcript_messages;
         if let Some(link) = local_link.as_ref() {
+            merge_latest_completed_transcript_messages(
+                &mut messages,
+                link,
+                before_cursor.as_deref(),
+                after_cursor.as_deref(),
+            );
             attach_user_message_presentations_for_page(
                 &mut messages,
                 user_message_presentations(link),

@@ -379,15 +379,17 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
-            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/managed-components/**
+            !wework/test-results/desktop-e2e/**/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/*.zip
             !wework/test-results/desktop-e2e/**/harness-runtime/**
             !wework/test-results/desktop-e2e/**/node-runtime/**
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
       - name: Prepare desktop release assets
         shell: bash

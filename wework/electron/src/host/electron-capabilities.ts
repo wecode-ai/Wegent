@@ -56,6 +56,8 @@ import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { SecureValueStore } from './secure-value-store.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 import { RotatingLog } from '../runtime/rotating-log.js'
+import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
+import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
@@ -276,6 +278,7 @@ export function createElectronCapabilityRouter(
     retainedFiles: 2,
   })
   router.grant(WEWORK_APP_PRINCIPAL, coreGrantedCapabilities())
+  registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
   router.register('navigation.pendingSchemes', () => desktopServices.pendingSchemes.read())
   router.register('navigation.acknowledgeScheme', params => {
@@ -1036,7 +1039,11 @@ export function createWorkbenchCapabilityRouter(
       }),
     }
   })
-  router.grant(WEWORK_WORKBENCH_PRINCIPAL, WORKBENCH_ONLY_CAPABILITIES)
+  registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
+  router.grant(WEWORK_WORKBENCH_PRINCIPAL, [
+    ...WORKBENCH_ONLY_CAPABILITIES,
+    'deviceDiagnostics.microphone',
+  ])
   return router
 }
 

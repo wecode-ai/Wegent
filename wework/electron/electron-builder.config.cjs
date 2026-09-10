@@ -84,6 +84,11 @@ module.exports = {
     category: 'public.app-category.developer-tools',
     electronLanguages: ['en', 'zh_CN'],
     hardenedRuntime: true,
+    entitlements: path.resolve(__dirname, 'entitlements.mac.plist'),
+    entitlementsInherit: path.resolve(__dirname, 'entitlements.mac.plist'),
+    extendInfo: {
+      NSMicrophoneUsageDescription: `${identity.productName} uses the microphone to record audio when you use voice features.`,
+    },
     ...(useCustomMacosNotarization || packagePrebuiltMacosRelease || skipMacosNotarization
       ? { notarize: false }
       : {}),

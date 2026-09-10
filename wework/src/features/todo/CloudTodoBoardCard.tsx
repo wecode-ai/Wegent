@@ -661,14 +661,12 @@ function RuntimeTaskProgressSummary({
     void onLoadRuntimeGoal(taskAddress)
   }, [binding.runtimeGoalLoaded, onLoadRuntimeGoal, taskAddress])
   const activity = useRuntimeTaskActivity(activityAddress)
-  const liveMessage = useRuntimeTaskLatestAssistantMessage(taskAddress)
+  const liveMessage = useRuntimeTaskLatestAssistantMessage(activity.active ? taskAddress : null)
   const cachedFinalResponse = useRuntimeTaskFinalResponse(
-    item.status === 'in_review' ? taskAddress : null
+    item.status === 'in_review' && !activity.active ? taskAddress : null
   )
   const finalResponseText = binding.finalResponsePreview ?? cachedFinalResponse
-  const responseText = activity.active
-    ? liveMessage?.content?.trim() || null
-    : liveMessage?.content || finalResponseText
+  const responseText = activity.active ? liveMessage?.content?.trim() || null : finalResponseText
   const responsePreview = responseText ? latestResponseLine(responseText) : null
   const taskTitle = binding.task_title || binding.task_id
   const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)

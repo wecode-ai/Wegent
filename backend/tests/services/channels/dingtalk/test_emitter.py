@@ -4,11 +4,12 @@
 
 """Unit tests for compact DingTalk AI Card progress."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
-import dingtalk_stream
 import pytest
 
+from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk import emitter as emitter_module
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from shared.models import EventType, ExecutionEvent
@@ -43,6 +44,9 @@ class FakeRedis:
     def __init__(self, cache):
         self.cache = cache
 
+    def lock(self, key, **kwargs):
+        return self.cache.locks.setdefault(key, asyncio.Lock())
+
     async def append(self, key, value):
         self.cache.raw[key] = self.cache.raw.get(key, b"") + value
 
@@ -50,7 +54,7 @@ class FakeRedis:
         return True
 
     async def get(self, key):
-        return self.cache.raw.get(key)
+        return self.cache.raw.get(key) or self.cache.structured.get(key)
 
     async def set(self, key, value, nx=False, px=None):
         if nx and key in self.cache.raw:
@@ -73,6 +77,7 @@ class FakeRedis:
 class FakeCache:
     def __init__(self):
         self.raw: dict[str, bytes] = {}
+        self.locks: dict[str, asyncio.Lock] = {}
         self.structured: dict[str, object] = {}
 
     async def _get_client(self):
@@ -99,7 +104,7 @@ def card_factory(monkeypatch: pytest.MonkeyPatch):
         cards.append(card)
         return card
 
-    monkeypatch.setattr(dingtalk_stream, "AIMarkdownCardInstance", create_card)
+    monkeypatch.setattr(card_module, "DingTalkMarkdownCard", create_card)
     return cards
 
 
@@ -121,6 +126,7 @@ async def test_start_and_thinking_render_safe_compact_status(emitter, card_facto
             content="private chain of thought that must not leave Wework",
         )
     )
+    await emitter.flush()
 
     card = card_factory[0]
     assert "正在理解需求" in card.updates[0]
@@ -141,6 +147,7 @@ async def test_reasoning_summary_updates_live_compact_status(emitter, card_facto
                 data={"thinking_kind": "reasoning_summary"},
             )
         )
+        await emitter.flush()
 
     card = card_factory[0]
     assert "正在分析：正在检查" in card.updates[-2]
@@ -168,6 +175,7 @@ async def test_reconnected_card_projects_first_progress_event_without_throttling
             data={"thinking_kind": "reasoning_summary"},
         )
     )
+    await emitter.flush()
 
     assert card_factory[0].updates
     assert "正在检查跨 worker 状态" in card_factory[0].updates[-1]
@@ -181,7 +189,9 @@ async def test_dispatch_status_stays_in_progress_mode(emitter, card_factory):
         subtask_id=2,
         content="任务已发送到设备 device-1\n\n状态: 正在执行",
     )
+    await emitter.flush()
     await emitter.emit_thinking(task_id=1, subtask_id=2)
+    await emitter.flush()
 
     card = card_factory[0]
     assert "任务已发送到设备 device-1 状态: 正在执行" in card.updates[-2]
@@ -203,6 +213,7 @@ async def test_progress_window_is_bounded_and_omits_tool_payloads(
             tool_input={"path": "/secret/input"},
         )
     )
+    await emitter.flush()
     await emitter.emit(
         ExecutionEvent.create(
             EventType.TOOL_RESULT,
@@ -213,6 +224,7 @@ async def test_progress_window_is_bounded_and_omits_tool_payloads(
             data={"status": "completed"},
         )
     )
+    await emitter.flush()
     for index in range(3):
         await emitter.emit(
             ExecutionEvent.create(
@@ -230,6 +242,7 @@ async def test_progress_window_is_bounded_and_omits_tool_payloads(
                 },
             )
         )
+        await emitter.flush()
 
     rendered = card_factory[0].updates[-1]
     assert rendered.splitlines() == [
@@ -264,6 +277,7 @@ async def test_reasoning_block_is_generic_and_process_text_masks_secrets(
             },
         )
     )
+    await emitter.flush()
     await emitter.emit(
         ExecutionEvent.create(
             EventType.BLOCK_CREATED,
@@ -279,6 +293,7 @@ async def test_reasoning_block_is_generic_and_process_text_masks_secrets(
             },
         )
     )
+    await emitter.flush()
 
     all_updates = "".join(card_factory[0].updates)
     assert "raw private reasoning" not in all_updates
@@ -307,6 +322,7 @@ async def test_block_update_reuses_tool_name_without_exposing_output(
             },
         )
     )
+    await emitter.flush()
     await emitter.emit(
         ExecutionEvent.create(
             EventType.BLOCK_UPDATED,
@@ -321,6 +337,7 @@ async def test_block_update_reuses_tool_name_without_exposing_output(
             },
         )
     )
+    await emitter.flush()
 
     rendered = card_factory[0].updates[-1]
     assert "工具完成：Bash" in rendered
@@ -347,6 +364,7 @@ async def test_interactive_block_points_user_back_to_wework(emitter, card_factor
             },
         )
     )
+    await emitter.flush()
 
     rendered = card_factory[0].updates[-1]
     assert "等待你在 Wework 中确认" in rendered
@@ -376,7 +394,9 @@ async def test_answer_stream_and_terminal_result_replace_progress(
 ):
     await emitter.emit_start(task_id=1, subtask_id=2)
     await emitter.emit_thinking(task_id=1, subtask_id=2)
+    await emitter.flush()
     await emitter.emit_chunk(task_id=1, subtask_id=2, content="部分回答", offset=4)
+    await emitter.flush()
 
     card = card_factory[0]
     assert card.updates[-1] == "部分回答"
@@ -405,6 +425,7 @@ async def test_process_fallback_is_not_rendered_as_final_answer(emitter, card_fa
             data={"thinking_kind": "reasoning_summary"},
         )
     )
+    await emitter.flush()
 
     await emitter.emit_done(
         task_id=1,
@@ -458,6 +479,7 @@ async def test_structured_terminal_output_does_not_replace_streamed_answer(
 ):
     await emitter.emit_start(task_id=1, subtask_id=2)
     await emitter.emit_chunk(task_id=1, subtask_id=2, content="最终回答", offset=4)
+    await emitter.flush()
     await emitter.emit_done(
         task_id=1,
         subtask_id=2,
@@ -489,6 +511,7 @@ async def test_shared_progress_survives_worker_reconstruction_and_cleans_up(
             data={"status": "completed"},
         )
     )
+    await first.flush()
 
     second = StreamingResponseEmitter(
         object(),
@@ -513,8 +536,9 @@ async def test_shared_progress_survives_worker_reconstruction_and_cleans_up(
             },
         )
     )
+    await second.flush()
 
-    state_key = "channel:streaming_content:task-1:progress"
+    state_key = "channel:streaming_content:task-1:card-1:progress"
     assert cache.structured[state_key]["recent"] == [
         "工具完成：Read",
         "检查完成",
@@ -526,7 +550,7 @@ async def test_shared_progress_survives_worker_reconstruction_and_cleans_up(
         result={"value": "完成"},
     )
     assert state_key not in cache.structured
-    assert "channel:streaming_content:task-1" not in cache.raw
+    assert "channel:streaming_content:task-1:card-1" not in cache.raw
 
 
 @pytest.mark.asyncio
@@ -549,6 +573,7 @@ async def test_display_throttle_does_not_drop_shared_progress(
             data={"status": "completed"},
         )
     )
+    await emitter.flush()
 
-    state = cache.structured["channel:streaming_content:task-2:progress"]
+    state = cache.structured["channel:streaming_content:task-2:card-1:progress"]
     assert state["recent"] == ["工具完成：Read"]
