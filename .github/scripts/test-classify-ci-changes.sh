@@ -386,6 +386,15 @@ wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-13","name":"Cloud / sha
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/fixtures/dws-store/main.go"
+assert_desktop_case "Creator resources select desktop and cloud delivery" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-15","name":"Cloud / shard 15","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-marketplace-lifecycle","name":"Plugins / plugin-marketplace-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-marketplace-lifecycle"}]}' \
+  "sdk/plugin-creator/SKILL.md"
 for terminal_path in \
   wework/e2e/desktop/modules/terminal-compatibility-flows.mjs \
   backend/app/api/ws/terminal_namespace.py \

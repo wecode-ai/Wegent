@@ -593,6 +593,7 @@ class RealCloudEnvironment {
         runtime: 'codex',
         message,
         title,
+        additionalSkills: [{ name: 'wework-plugin-creator', namespace: 'codex', is_public: false }],
         modelId: CLOUD_PUBLIC_MODEL_NAME,
         modelType: 'public',
         modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
