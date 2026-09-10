@@ -9,14 +9,14 @@ import { loadTelemetryConfig, readTelemetryEnvFile, TelemetryConfigError } from 
 const VALID_HMAC_KEY = '0123456789abcdef0123456789abcdef'
 const VALID_FILE = [
   'WEWORK_INTERNAL_TELEMETRY_ENABLED=true',
-  'POSTHOG_HOST=https://telemetry.example.test',
-  'POSTHOG_PROJECT_KEY=file-project-key',
-  `IDENTITY_HMAC_KEY=${VALID_HMAC_KEY}`,
-  'RELEASE_CHANNEL=internal',
-  'BATCH_SIZE=12',
-  'FLUSH_INTERVAL_MS=3000',
-  'MAX_QUEUE_SIZE=200',
-  'REQUEST_TIMEOUT_MS=6000',
+  'WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST=https://telemetry.example.test',
+  'WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY=file-project-key',
+  `WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY=${VALID_HMAC_KEY}`,
+  'WEWORK_INTERNAL_TELEMETRY_RELEASE_CHANNEL=internal',
+  'WEWORK_INTERNAL_TELEMETRY_BATCH_SIZE=12',
+  'WEWORK_INTERNAL_TELEMETRY_FLUSH_INTERVAL_MS=3000',
+  'WEWORK_INTERNAL_TELEMETRY_MAX_QUEUE_SIZE=200',
+  'WEWORK_INTERNAL_TELEMETRY_REQUEST_TIMEOUT_MS=6000',
 ].join('\n')
 
 test('uses safe disabled defaults when the dedicated file is missing', async () => {
@@ -52,14 +52,14 @@ test('reads the dedicated env file without changing the supplied environment', a
 
     assert.deepEqual(await readTelemetryEnvFile({ environment }), {
       WEWORK_INTERNAL_TELEMETRY_ENABLED: 'true',
-      POSTHOG_HOST: 'https://telemetry.example.test',
-      POSTHOG_PROJECT_KEY: 'file-project-key',
-      IDENTITY_HMAC_KEY: VALID_HMAC_KEY,
-      RELEASE_CHANNEL: 'internal',
-      BATCH_SIZE: '12',
-      FLUSH_INTERVAL_MS: '3000',
-      MAX_QUEUE_SIZE: '200',
-      REQUEST_TIMEOUT_MS: '6000',
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'https://telemetry.example.test',
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: 'file-project-key',
+      WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY: VALID_HMAC_KEY,
+      WEWORK_INTERNAL_TELEMETRY_RELEASE_CHANNEL: 'internal',
+      WEWORK_INTERNAL_TELEMETRY_BATCH_SIZE: '12',
+      WEWORK_INTERNAL_TELEMETRY_FLUSH_INTERVAL_MS: '3000',
+      WEWORK_INTERNAL_TELEMETRY_MAX_QUEUE_SIZE: '200',
+      WEWORK_INTERNAL_TELEMETRY_REQUEST_TIMEOUT_MS: '6000',
     })
     assert.deepEqual(environment, { DSH_HOME: dshHome })
   })
@@ -72,10 +72,10 @@ test('prefers non-empty process environment values over the dedicated file', asy
     const config = await loadTelemetryConfig({
       environment: {
         DSH_HOME: dshHome,
-        POSTHOG_PROJECT_KEY: 'environment-project-key',
-        RELEASE_CHANNEL: 'canary',
-        BATCH_SIZE: '20',
-        MAX_QUEUE_SIZE: '',
+        WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: 'environment-project-key',
+        WEWORK_INTERNAL_TELEMETRY_RELEASE_CHANNEL: 'canary',
+        WEWORK_INTERNAL_TELEMETRY_BATCH_SIZE: '20',
+        WEWORK_INTERNAL_TELEMETRY_MAX_QUEUE_SIZE: '',
       },
     })
 
@@ -94,7 +94,7 @@ test('prefers non-empty process environment values over the dedicated file', asy
 
 test('reports a missing PostHog host without throwing to callers', async () => {
   const config = await loadTelemetryConfig({
-    environment: enabledEnvironment({ POSTHOG_HOST: '' }),
+    environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: '' }),
   })
 
   assert.deepEqual(config.public, publicConfig('missing_posthog_host'))
@@ -112,7 +112,7 @@ test('rejects disallowed PostHog URLs', async () => {
     'https://telemetry.example.test#',
   ]) {
     const config = await loadTelemetryConfig({
-      environment: enabledEnvironment({ POSTHOG_HOST: posthogHost }),
+      environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: posthogHost }),
     })
 
     assert.deepEqual(config.public, publicConfig('invalid_posthog_host'))
@@ -123,18 +123,18 @@ test('allows an http loopback host only in a test environment', async () => {
   const accepted = await loadTelemetryConfig({
     environment: enabledEnvironment({
       NODE_ENV: 'test',
-      POSTHOG_HOST: 'http://localhost:8000',
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'http://localhost:8000',
     }),
   })
   const rejected = await loadTelemetryConfig({
     environment: enabledEnvironment({
-      POSTHOG_HOST: 'http://localhost:8000',
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'http://localhost:8000',
     }),
   })
   const whitespacePadded = await loadTelemetryConfig({
     environment: enabledEnvironment({
       NODE_ENV: ' test ',
-      POSTHOG_HOST: 'http://localhost:8000',
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'http://localhost:8000',
     }),
   })
 
@@ -146,10 +146,10 @@ test('allows an http loopback host only in a test environment', async () => {
 
 test('rejects absent project keys and too-short HMAC keys', async () => {
   const missingProjectKey = await loadTelemetryConfig({
-    environment: enabledEnvironment({ POSTHOG_PROJECT_KEY: '' }),
+    environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: '' }),
   })
   const invalidHmacKey = await loadTelemetryConfig({
-    environment: enabledEnvironment({ IDENTITY_HMAC_KEY: 'too-short' }),
+    environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY: 'too-short' }),
   })
 
   assert.deepEqual(missingProjectKey.public, publicConfig('missing_posthog_project_key'))
@@ -158,10 +158,10 @@ test('rejects absent project keys and too-short HMAC keys', async () => {
 
 test('accepts every numeric lower and upper boundary', async () => {
   for (const [name, lower, upper] of [
-    ['BATCH_SIZE', 1, 20],
-    ['FLUSH_INTERVAL_MS', 1000, 60000],
-    ['MAX_QUEUE_SIZE', 20, 500],
-    ['REQUEST_TIMEOUT_MS', 1000, 30000],
+    ['WEWORK_INTERNAL_TELEMETRY_BATCH_SIZE', 1, 20],
+    ['WEWORK_INTERNAL_TELEMETRY_FLUSH_INTERVAL_MS', 1000, 60000],
+    ['WEWORK_INTERNAL_TELEMETRY_MAX_QUEUE_SIZE', 20, 500],
+    ['WEWORK_INTERNAL_TELEMETRY_REQUEST_TIMEOUT_MS', 1000, 30000],
   ]) {
     for (const value of [lower, upper]) {
       const config = await loadTelemetryConfig({
@@ -175,10 +175,10 @@ test('accepts every numeric lower and upper boundary', async () => {
 
 test('rejects numeric values outside every allowed boundary', async () => {
   for (const [name, below, above, error] of [
-    ['BATCH_SIZE', 0, 21, 'invalid_batch_size'],
-    ['FLUSH_INTERVAL_MS', 999, 60001, 'invalid_flush_interval_ms'],
-    ['MAX_QUEUE_SIZE', 19, 501, 'invalid_max_queue_size'],
-    ['REQUEST_TIMEOUT_MS', 999, 30001, 'invalid_request_timeout_ms'],
+    ['WEWORK_INTERNAL_TELEMETRY_BATCH_SIZE', 0, 21, 'invalid_batch_size'],
+    ['WEWORK_INTERNAL_TELEMETRY_FLUSH_INTERVAL_MS', 999, 60001, 'invalid_flush_interval_ms'],
+    ['WEWORK_INTERNAL_TELEMETRY_MAX_QUEUE_SIZE', 19, 501, 'invalid_max_queue_size'],
+    ['WEWORK_INTERNAL_TELEMETRY_REQUEST_TIMEOUT_MS', 999, 30001, 'invalid_request_timeout_ms'],
   ]) {
     for (const value of [below, above]) {
       const config = await loadTelemetryConfig({
@@ -192,7 +192,7 @@ test('rejects numeric values outside every allowed boundary', async () => {
 
 test('keeps numeric validation closed even while telemetry is disabled', async () => {
   const config = await loadTelemetryConfig({
-    environment: { BATCH_SIZE: 'invalid' },
+    environment: { WEWORK_INTERNAL_TELEMETRY_BATCH_SIZE: 'invalid' },
   })
 
   assert.deepEqual(config.public, publicConfig('invalid_batch_size', { enabled: false }))
@@ -221,15 +221,15 @@ test('never serializes PostHog or HMAC secrets in public config or error states'
   const hmacKey = 'hmac-key-that-must-not-leak-0123456789'
   const invalidConfig = await loadTelemetryConfig({
     environment: enabledEnvironment({
-      POSTHOG_HOST: 'http://telemetry.example.test',
-      POSTHOG_PROJECT_KEY: projectKey,
-      IDENTITY_HMAC_KEY: hmacKey,
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'http://telemetry.example.test',
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: projectKey,
+      WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY: hmacKey,
     }),
   })
   const validConfig = await loadTelemetryConfig({
     environment: enabledEnvironment({
-      POSTHOG_PROJECT_KEY: projectKey,
-      IDENTITY_HMAC_KEY: hmacKey,
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: projectKey,
+      WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY: hmacKey,
     }),
   })
 
@@ -250,9 +250,9 @@ test('never serializes PostHog or HMAC secrets in public config or error states'
 function enabledEnvironment(overrides = {}) {
   return {
     WEWORK_INTERNAL_TELEMETRY_ENABLED: 'true',
-    POSTHOG_HOST: 'https://telemetry.example.test',
-    POSTHOG_PROJECT_KEY: 'project-key',
-    IDENTITY_HMAC_KEY: VALID_HMAC_KEY,
+    WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'https://telemetry.example.test',
+    WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: 'project-key',
+    WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY: VALID_HMAC_KEY,
     ...overrides,
   }
 }

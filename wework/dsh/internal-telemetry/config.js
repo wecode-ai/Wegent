@@ -14,7 +14,7 @@ const DEFAULTS = Object.freeze({
 })
 const NUMERIC_CONFIG = Object.freeze([
   {
-    key: 'BATCH_SIZE',
+    key: 'WEWORK_INTERNAL_TELEMETRY_BATCH_SIZE',
     publicKey: 'batchSize',
     defaultValue: DEFAULTS.batchSize,
     minimum: 1,
@@ -22,7 +22,7 @@ const NUMERIC_CONFIG = Object.freeze([
     error: 'invalid_batch_size',
   },
   {
-    key: 'FLUSH_INTERVAL_MS',
+    key: 'WEWORK_INTERNAL_TELEMETRY_FLUSH_INTERVAL_MS',
     publicKey: 'flushIntervalMs',
     defaultValue: DEFAULTS.flushIntervalMs,
     minimum: 1000,
@@ -30,7 +30,7 @@ const NUMERIC_CONFIG = Object.freeze([
     error: 'invalid_flush_interval_ms',
   },
   {
-    key: 'MAX_QUEUE_SIZE',
+    key: 'WEWORK_INTERNAL_TELEMETRY_MAX_QUEUE_SIZE',
     publicKey: 'maxQueueSize',
     defaultValue: DEFAULTS.maxQueueSize,
     minimum: 20,
@@ -38,7 +38,7 @@ const NUMERIC_CONFIG = Object.freeze([
     error: 'invalid_max_queue_size',
   },
   {
-    key: 'REQUEST_TIMEOUT_MS',
+    key: 'WEWORK_INTERNAL_TELEMETRY_REQUEST_TIMEOUT_MS',
     publicKey: 'requestTimeoutMs',
     defaultValue: DEFAULTS.requestTimeoutMs,
     minimum: 1000,
@@ -114,10 +114,10 @@ function resolveConfigValues(environment, fileEnvironment) {
   const values = {}
   for (const key of [
     'WEWORK_INTERNAL_TELEMETRY_ENABLED',
-    'POSTHOG_HOST',
-    'POSTHOG_PROJECT_KEY',
-    'IDENTITY_HMAC_KEY',
-    'RELEASE_CHANNEL',
+    'WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST',
+    'WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY',
+    'WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY',
+    'WEWORK_INTERNAL_TELEMETRY_RELEASE_CHANNEL',
     ...NUMERIC_CONFIG.map(config => config.key),
   ]) {
     values[key] = firstNonEmptyString(environment[key], fileEnvironment[key])
@@ -137,7 +137,7 @@ function parsePublicValues(values) {
   const parsed = {
     ...DEFAULTS,
     enabled,
-    releaseChannel: values.RELEASE_CHANNEL ?? DEFAULTS.releaseChannel,
+    releaseChannel: values.WEWORK_INTERNAL_TELEMETRY_RELEASE_CHANNEL ?? DEFAULTS.releaseChannel,
   }
   for (const config of NUMERIC_CONFIG) {
     const value = parseBoundedInteger(values[config.key], config)
@@ -154,13 +154,16 @@ function parsePublicValues(values) {
 }
 
 function parsePrivateValues(values, environment) {
-  const posthogHost = parsePosthogHost(values.POSTHOG_HOST, environment.NODE_ENV === 'test')
+  const posthogHost = parsePosthogHost(
+    values.WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST,
+    environment.NODE_ENV === 'test'
+  )
   if (posthogHost.error) return posthogHost
 
-  const posthogProjectKey = nonEmptyString(values.POSTHOG_PROJECT_KEY)
+  const posthogProjectKey = nonEmptyString(values.WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY)
   if (!posthogProjectKey) return { error: 'missing_posthog_project_key' }
 
-  const identityHmacKey = nonEmptyString(values.IDENTITY_HMAC_KEY)
+  const identityHmacKey = nonEmptyString(values.WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY)
   if (!identityHmacKey || utf8ByteLength(identityHmacKey) < 32) {
     return { error: 'invalid_identity_hmac_key' }
   }
