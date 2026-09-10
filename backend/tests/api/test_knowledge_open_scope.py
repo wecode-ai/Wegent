@@ -183,7 +183,7 @@ def test_open_create_text_document_rejects_reporter_before_attachment_upload(
     assert upload_calls == []
 
 
-def test_open_search_folder_ids_zero_resolves_root_documents_only(
+def test_open_search_passes_raw_scope_to_orchestrator(
     test_client: TestClient,
     test_db: Session,
     test_user,
@@ -192,7 +192,7 @@ def test_open_search_folder_ids_zero_resolves_root_documents_only(
 ) -> None:
     kb_id = _create_kb(test_db, test_user.id)
     folder = _create_folder(test_db, kb_id, test_user.id, "folder")
-    root_doc = _create_document(test_db, kb_id, test_user.id, "root.md", folder_id=0)
+    _create_document(test_db, kb_id, test_user.id, "root.md", folder_id=0)
     _create_document(test_db, kb_id, test_user.id, "nested.md", folder_id=folder.id)
     captured: dict = {}
 
@@ -218,10 +218,12 @@ def test_open_search_folder_ids_zero_resolves_root_documents_only(
 
     assert response.status_code == 200
     assert response.json()["records"][0]["title"] == "root.md"
-    assert captured["document_ids"] == [root_doc.id]
+    assert captured["document_ids"] is None
+    assert captured["folder_ids"] == [0]
+    assert captured["include_subfolders"] is True
 
 
-def test_open_search_empty_folder_scope_does_not_call_rag(
+def test_open_search_passes_empty_scope_to_orchestrator(
     test_client: TestClient,
     test_db: Session,
     test_user,
@@ -231,12 +233,15 @@ def test_open_search_empty_folder_scope_does_not_call_rag(
     kb_id = _create_kb(test_db, test_user.id, "open-empty-folder-kb")
     empty_folder = _create_folder(test_db, kb_id, test_user.id, "empty")
 
-    async def fail_retrieve_knowledge(**kwargs):
-        raise AssertionError("RAG retrieval should not run for an empty scope")
+    captured: dict = {}
+
+    async def fake_retrieve_knowledge(**kwargs):
+        captured.update(kwargs)
+        return {"records": []}
 
     monkeypatch.setattr(
         "app.api.endpoints.knowledge_open.knowledge_orchestrator.retrieve_knowledge",
-        fail_retrieve_knowledge,
+        fake_retrieve_knowledge,
     )
 
     response = test_client.post(
@@ -251,6 +256,8 @@ def test_open_search_empty_folder_scope_does_not_call_rag(
 
     assert response.status_code == 200
     assert response.json() == {"records": []}
+    assert captured["folder_ids"] == [empty_folder.id]
+    assert captured["document_ids"] is None
 
 
 def test_open_search_rejects_empty_folder_ids(

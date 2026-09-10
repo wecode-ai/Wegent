@@ -537,7 +537,6 @@ async def create_document_open(
 async def search_documents_open(
     data: KnowledgeSearchRequest,
     auth_context: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
 ) -> RetrieveResponse:
     """Search document chunks in a knowledge base via RAG retrieval.
 
@@ -564,29 +563,14 @@ async def search_documents_open(
 
     current_user = auth_context.user
     try:
-        scope_specified = data.folder_ids is not None or data.document_ids is not None
-        resolved_document_ids = None
-        if scope_specified:
-            resolved_document_ids = (
-                KnowledgeFolderService.resolve_document_ids_for_scope(
-                    db=db,
-                    knowledge_base_id=data.knowledge_base_id,
-                    user_id=current_user.id,
-                    folder_ids=data.folder_ids,
-                    document_ids=data.document_ids,
-                    include_subfolders=data.include_subfolders,
-                )
-            )
-            if not resolved_document_ids:
-                return {"records": []}
-
         result = await knowledge_orchestrator.retrieve_knowledge(
-            db=db,
-            user=current_user,
+            user_id=current_user.id,
             knowledge_base_id=data.knowledge_base_id,
             query=data.query,
+            document_ids=data.document_ids,
+            folder_ids=data.folder_ids,
+            include_subfolders=data.include_subfolders,
             max_results=data.top_k,
-            document_ids=resolved_document_ids if scope_specified else None,
             route_mode=data.route_mode,
             context_window=data.context_window,
             used_context_tokens=data.used_context_tokens,
