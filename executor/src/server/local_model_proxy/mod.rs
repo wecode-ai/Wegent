@@ -313,6 +313,16 @@ pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> 
     register_with_vision_sidecar(route_scope, upstream, None)
 }
 
+#[cfg(test)]
+pub(crate) fn registered_upstream(token: &str) -> Option<LocalModelProxyUpstream> {
+    registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned")
+        .routes
+        .get(token)
+        .map(|registered| registered.upstream.clone())
+}
+
 pub(crate) fn register_with_vision_sidecar(
     route_scope: &str,
     mut upstream: LocalModelProxyUpstream,

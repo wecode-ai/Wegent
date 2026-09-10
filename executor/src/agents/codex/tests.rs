@@ -493,6 +493,50 @@ fn local_proxy_upstream_receives_gateway_forwarding_headers() {
 }
 
 #[test]
+fn runtime_local_task_id_stabilizes_local_proxy_attribution_route() {
+    let mut manual = ExecutionRequest {
+        task_id: "manual-execution".to_owned(),
+        task_source: "wework".to_owned(),
+        execution_device_type: "app".to_owned(),
+        model_config: json!({
+            "model_id": "gpt-test",
+            "base_url": "https://wegent.example.com/api/runtime-work/llm-responses-proxy",
+            "api_key": "test-key",
+            "api_format": "responses",
+        }),
+        ..ExecutionRequest::default()
+    };
+    manual.extra.insert(
+        "runtimeLocalTaskId".to_owned(),
+        json!("stable-attribution-thread"),
+    );
+    let mut scheduled = manual.clone();
+    scheduled.task_id = "scheduled-execution".to_owned();
+    scheduled.task_source = "unknown".to_owned();
+
+    let manual_config =
+        build_codex_launch_config(&manual).expect("manual launch config should be built");
+    let scheduled_config =
+        build_codex_launch_config(&scheduled).expect("scheduled launch config should be built");
+    let manual_token = &manual_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("manual route registration")
+        .0;
+    let scheduled_token = &scheduled_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("scheduled route registration")
+        .0;
+
+    assert_eq!(manual_token, scheduled_token);
+    assert!(local_model_proxy::registered_upstream(scheduled_token)
+        .expect("updated scheduled route")
+        .default_headers
+        .contains(&("wecode-task-source".to_owned(), "unknown".to_owned())));
+}
+
+#[test]
 fn vision_sidecar_does_not_inherit_primary_attribution_headers() {
     let request = ExecutionRequest {
         task_source: "wework".to_owned(),

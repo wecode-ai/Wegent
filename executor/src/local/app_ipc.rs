@@ -438,12 +438,12 @@ impl AppIpcServer {
 
     pub fn with_local_runtime_work_handler(mut self, codex_binary: impl Into<String>) -> Self {
         self.runtime_work_handler = Some(Arc::new(
-            RuntimeWorkRpcHandler::with_event_sender(
+            RuntimeWorkRpcHandler::with_event_sender_and_device_type(
                 self.device_id.clone(),
                 codex_binary.into(),
                 self.event_tx.clone(),
-            )
-            .with_execution_device_type("app"),
+                "app",
+            ),
         ));
         self
     }

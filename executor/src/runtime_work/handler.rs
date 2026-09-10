@@ -800,8 +800,18 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
+        Self::with_event_sender_and_device_type(device_id, codex_binary, event_tx, "unknown")
+    }
+
+    pub fn with_event_sender_and_device_type(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: broadcast::Sender<Value>,
+        execution_device_type: impl Into<String>,
+    ) -> Self {
         let handler = Self {
             event_tx: Some(event_tx),
+            execution_device_type: execution_device_type.into(),
             ..Self::new(device_id, codex_binary)
         };
         if let Some(sender) = handler.event_tx.clone() {
@@ -818,11 +828,6 @@ impl RuntimeWorkRpcHandler {
     ) -> Self {
         self.backend_connection = backend_connection;
         self.start_supervisor_scheduler();
-        self
-    }
-
-    pub fn with_execution_device_type(mut self, device_type: impl Into<String>) -> Self {
-        self.execution_device_type = device_type.into();
         self
     }
 

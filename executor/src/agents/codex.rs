@@ -26,7 +26,7 @@ use tokio::{
 use crate::{
     agents::{
         model_attribution, runtime_capabilities,
-        task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
+        task_identity::{task_identity_env, task_identity_id, TASK_SCOPED_ENV_KEYS},
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
@@ -3093,7 +3093,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             );
             configure_codex_router(
                 &mut launch_config,
-                &request.task_id,
+                task_identity_id(request),
                 attributed_upstream(upstream, request),
                 model.clone(),
                 request_model_switched(request),
@@ -3141,7 +3141,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         );
         configure_codex_router(
             &mut launch_config,
-            &request.task_id,
+            task_identity_id(request),
             attributed_upstream(upstream, request),
             model.clone(),
             request_model_switched(request),

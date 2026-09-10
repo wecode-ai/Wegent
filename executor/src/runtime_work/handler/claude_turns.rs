@@ -534,13 +534,14 @@ fn is_claude_goal_invocation(request: &ExecutionRequest) -> bool {
 }
 
 fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionRequest, Option<String>) {
-    let Some(upstream) = local_model_proxy::upstream_from_model_config(&request.model_config)
+    let Some(mut upstream) = local_model_proxy::upstream_from_model_config(&request.model_config)
     else {
         return (request, None);
     };
     let Some(loopback) = executor_loopback_base_url() else {
         return (request, None);
     };
+    upstream = attributed_claude_upstream(upstream, &request);
     let token = local_model_proxy::register_harness(
         &format!("claude-runtime:{}:{}", request.task_id, request.subtask_id),
         upstream,
@@ -558,6 +559,18 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
         Value::String(local_model_proxy::API_KEY.to_owned()),
     );
     (request, Some(token))
+}
+
+fn attributed_claude_upstream(
+    mut upstream: local_model_proxy::LocalModelProxyUpstream,
+    request: &ExecutionRequest,
+) -> local_model_proxy::LocalModelProxyUpstream {
+    upstream.default_headers = model_attribution::apply_authoritative_headers(
+        upstream.default_headers,
+        request,
+        "claudecode",
+    );
+    upstream
 }
 
 #[cfg(test)]
@@ -588,6 +601,36 @@ mod tests {
         let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
         handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
         (directory, handler)
+    }
+
+    #[test]
+    fn claude_model_proxy_forwards_authoritative_attribution_headers() {
+        let request = ExecutionRequest {
+            task_id: "claude-task".to_owned(),
+            subtask_id: "claude-turn".to_owned(),
+            task_source: "wework".to_owned(),
+            execution_device_type: "app".to_owned(),
+            model_config: json!({
+                "model_id": "claude-test",
+                "base_url": "https://wegent.example.com/api/runtime-work/llm-responses-proxy",
+                "api_key": "test-key",
+                "api_format": "responses",
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let upstream = local_model_proxy::upstream_from_model_config(&request.model_config)
+            .expect("Claude upstream");
+        let headers = attributed_claude_upstream(upstream, &request).default_headers;
+
+        for (key, value) in [
+            ("wecode-executor", "claudecode"),
+            ("wecode-source", "wegent-app"),
+            ("wecode-task-source", "wework"),
+            ("X-Wegent-Upstream-Header-wecode-task-source", "wework"),
+        ] {
+            assert!(headers.contains(&(key.to_owned(), value.to_owned())));
+        }
     }
 
     #[test]
