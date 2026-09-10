@@ -44,6 +44,8 @@ async function waitForStartupLogs(resultDir) {
 export async function createDesktopScenario({ resultDir }) {
   let restartDesktopApp
   return {
+    appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
+
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
@@ -82,12 +84,11 @@ export async function createDesktopScenario({ resultDir }) {
       await restartDesktopApp()
       await waitForClosedStartupSplash(control)
       await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]')
-      const composerSelector = '[data-testid="chat-message-input"][contenteditable="true"]'
-      await control.command('waitFor', composerSelector)
+      await control.command(
+        'waitFor',
+        '[data-testid="chat-message-input"][contenteditable="true"]:focus'
+      )
       const focusSnapshot = JSON.parse(await control.command('getComposerFocusSnapshot', 'body'))
-      assert.equal(focusSnapshot.activeElement?.testId, 'chat-message-input')
-      await control.command('focusMainWindow', 'body')
-      await control.command('waitFor', `${composerSelector}:focus`)
       await writeFile(
         join(resultDir, 'startup-composer-focus.json'),
         `${JSON.stringify(focusSnapshot, null, 2)}\n`
