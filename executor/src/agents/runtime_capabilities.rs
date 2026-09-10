@@ -35,8 +35,35 @@ use crate::{
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
-const DOWNLOAD_ATTEMPTS: usize = 3;
+const REQUIRED_SKILL_DOWNLOAD_POLICY: SkillDownloadPolicy = SkillDownloadPolicy {
+    timeout: DOWNLOAD_TIMEOUT,
+    attempts: 3,
+};
+/// Optional Skills keep the timeout that predates the required-Skill retries:
+/// their failure degrades to on-demand loading instead of ending the turn, so a
+/// stalled download must not hold the turn for the required budget.
+const OPTIONAL_SKILL_DOWNLOAD_POLICY: SkillDownloadPolicy = SkillDownloadPolicy {
+    timeout: Duration::from_secs(60),
+    attempts: 2,
+};
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
+
+/// Download budget for a single Skill archive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SkillDownloadPolicy {
+    timeout: Duration,
+    attempts: usize,
+}
+
+impl SkillDownloadPolicy {
+    fn for_skill(skill: &str, required_skills: &[String]) -> Self {
+        if required_skills.iter().any(|required| required == skill) {
+            REQUIRED_SKILL_DOWNLOAD_POLICY
+        } else {
+            OPTIONAL_SKILL_DOWNLOAD_POLICY
+        }
+    }
+}
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
     if request.extra.get("interactive_form_answer").is_some() {
@@ -491,7 +518,7 @@ async fn deploy_request_skills(
 
     let api_base_url = request_api_base_url(request);
     ensure_required_skills_in_plan(request, &required_skills, &plan)?;
-    let report = deploy_skills(&plan, &api_base_url).await?;
+    let report = deploy_skills(&plan, &api_base_url, &required_skills).await?;
     log_degraded_preload_skills(request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
@@ -533,7 +560,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
 
     let api_base_url = request_api_base_url(&request);
     ensure_required_skills_in_plan(&request, &required_skills, &plan)?;
-    let report = deploy_skills(&plan, &api_base_url).await?;
+    let report = deploy_skills(&plan, &api_base_url, &required_skills).await?;
     log_degraded_preload_skills(&request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
@@ -976,6 +1003,7 @@ fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
 async fn deploy_skills(
     plan: &SkillDeploymentPlan,
     api_base_url: &str,
+    required_skills: &[String],
 ) -> Result<SkillDeploymentReport, String> {
     fs::create_dir_all(&plan.skills_dir).map_err(|error| {
         format!(
@@ -991,6 +1019,7 @@ async fn deploy_skills(
             async move {
                 let target = plan.skills_dir.join(&skill);
                 let skill_ref = plan.resolved_skill_map.get(&skill);
+                let policy = SkillDownloadPolicy::for_skill(&skill, required_skills);
                 let cache_miss_reason =
                     match skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref) {
                         Ok(reason) => reason,
@@ -1036,7 +1065,7 @@ async fn deploy_skills(
                 if plan.clear_cache && target.exists() {
                     let _ = fs::remove_dir_all(&target);
                 }
-                match download_skill(client, plan, &skill, skill_ref, api_base_url).await {
+                match download_skill(client, plan, &skill, skill_ref, api_base_url, policy).await {
                     Ok(result) => result,
                     Err(error) => {
                         let reason = safe_skill_deployment_reason(&error);
@@ -1238,6 +1267,7 @@ async fn download_skill(
     skill_name: &str,
     skill_ref: Option<&SkillRef>,
     api_base_url: &str,
+    policy: SkillDownloadPolicy,
 ) -> Result<SkillDeploymentResult, String> {
     let Some((skill_id, namespace)) =
         resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
@@ -1260,6 +1290,7 @@ async fn download_skill(
         api_base_url,
         &path,
         local_hash.as_deref(),
+        policy,
     )
     .await?;
     match download {
@@ -1337,29 +1368,31 @@ enum SkillArchiveResponse {
 /// Download a skill archive with bounded retries for transient failures.
 ///
 /// Transient errors (timeouts, connection failures, aborted body reads) are
-/// retried up to [`DOWNLOAD_ATTEMPTS`] times; each retry is logged with a
-/// sanitized reason. Non-retryable errors fail immediately.
+/// retried up to [`SkillDownloadPolicy::attempts`] times, each within
+/// [`SkillDownloadPolicy::timeout`]; every retry is logged with a sanitized
+/// reason. Non-retryable errors fail immediately.
 async fn download_skill_archive_with_retry(
     client: &reqwest::Client,
     auth_token: &str,
     api_base_url: &str,
     path: &str,
     local_hash: Option<&str>,
+    policy: SkillDownloadPolicy,
 ) -> Result<SkillArchiveResponse, String> {
     let mut last_error = String::new();
-    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+    for attempt in 1..=policy.attempts {
         match get_skill_archive(
             client,
             auth_token,
             api_base_url,
             path,
             local_hash,
-            DOWNLOAD_TIMEOUT,
+            policy.timeout,
         )
         .await
         {
             Ok(response) => return Ok(response),
-            Err(error) if attempt < DOWNLOAD_ATTEMPTS => {
+            Err(error) if attempt < policy.attempts => {
                 if is_retryable_download_error(&error) {
                     log_executor_event(
                         "skill archive download retry",
@@ -2871,7 +2904,9 @@ mod tests {
             )]),
         };
 
-        deploy_skills(&plan, "http://127.0.0.1:1").await.unwrap();
+        deploy_skills(&plan, "http://127.0.0.1:1", &[])
+            .await
+            .unwrap();
 
         assert_eq!(
             fs::read_to_string(skill_dir.join("SKILL.md")).unwrap(),
@@ -2921,7 +2956,7 @@ mod tests {
             ]),
         };
 
-        deploy_skills(&plan, &api_base_url).await.unwrap();
+        deploy_skills(&plan, &api_base_url, &[]).await.unwrap();
 
         let manifest = read_skill_manifest(&skills_dir).unwrap();
         assert_eq!(manifest.len(), 2);

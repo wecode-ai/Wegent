@@ -29,6 +29,10 @@ use wegent_executor::{
     runner::{AgentEngine, EventSink, ExecutionOutcome},
 };
 
+/// Refused immediately, which makes the Skill download retry policy observable
+/// without waiting for a real timeout.
+const CLOSED_BACKEND_URL: &str = "http://127.0.0.1:1";
+
 #[derive(Clone, Default)]
 struct RecordingSink {
     events: Arc<StdMutex<Vec<EventEnvelope>>>,
@@ -598,6 +602,144 @@ async fn claude_runtime_rejects_required_skill_outside_the_deployment_plan() {
     assert!(
         executor_log.contains("required Skills are outside the deployment plan"),
         "{executor_log}"
+    );
+}
+
+#[tokio::test]
+async fn claude_runtime_bounds_optional_skill_download_retries() {
+    let _lock = env_lock().await;
+    let home = unique_dir("claude-optional-skill-retry-home");
+    let workspace_root = unique_dir("claude-optional-skill-retry-workspace");
+    let log_path = unique_dir("claude-optional-skill-retry-log").join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let executor_log_dir = unique_dir("claude-optional-skill-retry-executor-log");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", CLOSED_BACKEND_URL);
+    let _api = EnvGuard::set("TASK_API_DOMAIN", CLOSED_BACKEND_URL);
+    let _executor_log_dir = EnvGuard::set(
+        "WEGENT_EXECUTOR_LOG_DIR",
+        &executor_log_dir.display().to_string(),
+    );
+    let _file_log = EnvGuard::remove("WEGENT_EXECUTOR_DISABLE_FILE_LOG");
+    init_executor_logging(&DeviceConfig::default());
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "7803".to_owned(),
+        subtask_id: "106".to_owned(),
+        prompt: json!("use preloaded skill"),
+        auth_token: Some("task-token".to_owned()),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode",
+            "skills": ["abtest-file-analyzer"]
+        }]),
+        extra: serde_json::Map::from_iter([
+            (
+                "skill_refs".to_owned(),
+                json!({
+                    "abtest-file-analyzer": {
+                        "skill_id": 237510,
+                        "namespace": "default"
+                    }
+                }),
+            ),
+            ("preload_skills".to_owned(), json!(["abtest-file-analyzer"])),
+        ]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "ok".to_owned()
+        }
+    );
+    let executor_log = fs::read_to_string(executor_log_dir.join("executor.log")).unwrap();
+    assert_eq!(
+        executor_log.matches("skill archive download retry").count(),
+        1,
+        "optional Skills retry once before degrading: {executor_log}"
+    );
+    assert!(
+        executor_log.contains("preload Skill deployment degraded to on-demand loading"),
+        "{executor_log}"
+    );
+}
+
+#[tokio::test]
+async fn claude_runtime_keeps_full_retries_for_required_skill_downloads() {
+    let _lock = env_lock().await;
+    let home = unique_dir("claude-required-skill-retry-home");
+    let workspace_root = unique_dir("claude-required-skill-retry-workspace");
+    let log_path = unique_dir("claude-required-skill-retry-log").join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let executor_log_dir = unique_dir("claude-required-skill-retry-executor-log");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", CLOSED_BACKEND_URL);
+    let _api = EnvGuard::set("TASK_API_DOMAIN", CLOSED_BACKEND_URL);
+    let _executor_log_dir = EnvGuard::set(
+        "WEGENT_EXECUTOR_LOG_DIR",
+        &executor_log_dir.display().to_string(),
+    );
+    let _file_log = EnvGuard::remove("WEGENT_EXECUTOR_DISABLE_FILE_LOG");
+    init_executor_logging(&DeviceConfig::default());
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "7804".to_owned(),
+        subtask_id: "107".to_owned(),
+        prompt: json!("use required skill"),
+        auth_token: Some("task-token".to_owned()),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode",
+            "skills": ["abtest-file-analyzer"]
+        }]),
+        extra: serde_json::Map::from_iter([
+            (
+                "skill_refs".to_owned(),
+                json!({
+                    "abtest-file-analyzer": {
+                        "skill_id": 237510,
+                        "namespace": "default"
+                    }
+                }),
+            ),
+            (
+                "required_skills".to_owned(),
+                json!(["abtest-file-analyzer"]),
+            ),
+        ]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "required Skill deployment failed: abtest-file-analyzer (backend download connection failed)".to_owned()
+        }
+    );
+    assert!(!log_path.exists());
+    let executor_log = fs::read_to_string(executor_log_dir.join("executor.log")).unwrap();
+    assert_eq!(
+        executor_log.matches("skill archive download retry").count(),
+        2,
+        "required Skills keep the full retry policy: {executor_log}"
     );
 }
 
