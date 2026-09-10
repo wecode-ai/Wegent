@@ -10,6 +10,7 @@ import {
   extractSingleRootZipFixture,
   extractZipFixture,
 } from '../modules/zip-fixtures.mjs'
+import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifySmartAppMarketplaceIdentity } from '../modules/smart-app-marketplace-identity.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
@@ -486,6 +487,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const marketplaceRequest = await control.awaitTelemetryEvent('smart_app_marketplace_opened')
+      const marketplaceEvent = telemetryEvents(marketplaceRequest.payload).find(
+        event => event.event === 'smart_app_marketplace_opened'
+      )
+      assert.equal(marketplaceEvent?.properties.domain, 'smart_app')
       await control.command('waitFor', '[data-testid="sidebar-worklists-scroll"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -539,6 +545,13 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const installRequest = await control.awaitTelemetryEvent('smart_app_install_succeeded')
+      const installEvent = telemetryEvents(installRequest.payload).find(
+        event => event.event === 'smart_app_install_succeeded'
+      )
+      assert.ok(installEvent, 'Smart App install telemetry event was missing')
+      assert.equal(installEvent?.properties.domain, 'smart_app')
+      assert.equal('smart_app_name' in installEvent.properties, false)
       await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
         timeoutMs: uiTimeoutMs,
       })

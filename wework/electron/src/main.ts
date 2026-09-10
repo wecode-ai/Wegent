@@ -122,9 +122,11 @@ import { resolveDevelopmentDockIdentity } from './host/development-dock-identity
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
-  createWeworkSyncRequestSignal,
+  createWeworkSyncDownloadTimeout,
+  createWeworkSyncFetchInit,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
+  readWeworkSyncResponse,
 } from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -1430,25 +1432,26 @@ async function configureDesktopRuntime(): Promise<void> {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
             const path = normalizeWeworkSyncPath(request.path)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
-            const response = await fetch(`${apiBaseUrl}${path}`, {
-              method: request.method,
-              signal: createWeworkSyncRequestSignal(),
-              headers: {
-                authorization: `${credential.tokenType} ${credential.accessToken}`,
-                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
-              },
-              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-            })
-            const text = await response.text()
-            let body: unknown = null
-            if (text) {
-              try {
-                body = JSON.parse(text)
-              } catch {
-                body = text
-              }
+            const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
+            try {
+              const response = await fetch(
+                `${apiBaseUrl}${path}`,
+                await createWeworkSyncFetchInit(
+                  request,
+                  `${credential.tokenType} ${credential.accessToken}`,
+                  downloadTimeout?.signal
+                )
+              )
+              const body = await readWeworkSyncResponse(
+                response,
+                request.downloadPath,
+                request.downloadSizeBytes,
+                downloadTimeout?.refresh
+              )
+              return { status: response.status, body }
+            } finally {
+              downloadTimeout?.clear()
             }
-            return { status: response.status, body }
           },
         },
         {
