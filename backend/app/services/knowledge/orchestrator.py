@@ -2980,11 +2980,13 @@ class KnowledgeOrchestrator:
         self,
         *,
         user_id: int,
-        user_name: str | None,
         knowledge_base_id: int,
         query: str,
+        task_id: int | None = None,
         max_results: int = 10,
         document_ids: Optional[List[int]] = None,
+        folder_ids: Optional[List[int]] = None,
+        include_subfolders: bool = True,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
         context_window: int = 128000,
         used_context_tokens: int = 0,
@@ -3000,11 +3002,13 @@ class KnowledgeOrchestrator:
 
         Args:
             user_id: Current user ID for access control.
-            user_name: Current user name for runtime headers.
             knowledge_base_id: Target knowledge base ID.
             query: Search query text.
+            task_id: Optional task context for resolving delegated read access.
             max_results: Maximum number of results to return (default: 10, max: 50).
             document_ids: Optional list of document IDs to restrict search scope.
+            folder_ids: Optional list of folder IDs to restrict search scope.
+            include_subfolders: Whether folder scope includes descendants.
             route_mode: Routing strategy:
                 - "auto": Let Backend decide based on token budget (default).
                 - "direct_injection": Fetch all chunks for direct context injection.
@@ -3028,13 +3032,20 @@ class KnowledgeOrchestrator:
         """
         from app.services.knowledge.search_execution import knowledge_search_runner
 
+        if max_results < 1:
+            max_results = 10
+        if max_results > 50:
+            max_results = 50
+
         return await knowledge_search_runner.retrieve(
             user_id=user_id,
-            user_name=user_name,
+            task_id=task_id,
             knowledge_base_id=knowledge_base_id,
             query=query,
-            max_results=min(max(max_results, 1), 50),
+            max_results=max_results,
             document_ids=document_ids,
+            folder_ids=folder_ids,
+            include_subfolders=include_subfolders,
             route_mode=route_mode,
             context_window=context_window,
             used_context_tokens=used_context_tokens,

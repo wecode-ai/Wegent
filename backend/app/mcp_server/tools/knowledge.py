@@ -25,15 +25,10 @@ from typing import Any, Dict, Optional
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.core.async_utils import run_in_threadpool_with_cleanup
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
-from app.services.chat.task_default_knowledge_bases import (
-    resolve_task_default_knowledge_base_read_user_id,
-)
-from app.services.knowledge import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
@@ -57,59 +52,13 @@ def _get_read_user_for_knowledge_base(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
 ) -> Optional[User]:
-    """Resolve direct user access or task-scoped agent default read access."""
-    user = _get_user_from_token(db, token_info)
-    if user is None:
-        return None
-    if KnowledgeService.can_directly_access_knowledge_base(
+    """Resolve the effective reader for a knowledge base."""
+    return KnowledgeService.resolve_read_user_for_knowledge_base(
         db,
-        knowledge_base_id,
-        user.id,
-    ):
-        return user
-
-    access_user_id = resolve_task_default_knowledge_base_read_user_id(
-        db,
-        token_info.task_id,
-        user.id,
-        knowledge_base_id,
+        user_id=token_info.user_id,
+        task_id=token_info.task_id,
+        knowledge_base_id=knowledge_base_id,
     )
-    if access_user_id is None:
-        return user
-    return (
-        db.query(User)
-        .filter(User.id == access_user_id, User.is_active.is_(True))
-        .first()
-    )
-
-
-def _resolve_read_user_identity(
-    token_info: TaskTokenInfo, knowledge_base_id: int
-) -> tuple[int, str | None] | None:
-    """Resolve an effective reader while owning its Session in this worker."""
-    with SessionLocal() as db:
-        user = _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
-        return (user.id, user.user_name) if user else None
-
-
-def _resolve_document_scope(
-    *,
-    knowledge_base_id: int,
-    user_id: int,
-    folder_ids: list[int] | None,
-    document_ids: list[int] | None,
-    include_subfolders: bool,
-) -> list[int]:
-    """Resolve a document scope while owning its Session in this worker."""
-    with SessionLocal() as db:
-        return KnowledgeFolderService.resolve_document_ids_for_scope(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=user_id,
-            folder_ids=folder_ids,
-            document_ids=document_ids,
-            include_subfolders=include_subfolders,
-        )
 
 
 @mcp_tool(
@@ -176,47 +125,16 @@ async def search_knowledge_base(
             }
 
     try:
-        identity = await run_in_threadpool_with_cleanup(
-            _resolve_read_user_identity, token_info, knowledge_base_id
-        )
-        if identity is None:
-            return {
-                "error": "User not found",
-                "query": query,
-                "chunks": [],
-                "sources": [],
-                "total": 0,
-            }
-
-        user_id, user_name = identity
-        scope_specified = folder_ids is not None or document_ids is not None
-        resolved_document_ids = document_ids
-        if scope_specified:
-            resolved_document_ids = await run_in_threadpool_with_cleanup(
-                _resolve_document_scope,
-                knowledge_base_id=knowledge_base_id,
-                user_id=user_id,
-                folder_ids=folder_ids,
-                document_ids=document_ids,
-                include_subfolders=include_subfolders,
-            )
-            if not resolved_document_ids:
-                return {
-                    "query": query,
-                    "chunks": [],
-                    "sources": [],
-                    "total": 0,
-                    "mode": "rag_retrieval",
-                }
-
         result = await knowledge_orchestrator.retrieve_knowledge(
-            user_id=user_id,
-            user_name=user_name,
+            user_id=token_info.user_id,
+            task_id=token_info.task_id,
             knowledge_base_id=knowledge_base_id,
             query=query,
             search_hints=search_hints,
             max_results=max_results,
-            document_ids=resolved_document_ids if scope_specified else None,
+            document_ids=document_ids,
+            folder_ids=folder_ids,
+            include_subfolders=include_subfolders,
             route_mode="rag_retrieval",
         )
 

@@ -491,6 +491,43 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def resolve_read_user_for_knowledge_base(
+        db: Session,
+        *,
+        user_id: int,
+        task_id: int | None,
+        knowledge_base_id: int,
+    ) -> User | None:
+        """Resolve the user whose permissions and runtime identity apply."""
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            return None
+        if task_id is None or KnowledgeService.can_directly_access_knowledge_base(
+            db,
+            knowledge_base_id,
+            user.id,
+        ):
+            return user
+
+        from app.services.chat.task_default_knowledge_bases import (
+            resolve_task_default_knowledge_base_read_user_id,
+        )
+
+        access_user_id = resolve_task_default_knowledge_base_read_user_id(
+            db,
+            task_id,
+            user.id,
+            knowledge_base_id,
+        )
+        if access_user_id is None:
+            return user
+        return (
+            db.query(User)
+            .filter(User.id == access_user_id, User.is_active.is_(True))
+            .first()
+        )
+
+    @staticmethod
     def list_knowledge_bases(
         db: Session,
         user_id: int,

@@ -29,6 +29,54 @@ from app.services.knowledge.knowledge_service import (
 
 
 @pytest.mark.unit
+class TestKnowledgeServiceReadUserResolution:
+    def test_direct_read_uses_requester_without_task_lookup(self):
+        db = MagicMock()
+        requester = SimpleNamespace(id=7)
+        db.query.return_value.filter.return_value.first.return_value = requester
+
+        with patch.object(
+            KnowledgeService, "can_directly_access_knowledge_base"
+        ) as can_access:
+            result = KnowledgeService.resolve_read_user_for_knowledge_base(
+                db,
+                user_id=7,
+                task_id=None,
+                knowledge_base_id=11,
+            )
+
+        assert result is requester
+        can_access.assert_not_called()
+
+    def test_task_read_uses_active_default_knowledge_base_owner(self):
+        db = MagicMock()
+        requester = SimpleNamespace(id=7)
+        owner = SimpleNamespace(id=23)
+        db.query.return_value.filter.return_value.first.side_effect = [requester, owner]
+
+        with (
+            patch.object(
+                KnowledgeService,
+                "can_directly_access_knowledge_base",
+                return_value=False,
+            ),
+            patch(
+                "app.services.chat.task_default_knowledge_bases.resolve_task_default_knowledge_base_read_user_id",
+                return_value=23,
+            ) as resolve_owner,
+        ):
+            result = KnowledgeService.resolve_read_user_for_knowledge_base(
+                db,
+                user_id=7,
+                task_id=101,
+                knowledge_base_id=11,
+            )
+
+        assert result is owner
+        resolve_owner.assert_called_once_with(db, 101, 7, 11)
+
+
+@pytest.mark.unit
 class TestKnowledgeServiceCreateKnowledgeBase:
     def test_create_knowledge_base_persists_retrieval_config_as_dict(
         self, test_db, test_user

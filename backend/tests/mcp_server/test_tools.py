@@ -194,7 +194,11 @@ class TestKnowledgeTool:
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=user),
+            patch.object(
+                module.KnowledgeService,
+                "resolve_read_user_for_knowledge_base",
+                return_value=user,
+            ),
             patch.object(
                 module.knowledge_orchestrator, "list_documents", return_value=response
             ) as mock_list,
@@ -244,7 +248,11 @@ class TestKnowledgeTool:
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=user),
+            patch.object(
+                module.KnowledgeService,
+                "resolve_read_user_for_knowledge_base",
+                return_value=user,
+            ),
             patch.object(
                 module.knowledge_orchestrator, "list_documents", return_value=response
             ) as mock_list,
@@ -269,7 +277,11 @@ class TestKnowledgeTool:
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=user),
+            patch.object(
+                module.KnowledgeService,
+                "resolve_read_user_for_knowledge_base",
+                return_value=user,
+            ),
             patch.object(
                 module.knowledge_orchestrator,
                 "list_documents",
@@ -290,8 +302,8 @@ class TestKnowledgeTool:
         mock_session.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_resolves_folder_scope(self):
-        """search_knowledge_base should resolve folder scope without breaking document_ids."""
+    async def test_search_knowledge_base_passes_raw_scope(self):
+        """search_knowledge_base should delegate raw scope to the orchestrator."""
         module = get_knowledge_module()
         token_info = TaskTokenInfo(
             task_id=1, subtask_id=2, user_id=3, user_name="alice"
@@ -306,14 +318,6 @@ class TestKnowledgeTool:
             }
 
         with (
-            patch.object(
-                module, "_resolve_read_user_identity", return_value=(3, "alice")
-            ),
-            patch.object(
-                module,
-                "_resolve_document_scope",
-                return_value=[11, 12],
-            ) as mock_resolve,
             patch.object(
                 module.knowledge_orchestrator,
                 "retrieve_knowledge",
@@ -330,15 +334,12 @@ class TestKnowledgeTool:
                 include_subfolders=False,
             )
 
-        mock_resolve.assert_called_once_with(
-            knowledge_base_id=7,
-            user_id=3,
-            folder_ids=[5],
-            document_ids=[11],
-            include_subfolders=False,
-        )
         mock_retrieve.assert_called_once()
-        assert mock_retrieve.call_args.kwargs["document_ids"] == [11, 12]
+        assert mock_retrieve.call_args.kwargs["user_id"] == 3
+        assert mock_retrieve.call_args.kwargs["task_id"] == 1
+        assert mock_retrieve.call_args.kwargs["document_ids"] == [11]
+        assert mock_retrieve.call_args.kwargs["folder_ids"] == [5]
+        assert mock_retrieve.call_args.kwargs["include_subfolders"] is False
         assert result["query"] == "policy"
 
     def test_read_document_content_returns_orchestrator_payload(self):
