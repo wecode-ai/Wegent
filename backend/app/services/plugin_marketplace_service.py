@@ -877,7 +877,8 @@ class PluginMarketplaceService:
                 detail="Official plugin version must not be older than latest",
             )
         plugin.visibility = visibility
-        plugin.featured_rank = featured_rank or 0
+        if featured_rank is not None:
+            plugin.featured_rank = featured_rank
         try:
             result = self._publish_release(
                 db,
@@ -1310,7 +1311,7 @@ class PluginMarketplaceService:
                         pending_access=pending_access,
                     )
             else:
-                if plugin.status != "published":
+                if plugin.status not in {"published", "unpublished"}:
                     plugin.status = "pending_review"
                     if requested_visibility in {"workspace", "public"}:
                         plugin.visibility = requested_visibility
@@ -1422,14 +1423,27 @@ class PluginMarketplaceService:
                 )
                 .first()
             )
-            plugin.status = "published" if has_published else "draft"
+            if plugin.status != "unpublished":
+                plugin.status = "published" if has_published else "draft"
         db.commit()
         db.refresh(submission)
         if approved:
             self._notify_release_available(db, submission.release_id)
         return self._submission_item(submission)
 
-    def _apply_release_listing(self, plugin: Plugin, release: PluginRelease) -> None:
+    @staticmethod
+    def _release_listing_copy(release: PluginRelease) -> tuple[str, str]:
+        listing = (release.scan_report_json or {}).get("listing") or {}
+        manifest = release.manifest_json or {}
+        description = listing.get("descriptionMd") or manifest.get("description") or ""
+        return listing.get("summary") or description[:500], description[:8192]
+
+    def _apply_release_listing(
+        self,
+        plugin: Plugin,
+        release: PluginRelease,
+        previous_release: PluginRelease | None,
+    ) -> None:
         listing = (release.scan_report_json or {}).get("listing") or {}
         manifest = release.manifest_json or {}
         interface = release.interface_json or {}
@@ -1439,10 +1453,17 @@ class PluginMarketplaceService:
             or interface.get("displayName")
             or plugin.display_name
         )
-        description = listing.get("descriptionMd") or manifest.get("description") or ""
-        plugin.summary = listing.get("summary") or description[:500]
-        plugin.description_md = description[:8192]
+        summary, description = self._release_listing_copy(release)
+        previous_copy = (
+            self._release_listing_copy(previous_release) if previous_release else None
+        )
+        # Only advance package-owned copy; preserve marketplace edits, including blanks.
+        if previous_copy is None or plugin.summary == previous_copy[0]:
+            plugin.summary = summary
+        if previous_copy is None or plugin.description_md == previous_copy[1]:
+            plugin.description_md = description
         plugin.interface_json = interface
+        plugin.category = str(interface.get("category") or plugin.category or "")
 
     def _should_promote_latest(
         self, db: Session, plugin: Plugin, release: PluginRelease
@@ -1531,7 +1552,6 @@ class PluginMarketplaceService:
         object_created = False
         try:
             object_created = package_storage.put_immutable(object_key, package)
-            plugin.category = str(interface.get("category") or plugin.category or "")
             self._finalize_release(db, plugin=plugin, release=release)
             if defer_commit:
                 db.flush()
@@ -1561,9 +1581,16 @@ class PluginMarketplaceService:
         release.status = "ready"
         if unset_datetime(release.published_at) is None:
             release.published_at = now
-        self._apply_release_listing(plugin, release)
-        plugin.status = "published"
+        # Shipping a release must not undo an administrator's delisting decision.
+        if plugin.status != "unpublished":
+            plugin.status = "published"
         if self._should_promote_latest(db, plugin, release):
+            previous_release = (
+                db.get(PluginRelease, plugin.latest_release_id)
+                if plugin.latest_release_id
+                else None
+            )
+            self._apply_release_listing(plugin, release, previous_release)
             plugin.latest_release_id = release.id
         if unset_datetime(plugin.published_at) is None:
             plugin.published_at = now
@@ -1974,7 +2001,7 @@ class PluginMarketplaceService:
                     status="pending",
                 )
             )
-            if plugin.status != "published":
+            if plugin.status not in {"published", "unpublished"}:
                 plugin.status = "pending_review"
             db.flush()
         except Exception:

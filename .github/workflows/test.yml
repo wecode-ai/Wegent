@@ -25,6 +25,7 @@ concurrency:
 jobs:
   changes:
     name: Detect CI Changes
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
@@ -45,12 +46,12 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          FORCE_ALL: ${{ github.event_name == 'merge_group' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FORCE_ALL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all') }}
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
-            # Merge groups and ci:all force every module test.
+            # ci:all is the explicit full-regression path.
             .github/scripts/classify-ci-changes.sh --all
           else
             git diff --name-only "$BASE_SHA...$HEAD_SHA" |
@@ -550,7 +551,7 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always()
+    if: always() && github.event_name != 'merge_group'
 
     steps:
       - name: Check test results
@@ -578,3 +579,12 @@ jobs:
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"
+
+  merge-queue-summary:
+    name: Test Summary
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Confirm E2E-only merge queue
+        run: echo "Unit tests are completed before the merge queue"

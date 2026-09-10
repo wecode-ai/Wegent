@@ -1310,14 +1310,12 @@ export function createDesktopScenario({
       'The completed Issue did not reach the review state required for board follow-up',
       uiTimeoutMs
     )
-    await control.command(
-      'waitFor',
-      `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`,
-      {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      }
-    )
+    const moonshotTaskListSelector = `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`
+    await control.command('scrollIntoView', moonshotTaskListSelector)
+    await control.command('waitFor', moonshotTaskListSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
     const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
     const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
@@ -1332,14 +1330,25 @@ export function createDesktopScenario({
     const [moonshotPopupMetrics] = JSON.parse(
       await control.command('getElementMetrics', moonshotProgressPopup)
     )
+    const [moonshotCardMetrics] = JSON.parse(
+      await control.command('getElementMetrics', moonshotOverrideCard)
+    )
     const [bodyMetrics] = JSON.parse(await control.command('getElementMetrics', 'body'))
+    const popupHorizontalGap =
+      moonshotPopupMetrics.left >= moonshotCardMetrics.right
+        ? moonshotPopupMetrics.left - moonshotCardMetrics.right
+        : moonshotCardMetrics.left - moonshotPopupMetrics.right
     assert.ok(
-      Math.abs(moonshotPopupMetrics.top - 48) <= 1,
-      `The board popup did not keep its stable viewport top: ${JSON.stringify(moonshotPopupMetrics)}`
+      Math.abs(popupHorizontalGap - 10) <= 1,
+      `The board popup was not positioned beside its card: ${JSON.stringify({
+        moonshotCardMetrics,
+        moonshotPopupMetrics,
+      })}`
     )
     assert.ok(
-      Math.abs(bodyMetrics.right - moonshotPopupMetrics.right - 8) <= 1,
-      `The board popup did not stay at the viewport right edge: ${JSON.stringify({
+      moonshotPopupMetrics.top >= bodyMetrics.top + 8 - 1 &&
+        moonshotPopupMetrics.bottom <= bodyMetrics.bottom - 8 + 1,
+      `The board popup escaped the viewport bounds: ${JSON.stringify({
         bodyMetrics,
         moonshotPopupMetrics,
       })}`

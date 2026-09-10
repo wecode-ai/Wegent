@@ -562,8 +562,12 @@ export function createDesktopScenario({
         `${RESTORED_WORKSPACE_MARKER}\n`
       )
       const restoredTaskRowSelector = `[data-testid="runtime-local-task-row-${transcriptId}"]`
-      await control.command('waitFor', restoredTaskRowSelector, { timeoutMs: uiTimeoutMs })
-      await control.command('click', restoredTaskRowSelector)
+      await control.command('waitFor', restoredTaskRowSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', restoredTaskRowSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SECOND_COMPLETION,
         timeoutMs: uiTimeoutMs,

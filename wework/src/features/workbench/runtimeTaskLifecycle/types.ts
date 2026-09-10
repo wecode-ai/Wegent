@@ -69,6 +69,7 @@ export type RuntimeTaskLifecycleEvent =
     }
   | { type: 'send_requested'; workspaceCreationKind?: string }
   | { type: 'send_accepted' }
+  | { type: 'send_queued'; queuePosition?: number | null }
   | { type: 'send_rejected' }
   | { type: 'send_blocked_by_active_turn' }
   | { type: 'stop_requested' }

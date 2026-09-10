@@ -5,7 +5,8 @@ import {
   type SmartAppGeneratedEventMap,
 } from './generated/smartAppEvents'
 
-export type ExecutionTarget = 'local' | 'cloud' | 'unknown'
+export const EXECUTION_TARGETS = ['local', 'cloud', 'remote', 'unknown'] as const
+export type ExecutionTarget = (typeof EXECUTION_TARGETS)[number]
 export type TelemetryResult = 'success' | 'cancelled' | 'failure'
 export type TelemetryFailureReason = 'network_error' | 'model_error' | 'runtime_error' | 'unknown'
 export type TelemetryDataSource = 'local' | 'cloud' | 'unknown'
@@ -356,7 +357,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
   $ai_trace: {
     $ai_trace_id: { maxLength: 128, pattern: TELEMETRY_TRACE_ID_PATTERN },
     $ai_trace_phase: ['start', 'end'],
-    execution_target: ['local', 'cloud', 'unknown'],
+    execution_target: EXECUTION_TARGETS,
     result: ['success', 'cancelled', 'failure'],
     failure_reason: ['network_error', 'model_error', 'runtime_error', 'unknown'],
   },
@@ -370,14 +371,14 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
   },
   app_started: { surface: ['main', 'popout', 'workspace'] },
   project_opened: { source: ['local', 'cloud', 'unknown'] },
-  conversation_created: { execution_target: ['local', 'cloud', 'unknown'] },
-  task_started: { execution_target: ['local', 'cloud', 'unknown'] },
+  conversation_created: { execution_target: EXECUTION_TARGETS },
+  task_started: { execution_target: EXECUTION_TARGETS },
   first_response_completed: {
-    execution_target: ['local', 'cloud', 'unknown'],
+    execution_target: EXECUTION_TARGETS,
     result: ['success', 'cancelled', 'failure'],
   },
   task_completed: {
-    execution_target: ['local', 'cloud', 'unknown'],
+    execution_target: EXECUTION_TARGETS,
     failure_reason: ['network_error', 'model_error', 'runtime_error', 'unknown'],
     result: ['success', 'cancelled', 'failure'],
   },
@@ -539,13 +540,13 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     source: ['chat', 'workbench', 'board'],
   },
   generation_regenerated: {
-    execution_target: ['local', 'cloud', 'unknown'],
+    execution_target: EXECUTION_TARGETS,
   },
   task_interrupted: {
-    execution_target: ['local', 'cloud', 'unknown'],
+    execution_target: EXECUTION_TARGETS,
   },
   task_retried: {
-    execution_target: ['local', 'cloud', 'unknown'],
+    execution_target: EXECUTION_TARGETS,
     previous_result: ['success', 'cancelled', 'failure'],
   },
   setting_changed: {

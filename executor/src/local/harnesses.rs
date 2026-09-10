@@ -16,7 +16,7 @@ use tokio::{process::Command, time::timeout};
 
 use crate::{path_compat::strip_windows_verbatim_prefix, process_environment};
 
-const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy)]
 struct LocalHarnessDefinition {
