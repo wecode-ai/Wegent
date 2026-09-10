@@ -2180,13 +2180,18 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="ai-coordinator-prompt"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('click', '[data-testid^="execution-node-step-"]', {
+    const executionNodeSelector = '[data-testid^="execution-node-step-"]'
+    await control.command('waitFor', executionNodeSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', executionNodeSelector, {
       visible: true,
     })
     await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
       visible: true,
     })
-    await control.command('hover', '[data-testid^="execution-node-step-"]', {
+    await control.command('hover', executionNodeSelector, {
       visible: true,
     })
     await control.command('waitFor', '[data-testid^="automation-node-insert-before-step-"]', {
