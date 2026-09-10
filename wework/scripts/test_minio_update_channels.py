@@ -137,7 +137,7 @@ def test_stable_versions_sort_after_beta_versions() -> None:
     ("script_name", "version_key"),
     [
         ("upload-mac-release-to-s3.py", "appVersion"),
-        ("upload-windows-release-to-s3.py", "version"),
+        ("upload-windows-release-to-s3.py", "appVersion"),
     ],
 )
 def test_rolling_channels_never_move_backwards(
@@ -165,7 +165,7 @@ def test_rolling_channels_never_move_backwards(
     ("script_name", "electron_manifest", "version_key"),
     [
         ("upload-mac-release-to-s3.py", "latest-mac.yml", "appVersion"),
-        ("upload-windows-release-to-s3.py", "latest.yml", "version"),
+        ("upload-windows-release-to-s3.py", "latest.yml", "appVersion"),
     ],
 )
 def test_same_version_repairs_incomplete_rolling_channels(
@@ -195,7 +195,7 @@ def test_same_version_repairs_incomplete_rolling_channels(
     ("script_name", "electron_manifest", "version_key"),
     [
         ("upload-mac-release-to-s3.py", "latest-mac.yml", "appVersion"),
-        ("upload-windows-release-to-s3.py", "latest.yml", "version"),
+        ("upload-windows-release-to-s3.py", "latest.yml", "appVersion"),
     ],
 )
 def test_older_release_rejects_incomplete_newer_rolling_channels(
@@ -226,7 +226,7 @@ def test_older_release_rejects_incomplete_newer_rolling_channels(
     ("script_name", "electron_manifest", "version_key"),
     [
         ("upload-mac-release-to-s3.py", "latest-mac.yml", "appVersion"),
-        ("upload-windows-release-to-s3.py", "latest.yml", "version"),
+        ("upload-windows-release-to-s3.py", "latest.yml", "appVersion"),
     ],
 )
 def test_complete_same_version_rolling_channels_are_reused(
@@ -281,11 +281,8 @@ def test_channel_repair_publishes_rolling_pointer_last(
 ) -> None:
     module = load_script(script_name)
     client = FakeClient()
-    channel_manifest = tmp_path / "stable-windows-x86_64.json"
-    version_key = "version"
-    if script_name == "upload-mac-release-to-s3.py":
-        channel_manifest = tmp_path / component_manifest
-        version_key = "appVersion"
+    channel_manifest = tmp_path / component_manifest
+    version_key = "appVersion"
     channel_manifest.write_text(json.dumps({version_key: "1.2.3"}), encoding="utf-8")
     (tmp_path / electron_manifest).write_text("version: 1.2.3\n", encoding="utf-8")
     remote_channel = f"wework/{channel_manifest.name}"
@@ -296,12 +293,6 @@ def test_channel_repair_publishes_rolling_pointer_last(
         "upload_electron_manifest",
         lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
     )
-    if script_name == "upload-windows-release-to-s3.py":
-        monkeypatch.setattr(
-            module,
-            "upload_channel_manifest",
-            lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
-        )
     if script_name == "upload-mac-release-to-s3.py":
         repaired = module.publish_channel(
             client,
@@ -323,10 +314,7 @@ def test_channel_repair_publishes_rolling_pointer_last(
         )
 
     assert repaired
-    expected = [component_manifest, electron_manifest]
-    if script_name == "upload-windows-release-to-s3.py":
-        expected.insert(1, channel_manifest.name)
-    assert uploaded == expected
+    assert uploaded == [component_manifest, electron_manifest]
 
 
 def write_component_release(
@@ -644,7 +632,7 @@ def test_minio_windows_build_uses_native_electron_release() -> None:
     assert "pnpm exec tauri build" not in script
 
 
-def test_windows_jenkins_pipeline_builds_unsigned_with_the_tauri_bridge() -> None:
+def test_windows_jenkins_pipeline_builds_unsigned_electron_release() -> None:
     pipeline = (SCRIPT_DIR.parent / "jenkins/windows-release/Jenkinsfile").read_text(
         encoding="utf-8"
     )
@@ -654,13 +642,15 @@ def test_windows_jenkins_pipeline_builds_unsigned_with_the_tauri_bridge() -> Non
     assert "C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe" in pipeline
     assert "build-minio-windows-release.sh" in pipeline
     assert "--unsigned" in pipeline
-    assert "WEWORK_UPDATER_KEY_PATH" in pipeline
-    assert "Required legacy updater key file is missing or empty" in pipeline
+    assert "WEWORK_UPDATER_KEY_PATH" not in pipeline
+    assert "Required legacy updater key file is missing or empty" not in pipeline
     assert "WeWork_${version}_windows-x64-setup.exe" in pipeline
     assert "WeWorkHostUpdate_${version}_windows-x64-setup.exe" in pipeline
     assert "windows_" + "x64" not in pipeline
-    assert "windows-x86_64" in pipeline
-    assert "latest.json" in pipeline
+    assert "components-${channel}-windows-x64.json" in pipeline
+    assert "windows-x86_64" not in pipeline
+    assert "latest.json" not in pipeline
+    assert "Tauri" not in pipeline
     assert "archiveArtifacts" in pipeline
     assert "wegent-windows-signing-pfx" not in pipeline
     assert "wegent-windows-signing-password" not in pipeline
@@ -682,6 +672,10 @@ def test_minio_uploads_component_assets_without_legacy_runtime_sidecars(
     assert "publish_component_manifest" in script
     assert "load_release_artifacts" in script
     assert "publish_runtime_asset_pairs" not in script
+    if script_name == "upload-windows-release-to-s3.py":
+        assert "latest.json" not in script
+        assert "windows-x86_64.json" not in script
+        assert "publish_stable_bootstrap_manifest" not in script
 
 
 def test_electron_release_bakes_the_minio_update_base_url() -> None:

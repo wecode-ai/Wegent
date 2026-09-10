@@ -218,15 +218,6 @@ exit /b %errorlevel%
             text: '''#!/usr/bin/env bash
 set -euo pipefail
 
-export WEWORK_UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
-
-for key_file in "$WEWORK_UPDATER_KEY_PATH" "$WEWORK_UPDATER_KEY_PATH.pub"; do
-  if [ ! -s "$key_file" ]; then
-    echo "Required legacy updater key file is missing or empty: $key_file" >&2
-    exit 1
-  fi
-done
-
 args=(
   --version "$RELEASE_VERSION"
   --channel "$RELEASE_CHANNEL"
@@ -279,7 +270,7 @@ exit /b %errorlevel%
       }
     }
 
-    stage('Verify updater bridge') {
+    stage('Verify Electron updater artifacts') {
       steps {
         writeFile(
           file: '.jenkins-release/verify-release.mjs',
@@ -292,8 +283,7 @@ const output = resolve('wework/electron/release-minio')
 const installerName = `WeWork_${version}_windows-x64-setup.exe`
 const hostUpdateName = `WeWorkHostUpdate_${version}_windows-x64-setup.exe`
 const installer = resolve(output, installerName)
-const signaturePath = `${installer}.sig`
-const channelManifest = resolve(output, `${channel}-windows-x86_64.json`)
+const componentManifestPath = resolve(output, `components-${channel}-windows-x64.json`)
 const electronManifest = resolve(output, `${channel === 'stable' ? 'latest' : 'beta'}.yml`)
 
 for (const path of [
@@ -301,8 +291,7 @@ for (const path of [
   `${installer}.blockmap`,
   resolve(output, hostUpdateName),
   resolve(output, `${hostUpdateName}.blockmap`),
-  signaturePath,
-  channelManifest,
+  componentManifestPath,
   electronManifest,
 ]) {
   const file = await stat(path).catch(() => null)
@@ -311,13 +300,14 @@ for (const path of [
   }
 }
 
-const signature = (await readFile(signaturePath, 'utf8')).trim()
-const legacy = JSON.parse(
-  await readFile(resolve(output, 'latest.json'), 'utf8')
-)
-const bridge = legacy.platforms?.['windows-x86_64']
-if (!bridge || bridge.signature !== signature || !bridge.url.endsWith(installerName)) {
-  throw new Error('The legacy Tauri Windows updater bridge is incomplete.')
+const componentManifest = JSON.parse(await readFile(componentManifestPath, 'utf8'))
+if (
+  componentManifest.appVersion !== version ||
+  componentManifest.channel !== channel ||
+  componentManifest.platform !== 'windows' ||
+  componentManifest.arch !== 'x64'
+) {
+  throw new Error('The Windows component updater manifest is inconsistent.')
 }
 
 const electron = await readFile(electronManifest, 'utf8')
@@ -325,7 +315,7 @@ if (!electron.includes(installerName) && !electron.includes(hostUpdateName)) {
   throw new Error('The Electron Windows updater manifest does not reference an update package.')
 }
 
-console.log(`Verified Windows Tauri-to-Electron bridge for ${version} (${channel}).`)
+console.log(`Verified Windows Electron updater artifacts for ${version} (${channel}).`)
 '''
         )
 
