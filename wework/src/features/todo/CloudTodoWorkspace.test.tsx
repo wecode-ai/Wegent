@@ -28,6 +28,7 @@ import {
   workItemTaskInput,
 } from './workItemTaskInput'
 import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -507,6 +508,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       listTaskBindings: vi.fn(async () => [
         {
           id: 1,
+          cloud_project_id: project.id,
           loop_item_id: item.id,
           task_user_id: 1,
           device_id: 'local-device',
@@ -617,11 +619,14 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
     )
     return {
       items,
-      task_bindings: bindingResults.flat(),
+      task_bindings: bindingResults
+        .flat()
+        .map(binding => ({ ...binding, cloud_project_id: binding.cloud_project_id ?? projectId })),
       members,
       agents,
     }
   })
+  workbenchServices.sharedWorkspaceApi = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
   workbenchServices.projectSpaceDetailServices = {
     local: {
       get deliveryApi() {
@@ -1711,6 +1716,7 @@ describe('CloudTodoWorkspace', () => {
     const workbenchServices = {
       ...localServices,
       deliveryApi: cloudApi,
+      sharedWorkspaceApi: undefined,
       projectSpaceApis: {
         local: localApi,
         cloud: cloudApi,

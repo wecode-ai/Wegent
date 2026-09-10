@@ -64,6 +64,8 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
   ProjectSpaceSidebar,
   ProjectViewSwitcher,
+  type SharedWorkspaceApi,
+  type WorkspaceTaskBinding,
   type CollaborationProjectView,
   type CollaborationProjectViewOption,
 } from '@wegent/collaboration'
@@ -523,6 +525,27 @@ type BoardReadResult = {
   members?: CloudProjectMember[]
   agents?: ProjectChatAgent[]
   page_cursors?: Record<string, string | null>
+}
+
+function toWeworkTaskBinding(binding: WorkspaceTaskBinding): LoopItemTaskBinding {
+  return {
+    id: binding.id,
+    cloud_project_id: binding.projectId,
+    loop_item_id: binding.issueId,
+    task_user_id: binding.taskUserId,
+    device_id: binding.deviceId,
+    task_id: binding.taskId,
+    task_title: binding.taskTitle,
+    backend_task_id: binding.backendTaskId,
+    modelSelection: binding.modelSelection as LoopItemTaskBinding['modelSelection'],
+    workflow_node_id: binding.workflowNodeId,
+    binding_type: binding.bindingType,
+    linked_at: binding.linkedAt,
+  }
+}
+
+function toCloudLoopItem(issue: Awaited<ReturnType<SharedWorkspaceApi['issues']['get']>>) {
+  return issue as CloudLoopItem
 }
 
 function projectActiveRuntimeTaskStatuses(
@@ -1235,20 +1258,21 @@ export function CloudTodoWorkspace({
         : null,
     [changeRequestStatusEnabled, services.deviceApi]
   )
+  const cloudWorkspaceApi = services.sharedWorkspaceApi
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
     return {
-      cloud: services.deliveryApi,
       defaultLocation: 'cloud' as const,
     }
   }, [services])
   const availableProjectSpaceApis = useMemo(
     () =>
       (['local', 'cloud'] as const).flatMap(location => {
-        const api = projectSpaceApis[location]
+        const api =
+          projectSpaceApis[location] ?? services.projectSpaceDetailServices?.[location]?.deliveryApi
         return api ? [{ api, location }] : []
       }),
-    [projectSpaceApis]
+    [projectSpaceApis, services.projectSpaceDetailServices]
   )
   const [localProjectSpaces, setLocalProjectSpaces] = useState<LocatedCloudProject[]>([])
   const [cloudProjectSpaces, setCloudProjectSpaces] = useState<LocatedCloudProject[]>([])
@@ -1434,7 +1458,7 @@ export function CloudTodoWorkspace({
   }, [activeProjectKey, resetProjectViewState])
 
   const [localProjectsLoading, setLocalProjectsLoading] = useState(Boolean(projectSpaceApis.local))
-  const [cloudProjectsLoading, setCloudProjectsLoading] = useState(Boolean(projectSpaceApis.cloud))
+  const [cloudProjectsLoading, setCloudProjectsLoading] = useState(Boolean(cloudWorkspaceApi))
   const [localProjectsError, setLocalProjectsError] = useState<string | null>(null)
   const [localProjectsRefreshNonce, setLocalProjectsRefreshNonce] = useState(0)
   const [boardError, setBoardError] = useState<string | null>(null)
@@ -1863,9 +1887,12 @@ export function CloudTodoWorkspace({
       if (project.task_provider === 'dingtalk_aitable' && projectSpaceApis.local) {
         return projectSpaceApis.local
       }
-      return projectSpaceApis[project.location]
+      return (
+        projectSpaceApis[project.location] ??
+        services.projectSpaceDetailServices?.[project.location]?.deliveryApi
+      )
     },
-    [projectSpaceApis]
+    [projectSpaceApis, services.projectSpaceDetailServices]
   )
   const selectedProjectServices = selectedProject
     ? services.projectSpaceDetailServices?.[selectedProject.location]
@@ -2160,7 +2187,7 @@ export function CloudTodoWorkspace({
   const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
   const startupProjectsLoading =
     (Boolean(projectSpaceApis.local) && localProjectsLoading) ||
-    (Boolean(projectSpaceApis.cloud) && cloudProjectsLoading)
+    (Boolean(cloudWorkspaceApi) && cloudProjectsLoading)
   const startupProjectRouteReady =
     !activeProjectRef ||
     Boolean(selectedProject && sameProjectSpace(projectSpaceRef(selectedProject), activeProjectRef))
@@ -2193,7 +2220,7 @@ export function CloudTodoWorkspace({
       if (!item.is_unread) return
       const project = projectForItem(item)
       const itemApi = apiForProject(project)
-      if (!project || !itemApi) return
+      if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) return
       const projectKey = projectSpaceKey(projectSpaceRef(project))
       const requestKey = `${projectKey}\0${item.id}`
       if (markingReadItemKeysRef.current.has(requestKey)) return
@@ -2201,7 +2228,9 @@ export function CloudTodoWorkspace({
 
       try {
         const updated = {
-          ...(await itemApi.markLoopItemRead(item.id)),
+          ...(project.location === 'cloud'
+            ? toCloudLoopItem(await cloudWorkspaceApi!.issues.markRead(item.id))
+            : await itemApi!.markLoopItemRead(item.id)),
           project_store: item.project_store,
         }
         const applyReadSnapshot = (current: LocatedLoopItem) => ({
@@ -2234,15 +2263,25 @@ export function CloudTodoWorkspace({
         markingReadItemKeysRef.current.delete(requestKey)
       }
     },
-    [apiForProject, projectForItem]
+    [apiForProject, cloudWorkspaceApi, projectForItem]
   )
   useEffect(() => {
-    if (!selectedItem || selectedItem.detail_loaded !== false || !selectedItemApi) return
+    if (
+      !selectedItem ||
+      selectedItem.detail_loaded !== false ||
+      !selectedItemProject ||
+      (selectedItemProject.location === 'cloud' ? !cloudWorkspaceApi : !selectedItemApi)
+    ) {
+      return
+    }
     let active = true
     const itemId = selectedItem.id
     const projectStore = selectedItem.project_store
-    void selectedItemApi
-      .getLoopItem(itemId)
+    const request =
+      selectedItemProject.location === 'cloud'
+        ? cloudWorkspaceApi!.issues.get(itemId).then(toCloudLoopItem)
+        : selectedItemApi!.getLoopItem(itemId)
+    void request
       .then(item => {
         if (!active) return
         const locatedItem = { ...item, project_store: projectStore }
@@ -2261,7 +2300,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [selectedItem, selectedItemApi, t])
+  }, [cloudWorkspaceApi, selectedItem, selectedItemApi, selectedItemProject, t])
   useEffect(() => {
     if (
       !selectedItem?.is_unread ||
@@ -2350,14 +2389,22 @@ export function CloudTodoWorkspace({
   async function renameSelectedProject() {
     if (!renameProject) return
     const api = apiForProject(renameProject)
-    if (!api) throw new Error('项目空间接口当前不可用')
+    if (renameProject.location === 'cloud' ? !cloudWorkspaceApi : !api) {
+      throw new Error('项目空间接口当前不可用')
+    }
     setRenameBusy(true)
     setRenameError(null)
     try {
-      const updated = await api.updateCloudProject(renameProject.id, {
-        name: renameProjectName.trim(),
-        version: renameProject.version,
-      })
+      const updated =
+        renameProject.location === 'cloud'
+          ? ((await cloudWorkspaceApi!.projects.update(renameProject.id, {
+              name: renameProjectName.trim(),
+              version: renameProject.version,
+            })) as CloudProject)
+          : await api!.updateCloudProject(renameProject.id, {
+              name: renameProjectName.trim(),
+              version: renameProject.version,
+            })
       replaceProject(renameProject, updated)
       track('feature_action_completed', { domain: 'project_space', action: 'rename' })
       setRenameProject(null)
@@ -2372,11 +2419,15 @@ export function CloudTodoWorkspace({
   async function confirmArchiveProject() {
     if (!archiveProject || archiveBusy) return
     const api = apiForProject(archiveProject)
-    if (!api) return
+    if (archiveProject.location === 'cloud' ? !cloudWorkspaceApi : !api) return
     setArchiveBusy(true)
     setArchiveError(null)
     try {
-      await api.archiveCloudProject(archiveProject.id, archiveProject.version)
+      if (archiveProject.location === 'cloud') {
+        await cloudWorkspaceApi!.projects.archive(archiveProject.id, archiveProject.version)
+      } else {
+        await api!.archiveCloudProject(archiveProject.id, archiveProject.version)
+      }
       removeProjectFromList(archiveProject)
       setProjectCounts(current => {
         const next = { ...current }
@@ -2398,12 +2449,17 @@ export function CloudTodoWorkspace({
 
   async function confirmArchiveItem() {
     if (!archiveItem || archiveBusy) return
-    const api = apiForProject(projectForItem(archiveItem))
-    if (!api) return
+    const project = projectForItem(archiveItem)
+    const api = apiForProject(project)
+    if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !api)) return
     setArchiveBusy(true)
     setArchiveError(null)
     try {
-      await api.archiveLoopItem(archiveItem.id)
+      if (project.location === 'cloud') {
+        await cloudWorkspaceApi!.issues.archive(archiveItem.id)
+      } else {
+        await api!.archiveLoopItem(archiveItem.id)
+      }
       const archivedIds = new Set([archiveItem.id])
       let changed = true
       while (changed) {
@@ -2470,9 +2526,16 @@ export function CloudTodoWorkspace({
       } else {
         const archiveResults = await Promise.allSettled(
           completedItems.map(async item => {
-            const api = apiForProject(projectForItem(item))
-            if (!api) throw new Error('项目空间当前不可用')
-            await api.archiveLoopItem(item.id)
+            const project = projectForItem(item)
+            const api = apiForProject(project)
+            if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !api)) {
+              throw new Error('项目空间当前不可用')
+            }
+            if (project.location === 'cloud') {
+              await cloudWorkspaceApi!.issues.archive(item.id)
+            } else {
+              await api!.archiveLoopItem(item.id)
+            }
             return item
           })
         )
@@ -2594,30 +2657,52 @@ export function CloudTodoWorkspace({
     content: string,
     automationRuleId?: string
   ) {
-    if (!selectedProject || !selectedProjectApi) throw new Error('项目空间接口当前不可用')
+    if (
+      !selectedProject ||
+      (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !selectedProjectApi)
+    ) {
+      throw new Error('项目空间接口当前不可用')
+    }
     if (isMyTasksBoard && status !== 'inbox' && !selectedLocalProject) {
       throw new Error(t('todo.select_local_project_before_create', '请先选择要修改的本地项目'))
     }
     const draft = issueDraftFromText(content)
     try {
-      const created = await selectedProjectApi.createLoopItem(selectedProject.id, {
-        title: draft.title,
-        description: draft.description,
-        priority: 'none',
-        status,
-        tags: [],
-        ...(isMyTasksBoard && status !== 'inbox' && selectedLocalProject
-          ? {
-              local_project_id: selectedLocalProject.id,
-              local_project_name: selectedLocalProject.name,
-            }
-          : {}),
-        ...(boardParent ? { parent_id: boardParent.id } : {}),
-        ...(selectedProject.current_user_name
-          ? { creator_name: selectedProject.current_user_name }
-          : {}),
-        ...(automationRuleId ? { automation_rule_id: automationRuleId } : {}),
-      })
+      const localProject =
+        isMyTasksBoard && status !== 'inbox' && selectedLocalProject ? selectedLocalProject : null
+      const created =
+        selectedProject.location === 'cloud'
+          ? toCloudLoopItem(
+              await cloudWorkspaceApi!.issues.create(selectedProject.id, {
+                title: draft.title,
+                description: draft.description,
+                priority: 'none',
+                status,
+                tags: [],
+                localProjectId: localProject?.id,
+                localProjectName: localProject?.name,
+                parentId: boardParent?.id,
+                automationRuleId,
+              })
+            )
+          : await selectedProjectApi!.createLoopItem(selectedProject.id, {
+              title: draft.title,
+              description: draft.description,
+              priority: 'none',
+              status,
+              tags: [],
+              ...(localProject
+                ? {
+                    local_project_id: localProject.id,
+                    local_project_name: localProject.name,
+                  }
+                : {}),
+              ...(boardParent ? { parent_id: boardParent.id } : {}),
+              ...(selectedProject.current_user_name
+                ? { creator_name: selectedProject.current_user_name }
+                : {}),
+              ...(automationRuleId ? { automation_rule_id: automationRuleId } : {}),
+            })
       const locatedItem = addCreatedTodo(created, selectedProject)
       requestCreatedItemExecutionConfiguration(locatedItem)
       setQuickCreateStatus(null)
@@ -2678,16 +2763,15 @@ export function CloudTodoWorkspace({
   }, [localProjectsRefreshNonce, projectSpaceApis.local])
 
   useEffect(() => {
-    const api = projectSpaceApis.cloud
-    if (!api) return
+    if (!cloudWorkspaceApi) return
     let active = true
-    void api
-      .listCloudProjects()
-      .then(response => {
+    void cloudWorkspaceApi.projects
+      .list()
+      .then(projects => {
         if (!active) return
         setCloudProjectSpaces(
-          response.items.map(project => ({
-            ...project,
+          projects.map(project => ({
+            ...(project as CloudProject),
             project_store: 'backend',
             location: 'cloud',
           }))
@@ -2703,9 +2787,16 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [projectSpaceApis.cloud])
+  }, [cloudWorkspaceApi])
   useEffect(() => {
-    if (!selectedProject || !selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
+    if (
+      !selectedProject ||
+      !selectedProjectId ||
+      !selectedProjectKey ||
+      (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !selectedProjectApi)
+    ) {
+      return
+    }
     let active = true
     const refreshItems = () => {
       const prepare =
@@ -2717,15 +2808,29 @@ export function CloudTodoWorkspace({
         if (isExternalGitBoard) {
           const [pages, members, agents] = await Promise.all([
             Promise.all(
-              externalBoardStatuses.map(status =>
-                selectedProjectApi.listLoopItemsPage(selectedProjectId, {
+              externalBoardStatuses.map(async status => {
+                if (selectedProject.location === 'cloud') {
+                  const page = await cloudWorkspaceApi!.issues.listPage(selectedProjectId, {
+                    status,
+                    parentId: boardParentId,
+                    limit: externalBoardColumnPageSize,
+                  })
+                  return {
+                    items: page.items.map(toCloudLoopItem),
+                    task_bindings: page.taskBindings.map(toWeworkTaskBinding),
+                    next_cursor: page.nextCursor,
+                  }
+                }
+                return selectedProjectApi!.listLoopItemsPage(selectedProjectId, {
                   status,
                   parentId: boardParentId,
                   limit: externalBoardColumnPageSize,
                 })
-              )
+              })
             ),
-            selectedProjectApi.listCloudProjectMembers(selectedProjectId),
+            selectedProject.location === 'cloud'
+              ? cloudWorkspaceApi!.members.list(selectedProjectId)
+              : selectedProjectApi!.listCloudProjectMembers(selectedProjectId),
             selectedProjectAgentApi?.list(selectedProjectId) ?? Promise.resolve([]),
           ])
           console.info('[Wework project board] column pages loaded', {
@@ -2751,7 +2856,16 @@ export function CloudTodoWorkspace({
           }
         }
         const selectedResponse: BoardReadResult =
-          await selectedProjectApi.getBoardSnapshot(selectedProjectId)
+          selectedProject.location === 'cloud'
+            ? await cloudWorkspaceApi!.issues
+                .getBoardSnapshot(selectedProjectId)
+                .then(snapshot => ({
+                  items: snapshot.items.map(toCloudLoopItem),
+                  task_bindings: snapshot.taskBindings.map(toWeworkTaskBinding),
+                  members: snapshot.members,
+                  agents: snapshot.agents as ProjectChatAgent[],
+                }))
+            : await selectedProjectApi!.getBoardSnapshot(selectedProjectId)
         const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
         if (!isMyTasksBoard) return { ...selectedResponse, items: selectedItems }
         const activeBindings = (selectedResponse.task_bindings ?? []).filter(binding =>
@@ -2925,6 +3039,7 @@ export function CloudTodoWorkspace({
     boardRefreshNonce,
     isExternalGitBoard,
     isMyTasksBoard,
+    cloudWorkspaceApi,
     selectedProject,
     selectedProjectApi,
     selectedProjectAgentApi,
@@ -2943,9 +3058,9 @@ export function CloudTodoWorkspace({
     if (
       !isExternalGitBoard ||
       !selectedProject ||
-      !selectedProjectApi ||
       !selectedProjectId ||
       !selectedProjectKey ||
+      (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !selectedProjectApi) ||
       !cursor ||
       externalPageLoading[itemStatus]
     ) {
@@ -2953,12 +3068,26 @@ export function CloudTodoWorkspace({
     }
     setExternalPageLoading(current => ({ ...current, [itemStatus]: true }))
     try {
-      const page = await selectedProjectApi.listLoopItemsPage(selectedProjectId, {
-        status: itemStatus,
-        parentId: boardParentId,
-        cursor,
-        limit: externalBoardColumnPageSize,
-      })
+      const page =
+        selectedProject.location === 'cloud'
+          ? await cloudWorkspaceApi!.issues
+              .listPage(selectedProjectId, {
+                status: itemStatus,
+                parentId: boardParentId,
+                cursor,
+                limit: externalBoardColumnPageSize,
+              })
+              .then(result => ({
+                items: result.items.map(toCloudLoopItem),
+                task_bindings: result.taskBindings.map(toWeworkTaskBinding),
+                next_cursor: result.nextCursor,
+              }))
+          : await selectedProjectApi!.listLoopItemsPage(selectedProjectId, {
+              status: itemStatus,
+              parentId: boardParentId,
+              cursor,
+              limit: externalBoardColumnPageSize,
+            })
       const locatedItems = locateItems(page.items, selectedProject.project_store)
       setItems(current => {
         const currentColumnItems = current.filter(
@@ -3191,6 +3320,11 @@ export function CloudTodoWorkspace({
     void Promise.allSettled(
       projects.map(async project => {
         const api = apiForProject(project)
+        if (project.location === 'cloud') {
+          if (!cloudWorkspaceApi) return null
+          const items = await cloudWorkspaceApi.issues.list(project.id)
+          return { project, items: items.map(toCloudLoopItem) }
+        }
         if (!api) return null
         const response = await api.listLoopItems(project.id)
         return { project, items: response.items }
@@ -3210,7 +3344,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [apiForProject, globalSearchOpen, projects])
+  }, [apiForProject, cloudWorkspaceApi, globalSearchOpen, projects])
   // Load the drawer project's items when the drawer shows a todo from a project
   // other than the one on the board, so subtasks and parent options stay correct.
   useEffect(() => {
@@ -3222,17 +3356,35 @@ export function CloudTodoWorkspace({
       return
     }
     const detailApi = apiForProject(selectedItemProject)
-    if (!detailApi) return
+    if (
+      !selectedItemProject ||
+      (selectedItemProject.location === 'cloud' ? !cloudWorkspaceApi : !detailApi)
+    ) {
+      return
+    }
     let active = true
-    void detailApi.listLoopItems(selectedItem.cloud_project_id).then(response => {
+    const request =
+      selectedItemProject.location === 'cloud'
+        ? cloudWorkspaceApi!.issues
+            .list(String(selectedItem.cloud_project_id))
+            .then(items => items.map(toCloudLoopItem))
+        : detailApi!.listLoopItems(selectedItem.cloud_project_id).then(response => response.items)
+    void request.then(items => {
       if (active && selectedItemProject) {
-        setDetailItems(locateItems(response.items, selectedItemProject.project_store))
+        setDetailItems(locateItems(items, selectedItemProject.project_store))
       }
     })
     return () => {
       active = false
     }
-  }, [apiForProject, locateItems, selectedItem, selectedItemProject, selectedProjectRef])
+  }, [
+    apiForProject,
+    cloudWorkspaceApi,
+    locateItems,
+    selectedItem,
+    selectedItemProject,
+    selectedProjectRef,
+  ])
 
   async function saveExecutionConfiguration(
     item: LocatedLoopItem,
@@ -3240,13 +3392,26 @@ export function CloudTodoWorkspace({
   ): Promise<void> {
     const project = projectForItem(item)
     const itemApi = apiForProject(project)
-    if (!project || !itemApi) throw new Error('项目空间当前不可用')
+    if (!project || (project.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) {
+      throw new Error('项目空间当前不可用')
+    }
 
     setBoardError(null)
-    const updated = await itemApi.updateLoopItem(item.id, {
-      version: item.version,
-      ...result,
-    })
+    const updated =
+      project.location === 'cloud'
+        ? toCloudLoopItem(
+            await cloudWorkspaceApi!.issues.update(item.id, {
+              version: item.version,
+              workflow: result.workflow as unknown as Record<string, unknown> | undefined,
+              executionConfig: result.execution_config as unknown as
+                | Record<string, unknown>
+                | undefined,
+            })
+          )
+        : await itemApi!.updateLoopItem(item.id, {
+            version: item.version,
+            ...result,
+          })
     const locatedUpdated = { ...updated, project_store: item.project_store }
     const projectKey = projectSpaceKey(projectSpaceRef(project))
 
@@ -3276,15 +3441,19 @@ export function CloudTodoWorkspace({
     const column = boardColumns.find(candidate => candidate.key === columnKey)
     if (!item || !column || item.can_edit === false || isAITableProject) return false
     const enteringExecution = nativeGroupBy === 'status' && isProcessingStatus(column.status)
+    const itemProject = projectForItem(item)
     let executionItem = item
     if (enteringExecution && !item.workflow && item.can_view_detail !== false) {
-      const itemApi = apiForProject(projectForItem(item))
-      if (!itemApi) {
+      const itemApi = apiForProject(itemProject)
+      if (!itemProject || (itemProject.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) {
         setBoardError('项目空间当前不可用')
         return false
       }
       try {
-        const refreshed = await itemApi.getLoopItem(item.id)
+        const refreshed =
+          itemProject.location === 'cloud'
+            ? toCloudLoopItem(await cloudWorkspaceApi!.issues.get(item.id))
+            : await itemApi!.getLoopItem(item.id)
         executionItem = { ...refreshed, project_store: item.project_store }
         setItems(current =>
           current.map(candidate => (candidate.id === item.id ? executionItem : candidate))
@@ -3357,8 +3526,10 @@ export function CloudTodoWorkspace({
     }
     setBoardError(null)
     try {
-      const itemApi = apiForProject(projectForItem(item))
-      if (!itemApi) throw new Error('项目空间当前不可用')
+      const itemApi = apiForProject(itemProject)
+      if (!itemProject || (itemProject.location === 'cloud' ? !cloudWorkspaceApi : !itemApi)) {
+        throw new Error('项目空间当前不可用')
+      }
       const update =
         nativeGroupBy === 'status'
           ? {
@@ -3387,21 +3558,56 @@ export function CloudTodoWorkspace({
                       assignee_team_id: null,
                     }
               : { tags: column.groupValue ? [column.groupValue] : [] }
+      const assigneeType = column.groupValue.startsWith('agent:')
+        ? 'agent'
+        : column.groupValue.startsWith('team:')
+          ? 'team'
+          : 'user'
       const updated =
-        nativeGroupBy === 'assignee' &&
-        column.groupValue &&
-        typeof itemApi.assignLoopItem === 'function'
-          ? await itemApi.assignLoopItem(item.cloud_project_id, item.id, {
-              version: item.version,
-              assigneeType: column.groupValue.startsWith('agent:')
-                ? 'agent'
-                : column.groupValue.startsWith('team:')
-                  ? 'team'
-                  : 'user',
-              assigneeId: column.groupValue.replace(/^(agent|team):/, ''),
-              notifyAssignee,
-            })
-          : await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
+        itemProject.location === 'cloud'
+          ? nativeGroupBy === 'assignee' && column.groupValue
+            ? toCloudLoopItem(
+                await cloudWorkspaceApi!.issues.assign(String(item.cloud_project_id), item.id, {
+                  version: item.version,
+                  assigneeType,
+                  assigneeId: column.groupValue.replace(/^(agent|team):/, ''),
+                  notifyAssignee,
+                })
+              )
+            : toCloudLoopItem(
+                await cloudWorkspaceApi!.issues.update(item.id, {
+                  version: item.version,
+                  status: 'status' in update ? update.status : undefined,
+                  priority: 'priority' in update ? update.priority : undefined,
+                  assigneeUserId:
+                    'assignee_user_id' in update ? update.assignee_user_id : undefined,
+                  assigneeAgentId:
+                    'assignee_agent_id' in update ? update.assignee_agent_id : undefined,
+                  assigneeTeamId:
+                    'assignee_team_id' in update ? update.assignee_team_id : undefined,
+                  tags: 'tags' in update ? update.tags : undefined,
+                  workflow:
+                    'workflow' in update
+                      ? (update.workflow as unknown as Record<string, unknown> | undefined)
+                      : undefined,
+                  executionConfig:
+                    'execution_config' in update
+                      ? (update.execution_config as unknown as Record<string, unknown> | undefined)
+                      : undefined,
+                  automationRuleId:
+                    'automation_rule_id' in update ? update.automation_rule_id : undefined,
+                })
+              )
+          : nativeGroupBy === 'assignee' &&
+              column.groupValue &&
+              typeof itemApi!.assignLoopItem === 'function'
+            ? await itemApi!.assignLoopItem(item.cloud_project_id, item.id, {
+                version: item.version,
+                assigneeType,
+                assigneeId: column.groupValue.replace(/^(agent|team):/, ''),
+                notifyAssignee,
+              })
+            : await itemApi!.updateLoopItem(item.id, { version: item.version, ...update })
       const locatedUpdated = { ...updated, project_store: item.project_store }
       setItems(current =>
         current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
@@ -3432,11 +3638,19 @@ export function CloudTodoWorkspace({
         return false
       }
       if (reordered) {
-        await itemApi.reorderLoopItems(item.cloud_project_id, {
-          parent_id: item.parent_id,
-          status: column.status,
-          item_ids: reordered.laneIds,
-        })
+        if (itemProject.location === 'cloud') {
+          await cloudWorkspaceApi!.issues.reorder(String(item.cloud_project_id), {
+            parentId: item.parent_id,
+            status: column.status,
+            issueIds: reordered.laneIds,
+          })
+        } else {
+          await itemApi!.reorderLoopItems(item.cloud_project_id, {
+            parent_id: item.parent_id,
+            status: column.status,
+            item_ids: reordered.laneIds,
+          })
+        }
       }
       const shouldOpenTaskComposer =
         enteringExecution &&
@@ -3546,19 +3760,26 @@ export function CloudTodoWorkspace({
 
   async function saveGlobalGroupBy() {
     if (!selectedProject || groupScopeBusy) return
-    const projectApi = projectSpaceApis[selectedProject.location] ?? selectedProjectApi
-    if (!projectApi) return
+    const projectApi = projectSpaceApis[selectedProject.location]
+    if (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !projectApi) return
     setGroupScopeBusy(true)
     setBoardError(null)
     try {
-      const updated = await projectApi.updateCloudProject(selectedProject.id, {
-        version: selectedProject.version,
-        board_config: {
-          group_by: nativeGroupBy,
-          processing_start_status_id: processingStartStatusId,
-          statuses: nativeStatuses,
-        },
-      })
+      const boardConfig = {
+        group_by: nativeGroupBy,
+        processing_start_status_id: processingStartStatusId,
+        statuses: nativeStatuses,
+      }
+      const updated =
+        selectedProject.location === 'cloud'
+          ? ((await cloudWorkspaceApi!.projects.update(selectedProject.id, {
+              version: selectedProject.version,
+              boardConfig,
+            })) as CloudProject)
+          : await projectApi!.updateCloudProject(selectedProject.id, {
+              version: selectedProject.version,
+              board_config: boardConfig,
+            })
       if (personalGroupKey) localStorage.removeItem(personalGroupKey)
       replaceProject(selectedProject, updated)
       track('feature_action_completed', { domain: 'project_space', action: 'save_grouping' })
@@ -3611,7 +3832,13 @@ export function CloudTodoWorkspace({
       project => projectSpaceKey(projectSpaceRef(project)) === input.boardKey
     )
     const targetApi = apiForProject(targetProject)
-    if (!targetProject || !targetApi || issueComposerBusy) return false
+    if (
+      !targetProject ||
+      (targetProject.location === 'cloud' ? !cloudWorkspaceApi : !targetApi) ||
+      issueComposerBusy
+    ) {
+      return false
+    }
     setIssueComposerBusy(true)
     setIssueComposerError(null)
     const notifyAssignee =
@@ -3628,46 +3855,87 @@ export function CloudTodoWorkspace({
       const taskRuntimeProjectId = runtimeTaskProjectUiId(runtimeWork, input.taskRequest)
       const issueLocalProject =
         localProjectOptions.find(project => project.id === taskRuntimeProjectId) ?? null
-      let created = await targetApi.createLoopItem(targetProject.id, {
-        title: input.title,
-        description: input.description,
-        status: input.status ?? (input.createTask ? 'pending' : 'inbox'),
-        ...(input.priority ? { priority: input.priority } : {}),
-        ...(input.tags ? { tags: input.tags } : {}),
-        ...(input.automationRuleId ? { automation_rule_id: input.automationRuleId } : {}),
-        parent_id: null,
-        ...(input.createTask && isDefaultWorkItemProject(targetProject) && issueLocalProject
-          ? {
-              local_project_id: issueLocalProject.id,
-              local_project_name: issueLocalProject.name,
-            }
-          : {}),
-      })
+      const issueLocalProjectInput =
+        input.createTask && isDefaultWorkItemProject(targetProject) && issueLocalProject
+          ? issueLocalProject
+          : null
+      let created =
+        targetProject.location === 'cloud'
+          ? toCloudLoopItem(
+              await cloudWorkspaceApi!.issues.create(targetProject.id, {
+                title: input.title,
+                description: input.description,
+                status: input.status ?? (input.createTask ? 'pending' : 'inbox'),
+                priority: input.priority,
+                tags: input.tags,
+                automationRuleId: input.automationRuleId,
+                parentId: null,
+                localProjectId: issueLocalProjectInput?.id,
+                localProjectName: issueLocalProjectInput?.name,
+              })
+            )
+          : await targetApi!.createLoopItem(targetProject.id, {
+              title: input.title,
+              description: input.description,
+              status: input.status ?? (input.createTask ? 'pending' : 'inbox'),
+              ...(input.priority ? { priority: input.priority } : {}),
+              ...(input.tags ? { tags: input.tags } : {}),
+              ...(input.automationRuleId ? { automation_rule_id: input.automationRuleId } : {}),
+              parent_id: null,
+              ...(issueLocalProjectInput
+                ? {
+                    local_project_id: issueLocalProjectInput.id,
+                    local_project_name: issueLocalProjectInput.name,
+                  }
+                : {}),
+            })
       if (input.files.length > 0) {
         const uploadedAttachments = await Promise.all(
-          input.files.map(file => targetApi.addLoopItemAttachment(created.id, file))
+          input.files.map(file =>
+            targetProject.location === 'cloud'
+              ? cloudWorkspaceApi!.attachments.upload(created.id, file)
+              : targetApi!.addLoopItemAttachment(created.id, file)
+          )
         )
         const attachmentMarkdown = uploadedAttachments
           .map(attachment => attachment.markdown)
           .filter(Boolean)
           .join('\n')
         if (attachmentMarkdown) {
-          created = await targetApi.updateLoopItem(created.id, {
-            version: created.version,
-            description: [input.description, attachmentMarkdown].filter(Boolean).join('\n\n'),
-          })
+          const description = [input.description, attachmentMarkdown].filter(Boolean).join('\n\n')
+          created =
+            targetProject.location === 'cloud'
+              ? toCloudLoopItem(
+                  await cloudWorkspaceApi!.issues.update(created.id, {
+                    version: created.version,
+                    description,
+                  })
+                )
+              : await targetApi!.updateLoopItem(created.id, {
+                  version: created.version,
+                  description,
+                })
         }
       }
       if (input.assigneeUserId) {
-        if (typeof targetApi.assignLoopItem === 'function') {
-          created = await targetApi.assignLoopItem(targetProject.id, created.id, {
+        if (targetProject.location === 'cloud') {
+          created = toCloudLoopItem(
+            await cloudWorkspaceApi!.issues.assign(targetProject.id, created.id, {
+              version: created.version,
+              assigneeType: 'user',
+              assigneeId: String(input.assigneeUserId),
+              notifyAssignee,
+            })
+          )
+        } else if (typeof targetApi!.assignLoopItem === 'function') {
+          created = await targetApi!.assignLoopItem(targetProject.id, created.id, {
             version: created.version,
             assigneeType: 'user',
             assigneeId: String(input.assigneeUserId),
             notifyAssignee,
           })
         } else {
-          created = await targetApi.updateLoopItem(created.id, {
+          created = await targetApi!.updateLoopItem(created.id, {
             version: created.version,
             assignee_user_id: input.assigneeUserId,
           })
@@ -3779,14 +4047,28 @@ export function CloudTodoWorkspace({
   const issueResourceAttachmentsLoading = Boolean(
     taskPanelOpen &&
     selectedItem &&
-    selectedItemApi &&
+    selectedItemProject &&
+    (selectedItemProject.location === 'cloud' ? cloudWorkspaceApi : selectedItemApi) &&
     issueResourceAttachmentState.itemId !== selectedItem.id
   )
 
   useEffect(() => {
-    if (!taskPanelOpen || !selectedItem || !selectedItemApi) return
+    if (
+      !taskPanelOpen ||
+      !selectedItem ||
+      !selectedItemProject ||
+      (selectedItemProject.location === 'cloud' ? !cloudWorkspaceApi : !selectedItemApi)
+    ) {
+      return
+    }
     let active = true
-    void selectedItemApi.listLoopItemAttachments(selectedItem.id).then(
+    const request =
+      selectedItemProject.location === 'cloud'
+        ? cloudWorkspaceApi!.attachments
+            .list(selectedItem.id)
+            .then(attachments => attachments as CloudLoopItemAttachment[])
+        : selectedItemApi!.listLoopItemAttachments(selectedItem.id)
+    void request.then(
       attachments => {
         if (!active) return
         setIssueResourceAttachmentState({ itemId: selectedItem.id, attachments })
@@ -3799,7 +4081,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [selectedItem, selectedItemApi, taskPanelOpen])
+  }, [cloudWorkspaceApi, selectedItem, selectedItemApi, selectedItemProject, taskPanelOpen])
 
   const closeTaskPanel = useCallback(() => {
     advanceTaskPanelSession()

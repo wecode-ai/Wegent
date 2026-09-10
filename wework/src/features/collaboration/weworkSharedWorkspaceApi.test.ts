@@ -255,16 +255,11 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       pullRequestAutomation: { enabled: true },
       workflowDefinition: { version: 1 },
     })
-    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith(
-      'project-1',
-      expect.objectContaining({
-        version: 2,
-        board_config: project.board_config,
-        card_display: project.card_display,
-        pull_request_automation: { enabled: true },
-        workflow_definition: { version: 1 },
-      })
-    )
+    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
+      version: 2,
+      pull_request_automation: { enabled: true },
+      workflow_definition: { version: 1 },
+    })
     await api.projects.archive('project-1', 2)
     await expect(api.projects.listMyWork()).resolves.toEqual([issue])
 
@@ -354,6 +349,101 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       item_ids: ['issue-1'],
     })
     await api.issues.markRead('issue-1')
+  })
+
+  it('omits absent project and issue fields while preserving explicit null values', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+    await api.projects.create({ name: 'Minimal project' })
+    expect(deliveryApi.createCloudProject).toHaveBeenLastCalledWith({
+      name: 'Minimal project',
+    })
+
+    await api.projects.update('project-1', {
+      version: 4,
+      description: '',
+    })
+    expect(deliveryApi.updateCloudProject).toHaveBeenLastCalledWith('project-1', {
+      version: 4,
+      description: '',
+    })
+
+    await api.issues.create('project-1', {
+      title: 'Child issue',
+      parentId: null,
+      workflow: null,
+    })
+    expect(deliveryApi.createLoopItem).toHaveBeenLastCalledWith('project-1', {
+      title: 'Child issue',
+      parent_id: null,
+      workflow: null,
+    })
+
+    await api.issues.update('issue-1', {
+      version: 5,
+      parentId: null,
+      assigneeUserId: null,
+      dueAt: null,
+    })
+    expect(deliveryApi.updateLoopItem).toHaveBeenLastCalledWith('issue-1', {
+      version: 5,
+      parent_id: null,
+      assignee_user_id: null,
+      due_at: null,
+    })
+  })
+
+  it('uses the request project id only when paged board bindings omit it', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const bindingWithoutProject = { ...binding, cloud_project_id: undefined }
+    vi.mocked(deliveryApi.listLoopItemsPage).mockResolvedValue({
+      items: [issue],
+      task_bindings: [bindingWithoutProject],
+      next_cursor: null,
+    })
+    vi.mocked(deliveryApi.getBoardSnapshot).mockResolvedValue({
+      items: [issue],
+      task_bindings: [bindingWithoutProject],
+      members: [],
+      agents: [],
+    })
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+    await expect(
+      api.issues.listPage('project-42', {
+        status: 'pending',
+        parentId: null,
+      })
+    ).resolves.toMatchObject({
+      taskBindings: [{ projectId: 'project-42' }],
+    })
+    await expect(api.issues.getBoardSnapshot('project-42')).resolves.toMatchObject({
+      taskBindings: [{ projectId: 'project-42' }],
+    })
+  })
+
+  it('keeps an explicit binding project id and normalizes it to a string', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const numericProjectBinding = {
+      ...binding,
+      cloud_project_id: 9001,
+    }
+    vi.mocked(deliveryApi.listLoopItemsPage).mockResolvedValue({
+      items: [issue],
+      task_bindings: [numericProjectBinding],
+      next_cursor: null,
+    })
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+    await expect(
+      api.issues.listPage('request-project', {
+        status: 'pending',
+        parentId: null,
+      })
+    ).resolves.toMatchObject({
+      taskBindings: [{ projectId: '9001' }],
+    })
   })
 
   it('maps attachments, collaborators, task bindings, workflow plans, and members', async () => {

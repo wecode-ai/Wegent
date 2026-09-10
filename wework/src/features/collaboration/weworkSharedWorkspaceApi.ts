@@ -3,8 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  CollaborationAgent,
+  CollaborationAttachment,
   CollaborationComment,
   CollaborationExecution,
+  CollaborationIssue,
+  CollaborationMember,
+  CollaborationProject,
+  CollaborationUser,
   SharedWorkspaceApi,
   WorkspaceBoardSnapshot,
   WorkspaceDelivery,
@@ -18,6 +24,7 @@ import type {
   WorkspaceRuntimeProfile,
   WorkspaceTaskBinding,
   WorkspaceWorkflowPlan,
+  WorkspaceMyWorkItem,
 } from '@wegent/collaboration'
 import type {
   CloudLoopItem,
@@ -162,21 +169,85 @@ export interface WeworkSharedWorkspaceApiDependencies {
   projectChatAgentApi: ProjectChatAgentApi
 }
 
-function toProject(project: CloudProject): CloudProject {
-  return project
+function toProject(project: CloudProject): CollaborationProject {
+  return {
+    ...project,
+    id: String(project.id),
+  }
 }
 
-function toIssue(issue: CloudLoopItem): CloudLoopItem {
-  return issue
+function toIssue(issue: CloudLoopItem): CollaborationIssue {
+  return {
+    ...issue,
+    id: String(issue.id),
+    cloud_project_id: String(issue.cloud_project_id),
+  }
 }
 
-function toTaskBinding(binding: LoopItemTaskBinding): WorkspaceTaskBinding {
-  if (binding.cloud_project_id == null) {
+function toMyWorkItem(
+  item: Awaited<ReturnType<DeliveryApi['listMyWork']>>['items'][number]
+): WorkspaceMyWorkItem {
+  return {
+    ...item,
+    ...toIssue(item),
+  }
+}
+
+function toAttachment(
+  attachment: Awaited<ReturnType<DeliveryApi['listLoopItemAttachments']>>[number]
+): CollaborationAttachment {
+  return {
+    ...attachment,
+    id: String(attachment.id),
+    loop_item_id: String(attachment.loop_item_id),
+    size_bytes: Number(attachment.size_bytes),
+    created_by_user_id: Number(attachment.created_by_user_id),
+  }
+}
+
+function toMember(
+  member: Awaited<ReturnType<DeliveryApi['listCloudProjectMembers']>>[number]
+): CollaborationMember {
+  return {
+    ...member,
+    id: Number(member.id),
+    user_id: Number(member.user_id),
+  }
+}
+
+function toUser(
+  user: Awaited<ReturnType<DeliveryApi['searchCloudProjectUsers']>>['users'][number]
+): CollaborationUser {
+  return {
+    ...user,
+    id: Number(user.id),
+  }
+}
+
+function toAgent(agent: ProjectBoardSnapshot['agents'][number]): CollaborationAgent {
+  return {
+    ...agent,
+    id: String(agent.id),
+  }
+}
+
+function withoutUndefined<T extends Record<string, unknown>>(values: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(values).filter(([, value]) => value !== undefined)
+  ) as Partial<T>
+}
+
+function toTaskBinding(
+  binding: LoopItemTaskBinding,
+  contextProjectId?: string
+): WorkspaceTaskBinding {
+  const projectId = binding.cloud_project_id ?? contextProjectId
+  if (projectId == null) {
     throw new Error(`DeliveryApi task binding ${binding.id} is missing cloud_project_id`)
   }
   return {
     id: binding.id,
-    projectId: String(binding.cloud_project_id),
+    projectId: String(projectId),
     issueId: binding.loop_item_id,
     taskUserId: binding.task_user_id,
     deviceId: binding.device_id,
@@ -190,16 +261,20 @@ function toTaskBinding(binding: LoopItemTaskBinding): WorkspaceTaskBinding {
   }
 }
 
-function toBoardSnapshot(snapshot: ProjectBoardSnapshot): WorkspaceBoardSnapshot {
+function toBoardSnapshot(
+  snapshot: ProjectBoardSnapshot,
+  contextProjectId: string
+): WorkspaceBoardSnapshot {
   return {
     items: snapshot.items.map(toIssue),
-    members: snapshot.members,
-    agents: snapshot.agents,
-    taskBindings: snapshot.task_bindings.map(toTaskBinding),
+    members: snapshot.members.map(toMember),
+    agents: snapshot.agents.map(toAgent),
+    taskBindings: snapshot.task_bindings.map(binding => toTaskBinding(binding, contextProjectId)),
   }
 }
 
-function toExecution(row: Record<string, unknown>): CollaborationExecution {
+function toExecution(input: object): CollaborationExecution {
+  const row = input as Record<string, unknown>
   return {
     id: Number(row.id),
     loop_item_id: String(row.loopItemId ?? row.loop_item_id ?? ''),
@@ -337,42 +412,51 @@ export function createWeworkDeliverySharedWorkspaceApi(
         return (await deliveryApi.listCloudProjects()).items.map(toProject)
       },
       create(input) {
-        return deliveryApi.createCloudProject({
-          project_key: input.projectKey,
-          name: input.name,
-          description: input.description,
-          task_provider: input.taskProvider,
-          visibility: input.visibility,
-          provider_config: input.providerConfig as Parameters<
-            DeliveryApi['createCloudProject']
-          >[0]['provider_config'],
-        })
+        return deliveryApi
+          .createCloudProject(
+            withoutUndefined({
+              project_key: input.projectKey,
+              name: input.name,
+              description: input.description,
+              task_provider: input.taskProvider,
+              visibility: input.visibility,
+              provider_config: input.providerConfig as Parameters<
+                DeliveryApi['createCloudProject']
+              >[0]['provider_config'],
+            }) as Parameters<DeliveryApi['createCloudProject']>[0]
+          )
+          .then(toProject)
       },
       update(projectId, input) {
-        return deliveryApi.updateCloudProject(projectId, {
-          version: input.version,
-          name: input.name,
-          description: input.description,
-          tags: input.tags,
-          visibility: input.visibility,
-          provider_config: input.providerConfig as Parameters<
-            DeliveryApi['updateCloudProject']
-          >[1]['provider_config'],
-          board_config: input.boardConfig,
-          card_display: input.cardDisplay,
-          pull_request_automation: input.pullRequestAutomation as Parameters<
-            DeliveryApi['updateCloudProject']
-          >[1]['pull_request_automation'],
-          workflow_definition: input.workflowDefinition as Parameters<
-            DeliveryApi['updateCloudProject']
-          >[1]['workflow_definition'],
-        })
+        return deliveryApi
+          .updateCloudProject(
+            projectId,
+            withoutUndefined({
+              version: input.version,
+              name: input.name,
+              description: input.description,
+              tags: input.tags,
+              visibility: input.visibility,
+              provider_config: input.providerConfig as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['provider_config'],
+              board_config: input.boardConfig,
+              card_display: input.cardDisplay,
+              pull_request_automation: input.pullRequestAutomation as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['pull_request_automation'],
+              workflow_definition: input.workflowDefinition as Parameters<
+                DeliveryApi['updateCloudProject']
+              >[1]['workflow_definition'],
+            }) as Parameters<DeliveryApi['updateCloudProject']>[1]
+          )
+          .then(toProject)
       },
       archive(projectId, version) {
         return deliveryApi.archiveCloudProject(projectId, version)
       },
       async listMyWork() {
-        return (await deliveryApi.listMyWork()).items
+        return (await deliveryApi.listMyWork()).items.map(toMyWorkItem)
       },
     },
     issues: {
@@ -389,61 +473,71 @@ export function createWeworkDeliverySharedWorkspaceApi(
         return {
           items: page.items.map(toIssue),
           nextCursor: page.next_cursor,
-          taskBindings: page.task_bindings.map(toTaskBinding),
+          taskBindings: page.task_bindings.map(binding => toTaskBinding(binding, projectId)),
         }
       },
       async getBoardSnapshot(projectId) {
-        return toBoardSnapshot(await deliveryApi.getBoardSnapshot(projectId))
+        return toBoardSnapshot(await deliveryApi.getBoardSnapshot(projectId), projectId)
       },
       get(issueId) {
-        return deliveryApi.getLoopItem(issueId)
+        return deliveryApi.getLoopItem(issueId).then(toIssue)
       },
       create(projectId, input) {
-        return deliveryApi.createLoopItem(projectId, {
-          title: input.title,
-          description: input.description,
-          status: input.status,
-          priority: input.priority,
-          due_at: input.dueAt,
-          parent_id: input.parentId,
-          tags: input.tags,
-          local_project_id: input.localProjectId,
-          local_project_name: input.localProjectName,
-          workflow: input.workflow as Parameters<DeliveryApi['createLoopItem']>[1]['workflow'],
-          execution_config: input.executionConfig as Parameters<
-            DeliveryApi['createLoopItem']
-          >[1]['execution_config'],
-          automation_rule_id: input.automationRuleId,
-        })
+        return deliveryApi
+          .createLoopItem(
+            projectId,
+            withoutUndefined({
+              title: input.title,
+              description: input.description,
+              status: input.status,
+              priority: input.priority,
+              due_at: input.dueAt,
+              parent_id: input.parentId,
+              tags: input.tags,
+              local_project_id: input.localProjectId,
+              local_project_name: input.localProjectName,
+              workflow: input.workflow as Parameters<DeliveryApi['createLoopItem']>[1]['workflow'],
+              execution_config: input.executionConfig as Parameters<
+                DeliveryApi['createLoopItem']
+              >[1]['execution_config'],
+              automation_rule_id: input.automationRuleId,
+            }) as Parameters<DeliveryApi['createLoopItem']>[1]
+          )
+          .then(toIssue)
       },
       update(issueId, input) {
-        return deliveryApi.updateLoopItem(issueId, {
-          version: input.version,
-          title: input.title,
-          description: input.description,
-          status: input.status,
-          priority: input.priority,
-          parent_id: input.parentId,
-          assignee_user_id: input.assigneeUserId,
-          assignee_agent_id: input.assigneeAgentId,
-          assignee_team_id: input.assigneeTeamId,
-          due_at: input.dueAt,
-          tags: input.tags,
-          workflow: input.workflow as Parameters<DeliveryApi['updateLoopItem']>[1]['workflow'],
-          execution_config: input.executionConfig as Parameters<
-            DeliveryApi['updateLoopItem']
-          >[1]['execution_config'],
-          automation_rule_id: input.automationRuleId,
-        })
+        return deliveryApi
+          .updateLoopItem(
+            issueId,
+            withoutUndefined({
+              version: input.version,
+              title: input.title,
+              description: input.description,
+              status: input.status,
+              priority: input.priority,
+              parent_id: input.parentId,
+              assignee_user_id: input.assigneeUserId,
+              assignee_agent_id: input.assigneeAgentId,
+              assignee_team_id: input.assigneeTeamId,
+              due_at: input.dueAt,
+              tags: input.tags,
+              workflow: input.workflow as Parameters<DeliveryApi['updateLoopItem']>[1]['workflow'],
+              execution_config: input.executionConfig as Parameters<
+                DeliveryApi['updateLoopItem']
+              >[1]['execution_config'],
+              automation_rule_id: input.automationRuleId,
+            }) as Parameters<DeliveryApi['updateLoopItem']>[1]
+          )
+          .then(toIssue)
       },
       assign(projectId, issueId, input) {
-        return deliveryApi.assignLoopItem(projectId, issueId, input)
+        return deliveryApi.assignLoopItem(projectId, issueId, input).then(toIssue)
       },
       approveRun(projectId, issueId, version) {
-        return deliveryApi.approveLoopItemRun(projectId, issueId, version)
+        return deliveryApi.approveLoopItemRun(projectId, issueId, version).then(toIssue)
       },
       rejectRun(projectId, issueId, version, reason) {
-        return deliveryApi.rejectLoopItemRun(projectId, issueId, version, reason)
+        return deliveryApi.rejectLoopItemRun(projectId, issueId, version, reason).then(toIssue)
       },
       archive(issueId) {
         return deliveryApi.archiveLoopItem(issueId)
@@ -455,25 +549,25 @@ export function createWeworkDeliverySharedWorkspaceApi(
             status: input.status,
             item_ids: input.issueIds,
           })
-        ).items
+        ).items.map(toIssue)
       },
       markRead(issueId) {
-        return deliveryApi.markLoopItemRead(issueId)
+        return deliveryApi.markLoopItemRead(issueId).then(toIssue)
       },
     },
     attachments: {
-      list(issueId) {
-        return deliveryApi.listLoopItemAttachments(issueId)
+      async list(issueId) {
+        return (await deliveryApi.listLoopItemAttachments(issueId)).map(toAttachment)
       },
       async listProjectTaskAttachments(projectId) {
-        return (await deliveryApi.listProjectTaskAttachments(projectId)).items
+        return (await deliveryApi.listProjectTaskAttachments(projectId)).items.map(toAttachment)
       },
-      upload(issueId, file) {
-        return deliveryApi.addLoopItemAttachment(issueId, file)
+      async upload(issueId, file) {
+        return toAttachment(await deliveryApi.addLoopItemAttachment(issueId, file))
       },
-      importContexts(issueId, contextIds) {
+      async importContexts(issueId, contextIds) {
         const attachments = contextIds.map(id => ({ id }) as Attachment)
-        return deliveryApi.importLoopItemAttachments(issueId, attachments)
+        return (await deliveryApi.importLoopItemAttachments(issueId, attachments)).map(toAttachment)
       },
       async access(attachmentId) {
         const access = await deliveryApi.accessLoopItemAttachment(attachmentId)
@@ -499,7 +593,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
     },
     taskBindings: {
       async list(issueId) {
-        return (await deliveryApi.listTaskBindings(issueId)).map(toTaskBinding)
+        return (await deliveryApi.listTaskBindings(issueId)).map(binding => toTaskBinding(binding))
       },
     },
     workflowPlans: {
@@ -532,20 +626,26 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
     },
     members: {
-      list(projectId) {
-        return deliveryApi.listCloudProjectMembers(projectId)
+      async list(projectId) {
+        return (await deliveryApi.listCloudProjectMembers(projectId)).map(toMember)
       },
       async searchUsers(query) {
-        return (await deliveryApi.searchCloudProjectUsers(query)).users
+        return (await deliveryApi.searchCloudProjectUsers(query)).users.map(toUser)
       },
-      add(projectId, userId, role) {
-        return deliveryApi.addCloudProjectMember(projectId, userId, role)
+      async add(projectId, userId, role) {
+        return toMember(await deliveryApi.addCloudProjectMember(projectId, userId, role))
       },
-      update(projectId, userId, input) {
-        return deliveryApi.updateCloudProjectMember(projectId, userId, {
-          role: input.role,
-          capability_description: input.capabilityDescription,
-        })
+      async update(projectId, userId, input) {
+        return toMember(
+          await deliveryApi.updateCloudProjectMember(
+            projectId,
+            userId,
+            withoutUndefined({
+              role: input.role,
+              capability_description: input.capabilityDescription,
+            })
+          )
+        )
       },
       remove(projectId, userId) {
         return deliveryApi.removeCloudProjectMember(projectId, userId)
@@ -618,7 +718,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
             agent_id: filters?.agentId,
             status: filters?.status,
           })
-        ).items
+        ).items.map(toExecution)
       },
       stop(projectId, executionId) {
         return deliveryApi.stopExecution(projectId, executionId)
