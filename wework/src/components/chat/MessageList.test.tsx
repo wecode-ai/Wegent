@@ -602,8 +602,9 @@ describe('MessageList', () => {
     expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob))
 
     unmount()
-    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:generated-workspace-image')
+    expect(revokeObjectUrl).not.toHaveBeenCalled()
     clearImagePreviewCache()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:generated-workspace-image')
   })
 
   test('does not render viewed images as final message artifacts', () => {

@@ -1188,12 +1188,18 @@ async function triggerModelReloadUntilCloudFailure(control) {
   )
 }
 
-async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
+async function sendPromptUntilScenarioRequest(
+  control,
+  selector,
+  prompt,
+  scenario,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const scenarioRequest = control.awaitScenarioRequest(scenario)
   await sendPrompt(control, selector, prompt)
   return withTimeout(
     scenarioRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
     `The model service did not receive the ${scenario} request`
   )
 }

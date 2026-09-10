@@ -830,19 +830,29 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
   const { getViewport, setViewport } = useReactFlow()
   const previousNodeIds = useRef(new Set(nodes.map(node => node.id)))
   const previousRightPanelInset = useRef(rightPanelInset)
+  const previousSelectedId = useRef(selectedCanvasNodeId(selectedNode))
 
   useLayoutEffect(() => {
     const previousIds = previousNodeIds.current
+    const priorSelectedId = previousSelectedId.current
     const panelOpened = previousRightPanelInset.current === 0 && rightPanelInset > 0
     const addedNode =
       selectedNode.type === 'step' && !previousIds.has(selectedNode.id)
         ? nodes.find(node => node.id === selectedNode.id)
         : nodes.find(node => !previousIds.has(node.id))
     const selectedId = selectedCanvasNodeId(selectedNode)
+    const selectedAfterDeletion =
+      priorSelectedId !== null &&
+      priorSelectedId !== selectedId &&
+      !nodes.some(node => node.id === priorSelectedId)
     const targetNode =
-      addedNode ?? (panelOpened ? nodes.find(node => node.id === selectedId) : undefined)
+      addedNode ??
+      (panelOpened || selectedAfterDeletion
+        ? nodes.find(node => node.id === selectedId)
+        : undefined)
     previousNodeIds.current = new Set(nodes.map(node => node.id))
     previousRightPanelInset.current = rightPanelInset
+    previousSelectedId.current = selectedId
     if (!targetNode) return undefined
 
     const canvas = canvasRef.current

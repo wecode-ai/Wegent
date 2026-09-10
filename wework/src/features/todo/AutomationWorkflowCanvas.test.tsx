@@ -158,4 +158,48 @@ describe('AutomationWorkflowCanvas viewport', () => {
       { duration: 240 }
     )
   })
+
+  test('focuses the trigger after the selected step is deleted', () => {
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={{
+          ...emptyDraft,
+          steps: [
+            {
+              id: 'step-deleted',
+              kind: 'task',
+              name: 'Deleted step',
+              prompt: '',
+              dependencies: [],
+              dependencyContext: {},
+              x: 440,
+              y: 220,
+            },
+          ],
+        }}
+        selectedNode={{ type: 'step', id: 'step-deleted' }}
+        rightPanelInset={412}
+      />
+    )
+
+    flowMocks.setViewport.mockClear()
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={emptyDraft}
+        selectedNode={{ type: 'trigger' }}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).toHaveBeenCalledWith(
+      {
+        x: 394 - 230 * 0.99,
+        y: 400 - 270 * 0.99,
+        zoom: 0.99,
+      },
+      { duration: 240 }
+    )
+  })
 })

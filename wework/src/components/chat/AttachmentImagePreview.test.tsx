@@ -357,10 +357,10 @@ describe('AttachmentImagePreview', () => {
     })
 
     expect(readWorkspaceFileChunk).toHaveBeenCalledTimes(1)
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(2)
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:attachment-preview')
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
     second.unmount()
-    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
   })
 
   test('ignores an image error emitted for a released preview URL', () => {

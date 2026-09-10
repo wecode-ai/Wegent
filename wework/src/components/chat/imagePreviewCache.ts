@@ -2,7 +2,7 @@ const MAX_CACHED_IMAGE_COUNT = 32
 const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
 
 interface CachedImageEntry {
-  blob: Blob
+  url: string
   size: number
   activeUsers: number
   lastUsed: number
@@ -27,6 +27,7 @@ function removeCachedImage(key: string, entry: CachedImageEntry) {
   if (cachedImages.get(key) !== entry) return
   cachedImages.delete(key)
   cachedImageBytes -= entry.size
+  URL.revokeObjectURL(entry.url)
 }
 
 function pruneCachedImages() {
@@ -64,7 +65,7 @@ async function loadCachedImage(
       }
 
       const entry: CachedImageEntry = {
-        blob,
+        url: URL.createObjectURL(blob),
         size: blob.size,
         activeUsers: 0,
         lastUsed: ++accessSequence,
@@ -90,15 +91,13 @@ export async function acquireCachedImagePreview(
   entry.activeUsers += 1
   entry.lastUsed = ++accessSequence
   pruneCachedImages()
-  const url = URL.createObjectURL(entry.blob)
 
   let released = false
   return {
-    url,
+    url: entry.url,
     release: () => {
       if (released) return
       released = true
-      URL.revokeObjectURL(url)
       entry.activeUsers = Math.max(0, entry.activeUsers - 1)
       entry.lastUsed = ++accessSequence
       pruneCachedImages()

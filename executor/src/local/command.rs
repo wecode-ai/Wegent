@@ -240,10 +240,31 @@ impl CommandHandler {
 }
 
 pub(crate) fn configured_home_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME")
+    let configured = std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(dirs::home_dir)
+        .map(std::path::PathBuf::from);
+    #[cfg(windows)]
+    {
+        return configured
+            .map(normalize_windows_home_path)
+            .or_else(dirs::home_dir);
+    }
+    #[cfg(not(windows))]
+    {
+        configured.or_else(dirs::home_dir)
+    }
+}
+
+#[cfg(any(windows, test))]
+fn normalize_windows_home_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    let value = path.to_string_lossy();
+    let bytes = value.as_bytes();
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b'/' {
+        let drive = (bytes[1] as char).to_ascii_uppercase();
+        let suffix = value[3..].replace('/', "\\");
+        return std::path::PathBuf::from(format!("{drive}:\\{suffix}"));
+    }
+    path
 }
 
 #[cfg(windows)]
@@ -364,4 +385,26 @@ fn normalized_f64(value: Option<&Value>, default: f64, upper_bound: f64) -> f64 
 fn elapsed_seconds(started_at: Instant) -> f64 {
     let elapsed = started_at.elapsed().as_secs_f64();
     (elapsed * 1_000_000.0).round() / 1_000_000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_windows_home_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn windows_home_path_converts_msys_drive_paths() {
+        assert_eq!(
+            normalize_windows_home_path(PathBuf::from("/d/a/Wegent/Wegent")),
+            PathBuf::from(r"D:\a\Wegent\Wegent")
+        );
+    }
+
+    #[test]
+    fn windows_home_path_preserves_native_paths() {
+        assert_eq!(
+            normalize_windows_home_path(PathBuf::from(r"D:\a\Wegent\Wegent")),
+            PathBuf::from(r"D:\a\Wegent\Wegent")
+        );
+    }
 }
