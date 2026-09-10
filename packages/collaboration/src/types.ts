@@ -10,10 +10,12 @@ export type CollaborationRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter
 
 export type CollaborationPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent'
 
+export type CollaborationStatusColor = 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
+
 export interface CollaborationStatus {
   id: string
   name: string
-  color: 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
+  color: CollaborationStatusColor
 }
 
 export interface CollaborationProject {

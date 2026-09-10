@@ -28,6 +28,7 @@ describe('createCollaborationApi', () => {
     await expect(api.listProjects()).resolves.toEqual([{ id: '17' }])
     await api.createIssue('17', { title: 'Shared issue' })
     await api.updateIssue('COLLAB-1', { version: 1, status: 'in_progress' })
+    await api.archiveProject('17', 2)
 
     expect(http.get).toHaveBeenCalledWith('/v1/cloud-projects')
     expect(http.post).toHaveBeenCalledWith('/v1/cloud-projects/17/loop-items', {
@@ -37,6 +38,7 @@ describe('createCollaborationApi', () => {
       version: 1,
       status: 'in_progress',
     })
+    expect(http.delete).toHaveBeenCalledWith('/v1/cloud-projects/17?version=2')
   })
 
   it('shares comments and multipart attachments across hosts', async () => {

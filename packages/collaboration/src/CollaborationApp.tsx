@@ -9,6 +9,7 @@ import { CollaborationBoard } from './CollaborationBoard'
 import { collaborationMessages, type CollaborationLocale } from './i18n'
 import { collaborationTestIds } from './testIds'
 import { CollaborationProjectSummary } from './CollaborationProjectSummary'
+import { CollaborationSettings } from './CollaborationSettings'
 import { IssueDetail } from './IssueDetail'
 import type {
   CollaborationAttachment,
@@ -376,11 +377,42 @@ export function CollaborationApp({
             />
           )}
           {host.location.view === 'manage' && (
-            <ProjectSettings
+            <CollaborationSettings
               api={api}
               project={project}
-              messages={messages}
+              labels={{
+                settings: messages.settings,
+                projectName: messages.projectName,
+                projectDescription: messages.projectDescription,
+                visibility: messages.visibility,
+                privateVisibility: messages.privateVisibility,
+                publicVisibility: messages.publicVisibility,
+                tags: messages.tags,
+                tagsHint: messages.tagsHint,
+                boardLayout: messages.boardLayout,
+                boardLayoutHint: messages.boardLayoutHint,
+                statusName: messages.statusName,
+                statusColor: messages.statusColor,
+                processingStatus: messages.processingStatus,
+                addStatus: messages.addStatus,
+                remove: messages.remove,
+                moveUp: messages.moveUp,
+                moveDown: messages.moveDown,
+                cardDisplay: messages.cardDisplay,
+                showAssignee: messages.showAssignee,
+                showPriority: messages.showPriority,
+                showTags: messages.showTags,
+                showDate: messages.showDate,
+                repository: messages.repository,
+                providerToken: messages.providerToken,
+                providerTokenHint: messages.providerTokenHint,
+                aitableUrl: messages.aitableUrl,
+                save: messages.save,
+                archiveProject: messages.archiveProject,
+                archiveConfirm: messages.archiveConfirm,
+              }}
               onChange={setProject}
+              onArchived={() => host.navigate({ projectId: null, issueId: null, view: 'board' })}
               onConflict={async () => {
                 await loadProject(project.id, false)
                 notify(messages.conflict)
@@ -997,62 +1029,6 @@ function RunsView({
           ))}
         </ul>
       )}
-    </section>
-  )
-}
-
-function ProjectSettings({
-  api,
-  project,
-  messages,
-  onChange,
-  onConflict,
-  onError,
-}: {
-  api: CollaborationApi
-  project: CollaborationProject
-  messages: Messages
-  onChange(project: CollaborationProject): void
-  onConflict(): Promise<void>
-  onError(): void
-}) {
-  const [name, setName] = useState(project.name)
-  const [description, setDescription] = useState(project.description)
-  useEffect(() => {
-    setName(project.name)
-    setDescription(project.description)
-  }, [project])
-  return (
-    <section className="collaboration-panel collaboration-settings">
-      <h2>{messages.settings}</h2>
-      <label>
-        {messages.projectName}
-        <input value={name} onChange={event => setName(event.target.value)} />
-      </label>
-      <label>
-        {messages.projectDescription}
-        <textarea value={description} onChange={event => setDescription(event.target.value)} />
-      </label>
-      <button
-        type="button"
-        className="collaboration-primary-button"
-        onClick={async () => {
-          try {
-            onChange(
-              await api.updateProject(project.id, {
-                version: project.version,
-                name: name.trim(),
-                description: description.trim(),
-              })
-            )
-          } catch (error) {
-            if (errorStatus(error) === 409) await onConflict()
-            else onError()
-          }
-        }}
-      >
-        {messages.save}
-      </button>
     </section>
   )
 }

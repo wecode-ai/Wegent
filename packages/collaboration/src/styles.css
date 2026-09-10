@@ -73,6 +73,16 @@
   opacity: 0.45;
 }
 
+.collaboration-danger-button {
+  min-height: 36px;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #dc2626;
+  background: transparent;
+  cursor: pointer;
+}
+
 .collaboration-project-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -203,6 +213,12 @@
   color: rgb(var(--color-text-muted));
 }
 
+.collaboration-card-tag {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgb(var(--color-bg-muted));
+}
+
 .collaboration-member-search,
 .collaboration-member-actions {
   display: flex;
@@ -237,6 +253,44 @@
 
 .collaboration-member-results span {
   display: grid;
+}
+
+.collaboration-settings-section {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.collaboration-settings-section legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.collaboration-settings-section p,
+.collaboration-settings label small {
+  margin: 0;
+  color: rgb(var(--color-text-muted));
+}
+
+.collaboration-status-editor {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 110px auto auto auto;
+  gap: 8px;
+}
+
+.collaboration-checkbox {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.collaboration-settings-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .collaboration-link-button {

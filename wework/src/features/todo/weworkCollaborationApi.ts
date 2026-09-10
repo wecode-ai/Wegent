@@ -229,6 +229,14 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       )
       return mapProject(updated, 'local')
     },
+    async archiveProject(projectId, version) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        await cloudApi.archiveProject(reference.projectId, version)
+      } else {
+        await deliveryApiFor(services, 'local').archiveCloudProject(reference.projectId, version)
+      }
+    },
     async getBoardSnapshot(projectId) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {

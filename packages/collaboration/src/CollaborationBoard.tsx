@@ -63,6 +63,12 @@ export function CollaborationBoard({
   )
   const groups = groupBoardIssues(project, visibleIssues, statuses, labels.unassigned, labels.noTag)
   const groupBy = project.board_config?.group_by ?? 'status'
+  const display = project.card_display ?? {
+    show_assignee: true,
+    show_priority: true,
+    show_tags: true,
+    show_date: true,
+  }
 
   const drop = (
     event: DragEvent<HTMLElement>,
@@ -153,11 +159,24 @@ export function CollaborationBoard({
                         {project.project_key}-{issue.sequence_number}
                       </small>
                       <strong>{issue.title}</strong>
-                      <span className={`collaboration-priority priority-${issue.priority}`}>
-                        {issue.priority}
-                      </span>
+                      {display.show_priority && (
+                        <span className={`collaboration-priority priority-${issue.priority}`}>
+                          {issue.priority}
+                        </span>
+                      )}
                       {issue.parent_id && <span className="collaboration-sub-issue">↳</span>}
-                      {issue.assignee_name && <span>{issue.assignee_name}</span>}
+                      {display.show_tags &&
+                        issue.tags.map(tag => (
+                          <span className="collaboration-card-tag" key={tag}>
+                            {tag}
+                          </span>
+                        ))}
+                      {display.show_date && issue.due_at && (
+                        <time dateTime={issue.due_at}>{issue.due_at.slice(0, 10)}</time>
+                      )}
+                      {display.show_assignee && issue.assignee_name && (
+                        <span>{issue.assignee_name}</span>
+                      )}
                     </button>
                   </article>
                 ))}

@@ -46,6 +46,7 @@ function cloudApi(): CollaborationApi {
     getProject: vi.fn().mockResolvedValue(cloudProject),
     createProject: vi.fn(),
     updateProject: vi.fn(),
+    archiveProject: vi.fn(),
     getBoardSnapshot: vi.fn().mockResolvedValue({
       items: [
         {

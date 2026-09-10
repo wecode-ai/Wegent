@@ -48,6 +48,7 @@ export interface CollaborationApi {
       >
     > & { version: number }
   ): Promise<CollaborationProject>
+  archiveProject(projectId: string, version: number): Promise<void>
   getBoardSnapshot(projectId: string): Promise<CollaborationBoardSnapshot>
   getIssue(issueId: string): Promise<CollaborationIssue>
   createIssue(
@@ -134,6 +135,9 @@ export function createCollaborationApi(client: CollaborationHttpClient): Collabo
     },
     updateProject(projectId, data) {
       return client.patch(`/v1/cloud-projects/${encodeURIComponent(projectId)}`, data)
+    },
+    archiveProject(projectId, version) {
+      return client.delete(`/v1/cloud-projects/${encodeURIComponent(projectId)}?version=${version}`)
     },
     getBoardSnapshot(projectId) {
       return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/board-snapshot`)
