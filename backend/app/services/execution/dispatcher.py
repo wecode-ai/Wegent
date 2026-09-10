@@ -20,6 +20,7 @@ OpenAI Responses API compatible endpoint.
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from shared.telemetry.decorators import (
@@ -1278,6 +1279,12 @@ class ExecutionDispatcher:
         metadata = openai_request.get("metadata", {})
         request_id, request_id_source = self._resolve_request_id(request, metadata)
         metadata["request_id"] = request_id
+        from shared.telemetry.context.propagation import (
+            get_trace_context_for_propagation,
+        )
+        from shared.telemetry.context.span import set_request_context
+
+        set_request_context(request_id)
         openai_request["metadata"] = metadata
 
         # Get tools from openai_request (includes MCP servers converted to tools)
@@ -1305,6 +1312,8 @@ class ExecutionDispatcher:
             },
         )
         event_count = 0
+        emit_total_ms = 0.0
+        emit_max_ms = 0.0
         cancelled = False
         cancel_source = ""
         terminal_event_type = ""
@@ -1326,6 +1335,10 @@ class ExecutionDispatcher:
                     instructions=openai_request.get("instructions"),
                     tools=tools if tools else None,
                     stream=True,
+                    extra_headers={
+                        **get_trace_context_for_propagation(),
+                        "X-Request-ID": request_id,
+                    },
                     extra_body={
                         "metadata": openai_request.get("metadata", {}),
                         "model_config": openai_request.get("model_config", {}),
@@ -1378,6 +1391,7 @@ class ExecutionDispatcher:
 
                     async def consume_stream() -> None:
                         nonlocal event_count, terminal_event_type
+                        nonlocal emit_total_ms, emit_max_ms
                         add_span_event(
                             "sse.openai_event_iteration_start",
                             {
@@ -1443,7 +1457,15 @@ class ExecutionDispatcher:
                                     event_type,
                                     parsed_event.type,
                                 )
-                                await emitter.emit(parsed_event)
+                                emit_started = time.perf_counter()
+                                try:
+                                    await emitter.emit(parsed_event)
+                                finally:
+                                    emit_ms = (
+                                        time.perf_counter() - emit_started
+                                    ) * 1000
+                                    emit_total_ms += emit_ms
+                                    emit_max_ms = max(emit_max_ms, emit_ms)
 
                             if event_type in (
                                 ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
@@ -1538,7 +1560,8 @@ class ExecutionDispatcher:
             logger.info(
                 "[ExecutionDispatcher] SSE stream completed: task_id=%d, "
                 "subtask_id=%d, total_events=%d, cancelled=%s, "
-                "cancel_source=%s, terminal_event_type=%s, request_id=%s",
+                "cancel_source=%s, terminal_event_type=%s, request_id=%s, "
+                "emit_total_ms=%.2f, emit_max_ms=%.2f",
                 request.task_id,
                 request.subtask_id,
                 event_count,
@@ -1546,6 +1569,8 @@ class ExecutionDispatcher:
                 cancel_source or "none",
                 terminal_event_type or "none",
                 request_id,
+                emit_total_ms,
+                emit_max_ms,
             )
             add_span_event(
                 "sse.openai_event_iteration_complete",

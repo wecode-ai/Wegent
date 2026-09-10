@@ -58,12 +58,14 @@ def _build_fake_openai_module(calls: dict, events=None):
             tools,
             stream,
             extra_body,
+            extra_headers,
         ):
             calls["model"] = model
             calls["input"] = input
             calls["instructions"] = instructions
             calls["tools"] = tools
             calls["stream"] = stream
+            calls["extra_headers"] = extra_headers
             calls["extra_body"] = extra_body
             return _FakeStream(events)
 
@@ -118,6 +120,10 @@ async def test_dispatch_sse_keeps_existing_metadata_request_id():
     ):
         await dispatcher._dispatch_sse(request, target, emitter)
 
+    assert (
+        calls["extra_headers"]["X-Request-ID"]
+        == calls["extra_body"]["metadata"]["request_id"]
+    )
     assert calls["extra_body"]["metadata"]["request_id"] == "metadata-request-id"
 
 
@@ -153,6 +159,10 @@ async def test_dispatch_sse_uses_request_request_id_when_metadata_missing():
     ):
         await dispatcher._dispatch_sse(request, target, emitter)
 
+    assert (
+        calls["extra_headers"]["X-Request-ID"]
+        == calls["extra_body"]["metadata"]["request_id"]
+    )
     assert calls["extra_body"]["metadata"]["request_id"] == "backend-request-id"
 
 
@@ -188,6 +198,10 @@ async def test_dispatch_sse_generates_request_id_when_missing():
     ):
         await dispatcher._dispatch_sse(request, target, emitter)
 
+    assert (
+        calls["extra_headers"]["X-Request-ID"]
+        == calls["extra_body"]["metadata"]["request_id"]
+    )
     assert calls["extra_body"]["metadata"]["request_id"] == "req_77"
 
 
