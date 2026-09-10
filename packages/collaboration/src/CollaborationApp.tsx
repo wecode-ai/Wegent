@@ -5,7 +5,6 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import type { CollaborationApi } from './api'
-import { CollaborationAutomation } from './CollaborationAutomation'
 import { CollaborationBoard } from './CollaborationBoard'
 import { collaborationMessages, type CollaborationLocale } from './i18n'
 import { collaborationTestIds } from './testIds'
@@ -14,7 +13,6 @@ import { CollaborationSettings } from './CollaborationSettings'
 import { IssueDetail } from './IssueDetail'
 import type {
   CollaborationAttachment,
-  CollaborationAgent,
   CollaborationComment,
   CollaborationExecution,
   CollaborationFile,
@@ -68,7 +66,6 @@ export function CollaborationApp({
   const [project, setProject] = useState<CollaborationProject | null>(null)
   const [issues, setIssues] = useState<CollaborationIssue[]>([])
   const [members, setMembers] = useState<CollaborationMember[]>([])
-  const [agents, setAgents] = useState<CollaborationAgent[]>([])
   const [files, setFiles] = useState<CollaborationFile[]>([])
   const [runs, setRuns] = useState<CollaborationExecution[]>([])
   const [selectedIssue, setSelectedIssue] = useState<CollaborationIssue | null>(null)
@@ -110,7 +107,6 @@ export function CollaborationApp({
         setProject(nextProject)
         setIssues(snapshot.items)
         setMembers(snapshot.members)
-        setAgents(snapshot.agents)
         setError(null)
       } catch {
         setError(messages.loadFailed)
@@ -358,10 +354,8 @@ export function CollaborationApp({
               api={api}
               project={project}
               members={members}
-              agents={agents}
               messages={messages}
               onChange={setMembers}
-              onAgentsChange={setAgents}
               onError={() => notify(messages.saveFailed)}
             />
           )}
@@ -376,39 +370,10 @@ export function CollaborationApp({
             />
           )}
           {host.location.view === 'automation' && (
-            <CollaborationAutomation
-              api={api}
-              project={project}
-              agents={agents}
-              labels={{
-                automation: messages.automation,
-                loading: messages.loading,
-                empty: messages.emptyAutomations,
-                create: messages.createAutomation,
-                name: messages.automationName,
-                prompt: messages.automationPrompt,
-                trigger: messages.automationTrigger,
-                schedule: messages.automationSchedule,
-                event: messages.automationEvent,
-                cron: messages.automationCron,
-                eventType: messages.automationEventType,
-                agent: messages.automationAgent,
-                subscription: messages.automationSubscription,
-                subscriptionHint: messages.automationSubscriptionHint,
-                manageSubscriptions: messages.manageSubscriptions,
-                subscriptionName: messages.subscriptionName,
-                subscriptionSource: messages.subscriptionSource,
-                subscriptionResourceUrl: messages.subscriptionResourceUrl,
-                emptySubscriptions: messages.emptySubscriptions,
-                edit: messages.edit,
-                enabled: messages.enabled,
-                runNow: messages.runNow,
-                runs: messages.runs,
-                delete: messages.delete,
-                cancel: messages.cancel,
-                retry: messages.retry,
-              }}
-              onError={() => notify(messages.saveFailed)}
+            <CapabilityView
+              title={messages.automation}
+              unavailable={!host.capabilities.automation}
+              unavailableMessage={messages.capabilitiesUnavailable}
             />
           )}
           {host.location.view === 'manage' && (
@@ -503,8 +468,6 @@ export function CollaborationApp({
           api={api}
           issue={selectedIssue}
           statuses={projectStatuses(project)}
-          members={members}
-          agents={agents}
           attachments={attachments}
           comments={comments}
           messages={messages}
@@ -883,28 +846,20 @@ function MembersView({
   api,
   project,
   members,
-  agents,
   messages,
   onChange,
-  onAgentsChange,
   onError,
 }: {
   api: CollaborationApi
   project: CollaborationProject
   members: CollaborationMember[]
-  agents: CollaborationAgent[]
   messages: Messages
   onChange(members: CollaborationMember[]): void
-  onAgentsChange(agents: CollaborationAgent[]): void
   onError(): void
 }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<CollaborationUser[]>([])
   const [searching, setSearching] = useState(false)
-  const [agentEditorOpen, setAgentEditorOpen] = useState(false)
-  const [agentName, setAgentName] = useState('')
-  const [agentCapability, setAgentCapability] = useState('')
-  const [agentPrompt, setAgentPrompt] = useState('')
   const canManage = project.access_role === 'Owner' || project.access_role === 'Maintainer'
   const search = async (event: FormEvent) => {
     event.preventDefault()
@@ -1019,122 +974,6 @@ function MembersView({
           ))}
         </ul>
       )}
-      <section className="collaboration-agent-section">
-        <header>
-          <h3>{messages.agents}</h3>
-          {canManage && (
-            <button
-              type="button"
-              data-testid="collaboration-agent-create"
-              onClick={() => setAgentEditorOpen(open => !open)}
-            >
-              {messages.createAgent}
-            </button>
-          )}
-        </header>
-        {agentEditorOpen && (
-          <form
-            className="collaboration-automation-form"
-            data-testid="collaboration-agent-editor"
-            onSubmit={async event => {
-              event.preventDefault()
-              if (!agentName.trim()) return
-              try {
-                const created = await api.createAgent(project.id, {
-                  name: agentName.trim(),
-                  runtime: 'codex',
-                  model: null,
-                  modelType: null,
-                  modelOptions: {},
-                  systemPrompt: agentPrompt.trim(),
-                  capabilityDescription: agentCapability.trim(),
-                  visibility: 'creator_admin',
-                  executionEnvironment: project.project_store === 'local' ? 'local' : 'cloud',
-                  executionMode: 'auto',
-                  executionDeviceId: null,
-                  workspaceBinding: { type: 'standalone' },
-                  maxConcurrentExecutions: 1,
-                  workspacePolicy: 'project',
-                  defaultRuntimeProfileId: null,
-                  plugins: [],
-                })
-                onAgentsChange([...agents, created])
-                setAgentName('')
-                setAgentCapability('')
-                setAgentPrompt('')
-                setAgentEditorOpen(false)
-              } catch {
-                onError()
-              }
-            }}
-          >
-            <label>
-              {messages.agentName}
-              <input
-                data-testid="collaboration-agent-name"
-                value={agentName}
-                onChange={event => setAgentName(event.target.value)}
-              />
-            </label>
-            <label>
-              {messages.agentCapability}
-              <input
-                data-testid="collaboration-agent-capability"
-                value={agentCapability}
-                onChange={event => setAgentCapability(event.target.value)}
-              />
-            </label>
-            <label>
-              {messages.agentPrompt}
-              <textarea
-                data-testid="collaboration-agent-prompt"
-                value={agentPrompt}
-                onChange={event => setAgentPrompt(event.target.value)}
-              />
-            </label>
-            <button
-              type="submit"
-              data-testid="collaboration-agent-save"
-              disabled={!agentName.trim()}
-            >
-              {messages.create}
-            </button>
-          </form>
-        )}
-        {agents.length === 0 ? (
-          <p>{messages.emptyAgents}</p>
-        ) : (
-          <ul className="collaboration-member-list">
-            {agents.map(agent => (
-              <li key={agent.id} data-testid={`collaboration-agent-${agent.id}`}>
-                <span>
-                  <strong>{agent.name}</strong>
-                  <small>{agent.capabilityDescription}</small>
-                </span>
-                {canManage && agent.version && (
-                  <button
-                    type="button"
-                    data-testid={`collaboration-agent-archive-${agent.id}`}
-                    onClick={async () => {
-                      try {
-                        await api.updateAgent(project.id, agent.id, {
-                          version: agent.version ?? 1,
-                          status: 'archived',
-                        })
-                        onAgentsChange(agents.filter(item => item.id !== agent.id))
-                      } catch {
-                        onError()
-                      }
-                    }}
-                  >
-                    {messages.archiveAgent}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </section>
   )
 }
@@ -1190,6 +1029,23 @@ function RunsView({
           ))}
         </ul>
       )}
+    </section>
+  )
+}
+
+function CapabilityView({
+  title,
+  unavailable,
+  unavailableMessage,
+}: {
+  title: string
+  unavailable: boolean
+  unavailableMessage: string
+}) {
+  return (
+    <section className="collaboration-panel">
+      <h2>{title}</h2>
+      {unavailable && <p>{unavailableMessage}</p>}
     </section>
   )
 }

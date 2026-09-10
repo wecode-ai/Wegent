@@ -36,7 +36,9 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CollaborationWorkspace } from '@/features/todo/CollaborationWorkspace'
+import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
 import {
   defaultProjectSpaceContentRoute,
@@ -66,6 +68,7 @@ import {
   getWorkbenchPaneKey,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
+import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
 import { loadDshConversationTranscript } from '@/features/dsh-runtime/dshConversationTranscript'
@@ -130,6 +133,7 @@ export function DesktopWorkbenchLayout({
 }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
+  const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const {
     state,
     cloudWorkStatus,
@@ -152,6 +156,7 @@ export function DesktopWorkbenchLayout({
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
+    createLocalRuntimeProject: onCreateLocalRuntimeProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
     deleteDeviceWorkspace: onDeleteDeviceWorkspace,
@@ -181,6 +186,10 @@ export function DesktopWorkbenchLayout({
     refreshWorkLists,
     workspaceTabId,
   } = useWorkbench()
+  const localTodoProjects = useMemo(
+    () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
+    [state.projects, state.runtimeWork]
+  )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
   const workspaceTabs = useOptionalWorkspaceTabs()
   const ownedWorkspaceTab = workspaceTabs
@@ -553,6 +562,12 @@ export function DesktopWorkbenchLayout({
   const [standalonePreferNativeLocalPicker, setStandalonePreferNativeLocalPicker] = useState(true)
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
+  )
+  const openProjectSpaceRuntimeTask = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      await openProjectSpaceRuntimeTaskInTab(address, workspaceTabs, openRuntimeTaskOutsideHarness)
+    },
+    [openRuntimeTaskOutsideHarness, workspaceTabs]
   )
   const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
@@ -1081,15 +1096,29 @@ export function DesktopWorkbenchLayout({
           {todoOpen &&
             (state.user && services.deliveryApi ? (
               <CollaborationWorkspace
-                services={services}
                 user={state.user}
+                localProjects={localTodoProjects}
+                runtimeWork={state.runtimeWork}
+                runtimeTaskLifecycle={runtimeTaskLifecycle}
+                services={services}
                 startupActive={routeActive && todoOpen}
+                onCreateLocalCodeProject={onCreateLocalRuntimeProject}
+                onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                onListDeviceDirectories={onListDeviceDirectories}
+                onCreateDeviceDirectory={onCreateDeviceDirectory}
+                onCloneGitRepository={onCloneGitRepository}
+                onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                onArchiveRuntimeTasks={onArchiveChatConversations}
                 onOpenSettings={options => openSettings(options)}
                 onLogout={onLogout}
                 activeProjectRef={
                   ownedWorkspaceTab?.kind === 'board'
                     ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
                     : undefined
+                }
+                defaultProjectRequested={
+                  ownedWorkspaceTab?.kind === 'board' &&
+                  projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
                 }
                 focusedItemId={
                   ownedWorkspaceTab?.kind === 'board'

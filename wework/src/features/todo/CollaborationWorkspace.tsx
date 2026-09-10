@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { MonitorCog } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   CollaborationApp,
@@ -14,15 +15,8 @@ import '@wegent/collaboration/styles.css'
 
 import { useTranslation } from '@/hooks/useTranslation'
 
+import { CloudTodoWorkspace, type CloudTodoWorkspaceProps } from './CloudTodoWorkspace'
 import type { LocatedProjectSpace } from './projectSpaceSelection'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import {
-  DesktopSidebarAccount,
-  type DesktopSidebarAccountSettingsOptions,
-} from '@/components/layout/DesktopSidebarAccount'
-import type { User as UserProfile } from '@/types/api'
 import {
   collaborationIssueId,
   collaborationProjectId,
@@ -40,23 +34,16 @@ function locatedProject(project: CollaborationProject): LocatedProjectSpace {
   }
 }
 
-export interface CollaborationWorkspaceProps {
-  activeProjectRef?: {
-    projectId: string
-    projectStore: 'local' | 'backend'
-  } | null
-  focusedItemId?: string | null
-  onActiveProjectChange?: (project: LocatedProjectSpace | null) => void
-  onFocusedItemHandled?: () => void
-  startupActive?: boolean
-  user: UserProfile
-  onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
-  onLogout?: () => void
-  services: WorkbenchServices
-}
-
-interface SharedCollaborationWorkspaceProps extends CollaborationWorkspaceProps {
+interface SharedCollaborationWorkspaceProps extends Pick<
+  CloudTodoWorkspaceProps,
+  | 'activeProjectRef'
+  | 'focusedItemId'
+  | 'onActiveProjectChange'
+  | 'onFocusedItemHandled'
+  | 'services'
+> {
   api: ReturnType<typeof createWeworkCollaborationApi>
+  onOpenDesktopWorkspace(): void
 }
 
 function SharedCollaborationWorkspace({
@@ -65,13 +52,10 @@ function SharedCollaborationWorkspace({
   focusedItemId,
   onActiveProjectChange,
   onFocusedItemHandled,
-  onLogout,
-  onOpenSettings,
+  onOpenDesktopWorkspace,
   services,
-  user,
 }: SharedCollaborationWorkspaceProps) {
   const { i18n } = useTranslation('common')
-  const hasLocalProjects = Boolean(services.projectSpaceApis?.local)
   const [view, setView] = useState<CollaborationView>('board')
   const [issueId, setIssueId] = useState<string | null>(() =>
     activeProjectRef?.projectStore === 'backend' && focusedItemId
@@ -96,9 +80,9 @@ function SharedCollaborationWorkspace({
     return {
       capabilities: {
         cloudProjects: true,
-        localProjects: hasLocalProjects,
+        localProjects: Boolean(services.projectSpaceApis?.local),
         aiAssignment: false,
-        automation: activeProjectRef?.projectStore !== 'local',
+        automation: true,
         terminal: true,
         dingtalkAitable: false,
       },
@@ -124,49 +108,54 @@ function SharedCollaborationWorkspace({
       openExternal(url) {
         window.open(url, '_blank', 'noopener,noreferrer')
       },
+      projectActions: activeProjectRef
+        ? [
+            {
+              id: 'desktop-workspace',
+              label: i18n.language.startsWith('zh') ? '桌面能力' : 'Desktop tools',
+              testId: 'collaboration-open-desktop-workspace',
+              renderIcon: () => <MonitorCog size={16} />,
+              invoke: onOpenDesktopWorkspace,
+            },
+          ]
+        : undefined,
     }
-  }, [activeProjectRef, api, hasLocalProjects, issueId, onActiveProjectChange, view])
+  }, [
+    activeProjectRef,
+    api,
+    i18n.language,
+    issueId,
+    onActiveProjectChange,
+    onOpenDesktopWorkspace,
+    services.projectSpaceApis?.local,
+    view,
+  ])
 
   const locale: CollaborationLocale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
   return (
-    <div className="flex h-full min-h-0" data-testid="wework-collaboration-workspace">
-      {onOpenSettings && onLogout && (
-        <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-sidebar p-2">
-          <div className="flex-1" />
-          <DesktopSidebarAccount user={user} onOpenSettings={onOpenSettings} onLogout={onLogout} />
-        </aside>
-      )}
-      <div className="min-w-0 flex-1 overflow-auto bg-background text-text-primary">
-        <CollaborationApp api={api} host={host} locale={locale} />
-      </div>
+    <div
+      className="h-full min-h-0 overflow-auto bg-background text-text-primary"
+      data-testid="wework-collaboration-workspace"
+    >
+      <CollaborationApp api={api} host={host} locale={locale} />
     </div>
   )
 }
 
-export function CollaborationWorkspace(props: CollaborationWorkspaceProps) {
+export function CollaborationWorkspace(props: CloudTodoWorkspaceProps) {
   const activeProjectRef = props.activeProjectRef ?? null
   const activeProjectKey = activeProjectRef
     ? `${activeProjectRef.projectStore}:${activeProjectRef.projectId}`
     : 'projects'
-  const { collaborationApi, localProjectChatClient, projectSpaceApis, projectSpaceDetailServices } =
-    props.services
+  const [desktopProjectKey, setDesktopProjectKey] = useState<string | null>(null)
+  const collaborationAvailable = Boolean(props.services.collaborationApi)
   const api = useMemo(
-    () =>
-      createWeworkCollaborationApi({
-        collaborationApi,
-        localProjectChatClient,
-        projectSpaceApis,
-        projectSpaceDetailServices,
-      }),
-    [collaborationApi, localProjectChatClient, projectSpaceApis, projectSpaceDetailServices]
+    () => (collaborationAvailable ? createWeworkCollaborationApi(props.services) : null),
+    [collaborationAvailable, props.services]
   )
+  const useDesktopWorkspace = !api || desktopProjectKey === activeProjectKey
 
-  useEffect(() => {
-    if (!props.startupActive || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
-      return
-    }
-    void invokeDesktopHost<void>('renderer.startupReady')
-  }, [props.startupActive])
+  if (useDesktopWorkspace) return <CloudTodoWorkspace {...props} />
 
   return (
     <SharedCollaborationWorkspace
@@ -176,10 +165,8 @@ export function CollaborationWorkspace(props: CollaborationWorkspaceProps) {
       focusedItemId={props.focusedItemId}
       onActiveProjectChange={props.onActiveProjectChange}
       onFocusedItemHandled={props.onFocusedItemHandled}
-      onLogout={props.onLogout}
-      onOpenSettings={props.onOpenSettings}
+      onOpenDesktopWorkspace={() => setDesktopProjectKey(activeProjectKey)}
       services={props.services}
-      user={props.user}
     />
   )
 }
