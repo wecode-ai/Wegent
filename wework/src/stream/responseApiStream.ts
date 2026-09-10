@@ -48,6 +48,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.subagent.activity',
   'response.guidance.applied',
   'runtime.task.title.updated',
+  'runtime.work.changed',
   'runtime.goal.updated',
   'runtime.goal.cleared',
   'runtime.goal.continuation',
@@ -787,6 +788,16 @@ export function emitResponseApiEvent(
       ...base,
       title,
     } as RuntimeTaskTitleUpdatedPayload)
+    return
+  }
+
+  if (eventName === 'runtime.work.changed') {
+    const taskId = base.taskId
+    if (!taskId) return
+    handlers.onRuntimeWorkChanged?.({
+      taskId,
+      ...(base.deviceId ? { deviceId: base.deviceId } : {}),
+    })
     return
   }
 

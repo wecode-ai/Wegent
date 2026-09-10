@@ -12,6 +12,7 @@ mod events;
 pub mod fork_transfer;
 mod handler;
 pub(crate) mod local_connector_auth;
+pub(crate) mod native_transcript;
 mod notification_mapping;
 mod remote_projects;
 mod response;

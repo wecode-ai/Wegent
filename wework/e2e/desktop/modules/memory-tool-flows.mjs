@@ -341,11 +341,7 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   )
   await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
 
-  const samples = []
-  for (let index = 0; index < 5; index += 1) {
-    samples.push(await captureTotalMemorySample(control, 'running'))
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
-  }
+  const samples = await captureStableTotalMemorySamples(control, 'running')
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )

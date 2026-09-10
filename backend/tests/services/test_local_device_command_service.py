@@ -4,6 +4,7 @@
 
 """Tests for local device command RPC service."""
 
+import base64
 import gzip
 import hashlib
 import json
@@ -117,6 +118,53 @@ def _create_turn_file_changes_sequence_artifact(tmp_path):
         encoding="utf-8",
     )
     return repo, executor_home
+
+
+def test_git_apply_patch_command_stages_unstages_and_reverts(tmp_path):
+    from app.services.device.command_registry import resolve_local_device_command
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "tests@example.com")
+    _run_git(repo, "config", "user.name", "Tests")
+    changed_file = repo / "changed.txt"
+    changed_file.write_text("before\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "initial")
+    changed_file.write_text("after\n", encoding="utf-8")
+    patch = _run_git(repo, "diff", "--binary", "--")
+    encoded_patch = base64.b64encode(patch).decode("ascii")
+    definition = resolve_local_device_command("git_apply_patch", {})
+
+    assert definition is not None
+
+    stage = subprocess.run(
+        [*shlex.split(definition.command), "stage", encoded_patch],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    assert stage.returncode == 0, stage.stderr.decode()
+    assert _run_git(repo, "diff", "--cached", "--") == patch
+
+    unstage = subprocess.run(
+        [*shlex.split(definition.command), "unstage", encoded_patch],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    assert unstage.returncode == 0, unstage.stderr.decode()
+    assert _run_git(repo, "diff", "--cached", "--") == b""
+
+    revert = subprocess.run(
+        [*shlex.split(definition.command), "revert", encoded_patch],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    assert revert.returncode == 0, revert.stderr.decode()
+    assert changed_file.read_text(encoding="utf-8") == "before\n"
 
 
 def _create_plain_workspace_add_sequence_artifact(tmp_path):
@@ -2770,6 +2818,7 @@ async def test_execute_configured_device_command_rejects_cloud_unsupported_comma
     ("command_key", "path", "expected_runtime_command_key"),
     [
         ("workspace_tree", "/workspace/repo", "workspace_tree"),
+        ("git_apply_patch", "/workspace/repo", "git_apply_patch"),
         ("git_status_porcelain", "/workspace/repo", None),
     ],
 )

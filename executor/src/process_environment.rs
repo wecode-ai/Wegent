@@ -113,13 +113,11 @@ pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, Str
         // executor would otherwise never see tools a fresh pwsh can resolve.
         let (machine_path, user_path) = windows_registry_paths()?;
         let current_path = env::var("PATH").unwrap_or_default();
-        let mut merged = Vec::new();
-        for value in [machine_path, user_path].into_iter().flatten() {
-            append_unique_windows_path(&mut merged, &value);
-        }
-        // Keep parent-provided entries that are not in the registry so extra
-        // developer/runtime directories survive a refresh.
-        append_unique_windows_path(&mut merged, &current_path);
+        let merged = merged_windows_path_entries(
+            &current_path,
+            machine_path.as_deref(),
+            user_path.as_deref(),
+        );
         let merged = env::join_paths(merged)
             .map_err(|error| format!("Failed to join Windows PATH entries: {error}"))?;
         let merged = merged.to_string_lossy().into_owned();
@@ -234,6 +232,22 @@ fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> 
         Some(user_path.to_owned())
     };
     Ok((machine_path, user_path))
+}
+
+#[cfg(windows)]
+fn merged_windows_path_entries(
+    current_path: &str,
+    machine_path: Option<&str>,
+    user_path: Option<&str>,
+) -> Vec<std::path::PathBuf> {
+    let mut merged = Vec::new();
+    // Explicit parent-provided entries may contain app/runtime overrides and
+    // must keep precedence. Registry paths supplement stale GUI environments.
+    append_unique_windows_path(&mut merged, current_path);
+    for value in [machine_path, user_path].into_iter().flatten() {
+        append_unique_windows_path(&mut merged, value);
+    }
+    merged
 }
 
 #[cfg(windows)]
@@ -547,6 +561,27 @@ fn ignored_process_env_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_registry_paths_supplement_parent_path_without_reordering_it() {
+        let merged = merged_windows_path_entries(
+            r"C:\Wework\fixture;C:\Windows\System32",
+            Some(r"C:\Windows\System32;C:\Program Files\Git\cmd"),
+            Some(r"C:\Users\test\bin;C:\Wework\fixture"),
+        );
+
+        assert_eq!(
+            merged,
+            [
+                r"C:\Wework\fixture",
+                r"C:\Windows\System32",
+                r"C:\Program Files\Git\cmd",
+                r"C:\Users\test\bin",
+            ]
+            .map(PathBuf::from)
+        );
+    }
 
     #[cfg(unix)]
     #[test]

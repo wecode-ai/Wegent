@@ -31,6 +31,7 @@ import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDial
 import type { HarnessAppVerificationReport } from '@/api/local/harnessApps'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { localizeSmartAppIssue } from '@/lib/smart-app-error-message'
 import type {
   CodeCommentContext,
   WorkspaceFileApi,
@@ -53,6 +54,8 @@ import {
   subscribeComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type { GitPatchAction } from '@/api/environment'
+import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
 import { isEditableShortcutTarget } from '@/lib/keybindings'
 import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
@@ -173,6 +176,7 @@ interface RightWorkspaceReviewState {
   branchName?: string
   targetBranchName?: string
   focusFilePath?: string
+  reviewMode?: DesktopReviewMode
 }
 
 interface RightWorkspacePanelProps {
@@ -247,6 +251,8 @@ interface RightWorkspacePanelProps {
   onCloseTab: (tab: RightWorkspacePanelTab) => void
   onHarnessSessionExit?: (sessionId: string) => void
   onRefreshReview?: () => void
+  onOpenReviewSourceFile?: (path: string, lineStart?: number, lineEnd?: number) => void
+  onApplyReviewPatch?: (action: GitPatchAction, patch: string) => Promise<void>
   onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
   getChatInitialAddress?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
@@ -351,12 +357,15 @@ function SmartAppDevelopmentPreviewState({
 }) {
   const { t } = useTranslation('common')
   const isError = status === 'error'
+  const fallback = t('workbench.smart_app_preview_failed', 'DSH 开发预览启动失败')
   const message =
     status === 'starting'
       ? t('workbench.smart_app_preview_starting')
       : status === 'reloading'
         ? t('workbench.smart_app_preview_reloading')
-        : error || t('workbench.smart_app_preview_failed')
+        : error
+          ? localizeSmartAppIssue(error, fallback, t)
+          : fallback
 
   return (
     <div
@@ -393,10 +402,21 @@ function SmartAppDevelopmentVerification({
   tab: RightWorkspaceBrowserTab
   onVerify?: (tab: RightWorkspaceBrowserTab, installationId: string) => void
 }) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
   const [detailsOpen, setDetailsOpen] = useState(false)
   const blockingIssue = preview.verificationReport?.issues.find(issue => issue.blocking)
   const issues = preview.verificationReport?.issues ?? []
+  const localizeIssue = (value: string) => {
+    if (!i18n.language.startsWith('zh')) return value
+    const fallback = t(
+      'workbench.smart_app_preview_verification_issue',
+      '智能工作台校验未通过，请修复后重新验证。'
+    )
+    const localized = localizeSmartAppIssue(value, fallback, t)
+    return /[\u4e00-\u9fff]/.test(localized) || !/[A-Za-z]{3}/.test(localized)
+      ? localized
+      : fallback
+  }
   const label =
     preview.verificationStatus === 'passed'
       ? t('workbench.smart_app_preview_verification_passed')
@@ -428,12 +448,12 @@ function SmartAppDevelopmentVerification({
           <span className="ml-2">
             {blockingIssue ? (
               <>
-                {blockingIssue.code}
+                {localizeIssue(blockingIssue.message)}
                 {blockingIssue.file ? ` · ${blockingIssue.file}` : ''}
-                {blockingIssue.hint ? ` · ${blockingIssue.hint}` : ''}
+                {blockingIssue.hint ? ` · ${localizeIssue(blockingIssue.hint)}` : ''}
               </>
             ) : (
-              preview.verificationError
+              localizeIssue(preview.verificationError ?? '')
             )}
           </span>
         ) : null}
@@ -469,8 +489,8 @@ function SmartAppDevelopmentVerification({
             {issues.map(issue => (
               <li key={`${issue.stage}:${issue.code}:${issue.file ?? ''}`}>
                 <div className="font-medium text-text-primary">{issue.code}</div>
-                <div>{issue.file ?? issue.message}</div>
-                {issue.hint ? <div>{issue.hint}</div> : null}
+                <div>{issue.file ?? localizeIssue(issue.message)}</div>
+                {issue.hint ? <div>{localizeIssue(issue.hint)}</div> : null}
               </li>
             ))}
           </ul>
@@ -535,6 +555,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onCloseTab,
   onHarnessSessionExit,
   onRefreshReview,
+  onOpenReviewSourceFile,
+  onApplyReviewPatch,
   onRestoreConversation,
   getChatInitialInput,
   getChatInitialAddress,
@@ -839,8 +861,12 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             branchName={review.branchName}
             targetBranchName={review.targetBranchName}
             focusFilePath={review.focusFilePath}
+            reviewMode={review.reviewMode}
             viewOptions={reviewViewOptions}
             onRefresh={onRefreshReview}
+            onOpenSourceFile={onOpenReviewSourceFile}
+            onApplyPatch={onApplyReviewPatch}
+            onAddCodeComment={onAddCodeComment}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />

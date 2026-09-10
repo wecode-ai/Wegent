@@ -1,9 +1,15 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
+  createWeworkSyncDownloadTimeout,
+  createWeworkSyncFetchInit,
   createWeworkSyncRequestSignal,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
+  readWeworkSyncResponse,
   WEWORK_SYNC_REQUEST_TIMEOUT_MS,
 } from './wework-sync-request.js'
 
@@ -35,9 +41,18 @@ describe('Wework sync request normalization', () => {
     expect(normalizeWeworkSyncApiBaseUrl('https://cloud.example.com/api/?ignored=1#hash')).toBe(
       'https://cloud.example.com/api'
     )
+    expect(normalizeWeworkSyncApiBaseUrl('http://127.0.0.1:8000/api')).toBe(
+      'http://127.0.0.1:8000/api'
+    )
+    expect(normalizeWeworkSyncApiBaseUrl('http://localhost:8000/api')).toBe(
+      'http://localhost:8000/api'
+    )
     expect(() =>
       normalizeWeworkSyncApiBaseUrl('https://user:secret@cloud.example.com/api')
     ).toThrow('Invalid Wework sync API URL')
+    expect(() => normalizeWeworkSyncApiBaseUrl('http://cloud.example.com/api')).toThrow(
+      'Invalid Wework sync API URL'
+    )
   })
 
   test('bounds an unavailable backend request without blocking the desktop', async () => {
@@ -47,5 +62,83 @@ describe('Wework sync request normalization', () => {
       signal.addEventListener('abort', () => resolve(), { once: true })
     })
     expect(signal.aborted).toBe(true)
+  })
+
+  test('renews and clears the download inactivity timeout', () => {
+    vi.useFakeTimers()
+    try {
+      const timeout = createWeworkSyncDownloadTimeout(30)
+      vi.advanceTimersByTime(20)
+      timeout.refresh()
+      vi.advanceTimersByTime(20)
+      expect(timeout.signal.aborted).toBe(false)
+      vi.advanceTimersByTime(10)
+      expect(timeout.signal.aborted).toBe(true)
+
+      const completed = createWeworkSyncDownloadTimeout(1)
+      completed.clear()
+      vi.advanceTimersByTime(1)
+      expect(completed.signal.aborted).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('builds authenticated multipart uploads to the backend', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-sync-upload-'))
+    const path = join(directory, 'segment.enc')
+    await writeFile(path, 'encrypted transcript')
+
+    const request = await createWeworkSyncFetchInit(
+      {
+        apiBaseUrl: 'https://cloud.example.com/api',
+        path: '/wework-transcripts/task-1/segments',
+        method: 'POST',
+        body: { sequence: 1 },
+        file: {
+          path,
+          name: 'segment.tgz.aes256gcm',
+          contentType: 'application/octet-stream',
+        },
+      },
+      'Bearer token'
+    )
+
+    expect(request.headers).toEqual({ authorization: 'Bearer token' })
+    expect(request.body).toBeInstanceOf(FormData)
+    const form = request.body as FormData
+    expect(form.get('metadata')).toBe('{"sequence":1}')
+    expect(await (form.get('file') as File).text()).toBe('encrypted transcript')
+  })
+
+  test('streams authenticated backend downloads to a local file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-sync-download-'))
+    const path = join(directory, 'segment.enc')
+    let progressEvents = 0
+
+    const body = await readWeworkSyncResponse(
+      new Response('encrypted transcript', {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+      }),
+      path,
+      Buffer.byteLength('encrypted transcript'),
+      () => {
+        progressEvents += 1
+      }
+    )
+
+    expect(body).toEqual({ path })
+    expect(await readFile(path, 'utf8')).toBe('encrypted transcript')
+    expect(progressEvents).toBeGreaterThanOrEqual(2)
+  })
+
+  test('rejects backend downloads that exceed their declared size', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-sync-download-'))
+    const path = join(directory, 'segment.enc')
+
+    await expect(readWeworkSyncResponse(new Response('oversized'), path, 4)).rejects.toThrow(
+      'exceeds its declared size'
+    )
   })
 })

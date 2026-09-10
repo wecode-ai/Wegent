@@ -4,9 +4,7 @@
 
 """Private object storage for archived Wework transcripts."""
 
-import io
-from datetime import timedelta
-from typing import Optional
+from typing import BinaryIO, Iterator
 
 from minio import Minio
 from urllib3 import PoolManager, Timeout
@@ -20,7 +18,7 @@ class WeworkTranscriptStorageError(RuntimeError):
 
 class WeworkTranscriptStorage:
     def __init__(self) -> None:
-        self._client: Optional[Minio] = None
+        self._client: Minio | None = None
 
     @property
     def bucket(self) -> str:
@@ -57,46 +55,48 @@ class WeworkTranscriptStorage:
             self._client = client
         return self._client
 
-    def put(self, object_key: str, content: bytes) -> None:
+    def stream(self, object_key: str) -> Iterator[bytes]:
+        try:
+            response = self.client.get_object(self.bucket, object_key)
+        except Exception as exc:
+            raise WeworkTranscriptStorageError(
+                "Failed to read transcript segment"
+            ) from exc
+        return self._stream_response(response)
+
+    @staticmethod
+    def _stream_response(response) -> Iterator[bytes]:
+        try:
+            yield from response.stream(amt=1024 * 1024)
+        finally:
+            response.close()
+            response.release_conn()
+
+    def put_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        size_bytes: int,
+    ) -> None:
         try:
             self.client.put_object(
                 self.bucket,
                 object_key,
-                io.BytesIO(content),
-                len(content),
-                content_type="application/zstd",
+                stream,
+                size_bytes,
+                content_type="application/octet-stream",
             )
         except Exception as exc:
             raise WeworkTranscriptStorageError(
-                "Failed to store archived Wework transcript"
+                "Failed to store transcript segment"
             ) from exc
 
-    def get(self, object_key: str) -> bytes:
-        response = None
+    def delete(self, object_key: str) -> None:
         try:
-            response = self.client.get_object(self.bucket, object_key)
-            return response.read()
+            self.client.remove_object(self.bucket, object_key)
         except Exception as exc:
             raise WeworkTranscriptStorageError(
-                "Failed to read archived Wework transcript"
-            ) from exc
-        finally:
-            if response is not None:
-                response.close()
-                response.release_conn()
-
-    def download_url(self, object_key: str) -> str:
-        try:
-            return self.client.presigned_get_object(
-                self.bucket,
-                object_key,
-                expires=timedelta(
-                    seconds=settings.WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS
-                ),
-            )
-        except Exception as exc:
-            raise WeworkTranscriptStorageError(
-                "Failed to create archived transcript download URL"
+                "Failed to delete obsolete transcript segment"
             ) from exc
 
 

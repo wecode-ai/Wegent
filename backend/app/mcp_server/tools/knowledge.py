@@ -31,10 +31,6 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.server import EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
-from app.services.chat.task_default_knowledge_bases import (
-    resolve_task_default_knowledge_base_read_user_id,
-)
-from app.services.knowledge import KnowledgeFolderService
 from app.services.knowledge.external_document_access import (
     DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
     DOWNLOAD_TOKEN_HEADER,
@@ -51,6 +47,7 @@ from app.services.knowledge.orchestrator import (
     knowledge_orchestrator,
 )
 from shared.models import SearchHints
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -144,29 +141,12 @@ def _get_read_user_for_knowledge_base(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
 ) -> Optional[User]:
-    """Resolve direct user access or task-scoped agent default read access."""
-    user = _get_user_from_token(db, token_info)
-    if user is None:
-        return None
-    if KnowledgeService.can_directly_access_knowledge_base(
+    """Resolve the effective reader for a knowledge base."""
+    return KnowledgeService.resolve_read_user_for_knowledge_base(
         db,
-        knowledge_base_id,
-        user.id,
-    ):
-        return user
-
-    access_user_id = resolve_task_default_knowledge_base_read_user_id(
-        db,
-        token_info.task_id,
-        user.id,
-        knowledge_base_id,
-    )
-    if access_user_id is None:
-        return user
-    return (
-        db.query(User)
-        .filter(User.id == access_user_id, User.is_active.is_(True))
-        .first()
+        user_id=token_info.user_id,
+        task_id=token_info.task_id,
+        knowledge_base_id=knowledge_base_id,
     )
 
 
@@ -184,6 +164,7 @@ def _get_read_user_for_knowledge_base(
         "include_subfolders": "Whether folder_ids include descendant folders",
     },
 )
+@trace_async(span_name="knowledge.search", tracer_name="backend.mcp")
 async def search_knowledge_base(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
@@ -232,48 +213,17 @@ async def search_knowledge_base(
                 "total": 0,
             }
 
-    db = SessionLocal()
     try:
-        user = _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
-        if not user:
-            return {
-                "error": "User not found",
-                "query": query,
-                "chunks": [],
-                "sources": [],
-                "total": 0,
-            }
-
-        scope_specified = folder_ids is not None or document_ids is not None
-        resolved_document_ids = document_ids
-        if scope_specified:
-            resolved_document_ids = (
-                KnowledgeFolderService.resolve_document_ids_for_scope(
-                    db=db,
-                    knowledge_base_id=knowledge_base_id,
-                    user_id=user.id,
-                    folder_ids=folder_ids,
-                    document_ids=document_ids,
-                    include_subfolders=include_subfolders,
-                )
-            )
-            if not resolved_document_ids:
-                return {
-                    "query": query,
-                    "chunks": [],
-                    "sources": [],
-                    "total": 0,
-                    "mode": "rag_retrieval",
-                }
-
         result = await knowledge_orchestrator.retrieve_knowledge(
-            db=db,
-            user=user,
+            user_id=token_info.user_id,
+            task_id=token_info.task_id,
             knowledge_base_id=knowledge_base_id,
             query=query,
             search_hints=search_hints,
             max_results=max_results,
-            document_ids=resolved_document_ids if scope_specified else None,
+            document_ids=document_ids,
+            folder_ids=folder_ids,
+            include_subfolders=include_subfolders,
             route_mode="rag_retrieval",
         )
 
@@ -327,9 +277,6 @@ async def search_knowledge_base(
             "sources": [],
             "total": 0,
         }
-
-    finally:
-        db.close()
 
 
 @mcp_tool(

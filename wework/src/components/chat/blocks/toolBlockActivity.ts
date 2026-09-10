@@ -636,9 +636,42 @@ function getCommandExecutable(command?: string): string {
   return executable?.toLowerCase() ?? ''
 }
 
-function unwrapShellCommand(command: string): string {
-  const match = command.match(/(?:^|\s)-lc\s+(['"])([\s\S]*)\1/)
-  return (match?.[2] ?? command).trim()
+export function unwrapShellCommand(command: string): string {
+  let current = command.trim()
+
+  for (let depth = 0; depth < 4; depth += 1) {
+    const words = splitShellWords(current)
+    const executableIndex = getExecutableWordIndex(words)
+    const executable = basename(words[executableIndex] ?? '').toLowerCase()
+    if (['bash', 'dash', 'sh', 'zsh'].includes(executable)) {
+      const commandArgument = words[executableIndex + 2]
+      if (
+        words[executableIndex + 1] !== '-lc' ||
+        !commandArgument ||
+        words.length !== executableIndex + 3
+      ) {
+        break
+      }
+      current = commandArgument.trim()
+      continue
+    }
+
+    if (['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(executable)) {
+      const commandOptionIndex = words.findIndex(
+        (word, index) => index > executableIndex && ['-c', '-command'].includes(word.toLowerCase())
+      )
+      const commandArgument = words[commandOptionIndex + 1]
+      if (commandOptionIndex < 0 || !commandArgument || words.length !== commandOptionIndex + 2) {
+        break
+      }
+      current = commandArgument.trim()
+      continue
+    }
+
+    break
+  }
+
+  return current
 }
 
 function isCompletedToolBlock(block: ToolBlock): boolean {

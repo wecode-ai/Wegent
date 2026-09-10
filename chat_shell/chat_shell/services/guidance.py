@@ -15,6 +15,8 @@ import httpx
 from langchain_core.messages import HumanMessage
 
 from chat_shell.core.config import settings
+from shared.telemetry.http import internal_http_event_hooks
+from shared.utils.http_client import traced_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,8 @@ class RemoteGuidanceQueueClient:
             }
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
-            self._client = httpx.AsyncClient(
+            self._client = traced_async_client(
+                event_hooks=internal_http_event_hooks(),
                 base_url=self.base_url,
                 headers=headers,
                 timeout=self.timeout,

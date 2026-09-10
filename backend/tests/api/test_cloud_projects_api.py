@@ -1744,7 +1744,7 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     assert queued_execution.executor_owner_user_id == test_user.id
 
     monkeypatch.setattr(
-        "app.services.device.capacity.cache_manager.get_sync",
+        "app.services.device.capacity.cache_manager.get_sync_or_raise",
         lambda _key: {
             "runtime_instance_id": "runtime-automation-local",
             "runtime_capacity": {

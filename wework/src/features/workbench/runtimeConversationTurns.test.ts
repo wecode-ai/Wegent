@@ -180,6 +180,23 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('retains the client user id when a queued turn starts without an optimistic user', () => {
+    const turns = reduceRuntimeConversationTurns([], {
+      type: 'assistant_started',
+      subtaskId: 'turn-queued',
+      clientUserMessageId: 'client-user-queued',
+    })
+
+    expect(turns).toEqual([
+      {
+        id: 'turn-queued',
+        clientUserMessageId: 'client-user-queued',
+        items: [],
+        status: 'streaming',
+      },
+    ])
+  })
+
   test('binds Codex turn started to the latest unbound optimistic turn', () => {
     let turns = reduceRuntimeConversationTurns([], {
       type: 'user_added',

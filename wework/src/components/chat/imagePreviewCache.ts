@@ -13,6 +13,10 @@ export interface CachedImagePreview {
   release: () => void
 }
 
+export function isCurrentImageLoadError(failedUrl: string, currentUrl: string | null): boolean {
+  return Boolean(currentUrl && failedUrl === currentUrl)
+}
+
 const cachedImages = new Map<string, CachedImageEntry>()
 const pendingImages = new Map<string, Promise<CachedImageEntry>>()
 let cachedImageBytes = 0

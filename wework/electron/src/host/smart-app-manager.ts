@@ -501,6 +501,7 @@ export class SmartAppManager {
     )
     if (installation.source === 'linked') {
       const packed = await this.verificationService.pack(installation.packagePath, archivePath)
+      await rejectOversizedPublishArchive(packed.archivePath, packed.sizeBytes)
       return {
         archivePath: packed.archivePath,
         sha256: packed.sha256,
@@ -510,6 +511,7 @@ export class SmartAppManager {
     }
     await archiveDirectory(installation.packagePath, archivePath)
     const metadata = await stat(archivePath)
+    await rejectOversizedPublishArchive(archivePath, metadata.size)
     return {
       archivePath,
       sha256: await fileSha256(archivePath),
@@ -655,6 +657,12 @@ export class SmartAppManager {
     )
     return result
   }
+}
+
+async function rejectOversizedPublishArchive(path: string, sizeBytes: number): Promise<void> {
+  if (sizeBytes <= MAX_SMART_APP_ARCHIVE_BYTES) return
+  await rm(path, { force: true })
+  throw new Error('发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。')
 }
 
 async function refreshLinkedInstallation(installation: SmartAppInstallation): Promise<boolean> {

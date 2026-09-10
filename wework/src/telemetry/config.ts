@@ -5,13 +5,22 @@ import type { CommonTelemetryProperties } from './events'
 
 const SESSION_ID_KEY = 'wework.telemetry.session-id.v1'
 
+export type TelemetryDistribution = 'public' | 'internal'
+
 export interface TelemetryConfig {
+  distribution: TelemetryDistribution
   environment: string
   posthogHost: string
   posthogKey: string
   releaseChannel: string
   sentryDsn: string
   sentryTracesSampleRate: number
+}
+
+function telemetryDistribution(value: string): TelemetryDistribution {
+  if (!value || value === 'public') return 'public'
+  if (value === 'internal') return 'internal'
+  throw new Error(`Unsupported telemetry distribution: ${value}`)
 }
 
 function env(name: keyof ImportMetaEnv): string {
@@ -27,6 +36,7 @@ function sampleRate(value: string): number {
 export function getTelemetryConfig(): TelemetryConfig {
   const desktopE2ERuntimeConfig = getDesktopE2ERuntimeConfig()
   return {
+    distribution: telemetryDistribution(env('VITE_WEWORK_TELEMETRY_DISTRIBUTION')),
     environment: env('VITE_WEWORK_TELEMETRY_ENVIRONMENT') || import.meta.env.MODE,
     posthogHost:
       desktopE2ERuntimeConfig.posthogHost ||

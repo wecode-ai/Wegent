@@ -28,6 +28,7 @@ import {
   getToolActivityFilePaths,
   getToolActivityKind,
   isWebSearchToolName,
+  unwrapShellCommand,
 } from './toolBlockActivity'
 import {
   getFileInputPath,
@@ -52,7 +53,6 @@ const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 interface ToolBlockItemProps {
   block: ProcessingBlock
   compact?: boolean
-  shimmer?: boolean
   durationStartedAt?: number
   durationEndAt?: number
   fileEditDurations?: FileEditDurationsByBlock
@@ -68,7 +68,6 @@ interface ToolBlockItemProps {
 export function ToolBlockItem({
   block,
   compact = false,
-  shimmer = false,
   durationStartedAt,
   durationEndAt,
   fileEditDurations,
@@ -122,7 +121,6 @@ export function ToolBlockItem({
     return (
       <ProcessFileChangesBlockItem
         block={block}
-        shimmer={shimmer}
         fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
       />
@@ -194,7 +192,7 @@ export function ToolBlockItem({
   const labelContent = (
     <>
       {icon}
-      {isRunning || shimmer ? (
+      {isRunning ? (
         <ActivityShimmerText variant="tool" className="min-w-0 truncate">
           {label}
         </ActivityShimmerText>
@@ -297,12 +295,10 @@ function PlanBlockItem({
 
 function ProcessFileChangesBlockItem({
   block,
-  shimmer,
   fileEditDurations,
   onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
-  shimmer: boolean
   fileEditDurations?: FileEditDurationsByBlock
   onExpandedChange?: (expanded: boolean) => void
 }) {
@@ -340,7 +336,7 @@ function ProcessFileChangesBlockItem({
                 className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-                {isRunning || shimmer ? (
+                {isRunning ? (
                   <ActivityShimmerText variant="tool" className="min-w-0 truncate">
                     {fileChangeRowLabel(file, t, isRunning)}
                   </ActivityShimmerText>
@@ -1048,7 +1044,9 @@ function getBlockLabel(
       }
     }
     const command = getInputField(block, 'command', 'cmd', 'commandLine')
-    const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
+    const shortCmd = command
+      ? truncate(unwrapShellCommand(command).split('\n')[0], 40)
+      : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
   if (isFileCreateToolName(name)) {

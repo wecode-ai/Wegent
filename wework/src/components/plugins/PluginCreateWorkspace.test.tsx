@@ -159,7 +159,7 @@ describe('PluginCreateWorkspace', () => {
 
     expect(workbench.setSelectedSkills).toHaveBeenCalledWith([
       {
-        name: 'plugin-creator',
+        name: 'wework-plugin-creator',
         namespace: 'codex',
         is_public: false,
       },
@@ -173,7 +173,7 @@ describe('PluginCreateWorkspace', () => {
           forceNewTask: true,
           additionalSkills: [
             {
-              name: 'plugin-creator',
+              name: 'wework-plugin-creator',
               namespace: 'codex',
               is_public: false,
             },

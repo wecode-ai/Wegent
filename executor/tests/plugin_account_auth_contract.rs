@@ -19,6 +19,94 @@ fn definition() -> Value {
     json!({"protocolVersion":1,"credentialType":"password","adapter":"scripts/account-auth.py"})
 }
 
+#[tokio::test]
+async fn shipped_creator_scaffolds_execute_without_a_source_checkout() {
+    let home = tempfile::tempdir().unwrap();
+    wegent_executor::local::plugin_creator::install(home.path()).unwrap();
+    let tool = home
+        .path()
+        .join("skills/wework-plugin-creator/scripts/auth-sdk/tool.py");
+    for (kind, credential) in [
+        (
+            "password",
+            json!({"username":"alice","password":"synthetic-secret"}),
+        ),
+        ("bearer", json!({"token":"synthetic-token"})),
+        ("oauth2", json!({"access_token":"synthetic-access"})),
+    ] {
+        let output = std::process::Command::new(python())
+            .args([
+                tool.as_os_str(),
+                "scaffold".as_ref(),
+                kind.as_ref(),
+                "--parent".as_ref(),
+                home.path().as_os_str(),
+                "--credential-type".as_ref(),
+                kind.as_ref(),
+            ])
+            .current_dir(home.path())
+            .env_remove("PYTHONPATH")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let root = home.path().join(kind);
+        let mut manifest: Value =
+            serde_json::from_slice(&fs::read(root.join(".codex-plugin/plugin.json")).unwrap())
+                .unwrap();
+        // This fixture implements export/run only, so it must not advertise
+        // unimplemented OAuth lifecycle callbacks from the development template.
+        manifest["connectors"][0]["accountAuth"]
+            .as_object_mut()
+            .unwrap()
+            .remove("oauth2");
+        fs::write(root.join(".codex-plugin/plugin.json"), manifest.to_string()).unwrap();
+        let provider_path = root.join("scripts/auth_provider.py");
+        let provider_source = fs::read_to_string(&provider_path).unwrap();
+        fs::write(
+            &provider_path,
+            provider_source
+                + &format!(
+                    r#"
+import json
+ALLOWED_COMMANDS = ("status",)
+def export_local():
+    return json.loads({credential:?})
+def account_id(credential):
+    return "alice"
+def execute(credential, arguments):
+    assert credential == json.loads({credential:?})
+    print("business-ok")
+    return 0
+"#,
+                    credential = credential.to_string()
+                ),
+        )
+        .unwrap();
+        let adapter =
+            NativeAdapter::load(&root, kind, &manifest["connectors"][0]["accountAuth"]).unwrap();
+        let exported = adapter
+            .export(&python(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(exported.account_id, "alice");
+        let result = adapter
+            .run(
+                &python(),
+                exported.credential,
+                &["status".into()],
+                None,
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8(result).unwrap().trim(), "business-ok");
+    }
+}
+
 fn oauth_definition() -> Value {
     json!({"protocolVersion":1,"credentialType":"oauth2","adapter":"scripts/account-auth.py","oauth2":["authorize","refresh","revoke"]})
 }

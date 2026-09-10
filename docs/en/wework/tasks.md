@@ -110,7 +110,18 @@ Completed processing activity is summarized by type. Terminal commands and Node.
 
 A plan generated in Plan mode remains part of the visible response instead of being placed inside the completed **Processed** disclosure. It stays directly visible after restoring a background task or reopening the conversation. Ordinary commands, file operations, and tool calls continue to use the summary and disclosure behavior described above.
 
+## Manage conversations
+
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+### Export a conversation
+
+Select **Export conversation** at the top of a conversation, or open the conversation item's menu, to export the complete conversation as Markdown or HTML. Before exporting, choose whether to include the message body, tool calls and file changes, thinking, images, and other attachments. Included tool calls, file changes, and thinking are collapsed by default in HTML so the conversation remains easy to read.
+
+- **Markdown** includes only the message body by default; images are not selected by default. A text-only export creates an `.md` file. Including images or other attachments creates a ZIP archive whose Markdown file references the packaged assets with relative paths.
+- **HTML** includes the message body and images by default. Images are embedded so the HTML file works offline. Including other attachments that must remain separate creates a ZIP archive.
+
+After you choose a save location, the export window continues to show packaging and writing progress. It reports completion only after the background export task finishes and the destination file is confirmed. When replacing an existing file, a failed write leaves the original file intact.
 
 To branch from a completed AI response, move the pointer to its message actions and choose **Continue in new task**. The new task keeps the conversation context through that response and uses the same workspace. The source task and later messages remain unchanged. The action is hidden for streaming, cancelled, or unmappable Codex turns.
 

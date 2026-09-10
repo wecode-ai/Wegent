@@ -248,3 +248,32 @@ Source-only packages cannot be published as complete native plugins.
 Local build and mocked GitLab API regression checks do not prove a remote pipeline
 has executed. Actual merged-MR publication requires pushed code, deployed services
 and verification in the configured release environment.
+
+### Local authorization diagnostic stream
+
+Local authorization commands can emit JSON lines prefixed with
+`WEWORK_PLUGIN_AUTH_DIAGNOSTIC:` on stderr. The Executor consumes them before the
+command exits and records allowlisted fields in the existing `executor.log`,
+which is already included in unified feedback exports. Stdout remains the command
+JSON result; plugins must not write directly to the Executor log file.
+
+Every local authorization invocation records start, process exit, completion, error,
+or cancellation with a host-generated invocation ID, manifest plugin name (null if
+unavailable), and elapsed time. Command success means invocation and JSON parsing
+succeeded, not that authentication succeeded; authentication status remains in the
+plugin JSON result.
+
+Any plugin can supply detailed diagnostics. Stage and status are required; platform,
+reason, error_code, hexadecimal 32-character attempt_id, and numeric exit_code and
+system_code are optional. Plugin-defined codes accept 1–64 ASCII letters, digits,
+underscores, hyphens, dots, or colons. Status is started, ok, or failed. Free-form text,
+unknown fields, and self-reported plugin identity are discarded. Never put credentials
+in code fields. The host attaches the manifest identity instead.
+
+Lines are limited to 4096 bytes and each invocation to 256 detailed events; the pipe
+continues draining after the limit. Stdout JSON behavior remains unchanged. Events
+already received remain available after timeout or cancellation.
+
+The email plugin must also emit this protocol and relay Windows stderr. Updating
+only the host cannot recover output discarded by the plugin launcher. Diagnostics
+do not include accounts, passwords, command arguments, or raw exception text.

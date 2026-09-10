@@ -45,6 +45,7 @@ interface EnvironmentLoadDiagnostics {
 }
 
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
+export type GitPatchAction = 'stage' | 'unstage' | 'revert'
 
 export interface EnvironmentInfoLoadOptions {
   changeRequestStatusEnabled?: boolean
@@ -1111,6 +1112,31 @@ export async function loadProjectEnvironmentDiff(
     timeoutSeconds: 30,
     maxOutputBytes: 5 * 1024 * 1024,
   })
+}
+
+export async function applyProjectEnvironmentPatch(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  action: GitPatchAction,
+  patch: string,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  const { deviceId, path } = await commandContext(api, project, target)
+  const encodedPatch = bytesToBase64(new TextEncoder().encode(patch))
+  await runGitCommand(api, deviceId, 'git_apply_patch', path, {
+    args: [action, encodedPatch],
+    timeoutSeconds: 30,
+    maxOutputBytes: 64 * 1024,
+  })
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+  }
+  return btoa(binary)
 }
 
 export async function commitProjectChanges(

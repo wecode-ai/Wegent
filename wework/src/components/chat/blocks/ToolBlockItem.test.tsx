@@ -57,6 +57,57 @@ describe('ToolBlockItem', () => {
     expect(screen.getByText('3.3s')).toBeInTheDocument()
   })
 
+  test('removes the activity shimmer when a tool reaches a terminal status', () => {
+    const runningBlock: ProcessingBlock = {
+      id: 'tool-shimmer-lifecycle',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: 'gh api repos/example/actions/runs/1' },
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+    const { rerender } = render(<ToolBlockItem block={runningBlock} />)
+
+    expect(screen.getByText(/正在运行 gh api/)).toHaveClass('tool-activity-shimmer')
+
+    rerender(
+      <ToolBlockItem
+        block={{
+          ...runningBlock,
+          status: 'done',
+          completedAt: 1770000000678,
+        }}
+      />
+    )
+
+    const completedLabel = screen.getByText(/运行 gh api/)
+    expect(completedLabel).not.toHaveClass('tool-activity-shimmer')
+    expect(completedLabel.querySelector('.activity-shimmer-highlight')).not.toBeInTheDocument()
+  })
+
+  test('hides nested shell launchers from the command summary', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'nested-shell-command',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: {
+            cmd: String.raw`/opt/homebrew/bin/zsh -lc "/bin/zsh -lc \"pnpm --filter wework test\""`,
+          },
+          status: 'streaming',
+          createdAt: 1770000000000,
+        }}
+      />
+    )
+
+    expect(screen.getByText('正在运行 pnpm --filter wework test')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('/opt/homebrew/bin/zsh')
+    expect(document.body.textContent).not.toContain('/bin/zsh')
+  })
+
   test('uses the standard tool row height for file changes', () => {
     render(
       <ToolBlockItem

@@ -93,7 +93,7 @@ def get_runtime_capacity_sync(
         )
         return None
     runtime_device_id, expected_instance_id = route
-    online_info = cache_manager.get_sync(
+    online_info = cache_manager.get_sync_or_raise(
         LocalDeviceProvider.generate_online_key(owner_user_id, runtime_device_id)
     )
     capacity = _parse_capacity(online_info, expected_instance_id)
@@ -155,7 +155,7 @@ async def get_runtime_capacity(
     if route is None:
         return None
     runtime_device_id, expected_instance_id = route
-    online_info = await cache_manager.get(
+    online_info = await cache_manager.get_or_raise(
         LocalDeviceProvider.generate_online_key(owner_user_id, runtime_device_id)
     )
     return _parse_capacity(online_info, expected_instance_id)

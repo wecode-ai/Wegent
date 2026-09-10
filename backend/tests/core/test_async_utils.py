@@ -7,6 +7,7 @@
 import asyncio
 import threading
 import time
+from contextvars import ContextVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,9 +18,28 @@ from app.core.async_utils import (
     get_main_event_loop,
     is_main_loop_running,
     run_in_main_loop,
+    run_in_threadpool_with_cleanup,
     schedule_async_task,
     set_main_event_loop,
 )
+
+
+async def test_threadpool_preserves_context_and_result() -> None:
+    context: ContextVar[str] = ContextVar("test_threadpool_context")
+    token = context.set("request")
+    try:
+        result = await run_in_threadpool_with_cleanup(context.get)
+    finally:
+        context.reset(token)
+    assert result == "request"
+
+
+async def test_threadpool_propagates_worker_error() -> None:
+    def fail() -> None:
+        raise ValueError("worker failed")
+
+    with pytest.raises(ValueError, match="worker failed"):
+        await run_in_threadpool_with_cleanup(fail)
 
 
 class TestSetMainEventLoop:
@@ -256,3 +276,36 @@ class TestAsyncSessionManager:
                     raise ValueError("test error")
 
             mock_session.close.assert_called_once()
+
+
+async def test_threadpool_waits_for_worker_under_anyio_cancellation() -> None:
+    from anyio import create_task_group
+
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    cleaned_up = []
+
+    def work() -> None:
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert release.wait(timeout=5)
+        finally:
+            finished.set()
+
+    async def owner() -> None:
+        try:
+            await run_in_threadpool_with_cleanup(work)
+        finally:
+            cleaned_up.append(finished.is_set())
+
+    async with create_task_group() as group:
+        group.start_soon(owner)
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            group.cancel_scope.cancel()
+        finally:
+            loop.call_later(0.01, release.set)
+
+    assert cleaned_up == [True]

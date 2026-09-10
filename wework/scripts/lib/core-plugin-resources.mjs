@@ -7,6 +7,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'terminal-runtime',
   'transcript-sync',
   'plugin-runtime',
+  'conversation-export',
   'ui-core-apps',
   'ui-core-settings',
   'ui-plugin-center',
@@ -21,6 +22,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
 
 const CORE_PLUGIN_TARGETS = {
   'app-wework': 'wework-app',
+  'conversation-export': 'wework-conversation-export',
   'browser-runtime': 'wework-browser-runtime',
   'electron-host': 'wework-electron-host',
   'executor-runtime': 'wework-executor-runtime',

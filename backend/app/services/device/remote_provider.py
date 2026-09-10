@@ -134,7 +134,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
         redis_keys = [
             self.generate_online_key(user_id, device.name) for device in remote_devices
         ]
-        online_info_map = await cache_manager.mget(redis_keys)
+        online_info_map = await cache_manager.mget_or_raise(redis_keys)
         latest_version = (
             await executor_version_service.get_latest_version()
             or settings.EXECUTOR_LATEST_VERSION

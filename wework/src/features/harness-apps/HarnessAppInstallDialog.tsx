@@ -3,6 +3,7 @@ import type { HarnessAppPreview } from '@/api/local/harnessApps'
 import { Button } from '@/components/ui/button'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
 import { useTranslation } from '@/hooks/useTranslation'
+import { localizeSmartAppIssue } from '@/lib/smart-app-error-message'
 
 interface HarnessAppInstallDialogProps {
   busy: boolean
@@ -175,7 +176,15 @@ export function HarnessAppInstallDialog({
                     {t('workbench.harness_apps_invalid_title', '无法安装这个智能工作台')}
                   </h3>
                   <p className="mt-1 text-sm leading-5 text-text-secondary">
-                    {preview.issues.join('；')}
+                    {preview.issues
+                      .map(issue =>
+                        localizeSmartAppIssue(
+                          issue,
+                          t('workbench.harness_apps_preview_failed', '无法读取智能工作台发布包。'),
+                          t
+                        )
+                      )
+                      .join('；')}
                   </p>
                 </div>
               </div>

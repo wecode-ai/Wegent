@@ -687,6 +687,75 @@ class TestTelegramChannelHandler:
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
+    async def test_create_and_process_cloud_task_rejects_non_claude_model(
+        self, handler
+    ):
+        """Cloud executor (Claude Code) must reject a non-Claude override model."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        db = MagicMock()
+
+        with (
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=("openai-gpt-5.1(overseas)", None)),
+            ),
+            patch.object(
+                handler,
+                "_is_claude_compatible_override",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(),
+            ) as create_task_mock,
+        ):
+            result = await handler._create_and_process_cloud_task(
+                db=db,
+                user=user,
+                team=team,
+                message_context=message_context,
+            )
+
+        assert result is not None
+        assert "不支持云端执行模式" in result
+        create_task_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_is_claude_compatible_override_matches_model_list(self, handler):
+        """The override compatibility check follows the model list provider."""
+        user = SimpleNamespace(id=1)
+        db = MagicMock()
+        models = [
+            {"name": "openai-gpt", "displayName": "GPT", "provider": "openai"},
+            {"name": "wecode-claude-x", "displayName": "ClaudeX", "provider": "claude"},
+        ]
+        with patch(
+            "app.services.model_aggregation_service.model_aggregation_service"
+            ".list_available_models",
+            return_value=models,
+        ):
+            assert (
+                await handler._is_claude_compatible_override(db, user, "openai-gpt")
+                is False
+            )
+            assert (
+                await handler._is_claude_compatible_override(db, user, "GPT") is False
+            )
+            assert (
+                await handler._is_claude_compatible_override(
+                    db, user, "wecode-claude-x"
+                )
+                is True
+            )
+            assert (
+                await handler._is_claude_compatible_override(db, user, "unknown-model")
+                is None
+            )
+
+    @pytest.mark.asyncio
     async def test_broadcast_user_message_to_web_includes_display_metadata(
         self, handler
     ):

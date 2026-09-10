@@ -40,6 +40,8 @@ Events cover feature adoption, funnel outcomes, and reliability outcomes that su
 | AI analytics                   | `$ai_trace`, `$ai_generation`, `ai_output_action_completed`, `generation_regenerated`            |
 | Privacy preference             | `telemetry_preference_changed`, emitted only after telemetry is re-enabled                       |
 
+Task lifecycle events classify `execution_target` as `local`, `cloud`, `remote`, or `unknown`. `task_started` is emitted only when a task actually enters the running state and is the primary event for measuring cloud- and remote-device usage; `conversation_created` means the create request was accepted. Remote devices must be reported as `remote` instead of being folded into `cloud`. Events must not contain device IDs, device names, IP addresses, or workspace paths.
+
 Cross-domain resource operations use `feature_action_completed` with bounded `domain` and `action` enums for project spaces, board items, task bindings, attachments and workspace files, AI tables, plugins, skills, MCP servers, hooks, Sites, models, Git, cloud devices, quick phrases, and archived conversations. Handled failures for critical operations use `operation_failed` with a bounded operation type and never include the error message. Resource IDs, project names, plugin names, URLs, file paths, and user input are never event properties; the only exception is the AI correlation identifiers described below, which are opaque per-run tokens rather than the raw IDs. Feature code must emit success events only after the API or native operation succeeds; rollback paths must not report success.
 
 ## AI Analytics Events

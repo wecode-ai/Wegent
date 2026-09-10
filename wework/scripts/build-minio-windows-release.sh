@@ -152,8 +152,7 @@ verify_uploaded_artifacts() {
     "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe.blockmap" \
     "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe" \
     "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe.blockmap" \
-    "$UPDATE_BASE_URL/$electron_channel.yml" \
-    "$UPDATE_BASE_URL/$CHANNEL-windows-x86_64.json"; do
+    "$UPDATE_BASE_URL/$electron_channel.yml"; do
     if ! curl -fsSI -o /dev/null "$url"; then
       echo "Published release file is not publicly readable: $url" >&2
       exit 1
@@ -259,6 +258,7 @@ COMPONENTIZED_HOST_UPDATE="$(
   wework_resolve_componentized_host_update \
     "$UPDATE_BASE_URL/components-$CHANNEL-windows-x64.json"
 )"
+export WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"
 if [ "$COMPONENTIZED_HOST_UPDATE" = "true" ]; then
   export WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS=false
 else
@@ -293,7 +293,6 @@ notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows-x64.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
-WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE" \
 WEWORK_RELEASE_TARGETS=windows-x64 \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \

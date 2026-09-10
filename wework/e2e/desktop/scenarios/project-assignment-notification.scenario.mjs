@@ -23,6 +23,7 @@ const NOTIFICATION_CALL_ID = 'send-general-notification'
 const NOTIFICATION_SEARCH_ID = 'search-general-notification'
 const CLICK_PROMPT = '给我发个你好的通知，然后点击打开看板页面'
 const CLICK_COMPLETION = 'WEWORK_CLICK_NOTIFICATION_SENT'
+const MULTI_TURN_RESPONSE_TIMEOUT_MS = 30_000
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -213,7 +214,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       await control.command('press', composer, { key: 'Enter' })
       await control.command('waitFor', `${activeSurface} [data-testid="message-assistant"]`, {
         text: NOTIFICATION_COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: Math.max(uiTimeoutMs, MULTI_TURN_RESPONSE_TIMEOUT_MS),
       })
       const sentInbox = await ownerRequest('/api/v1/wework-notifications')
       const general = sentInbox.items.find(
@@ -250,7 +251,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       await control.command('press', composer, { key: 'Enter' })
       await control.command('waitFor', `${activeSurface} [data-testid="message-assistant"]`, {
         text: CLICK_COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: Math.max(uiTimeoutMs, MULTI_TURN_RESPONSE_TIMEOUT_MS),
       })
       const clickInbox = await ownerRequest('/api/v1/wework-notifications')
       const clickable = clickInbox.items.find(item => item.title === '点击打开看板')

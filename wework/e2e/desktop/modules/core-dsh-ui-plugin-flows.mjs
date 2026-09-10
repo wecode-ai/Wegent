@@ -18,6 +18,15 @@ const ROOT_SELECTOR = '[data-testid="wework-dsh-root"]'
 const DESKTOP_HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const UI_PLUGINS = [
   {
+    name: '@wegent/dsh-conversation-export',
+    directory: 'wework-conversation-export',
+    slot: 'wework.shell.overlay',
+    contributions: ['conversation-export.dialog'],
+    navigation: null,
+    route: null,
+    testId: null,
+  },
+  {
     name: '@wegent/dsh-ui-core-apps',
     directory: 'wework-ui-core-apps',
     slot: 'wework.app',

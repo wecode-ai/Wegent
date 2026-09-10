@@ -123,6 +123,92 @@ test('persists an automatic branch route for later turns across restart', async 
   reopened.close()
 })
 
+test('persists a corrected branch point when the cloud parent is behind', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+  const turn = {
+    transcriptId: 'shared-transcript',
+    taskId: 'local-task',
+    title: 'Shared transcript',
+    sequence: 16,
+    turnId: 'conflicting-turn',
+    sessionId: 'local-session',
+  }
+
+  outbox.enqueue(turn, 15)
+  outbox.fork(outbox.first(), 'fork-stable-id', 11)
+  outbox.close()
+
+  const reopened = new SqliteSyncOutbox(path)
+  assert.deepEqual(reopened.first(), {
+    ...turn,
+    transcriptId: 'fork-stable-id',
+    baseSequence: 0,
+    cloudSequence: 1,
+    parentTranscriptId: 'shared-transcript',
+    forkedAtSequence: 11,
+  })
+  reopened.close()
+})
+
+test('discards every pending turn and route for an orphaned session', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+
+  outbox.enqueue({
+    transcriptId: 'orphaned-transcript',
+    taskId: 'orphaned-task',
+    title: 'Orphaned',
+    sequence: 1,
+    turnId: 'orphaned-turn-1',
+    sessionId: 'orphaned-session',
+  })
+  outbox.enqueue({
+    transcriptId: 'orphaned-transcript',
+    taskId: 'orphaned-task',
+    title: 'Orphaned',
+    sequence: 2,
+    turnId: 'orphaned-turn-2',
+    sessionId: 'orphaned-session',
+  })
+  outbox.enqueue({
+    transcriptId: 'retained-transcript',
+    taskId: 'retained-task',
+    title: 'Retained',
+    sequence: 1,
+    turnId: 'retained-turn-1',
+    sessionId: 'retained-session',
+  })
+
+  assert.deepEqual(outbox.sessionIds(), ['orphaned-session', 'retained-session'])
+  assert.equal(outbox.firstForSession('orphaned-session').turnId, 'orphaned-turn-1')
+  assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), true)
+  assert.equal(outbox.hasPendingTranscript('missing-transcript'), false)
+  const queryPlan = outbox.database
+    .prepare('EXPLAIN QUERY PLAN SELECT 1 FROM pending_turns WHERE transcript_id = ? LIMIT 1')
+    .get('orphaned-transcript')
+  assert.match(queryPlan.detail, /pending_turns_transcript/u)
+  assert.equal(outbox.discardSession('orphaned-session'), 2)
+  assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), false)
+  assert.equal(outbox.count(), 1)
+  assert.equal(outbox.first().turnId, 'retained-turn-1')
+
+  outbox.enqueue({
+    transcriptId: 'orphaned-transcript',
+    taskId: 'orphaned-task',
+    title: 'Recreated',
+    sequence: 3,
+    turnId: 'orphaned-turn-3',
+    sessionId: 'orphaned-session',
+  })
+  assert.equal(outbox.firstForSession('orphaned-session').cloudSequence, 1)
+  outbox.close()
+})
+
 test('upgrades an existing locator outbox without copying transcript bodies', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

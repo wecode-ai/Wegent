@@ -52,10 +52,14 @@ def _remote_device(user_id: int, device_id: str = "remote-device-1") -> Kind:
 
 
 @pytest.mark.asyncio
-async def test_device_service_lists_remote_devices(test_db, test_user):
+async def test_device_service_lists_remote_devices(test_db, test_user, monkeypatch):
     """Remote devices should be returned by the provider aggregation."""
     test_db.add(_remote_device(test_user.id))
     test_db.commit()
+    monkeypatch.setattr(
+        "app.services.device.remote_provider.cache_manager.mget_or_raise",
+        AsyncMock(return_value={}),
+    )
 
     assert DeviceProviderFactory.get_provider(DeviceType.REMOTE) is not None
 
@@ -93,7 +97,7 @@ async def test_remote_provider_exposes_online_runtime_features(
         }
 
     monkeypatch.setattr(
-        "app.services.device.remote_provider.cache_manager.mget",
+        "app.services.device.remote_provider.cache_manager.mget_or_raise",
         fake_mget,
     )
     monkeypatch.setattr(
@@ -123,7 +127,7 @@ async def test_remote_provider_does_not_expose_runtime_features_while_offline(
     test_db.commit()
 
     monkeypatch.setattr(
-        "app.services.device.remote_provider.cache_manager.mget",
+        "app.services.device.remote_provider.cache_manager.mget_or_raise",
         AsyncMock(return_value={}),
     )
     monkeypatch.setattr(

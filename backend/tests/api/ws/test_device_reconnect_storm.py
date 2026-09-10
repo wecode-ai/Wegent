@@ -480,6 +480,43 @@ async def test_stale_disconnect_does_not_clear_newer_device_socket(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_redis_failure_does_not_mark_device_offline(monkeypatch):
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(
+            return_value={
+                "user_id": 7,
+                "device_id": "device-1",
+                "request_id": "req-1",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(side_effect=RuntimeError("Redis unavailable")),
+    )
+    set_offline = AsyncMock()
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_offline", set_offline
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(namespace, "_broadcast_device_offline", AsyncMock())
+
+    await namespace.on_disconnect("sid-old")
+
+    set_offline.assert_not_awaited()
+    device_namespace.run_sync_in_executor.assert_not_awaited()
+    namespace._broadcast_device_offline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_stale_heartbeat_does_not_overwrite_newer_device_socket(monkeypatch):
     namespace = DeviceNamespace()
 

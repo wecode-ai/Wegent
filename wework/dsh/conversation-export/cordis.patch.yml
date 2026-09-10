@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-conversation-export
+      name: '@wegent/dsh-conversation-export'

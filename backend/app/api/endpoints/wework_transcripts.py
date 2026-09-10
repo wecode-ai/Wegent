@@ -6,27 +6,35 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
+from app.core.wework_transcript_encryption import (
+    KEY_ALGORITHM,
+    transcript_encryption_key,
+)
 from app.models.user import User
 from app.models.wework_transcript import (
     EPOCH_TIME,
     WeworkTranscript,
     WeworkTranscriptArchive,
+    WeworkTranscriptTurn,
 )
 from app.schemas.wework_transcript import (
     TranscriptAppendResponse,
     TranscriptArchiveRequest,
     TranscriptArchiveResponse,
+    TranscriptEncryptionKeyResponse,
     TranscriptLeaseReleaseRequest,
     TranscriptLeaseRequest,
     TranscriptLeaseResponse,
     TranscriptListResponse,
     TranscriptResponse,
-    TranscriptTurnAppendRequest,
+    TranscriptSegmentCommitRequest,
     TranscriptTurnResponse,
     TranscriptTurnsResponse,
 )
@@ -74,6 +82,28 @@ def get_transcript_endpoint(
             ),
         )
     )
+
+
+@router.get(
+    "/{transcript_id}/encryption-key",
+    response_model=TranscriptEncryptionKeyResponse,
+)
+def get_transcript_encryption_key_endpoint(
+    transcript_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _translate(
+        lambda: wework_transcript_service.get_transcript(
+            db,
+            user_id=current_user.id,
+            transcript_id=transcript_id,
+        )
+    )
+    return {
+        "algorithm": KEY_ALGORITHM,
+        "key": transcript_encryption_key(current_user.id),
+    }
 
 
 @router.post(
@@ -141,27 +171,33 @@ def release_lease_endpoint(
 
 
 @router.post(
-    "/{transcript_id}/turns",
+    "/{transcript_id}/segments",
     response_model=TranscriptAppendResponse,
     response_model_by_alias=True,
 )
-def append_turns_endpoint(
+def upload_segment_endpoint(
     transcript_id: str,
-    request: TranscriptTurnAppendRequest,
+    metadata: str = Form(...),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    try:
+        request = TranscriptSegmentCommitRequest.model_validate_json(metadata)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
     transcript, appended = _translate(
-        lambda: wework_transcript_service.append_turns(
+        lambda: wework_transcript_service.upload_segment(
             db,
             user_id=current_user.id,
             transcript_id=transcript_id,
             request=request,
+            source=file.file,
         )
     )
     return {
         "currentSequence": transcript.current_sequence,
-        "appended": appended,
+        "appended": int(appended),
     }
 
 
@@ -172,34 +208,30 @@ def append_turns_endpoint(
 )
 def list_turns_endpoint(
     transcript_id: str,
-    after: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=1000),
+    after_sequence: int = Query(default=0, ge=0, alias="after"),
+    limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    transcript, turns, has_more = _translate(
-        lambda: wework_transcript_service.list_turns(
+    transcript = _translate(
+        lambda: wework_transcript_service.get_transcript(
             db,
             user_id=current_user.id,
             transcript_id=transcript_id,
-            after=after,
-            limit=limit,
         )
     )
-    return {
-        "turns": [
-            TranscriptTurnResponse(
-                turnId=turn.turn_id,
-                sequence=turn.sequence,
-                payload=turn.payload,
-                createdAt=turn.created_at,
-            )
-            for turn in turns
-        ],
-        "currentSequence": transcript.current_sequence,
-        "archivedThroughSequence": transcript.archived_through_sequence,
-        "hasMore": has_more,
-    }
+    turns = wework_transcript_service.list_turns(
+        db,
+        transcript_db_id=transcript.id,
+        after_sequence=after_sequence,
+        limit=limit + 1,
+    )
+    return TranscriptTurnsResponse(
+        turns=[_turn_response(turn) for turn in turns[:limit]],
+        currentSequence=transcript.current_sequence,
+        archivedThroughSequence=transcript.archived_through_sequence,
+        hasMore=len(turns) > limit,
+    )
 
 
 @router.post(
@@ -213,7 +245,7 @@ def archive_transcript_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    transcript, _archive = _translate(
+    transcript = _translate(
         lambda: wework_transcript_service.archive_transcript(
             db,
             user_id=current_user.id,
@@ -239,42 +271,12 @@ def get_archive_download_endpoint(
             archive_id=archive_id,
         )
     )
-    return {
-        "downloadUrl": _translate(
-            lambda: wework_transcript_storage.download_url(archive.storage_key)
-        )
-    }
-
-
-@router.get(
-    "/{transcript_id}/archives/{archive_id}/turns",
-    response_model=TranscriptTurnsResponse,
-    response_model_by_alias=True,
-)
-def list_archive_turns_endpoint(
-    transcript_id: str,
-    archive_id: int,
-    after: int = Query(default=0, ge=0),
-    limit: int = Query(default=1000, ge=1, le=1000),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    archive, turns, has_more = _translate(
-        lambda: wework_transcript_service.list_archive_turns(
-            db,
-            user_id=current_user.id,
-            transcript_id=transcript_id,
-            archive_id=archive_id,
-            after=after,
-            limit=limit,
-        )
+    stream = _translate(lambda: wework_transcript_storage.stream(archive.storage_key))
+    return StreamingResponse(
+        stream,
+        media_type="application/octet-stream",
+        headers={"Content-Length": str(archive.size_bytes)},
     )
-    return {
-        "turns": turns,
-        "currentSequence": archive.to_sequence,
-        "archivedThroughSequence": archive.to_sequence,
-        "hasMore": has_more,
-    }
 
 
 def _lease_response(transcript: WeworkTranscript) -> TranscriptLeaseResponse:
@@ -325,6 +327,15 @@ def _archive_response(
         sizeBytes=archive.size_bytes,
         format=archive.format,
         createdAt=archive.created_at,
+    )
+
+
+def _turn_response(turn: WeworkTranscriptTurn) -> TranscriptTurnResponse:
+    return TranscriptTurnResponse(
+        turnId=turn.turn_id,
+        sequence=turn.sequence,
+        payload=turn.payload,
+        createdAt=turn.created_at,
     )
 
 
