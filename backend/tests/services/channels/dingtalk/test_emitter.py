@@ -4,6 +4,7 @@
 
 """Unit tests for compact DingTalk AI Card progress."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import dingtalk_stream
@@ -126,6 +127,51 @@ async def test_start_and_thinking_render_safe_compact_status(emitter, card_facto
     assert "正在理解需求" in card.updates[0]
     assert "正在分析" in card.updates[-1]
     assert "private chain of thought" not in "".join(card.updates)
+
+
+@pytest.mark.asyncio
+async def test_custom_answer_card_saves_settings_callback_state(monkeypatch):
+    from app.services.channels.dingtalk import conversation_card, selection_cards
+
+    cards = []
+
+    def create_card(client, message, template_id):
+        card = FakeCard(client, message)
+        card.template_id = template_id
+        cards.append(card)
+        return card
+
+    save_state = AsyncMock()
+    monkeypatch.setattr(
+        conversation_card,
+        "DingTalkConversationCardInstance",
+        create_card,
+    )
+    monkeypatch.setattr(selection_cards, "save_conversation_card_state", save_state)
+    message = SimpleNamespace(
+        sender_staff_id="staff-a",
+        conversation_id="conversation-1",
+        conversation_type="1",
+    )
+    emitter = StreamingResponseEmitter(
+        object(),
+        message,
+        conversation_card_template_id="answer.schema",
+        interaction_card_template_id="settings.schema",
+        channel_id=77,
+        user_id=9,
+    )
+
+    await emitter.emit_done(task_id=1, subtask_id=2, result={"value": "完成"})
+
+    assert cards[0].template_id == "answer.schema"
+    save_state.assert_awaited_once_with(
+        out_track_id="card-1",
+        channel_id=77,
+        interaction_template_id="settings.schema",
+        user_id=9,
+        incoming_message=message,
+    )
 
 
 @pytest.mark.asyncio

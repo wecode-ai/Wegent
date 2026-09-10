@@ -10,6 +10,8 @@ import pytest
 from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import MessageContext
+from app.services.channels.model_selection import ModelSelection
+from app.services.channels.selection_service import channel_selection_service
 
 
 def test_parse_message_preserves_dingtalk_message_id() -> None:
@@ -78,7 +80,12 @@ async def test_devices_command_selects_app_execution_target(
     )
     monkeypatch.setattr(
         "app.services.channels.handler.model_selection_manager.get_selection",
-        AsyncMock(return_value=None),
+        AsyncMock(
+            return_value=ModelSelection(
+                model_name="claude-sonnet",
+                model_type="public",
+            )
+        ),
     )
     monkeypatch.setattr(
         "app.services.channels.handler.device_selection_manager.get_selection",
@@ -87,6 +94,18 @@ async def test_devices_command_selects_app_execution_target(
     monkeypatch.setattr(
         "app.services.channels.handler.device_selection_manager.set_local_device",
         set_local_device,
+    )
+    monkeypatch.setattr(
+        channel_selection_service,
+        "_available_models",
+        lambda _db, _user: [
+            {
+                "name": "claude-sonnet",
+                "displayName": "Claude Sonnet",
+                "type": "public",
+                "provider": "anthropic",
+            }
+        ],
     )
 
     await handler._handle_devices_command(

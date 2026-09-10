@@ -43,7 +43,6 @@ from app.services.channels.commands import (
     AGENTS_EMPTY,
     AGENTS_FOOTER,
     AGENTS_HEADER,
-    DEVICE_ITEM_TEMPLATE,
     DEVICES_EMPTY,
     DEVICES_FOOTER,
     DEVICES_HEADER,
@@ -64,7 +63,6 @@ from app.services.channels.device_selection import (
 )
 from app.services.channels.emitter import SyncResponseEmitter
 from app.services.channels.model_selection import (
-    ModelSelection,
     is_claude_provider,
     model_selection_manager,
 )
@@ -295,6 +293,17 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             Streaming emitter or None if not supported
         """
         pass
+
+    async def try_handle_interactive_control(
+        self,
+        db: Session,
+        user: User,
+        im_session: Any,
+        message_context: MessageContext,
+    ) -> bool:
+        """Let a rich channel replace a no-argument control command with UI."""
+
+        return False
 
     async def _register_streaming_emitter(
         self,
@@ -770,6 +779,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 )
                 return False
 
+            message_context.extra_data["resolved_user_id"] = user.id
+
             im_session = None
             if self._is_private_conversation(message_context):
                 im_session = await im_session_service.get_or_create_private_session(
@@ -783,6 +794,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     display_name=message_context.sender_name or "",
                 )
 
+            if await self.try_handle_interactive_control(
+                db=db,
+                user=user,
+                im_session=im_session,
+                message_context=message_context,
+            ):
+                return True
+
+            if im_session is not None:
                 if await self._route_private_im_session(
                     db=db,
                     user=user,
@@ -1594,171 +1614,72 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
     ) -> None:
         """Handle /devices command - list devices or switch to a device."""
-        from app.services.channels.device_selection import (
-            get_device_execution_target_id,
+        from app.services.channels.selection_service import (
+            SelectionError,
+            channel_selection_service,
+            resolve_text_choice,
         )
-        from app.services.device_service import device_service
 
-        devices = await device_service.get_all_devices(db, user.id)
-        online_devices = [d for d in devices if d["status"] != "offline"]
+        options = await channel_selection_service.list_devices(db, user)
+        if not options:
+            await self.send_text_reply(message_context, DEVICES_HEADER + DEVICES_EMPTY)
+            return
 
-        # With argument - switch to specified device
         if argument:
-            argument = argument.strip()
-
-            if not devices:
-                await self.send_text_reply(
-                    message_context,
-                    "❌ 暂无可用设备\n\n💡 在本地运行 Executor 后设备会自动出现",
-                )
-                return
-
-            matched_device = None
-
-            # Check if argument is a number (device index)
-            if argument.isdigit():
-                device_index = int(argument)
-                if 1 <= device_index <= len(online_devices):
-                    matched_device = online_devices[device_index - 1]
-                else:
-                    await self.send_text_reply(
-                        message_context,
-                        f"❌ 无效的设备序号: {argument}\n\n"
-                        f"当前有 {len(online_devices)} 个在线设备，请使用 `/devices` 查看列表",
-                    )
-                    return
-            else:
-                # Match by name or device_id prefix
-                argument_lower = argument.lower()
-                for device in devices:
-                    if device["name"].lower() == argument_lower or device[
-                        "device_id"
-                    ].lower().startswith(argument_lower):
-                        matched_device = device
-                        break
-
-            if not matched_device:
+            selectable_options = [
+                option for option in options if not option.is_disabled
+            ]
+            option = resolve_text_choice(
+                selectable_options if argument.strip().isdigit() else options,
+                argument,
+            )
+            if option is None:
                 await self.send_text_reply(
                     message_context,
                     f"❌ 未找到设备: {argument}\n\n使用 `/devices` 查看可用设备列表",
                 )
                 return
-
-            if matched_device["status"] == "offline":
-                await self.send_text_reply(
-                    message_context,
-                    f"❌ 设备 **{matched_device['name']}** 已离线\n\n请选择其他设备或等待设备上线",
+            try:
+                result = await channel_selection_service.apply_device(
+                    db,
+                    user,
+                    option.value,
+                    default_model_name=self.default_model_name,
                 )
+            except SelectionError as exc:
+                await self.send_text_reply(message_context, f"❌ {exc}")
                 return
-
-            # Get model for device mode (uses default Claude if user hasn't selected one)
-            override_model_name, _ = await self._get_device_mode_model_override(
-                db, user
-            )
-
-            # Check if we have a valid Claude model for device mode
-            if not override_model_name:
-                model_selection = await model_selection_manager.get_selection(user.id)
-                if model_selection and not model_selection.is_claude_model():
-                    model_display = (
-                        model_selection.display_name or model_selection.model_name
-                    )
-                    await self.send_text_reply(
-                        message_context,
-                        f"⚠️ 当前模型 **{model_display}** 不支持设备模式\n\n"
-                        "设备模式仅支持 Claude 模型，请先使用 `/models` 切换到 Claude 模型",
-                    )
-                    return
-
-            # Get display name for the model
-            from app.services.model_aggregation_service import model_aggregation_service
-
-            model_display_name = override_model_name or "默认模型"
-            if override_model_name:
-                all_models = model_aggregation_service.list_available_models(
-                    db=db,
-                    current_user=user,
-                    shell_type=None,
-                    include_config=False,
-                    scope="personal",
-                    model_category_type="llm",
-                )
-                for m in all_models:
-                    if m.get("name") == override_model_name:
-                        model_display_name = m.get("displayName") or override_model_name
-                        break
-
-            # Store the record-scoped route for app devices. Their logical ID is
-            # display metadata and does not own the Runtime heartbeat/socket.
-            execution_target_id = get_device_execution_target_id(matched_device)
-
-            # Clear conversation cache if switching mode or device
-            current_selection = await device_selection_manager.get_selection(user.id)
-            if (
-                current_selection.device_type != DeviceType.LOCAL
-                or current_selection.device_id != execution_target_id
-            ):
+            if result.changed:
                 await self._delete_conversation_task_id(
-                    message_context.conversation_id, user.id
+                    message_context.conversation_id,
+                    user.id,
                 )
-
-            await device_selection_manager.set_local_device(
-                user.id,
-                execution_target_id,
-                matched_device["name"],
-            )
-
             await self.send_text_reply(
                 message_context,
-                f"✅ 已切换到设备 **{matched_device['name']}**\n\n"
-                f"当前模型: **{model_display_name}**\n"
-                "现在的消息将在该设备上执行",
+                f"✅ 已切换到设备 **{result.selected_label}**\n\n"
+                f"{result.detail}\n现在的消息将在该设备上执行",
             )
             return
 
-        # No argument - list devices
-        if not devices:
-            await self.send_text_reply(message_context, DEVICES_HEADER + DEVICES_EMPTY)
-            return
-
-        # Get current device selection
-        current_selection = await device_selection_manager.get_selection(user.id)
-        current_device_id = (
-            current_selection.device_id
-            if current_selection.device_type == DeviceType.LOCAL
-            else None
+        online_options = [option for option in options if not option.is_disabled]
+        offline_options = [option for option in options if option.is_disabled]
+        lines = [DEVICES_HEADER]
+        if online_options:
+            lines.append("**在线设备:**")
+            for index, option in enumerate(online_options, start=1):
+                status = " - ⭐ 当前" if option.is_current else ""
+                if option.description == "忙碌":
+                    status = " - 🔴 忙碌"
+                lines.append(f"{index}. **{option.label}**{status}")
+        if offline_options:
+            lines.append("\n**离线设备:**")
+            lines.extend(f"• ~~{option.label}~~ (离线)" for option in offline_options)
+        lines.append(
+            DEVICES_FOOTER
+            if online_options
+            else "\n💡 在本地运行 Executor 后设备会自动上线"
         )
-
-        message = DEVICES_HEADER + "\n"
-        offline_devices = [d for d in devices if d["status"] == "offline"]
-
-        if online_devices:
-            message += "**在线设备:**\n"
-            for idx, device in enumerate(online_devices, start=1):
-                status_str = ""
-                if get_device_execution_target_id(device) == current_device_id:
-                    status_str = " - ⭐ 当前"
-                elif device["status"] == "busy":
-                    status_str = " - 🔴 忙碌"
-                message += DEVICE_ITEM_TEMPLATE.format(
-                    index=idx,
-                    name=device["name"],
-                    device_id=device["device_id"][:8],
-                    status=status_str,
-                )
-
-        if offline_devices:
-            message += "\n**离线设备:**\n"
-            for device in offline_devices:
-                message += f"• ~~{device['name']}~~ (离线)\n"
-
-        # Only show switch hint if there are online devices
-        if online_devices:
-            message += DEVICES_FOOTER
-        else:
-            message += "\n💡 在本地运行 Executor 后设备会自动上线"
-
-        await self.send_text_reply(message_context, message)
+        await self.send_text_reply(message_context, "\n".join(lines))
 
     async def _handle_use_command(
         self,
@@ -2198,156 +2119,73 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         argument: Optional[str],
         message_context: MessageContext,
     ) -> None:
-        """Handle /models command - list/switch models.
-
-        In device mode, only Claude models are shown since device execution
-        requires Claude Code which only supports Claude/Anthropic models.
-        """
-        from app.services.model_aggregation_service import model_aggregation_service
-
-        # Check current execution mode
-        selection = await device_selection_manager.get_selection(user.id)
-        is_device_mode = selection.device_type == DeviceType.LOCAL
-
-        # Get available models
-        all_models = model_aggregation_service.list_available_models(
-            db=db,
-            current_user=user,
-            shell_type=None,  # No shell type filter for IM channels
-            include_config=False,
-            scope="personal",
-            model_category_type="llm",  # Only list LLM models
+        """Handle /models using the provider-neutral selection service."""
+        from app.services.channels.selection_service import (
+            SelectionError,
+            channel_selection_service,
+            resolve_text_choice,
         )
 
-        if not all_models:
+        options = await channel_selection_service.list_models(
+            db,
+            user,
+            default_model_name=self.default_model_name,
+        )
+        if not options:
             await self.send_text_reply(message_context, MODELS_HEADER + MODELS_EMPTY)
             return
 
-        # Check if there are available models for current mode
-        if is_device_mode:
-            claude_models = [
-                m for m in all_models if is_claude_provider(m.get("provider"))
-            ]
-            if not claude_models:
+        if not argument:
+            visible_options = [option for option in options if not option.is_disabled]
+            if not visible_options:
                 await self.send_text_reply(
                     message_context,
                     MODELS_HEADER + "\n暂无可用的 Claude 模型\n\n"
                     "💡 设备模式仅支持 Claude 模型，请联系管理员配置",
                 )
                 return
-            mode_hint = "\n\n⚠️ 设备模式仅支持 Claude 模型"
-        else:
-            mode_hint = ""
-
-        # No argument - list models
-        if not argument:
-            message = MODELS_HEADER + mode_hint + "\n\n"
-
-            # Get current selection to mark it
-            current_selection = await model_selection_manager.get_selection(user.id)
-            current_model_name = (
-                current_selection.model_name if current_selection else None
+            mode_hint = (
+                "\n⚠️ 设备模式仅支持 Claude 模型\n"
+                if len(visible_options) != len(options)
+                else ""
             )
-
-            # In device mode, show real index from full list for consistency
-            # In other modes, show sequential index
-            for idx, model in enumerate(all_models, start=1):
-                # In device mode, skip non-Claude models
-                if is_device_mode and not is_claude_provider(model.get("provider")):
+            lines = [MODELS_HEADER, mode_hint]
+            for index, option in enumerate(options, start=1):
+                if option.is_disabled:
                     continue
-
-                model_name = model.get("name", "")
-                display_name = model.get("displayName") or model_name
-                provider = model.get("provider", "")
-                model_type = model.get("type", "")
-
-                # Mark current selection
-                status_str = ""
-                if model_name == current_model_name:
-                    status_str = " - ⭐ 当前"
-                elif model_type == "public":
-                    status_str = " [公共]"
-                elif model_type == "group":
-                    status_str = " [群组]"
-
-                message += MODEL_ITEM_TEMPLATE.format(
-                    index=idx,
-                    name=display_name,
-                    provider=provider or "未知",
-                    status=status_str,
+                status = " - ⭐ 当前" if option.is_current else ""
+                lines.append(
+                    MODEL_ITEM_TEMPLATE.format(
+                        index=index,
+                        name=option.label,
+                        provider=option.description,
+                        status=status,
+                    ).rstrip()
                 )
-
-            message += MODELS_FOOTER
-            await self.send_text_reply(message_context, message)
+            lines.append(MODELS_FOOTER)
+            await self.send_text_reply(message_context, "\n".join(lines))
             return
 
-        # With argument - select model
-        argument = argument.strip()
-        matched_model = None
-
-        # Check if argument is a number (model index)
-        # Always use full list index for consistency
-        if argument.isdigit():
-            model_index = int(argument)
-            if 1 <= model_index <= len(all_models):
-                selected = all_models[model_index - 1]
-                # In device mode, verify it's a Claude model
-                if is_device_mode and not is_claude_provider(selected.get("provider")):
-                    await self.send_text_reply(
-                        message_context,
-                        f"❌ 模型 **{selected.get('displayName') or selected.get('name')}** "
-                        "不支持设备模式\n\n设备模式仅支持 Claude 模型，请选择其他模型",
-                    )
-                    return
-                matched_model = selected
-            else:
-                await self.send_text_reply(
-                    message_context,
-                    f"❌ 无效的模型序号: {argument}\n\n"
-                    f"当前有 {len(all_models)} 个模型，请使用 `/models` 查看列表",
-                )
-                return
-        else:
-            # Match by name (case-insensitive) - search in full list
-            argument_lower = argument.lower()
-            for model in all_models:
-                model_name = model.get("name", "")
-                display_name = model.get("displayName") or ""
-                if (
-                    model_name.lower() == argument_lower
-                    or display_name.lower() == argument_lower
-                ):
-                    # In device mode, verify it's a Claude model
-                    if is_device_mode and not is_claude_provider(model.get("provider")):
-                        await self.send_text_reply(
-                            message_context,
-                            f"❌ 模型 **{display_name or model_name}** 不支持设备模式\n\n"
-                            "设备模式仅支持 Claude 模型，请选择其他模型",
-                        )
-                        return
-                    matched_model = model
-                    break
-
-        if not matched_model:
+        option = resolve_text_choice(options, argument)
+        if option is None:
             await self.send_text_reply(
                 message_context,
                 f"❌ 未找到模型: {argument}\n\n使用 `/models` 查看可用模型列表",
             )
             return
-
-        # Save selection to Redis
-        new_selection = ModelSelection(
-            model_name=matched_model.get("name", ""),
-            model_type=matched_model.get("type", "public"),
-            display_name=matched_model.get("displayName"),
-            provider=matched_model.get("provider"),
-        )
-        await model_selection_manager.set_selection(user.id, new_selection)
-
-        display_name = new_selection.display_name or new_selection.model_name
+        try:
+            result = await channel_selection_service.apply_model(
+                db,
+                user,
+                option.value,
+                default_model_name=self.default_model_name,
+            )
+        except SelectionError as exc:
+            await self.send_text_reply(message_context, f"❌ {exc}")
+            return
         await self.send_text_reply(
             message_context,
-            f"✅ 已切换到模型 **{display_name}**\n\n现在的对话将使用该模型",
+            f"✅ 已切换到模型 **{result.selected_label}**\n\n现在的对话将使用该模型",
         )
 
     async def _handle_agent_command(
