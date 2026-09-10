@@ -1423,6 +1423,10 @@ export function createDesktopScenario({
     )
     try {
       await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
       await control.command('hover', moonshotOverrideCard, { visible: true })
       await control.command('waitFor', moonshotProgressPopup, {
         timeoutMs: uiTimeoutMs,
