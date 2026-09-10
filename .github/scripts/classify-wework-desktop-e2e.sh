@@ -64,6 +64,7 @@ core_segments=(
 )
 plugin_segments=(
   core-dsh-ui-plugin-composition
+  plugin-marketplace-lifecycle
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
@@ -762,6 +763,15 @@ classify_wework_path() {
 
 classify_path() {
   local path="$1"
+
+  case "$path" in
+    sdk/plugin-creator/* | sdk/plugin-auth/* | executor/src/local/plugin_creator.rs | \
+      wework/src/components/plugins/PluginCreateWorkspace* | \
+      wework/e2e/desktop/modules/plugin-flows.mjs)
+      select_target "plugins:plugin-marketplace-lifecycle"
+      select_target "cloud:plugin-workspace-publication"
+      ;;
+  esac
 
   case "$path" in
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \

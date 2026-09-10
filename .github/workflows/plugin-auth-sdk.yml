@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "sdk/plugin-auth/**"
+      - "sdk/plugin-creator/**"
       - "sdk/plugin-auth-go/**"
       - "sdk/dws-auth/**"
       - "sdk/plugin-build/**"
       - "shared/plugin_build.py"
       - "shared/tests/test_plugin_build.py"
       - "executor/src/plugin_account_auth/**"
+      - "executor/src/local/plugin_creator.rs"
       - "executor/src/process/mod.rs"
       - "executor/tests/plugin_account_auth_contract.rs"
       - ".github/workflows/plugin-auth-sdk.yml"
@@ -17,12 +19,14 @@ on:
     branches: [main]
     paths:
       - "sdk/plugin-auth/**"
+      - "sdk/plugin-creator/**"
       - "sdk/plugin-auth-go/**"
       - "sdk/dws-auth/**"
       - "sdk/plugin-build/**"
       - "shared/plugin_build.py"
       - "shared/tests/test_plugin_build.py"
       - "executor/src/plugin_account_auth/**"
+      - "executor/src/local/plugin_creator.rs"
       - "executor/src/process/mod.rs"
       - "executor/tests/plugin_account_auth_contract.rs"
       - ".github/workflows/plugin-auth-sdk.yml"
@@ -71,6 +75,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Test SDK, scaffolds, and isolated plugin processes
         run: uv run --no-project python -m unittest discover -s sdk/plugin-auth/tests -v
+      - name: Test Wework Creator Connector validation
+        run: uv run --no-project python -m unittest discover -s sdk/plugin-creator/tests -v
 
   native:
     strategy:

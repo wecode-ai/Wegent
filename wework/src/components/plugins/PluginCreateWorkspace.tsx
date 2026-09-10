@@ -133,15 +133,16 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
     setIsSubmitting(true)
     setSubmitError(null)
     const pluginCreatorSkill = {
-      name: 'plugin-creator',
+      name: 'wework-plugin-creator',
       namespace: 'codex',
       is_public: false,
     }
     projectChat.setSelectedSkills([pluginCreatorSkill])
     const message = [
       editPluginName
-        ? `Use the Codex plugin-creator workflow to continue editing the plugin "${editPluginName}" in Wegent.`
-        : 'Use the Codex plugin-creator workflow to create a Codex-compatible plugin for Wegent.',
+        ? `Use the wework-plugin-creator skill to continue editing the plugin "${editPluginName}" in Wegent.`
+        : 'Use the wework-plugin-creator skill to create a Codex-compatible plugin for Wegent.',
+      'Read wework-plugin-creator before scaffolding. For plugin-owned local authentication, use its bundled accountAuth SDK, implement provider callbacks and delegated business commands, and run its Wework validator on the complete manifest.',
       'Choose the storage flow from the Executor environment:',
       '- When DEVICE_TYPE=cloud, the Task workspace is the draft. Create or edit the source only under "$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>". Do not install it into a personal marketplace and do not write the source under $HOME.',
       `- Otherwise, use the existing desktop flow: create and install it in the registered managed local marketplace named "${WEWORK_PERSONAL_MARKETPLACE_ID}". Resolve that marketplace's existing local path first, do not use the defaults under ~/plugins or ~/.agents, and keep both managed marketplace manifests in sync.`,

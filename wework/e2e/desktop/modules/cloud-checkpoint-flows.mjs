@@ -1,5 +1,6 @@
 import { access } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
+import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
 import { basename } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
@@ -368,6 +369,7 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   const taskId = taskAddress.taskId
   const runtimeTask = await cloudEnvironment.waitForRuntimeTask(taskAddress)
   const taskWorkspace = runtimeTask.workspacePath
+  await verifyCreatorAuthenticationToolkit(cloudEnvironment.remoteCodexHome, taskWorkspace)
   const pluginRoot = join(taskWorkspace, 'plugins', 'cloud-workspace-e2e')
   await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
   await mkdir(join(pluginRoot, 'skills', 'cloud-draft'), { recursive: true })
