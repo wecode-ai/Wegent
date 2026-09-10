@@ -48,7 +48,7 @@ The catalog covers all public host slots:
   `wework.runtime-profile.workspace-policy`.
 - Composer: `wework.composer.action`.
 - Home and context: `wework.home`, `wework.task.status`,
-  `wework.environment.section`, and `wework.board.card.status`.
+  `wework.conversation.summary`, and `wework.board.card.status`.
 - Shell: `wework.shell.before`, `wework.shell.after`, and
   `wework.shell.overlay`.
 

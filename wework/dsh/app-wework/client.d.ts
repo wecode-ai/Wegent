@@ -219,6 +219,8 @@ export interface WeworkContribution {
   readonly icon?: string
   readonly module?: string
   readonly order?: number
+  readonly requiredHostServices?: readonly string[]
+  readonly when?: WeworkContextExpression
   readonly [key: string]: unknown
 }
 
@@ -232,7 +234,7 @@ export interface WeworkContributionMap {
   readonly 'wework.plugins.action': WeworkContribution
   readonly 'wework.board.card.status': WeworkContribution
   readonly 'wework.composer.action': WeworkContribution
-  readonly 'wework.environment.section': WeworkContribution
+  readonly 'wework.conversation.summary': WeworkContribution
   readonly 'wework.home': WeworkContribution
   readonly 'wework.project.create.section': WeworkContribution
   readonly 'wework.project.work.section': WeworkContribution
@@ -504,7 +506,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       scope: 'session-maybe'
       owner: { readonly compact: boolean; readonly disabled: boolean }
     }
-    'wework.environment.section': {
+    'wework.conversation.summary': {
       kind: 'list'
       scope: 'session-maybe'
       owner: Readonly<Record<string, unknown>>

@@ -27,4 +27,15 @@ describe('getAssistantReferences', () => {
       ])
     }
   )
+
+  test('decodes escaped parentheses in assistant file link destinations', () => {
+    expect(getAssistantReferences(null, String.raw`See [notes](docs/a\(draft\).md).`)).toEqual([
+      {
+        path: 'docs/a(draft).md',
+        title: 'notes',
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    ])
+  })
 })
