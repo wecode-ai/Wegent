@@ -42,6 +42,7 @@ const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
   '@wegent/dsh-transcript-sync',
+  ...(process.env.WEWORK_INTERNAL_TELEMETRY === '1' ? ['@wegent/dsh-internal-telemetry'] : []),
 ] as const
 const CORE_UI_BUNDLES = [
   '@wegent/dsh-conversation-export',
