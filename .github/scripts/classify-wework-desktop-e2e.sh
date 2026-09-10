@@ -13,11 +13,13 @@ core_segments=(
   project-event-sources
   project-assignment-notification
   offline-local-project-space
+  board-focus-view
   cloud-context-resilience
   core-dsh-plugin-management
   plugin-development
   project-ai-settings
   model-routing
+  codex-account-login
   permission-modes
   workbench-mode
   computer-use
@@ -62,6 +64,7 @@ core_segments=(
 )
 plugin_segments=(
   core-dsh-ui-plugin-composition
+  plugin-marketplace-lifecycle
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
@@ -118,9 +121,9 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-auto-update,plugin-workspace-publication,plugin-account-auth
+  plugin-account-auth
   cloud-worktree-queued-cancel
-  workspace-attachments
+  plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
 # Group checkpoints by observed Core CI duration so every serial shard stays
 # below the desktop suite's critical-path budget while reusing the same
@@ -138,12 +141,12 @@ core_shards=(
   project-automation
   resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
-  project-assignment-notification,split-workbench,priority-filter,project-event-sources
+  project-assignment-notification,split-workbench,priority-filter,project-event-sources,board-focus-view
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
-  model-routing,computer-use
+  model-routing,computer-use,codex-account-login
 )
 
 validate_core_shards() {
@@ -303,6 +306,10 @@ classify_wework_path() {
       select_target "cloud:core-task-flow"
       return
       ;;
+    wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs)
+      select_target "core:codex-account-login"
+      return
+      ;;
     # Documentation does not change the packaged desktop application.
     wework/*.md)
       return
@@ -421,6 +428,14 @@ classify_wework_path() {
       return
       ;;
 
+    # Native tray placement must survive process exit on macOS.
+    wework/electron/src/host/tray* | \
+      wework/e2e/desktop/scenarios/tray-*)
+      select_target "core:tray-lifecycle"
+      macos_inspector_e2e=true
+      return
+      ;;
+
     # Window and native lifecycle behavior.
     wework/src/desktop/tray* | \
       wework/src/desktop/runtimeTaskCloseGuard* | \
@@ -457,6 +472,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
       select_target "core:cloud-space-mention"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
+      select_target "core:board-focus-view"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \
@@ -746,6 +765,15 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    sdk/plugin-creator/* | sdk/plugin-auth/* | executor/src/local/plugin_creator.rs | \
+      wework/src/components/plugins/PluginCreateWorkspace* | \
+      wework/e2e/desktop/modules/plugin-flows.mjs)
+      select_target "plugins:plugin-marketplace-lifecycle"
+      select_target "cloud:plugin-workspace-publication"
+      ;;
+  esac
+
+  case "$path" in
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
       executor/tests/plugin_account_auth_contract.rs | \
       backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \
@@ -753,6 +781,22 @@ classify_path() {
       backend/app/schemas/plugin_account_auth.py | backend/app/api/ws/plugin_auth_broker.py | \
       backend/app/api/endpoints/plugin_connections.py)
       select_target "cloud:plugin-account-auth"
+      ;;
+    executor/src/runtime_work/codex_transcript_page.rs)
+      select_target "core:transcript-sync"
+      select_target "core:environment-panel-scroll"
+      ;;
+    backend/alembic/versions/*wework_transcript* | \
+      backend/app/api/endpoints/wework_transcripts.py | \
+      backend/app/core/wework_transcript_encryption.py | \
+      backend/app/models/wework_transcript.py | \
+      backend/app/schemas/wework_transcript.py | \
+      backend/app/services/wework_transcript_* | \
+      backend/tests/api/endpoints/test_wework_transcripts_api.py | \
+      backend/tests/models/test_wework_transcript_schema.py | \
+      executor/src/runtime_work/native_transcript.rs | \
+      executor/src/runtime_work/handler/transcript_sync.rs)
+      select_target "core:transcript-sync"
       ;;
     backend/app/api/ws/terminal_namespace.py | \
       backend/app/services/device/terminal_protocol.py | \

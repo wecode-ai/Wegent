@@ -118,9 +118,11 @@ import {
 } from '@/features/workspace-tabs/workspaceTabs'
 import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
 import type { User } from '@/types/api'
+import { TelemetryAgent } from '@/telemetry/TelemetryAgent'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
-import { track, useTelemetryEnabled } from '@/telemetry/client'
-import { telemetryDomainForFeature, telemetryFeatureForLocation } from '@/telemetry/routes'
+import { track } from '@/telemetry/client'
+import { resolveTelemetryRoute } from '@/telemetry/routeRegistry'
+import { telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
@@ -135,6 +137,7 @@ import {
   subscribeDshExtensions,
 } from '@/features/dsh-runtime/dshExtensions'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
 import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
 import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
@@ -509,7 +512,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
@@ -571,16 +573,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }, [])
 
   const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
-  const telemetryDomain = telemetryDomainForFeature(telemetryFeature)
+  const smartAppRoute = resolveTelemetryRoute(path, search)
 
   useEffect(() => {
-    track(
-      'feature_opened',
-      telemetryDomain
-        ? { domain: telemetryDomain, feature: telemetryFeature }
-        : { feature: telemetryFeature }
-    )
-  }, [path, telemetryDomain, telemetryEnabled, telemetryFeature])
+    if (smartAppRoute) return
+    track('feature_opened', { feature: telemetryFeature })
+  }, [path, smartAppRoute, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)
@@ -697,10 +695,12 @@ export default function App() {
       {content}
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
-      <DshSlotSurface
-        className="pointer-events-none fixed inset-0 z-system-popover"
-        slot={WEWORK_DSH_SLOTS.shellOverlay}
-      />
+      <div className="pointer-events-none fixed inset-0 z-system-popover">
+        <DshContributionSlotSurface
+          attachedClassName="contents"
+          slot={WEWORK_DSH_SLOTS.shellOverlay}
+        />
+      </div>
     </>
   )
 }
@@ -718,6 +718,7 @@ function MainApp() {
           <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
+              <TelemetryAgent />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>

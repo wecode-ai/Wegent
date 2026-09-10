@@ -38,7 +38,9 @@ import {
   HardDrive,
   ListTodo,
   LockKeyhole,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   Plus,
   Search,
   Settings,
@@ -124,6 +126,7 @@ import type {
   ModelSelectionConfig,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
+  RuntimeGoal,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeTaskSummary,
@@ -141,6 +144,7 @@ import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
   type BoardCardDisplaySettings,
+  type BoardCardProgressDisplay,
   type CloudTodoBoardTaskBinding,
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
@@ -1404,9 +1408,15 @@ export function CloudTodoWorkspace({
   const [nativeGroupBy, setNativeGroupBy] = useState<NativeBoardGroupBy>('status')
   const [nativeGroupFilter, setNativeGroupFilter] = useState('')
   const [nativeBoardQuery, setNativeBoardQuery] = useState('')
+  const [focusExecutionColumns, setFocusExecutionColumns] = useState(false)
   const [localProjectFilter, setLocalProjectFilter] = useState('all')
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
+  const boardScrollRef = useRef<HTMLDivElement>(null)
+  const [pinnedBoardPreview, setPinnedBoardPreview] = useState<{
+    contextKey: string
+    itemId: string
+  } | null>(null)
   const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
     useState<PendingExecutionConfiguration | null>(null)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
@@ -1552,8 +1562,12 @@ export function CloudTodoWorkspace({
       }
     >
   >({})
+  const [runtimeGoalsByAddress, setRuntimeGoalsByAddress] = useState<
+    Record<string, RuntimeGoal | null>
+  >({})
   const runtimeConversationRequestsRef = useRef(new Set<string>())
   const runtimeConversationLatestSignatureRef = useRef(new Map<string, string>())
+  const runtimeGoalRequestsRef = useRef(new Set<string>())
   useEffect(() => {
     if (projectMenuId === null) return
 
@@ -1780,6 +1794,10 @@ export function CloudTodoWorkspace({
             })
             const runtimeTask = runtimeTaskByAddress.get(addressKey)
             const preview = runtimeConversationPreviews[addressKey]
+            const runtimeGoalLoaded = Object.prototype.hasOwnProperty.call(
+              runtimeGoalsByAddress,
+              addressKey
+            )
 
             return {
               id: binding.id,
@@ -1793,6 +1811,8 @@ export function CloudTodoWorkspace({
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
                 : null,
               finalResponsePreview: preview?.text ?? null,
+              runtimeGoal: runtimeGoalsByAddress[addressKey] ?? null,
+              runtimeGoalLoaded,
             }
           }),
         ])
@@ -1800,9 +1820,44 @@ export function CloudTodoWorkspace({
     [
       itemTaskBindings,
       runtimeConversationPreviews,
+      runtimeGoalsByAddress,
       runtimeTaskByAddress,
       runtimeTaskRunningByAddress,
     ]
+  )
+  const loadBoardTaskRuntimeGoal = useCallback(
+    async (address: RuntimeTaskAddress): Promise<void> => {
+      const runtimeWorkApi = services.runtimeWorkApi
+      if (!runtimeWorkApi) return
+      const addressKey = runtimeConversationKey(address)
+      if (
+        Object.prototype.hasOwnProperty.call(runtimeGoalsByAddress, addressKey) ||
+        runtimeGoalRequestsRef.current.has(addressKey)
+      ) {
+        return
+      }
+
+      runtimeGoalRequestsRef.current.add(addressKey)
+      try {
+        const response = await runtimeWorkApi.getRuntimeGoal({ address })
+        setRuntimeGoalsByAddress(current => ({
+          ...current,
+          [addressKey]: response.accepted ? response.goal : null,
+        }))
+      } catch (error) {
+        console.warn('[Wework project board] failed to load task goal', {
+          address,
+          error,
+        })
+        setRuntimeGoalsByAddress(current => ({
+          ...current,
+          [addressKey]: null,
+        }))
+      } finally {
+        runtimeGoalRequestsRef.current.delete(addressKey)
+      }
+    },
+    [runtimeGoalsByAddress, services.runtimeWorkApi]
   )
   const localProjectIdForItem = useCallback(
     (item: CloudLoopItem): number | null => {
@@ -1819,6 +1874,19 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
+  const boardPreviewContextKey = [
+    selectedProjectKey,
+    boardParentId,
+    rootView,
+    projectView,
+    localProjectFilter,
+    nativeGroupFilter,
+    nativeBoardQuery,
+    aitableBoardQuery,
+    aitableGroupFilter,
+  ].join(':')
+  const pinnedBoardPreviewItemId =
+    pinnedBoardPreview?.contextKey === boardPreviewContextKey ? pinnedBoardPreview.itemId : null
   async function continueChangeRequestRepair(
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
@@ -1971,6 +2039,9 @@ export function CloudTodoWorkspace({
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
+  const focusExecutionColumnsKey = selectedProjectKey
+    ? `wework-board-focus-execution:v1:${user.id}:${selectedProjectKey}`
+    : null
 
   useEffect(() => {
     if (
@@ -2040,6 +2111,14 @@ export function CloudTodoWorkspace({
         : (selectedProject.board_config?.group_by ?? 'status')
     )
   }, [isAITableProject, personalGroupKey, selectedProject])
+
+  useEffect(() => {
+    // The selected project changes the external localStorage key we synchronize from.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFocusExecutionColumns(
+      focusExecutionColumnsKey ? localStorage.getItem(focusExecutionColumnsKey) === 'true' : false
+    )
+  }, [focusExecutionColumnsKey])
 
   const selectedGroupField = aitableFields.find(field => field.id === aitableGroupFieldId)
   const configuredGroupValues = Array.isArray(selectedGroupField?.config?.options)
@@ -3580,9 +3659,26 @@ export function CloudTodoWorkspace({
   }
 
   function savePersonalGroupBy(groupBy: NativeBoardGroupBy) {
+    if (nativeGroupBy !== groupBy && boardScrollRef.current) {
+      boardScrollRef.current.scrollLeft = 0
+    }
     setNativeGroupBy(groupBy)
     setNativeGroupFilter('')
     if (personalGroupKey) localStorage.setItem(personalGroupKey, groupBy)
+  }
+
+  function toggleFocusExecutionColumns() {
+    setFocusExecutionColumns(current => {
+      const next = !current
+      if (focusExecutionColumnsKey) {
+        if (next) {
+          localStorage.setItem(focusExecutionColumnsKey, 'true')
+        } else {
+          localStorage.removeItem(focusExecutionColumnsKey)
+        }
+      }
+      return next
+    })
   }
 
   async function saveGlobalGroupBy() {
@@ -4795,22 +4891,67 @@ export function CloudTodoWorkspace({
                           className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
                         />
                       </label>
-                      {personalGroupKey && localStorage.getItem(personalGroupKey) ? (
-                        <button
-                          type="button"
-                          data-testid="cloud-board-save-global"
-                          disabled={
-                            groupScopeBusy ||
-                            !['Owner', 'Maintainer'].includes(
-                              selectedProject.access_role ?? 'Owner'
-                            )
-                          }
-                          onClick={() => void saveGlobalGroupBy()}
-                          className="h-8 shrink-0 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
-                        >
-                          应用到全局
-                        </button>
-                      ) : null}
+                      <div
+                        data-testid="cloud-board-view-actions"
+                        className="ml-auto flex shrink-0 items-center gap-2"
+                      >
+                        {nativeGroupBy === 'status' ? (
+                          <Tooltip
+                            label={t(
+                              focusExecutionColumns
+                                ? 'todo.exit_focus_view_description'
+                                : 'todo.focus_view_description',
+                              focusExecutionColumns
+                                ? '退出执行阶段专注视图'
+                                : '展开进行中与待确认列'
+                            )}
+                          >
+                            <button
+                              type="button"
+                              data-testid="cloud-board-focus-running"
+                              aria-pressed={focusExecutionColumns}
+                              aria-label={t(
+                                focusExecutionColumns
+                                  ? 'todo.exit_focus_view_description'
+                                  : 'todo.focus_view_description',
+                                focusExecutionColumns
+                                  ? '退出执行阶段专注视图'
+                                  : '展开进行中与待确认列'
+                              )}
+                              onClick={toggleFocusExecutionColumns}
+                              className={cn(
+                                'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+                                focusExecutionColumns
+                                  ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
+                                  : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
+                              )}
+                            >
+                              {focusExecutionColumns ? (
+                                <Minimize2 className="h-3.5 w-3.5" />
+                              ) : (
+                                <Maximize2 className="h-3.5 w-3.5" />
+                              )}
+                              {t('todo.focus_view', '专注视图')}
+                            </button>
+                          </Tooltip>
+                        ) : null}
+                        {personalGroupKey && localStorage.getItem(personalGroupKey) ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-board-save-global"
+                            disabled={
+                              groupScopeBusy ||
+                              !['Owner', 'Maintainer'].includes(
+                                selectedProject.access_role ?? 'Owner'
+                              )
+                            }
+                            onClick={() => void saveGlobalGroupBy()}
+                            className="h-8 shrink-0 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                          >
+                            应用到全局
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   )}
                   <nav
@@ -4907,15 +5048,26 @@ export function CloudTodoWorkspace({
                     </p>
                   ) : null}
                   {boardItemsLoading ? (
-                    <div className="min-h-0 flex-1 overflow-x-auto">
+                    <div
+                      ref={boardScrollRef}
+                      data-testid="cloud-board-scroll"
+                      className="min-h-0 flex-1 overflow-x-auto"
+                    >
                       <CloudTodoBoardSkeleton />
                     </div>
                   ) : (
-                    <div className="min-h-0 flex-1 overflow-x-auto">
+                    <div
+                      ref={boardScrollRef}
+                      data-testid="cloud-board-scroll"
+                      className="min-h-0 flex-1 overflow-x-auto"
+                    >
                       <DndContext
                         sensors={boardSensors}
                         collisionDetection={boardCollisionDetection}
-                        onDragStart={event => setActiveDragItemId(String(event.active.id))}
+                        onDragStart={event => {
+                          setPinnedBoardPreview(null)
+                          setActiveDragItemId(String(event.active.id))
+                        }}
                         onDragCancel={() => setActiveDragItemId(null)}
                         onDragEnd={finishBoardDrop}
                       >
@@ -4994,12 +5146,21 @@ export function CloudTodoWorkspace({
                               }
                               setQuickCreateStatus(column.status)
                             }
+                            const focusedExecutionColumn =
+                              focusExecutionColumns &&
+                              nativeGroupBy === 'status' &&
+                              (column.status === 'in_progress' || column.status === 'in_review')
+                            const progressDisplay: BoardCardProgressDisplay = focusedExecutionColumn
+                              ? 'focused'
+                              : 'compact'
+
                             return (
                               <section
                                 key={column.key}
                                 data-testid={`cloud-todo-column-${column.key}`}
                                 className={cn(
-                                  'group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5',
+                                  'group flex max-h-full shrink-0 flex-col rounded-2xl bg-muted p-0.5 transition-[width]',
+                                  focusedExecutionColumn ? 'w-[480px]' : 'w-[292px]',
                                   // While a drag is active, outline every column with a dashed
                                   // border at its natural (content) height so each one reads as
                                   // a potential drop target without any layout shift.
@@ -5109,6 +5270,7 @@ export function CloudTodoWorkspace({
                                       }
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
+                                          setPinnedBoardPreview(null)
                                           setBackgroundTaskItemId(null)
                                           closeTaskPanel()
                                           setSelectedItem(item)
@@ -5124,30 +5286,29 @@ export function CloudTodoWorkspace({
                                         setArchiveError(null)
                                         setArchiveItem(item)
                                       }}
-                                      onOpenActivity={() => {
-                                        if (item.can_view_detail === false) return
-                                        const binding =
-                                          boardTaskBindings[item.id]?.find(
-                                            candidate => candidate.running
-                                          ) ?? boardTaskBindings[item.id]?.[0]
-                                        if (!binding) return
-                                        setBackgroundTaskItemId(null)
-                                        setSelectedItem(item)
-                                        openTaskBinding({
-                                          id: binding.id,
-                                          device_id: binding.device_id,
-                                          task_id: binding.task_id,
-                                          task_title: binding.task_title,
-                                          work_item_id: item.id,
-                                        })
-                                      }}
+                                      previewPinned={pinnedBoardPreviewItemId === item.id}
+                                      onPreviewPinnedChange={pinned =>
+                                        setPinnedBoardPreview(
+                                          pinned
+                                            ? {
+                                                contextKey: boardPreviewContextKey,
+                                                itemId: item.id,
+                                              }
+                                            : null
+                                        )
+                                      }
+                                      onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
                                       previewDisabled={
-                                        selectedItem !== null || activeDragItemId !== null
+                                        selectedItem !== null ||
+                                        activeDragItemId !== null ||
+                                        (pinnedBoardPreviewItemId !== null &&
+                                          pinnedBoardPreviewItemId !== item.id)
                                       }
                                       archiveDisabled={isAITableProject}
+                                      progressDisplay={progressDisplay}
                                       changeRequestMonitor={changeRequestMonitor}
                                       onContinueChangeRequestRepair={
                                         workbench ? continueChangeRequestRepair : undefined

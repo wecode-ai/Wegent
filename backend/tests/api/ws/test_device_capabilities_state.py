@@ -12,7 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from app.api.ws import device_namespace, local_task_responses
-from app.services.device.terminal_session_service import TerminalSessionRecord
+from app.services.device.terminal_session_service import (
+    TerminalSessionAuthorizationUnavailable,
+    TerminalSessionRecord,
+)
 
 
 def future_terminal_expiry() -> datetime:
@@ -1047,6 +1050,164 @@ async def test_device_terminal_output_rejects_invalid_data_before_redis(
 
 
 @pytest.mark.asyncio
+async def test_device_terminal_output_retries_when_authorization_is_unavailable(
+    monkeypatch,
+):
+    namespace = device_namespace.DeviceNamespace()
+    service = SimpleNamespace(
+        get=AsyncMock(side_effect=TerminalSessionAuthorizationUnavailable())
+    )
+    sio = SimpleNamespace(emit=AsyncMock())
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "device-sid",
+        {
+            "session_id": "terminal-1",
+            "protocol_version": 2,
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "retained",
+        },
+    )
+
+    assert result == {
+        "error": "Terminal session authorization is temporarily unavailable",
+        "code": "terminal_session_authorization_unavailable",
+        "retryable": True,
+    }
+    sio.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_output_dispatches_end_before_permanent_rejection(
+    monkeypatch,
+):
+    namespace = device_namespace.DeviceNamespace()
+    service = SimpleNamespace(get=AsyncMock(return_value=None))
+    manager = SimpleNamespace(is_connected=Mock(return_value=True))
+    sio = SimpleNamespace(
+        manager=manager,
+        call=AsyncMock(return_value={"success": True}),
+    )
+    metric = Mock()
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(device_namespace, "record_terminal_event", metric)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "device-sid",
+        {
+            "session_id": "terminal-1",
+            "browser_socket_id": "browser-sid",
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "discarded",
+        },
+    )
+
+    assert result == {
+        "error": "Terminal session not found",
+        "code": "terminal_session_not_found",
+        "retryable": False,
+        "terminal_end_dispatched": True,
+    }
+    sio.call.assert_awaited_once_with(
+        "terminal:exit",
+        {
+            "session_id": "terminal-1",
+            "exit_code": None,
+            "error": "Terminal session not found",
+            "reason_code": "terminal_session_not_found",
+            "output_complete": False,
+            "protocol_version": 2,
+            "consumer_id": "consumer-1",
+        },
+        to="browser-sid",
+        namespace="/terminal",
+        timeout=5,
+        ignore_queue=True,
+    )
+    manager.is_connected.assert_called_once_with("browser-sid", "/terminal")
+    metric.assert_called_once_with(source="device", event="forced_exit")
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_output_retries_when_end_dispatch_fails(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    service = SimpleNamespace(get=AsyncMock(return_value=None))
+    sio = SimpleNamespace(call=AsyncMock(side_effect=TimeoutError("not acknowledged")))
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "device-sid",
+        {
+            "session_id": "terminal-1",
+            "protocol_version": 2,
+            "browser_socket_id": "browser-sid",
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "retained",
+        },
+    )
+
+    assert result == {
+        "error": "Failed to dispatch terminal session end",
+        "code": "terminal_end_dispatch_failed",
+        "retryable": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_output_retries_when_end_target_is_missing(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    service = SimpleNamespace(get=AsyncMock(return_value=None))
+    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "device-sid",
+        {
+            "session_id": "terminal-1",
+            "protocol_version": 2,
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "retained",
+        },
+    )
+
+    assert result == {
+        "error": "Failed to dispatch terminal session end",
+        "code": "terminal_end_dispatch_failed",
+        "retryable": True,
+    }
+    sio.call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_device_terminal_output_rejects_mismatched_device(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
     record = TerminalSessionRecord(
@@ -1059,7 +1220,9 @@ async def test_device_terminal_output_rejects_mismatched_device(monkeypatch):
         expires_at=future_terminal_expiry(),
     )
     service = SimpleNamespace(get=AsyncMock(return_value=record))
+    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
     monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
     monkeypatch.setattr(
         namespace,
         "get_session",
@@ -1071,13 +1234,19 @@ async def test_device_terminal_output_rejects_mismatched_device(monkeypatch):
         {
             "session_id": "terminal-1",
             "protocol_version": 2,
+            "browser_socket_id": "browser-sid",
             "consumer_id": "consumer-1",
             "sequence": 1,
             "data": "hello",
         },
     )
 
-    assert result == {"error": "Terminal session does not belong to this device"}
+    assert result == {
+        "error": "Terminal session does not belong to this device",
+        "code": "terminal_session_device_mismatch",
+        "retryable": False,
+        "terminal_end_dispatched": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -1093,7 +1262,9 @@ async def test_device_terminal_output_rejects_cross_user_session(monkeypatch):
         expires_at=future_terminal_expiry(),
     )
     service = SimpleNamespace(get=AsyncMock(return_value=record))
+    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
     monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
     monkeypatch.setattr(
         namespace,
         "get_session",
@@ -1105,13 +1276,64 @@ async def test_device_terminal_output_rejects_cross_user_session(monkeypatch):
         {
             "session_id": "terminal-1",
             "protocol_version": 2,
+            "browser_socket_id": "browser-sid",
             "consumer_id": "consumer-1",
             "sequence": 1,
             "data": "hello",
         },
     )
 
-    assert result == {"error": "Terminal session does not belong to this device"}
+    assert result == {
+        "error": "Terminal session does not belong to this device",
+        "code": "terminal_session_device_mismatch",
+        "retryable": False,
+        "terminal_end_dispatched": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_output_marks_stale_socket_rejection_retryable(
+    monkeypatch,
+):
+    namespace = device_namespace.DeviceNamespace()
+    record = TerminalSessionRecord(
+        session_id="terminal-1",
+        user_id=7,
+        device_id="device-1",
+        socket_id="stale-sid",
+        project_id=123,
+        path="/repo",
+        expires_at=future_terminal_expiry(),
+    )
+    service = SimpleNamespace(get=AsyncMock(return_value=record))
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "current-sid",
+        {
+            "session_id": "terminal-1",
+            "protocol_version": 2,
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "hello",
+        },
+    )
+
+    assert result == {
+        "error": "Terminal session belongs to a stale device socket",
+        "code": "terminal_session_stale_socket",
+        "retryable": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -1144,6 +1366,7 @@ async def test_device_terminal_exit_forwards_and_deletes_session(monkeypatch):
         {
             "session_id": "terminal-1",
             "protocol_version": 2,
+            "browser_socket_id": "browser-sid",
             "consumer_id": "consumer-1",
             "exit_code": 0,
         },
@@ -1212,7 +1435,9 @@ async def test_device_terminal_exit_accepts_duplicate_after_durable_revocation(
         get=AsyncMock(return_value=None),
         is_durably_revoked=AsyncMock(return_value=True),
     )
+    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
     monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
     monkeypatch.setattr(
         namespace,
         "get_session",
@@ -1224,6 +1449,7 @@ async def test_device_terminal_exit_accepts_duplicate_after_durable_revocation(
         {
             "session_id": "terminal-1",
             "protocol_version": 2,
+            "browser_socket_id": "browser-sid",
             "consumer_id": "consumer-1",
             "exit_code": 0,
         },
@@ -1231,6 +1457,21 @@ async def test_device_terminal_exit_accepts_duplicate_after_durable_revocation(
 
     assert result == {"success": True}
     service.is_durably_revoked.assert_awaited_once_with("terminal-1")
+    sio.call.assert_awaited_once_with(
+        "terminal:exit",
+        {
+            "session_id": "terminal-1",
+            "exit_code": 0,
+            "error": "Terminal session not found",
+            "reason_code": "terminal_session_not_found",
+            "output_complete": True,
+            "protocol_version": 2,
+            "consumer_id": "consumer-1",
+        },
+        to="browser-sid",
+        namespace="/terminal",
+        timeout=5,
+    )
 
 
 @pytest.mark.asyncio
@@ -1246,7 +1487,9 @@ async def test_device_terminal_output_rejects_expired_session(monkeypatch):
         expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
     service = SimpleNamespace(get=AsyncMock(return_value=record))
+    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
     monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
     monkeypatch.setattr(
         namespace,
         "get_session",
@@ -1258,13 +1501,19 @@ async def test_device_terminal_output_rejects_expired_session(monkeypatch):
         {
             "session_id": "terminal-1",
             "protocol_version": 2,
+            "browser_socket_id": "browser-sid",
             "consumer_id": "consumer-1",
             "sequence": 1,
             "data": "hello",
         },
     )
 
-    assert result == {"error": "Terminal session expired"}
+    assert result == {
+        "error": "Terminal session expired",
+        "code": "terminal_session_expired",
+        "retryable": False,
+        "terminal_end_dispatched": True,
+    }
 
 
 def test_device_terminal_hot_path_events_skip_generic_payload_tracing():

@@ -38,6 +38,11 @@ export function resolveRunningHarnessApp(
   }
 }
 
+export function resolveRunningHarnessAppInstallation(key: string): HarnessAppInstallation | null {
+  if (!key.startsWith('harness-')) return null
+  return runningApps.get(key.slice('harness-'.length)) ?? null
+}
+
 export function openHarnessAppTab(
   workspaceTabs: WorkspaceTabsContextValue,
   installation: HarnessAppInstallation

@@ -8,6 +8,17 @@ Wework 桌面应用使用 Electron。正式构建和发布由
 `.github/workflows/wework-app.yml` 负责；该工作流同时生成 macOS、Windows 和
 Linux 的 Electron 安装包。
 
+macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建先
+校验 Rosetta 2，再通过 `actions/setup-node` 安装 x64 Node.js；安装依赖前，
+工作流校验运行中的 Node.js 架构与目标架构一致。Harness Runtime 的原生依赖按
+运行中的 Node.js 架构准备，仅指定 Electron Builder 的目标架构不足以交叉构建
+完整运行环境。架构不匹配时应修正 Node.js 架构并重新构建，不能复用错误架构的
+产物或仅重跑发布步骤。
+
+正式 macOS arm64 包验证失败时，工作流会清理体积较大的临时运行时目录，并上传
+保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
+E2E 断言隐藏失败。
+
 ## 版本与产物
 
 发布版本同时写入 `wework/package.json` 和 `wework/electron/package.json`。正式

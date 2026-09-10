@@ -354,6 +354,23 @@ async def test_interactive_block_points_user_back_to_wework(emitter, card_factor
 
 
 @pytest.mark.asyncio
+async def test_error_writes_content_before_marking_failed(emitter, card_factory):
+    """A failed task must render the error text instead of a blank card."""
+    await emitter.emit_start(task_id="task-1", subtask_id=1)
+    await emitter.emit_error(
+        task_id="task-1",
+        subtask_id=1,
+        error="There is an issue with the selected model (gpt-5.1)",
+    )
+
+    card = card_factory[0]
+    assert card.failed is True
+    assert card.updates
+    assert card.updates[-1].startswith("❌ 任务执行失败")
+    assert "gpt-5.1" in card.updates[-1]
+
+
+@pytest.mark.asyncio
 async def test_answer_stream_and_terminal_result_replace_progress(
     emitter, card_factory
 ):

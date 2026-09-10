@@ -169,6 +169,7 @@ class Settings(BaseSettings):
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
+    WEWORK_TRANSCRIPT_ENCRYPTION_SECRET: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
     WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     WEWORK_REFRESH_TOKEN_EXPIRE_MINUTES: int = 365 * 24 * 60
@@ -258,7 +259,6 @@ class Settings(BaseSettings):
     WORKSPACE_ARCHIVE_ENABLED: bool = True
     WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
     WEWORK_TRANSCRIPT_S3_BUCKET: str = "wework-transcripts"
-    WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS: int = 900
 
     # Publish storage configuration
     PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS: int = 3600
@@ -317,6 +317,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
     RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
+    RATE_LIMIT_MCP_IDENTITY: str = (
+        "60/minute"  # GET /api/external/mcp-identity/userinfo
+    )
 
     # External knowledge MCP configuration
     # Disabled by default because this endpoint is intended for trusted integrations.

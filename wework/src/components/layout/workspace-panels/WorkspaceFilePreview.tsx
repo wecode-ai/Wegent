@@ -700,6 +700,8 @@ export function WorkspaceFilePreview({
           path={file.path}
           value={editedContent}
           themeType={themeType}
+          targetLineStart={targetLineStart}
+          targetLineEnd={targetLineEnd}
           onChange={onEditedContentChange}
           onSave={onSave}
         />
