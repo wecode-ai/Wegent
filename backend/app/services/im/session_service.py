@@ -7,12 +7,11 @@
 import hashlib
 import logging
 import time
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Sequence
 
 import orjson
-from redis.exceptions import WatchError
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
@@ -28,12 +27,9 @@ USER_IM_NOTIFICATION_PRESENCE_PREFIX = "channel:user_im_notification_presence:"
 USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX = "channel:user_runtime_task_subscriptions:"
 RUNTIME_TASK_REPLY_TARGET_PREFIX = "channel:runtime_task_reply_target:"
 RUNTIME_TASK_REPLY_TARGET_TTL_SECONDS = 7 * 24 * 60 * 60
-RUNTIME_NOTIFICATION_REPLY_TARGET_PREFIX = "channel:runtime_notification_reply_target:"
-RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS = 24 * 60 * 60
 IM_NOTIFICATION_PRESENCE_TTL_SECONDS = 90
 IM_NOTIFICATION_PRESENCE_ACTIVE = "active"
 IM_NOTIFICATION_PRESENCE_AWAY = "away"
-RUNTIME_NOTIFICATION_BIND_MAX_RETRIES = 5
 
 CHANNEL_LABELS = {
     "dingtalk": "钉钉",
@@ -368,147 +364,6 @@ class IMSessionService:
             return None
         return data
 
-    async def save_runtime_notification_reply_target(
-        self,
-        *,
-        session: IMPrivateSession,
-        runtime_task: dict[str, Any],
-    ) -> bool:
-        """Remember the latest runtime notification awaiting a direct IM reply."""
-
-        self.runtime_task_notification_key(runtime_task)
-        return await cache_manager.set(
-            self._runtime_notification_reply_target_key(session.session_key),
-            dict(runtime_task),
-            expire=RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS,
-        )
-
-    async def pop_runtime_notification_reply_target(
-        self,
-        *,
-        session: IMPrivateSession,
-    ) -> dict[str, Any] | None:
-        """Atomically consume the latest runtime notification reply target."""
-
-        data = await cache_manager.pop(
-            self._runtime_notification_reply_target_key(session.session_key)
-        )
-        if not isinstance(data, dict):
-            return None
-        try:
-            self.runtime_task_notification_key(data)
-        except ValueError:
-            return None
-        return data
-
-    async def consume_and_bind_runtime_notification_reply_target(
-        self,
-        *,
-        session: IMPrivateSession,
-    ) -> dict[str, Any] | None:
-        """Atomically consume a notification target and bind the Redis session."""
-
-        client = await cache_manager._get_client()
-        try:
-            runtime_task, persisted_session = (
-                await self._transition_runtime_notification_target(
-                    client,
-                    session=session,
-                )
-            )
-        finally:
-            await client.aclose()
-
-        self._replace_session_state(session, persisted_session)
-        return runtime_task
-
-    async def _transition_runtime_notification_target(
-        self,
-        client: Any,
-        *,
-        session: IMPrivateSession,
-    ) -> tuple[dict[str, Any] | None, IMPrivateSession]:
-        target_key = self._runtime_notification_reply_target_key(session.session_key)
-        session_key = self._session_cache_key(session.session_key)
-        for _attempt in range(RUNTIME_NOTIFICATION_BIND_MAX_RETRIES):
-            try:
-                async with client.pipeline(transaction=True) as pipeline:
-                    await pipeline.watch(target_key, session_key)
-                    persisted_session = self._load_persisted_session(
-                        await pipeline.get(session_key)
-                    )
-                    target = _decode_redis_json(await pipeline.get(target_key))
-                    if target is None:
-                        pipeline.multi()
-                        await pipeline.execute()
-                        return None, persisted_session
-                    if not self._is_valid_runtime_task(target):
-                        pipeline.multi()
-                        pipeline.delete(target_key)
-                        await pipeline.execute()
-                        return None, persisted_session
-
-                    runtime_task = self._bind_runtime_notification_target(
-                        persisted_session,
-                        target,
-                    )
-                    pipeline.multi()
-                    pipeline.set(session_key, orjson.dumps(persisted_session.to_dict()))
-                    pipeline.delete(target_key)
-                    await pipeline.execute()
-                    return runtime_task, persisted_session
-            except WatchError:
-                continue
-        raise RuntimeError("Runtime notification binding contention exceeded retries")
-
-    def _load_persisted_session(self, payload: Any) -> IMPrivateSession:
-        data = _decode_redis_json(payload)
-        if not isinstance(data, dict):
-            raise RuntimeError("Private IM session is unavailable during binding")
-        return IMPrivateSession.from_dict(data)
-
-    def _is_valid_runtime_task(self, runtime_task: Any) -> bool:
-        if not isinstance(runtime_task, dict):
-            return False
-        try:
-            self.runtime_task_notification_key(runtime_task)
-        except ValueError:
-            return False
-        return True
-
-    def _bind_runtime_notification_target(
-        self,
-        session: IMPrivateSession,
-        target: dict[str, Any],
-    ) -> dict[str, Any]:
-        runtime_task = target
-        active_runtime_task = session.active_runtime_task
-        if isinstance(active_runtime_task, dict) and self._same_runtime_task(
-            active_runtime_task,
-            target,
-        ):
-            runtime_task = {**active_runtime_task, **target}
-        session.mode = IMSessionMode.TASK
-        session.state = IMSessionState.IDLE
-        session.active_task_id = None
-        session.active_runtime_task = dict(runtime_task)
-        session.pending_payload = {}
-        session.state_expires_at = None
-        session.updated_at = datetime.now()
-        return dict(runtime_task)
-
-    def _same_runtime_task(
-        self,
-        first: dict[str, Any],
-        second: dict[str, Any],
-    ) -> bool:
-        try:
-            return self.runtime_task_notification_key(
-                first
-            ) == self.runtime_task_notification_key(second)
-        except ValueError:
-            return False
-
     async def list_active_runtime_task_sessions(
         self,
         db: Session | None,
@@ -708,21 +563,6 @@ class IMSessionService:
         message_id: str,
     ) -> str:
         return f"{RUNTIME_TASK_REPLY_TARGET_PREFIX}{session_key}:{message_id}"
-
-    def _runtime_notification_reply_target_key(self, session_key: str) -> str:
-        return f"{RUNTIME_NOTIFICATION_REPLY_TARGET_PREFIX}{session_key}"
-
-    def _replace_session_state(
-        self,
-        session: IMPrivateSession,
-        persisted_session: IMPrivateSession,
-    ) -> None:
-        for session_field in fields(IMPrivateSession):
-            setattr(
-                session,
-                session_field.name,
-                getattr(persisted_session, session_field.name),
-            )
 
     def _normalize_reply_message_id(self, message_id: int | str | None) -> str:
         if isinstance(message_id, bool) or message_id is None:

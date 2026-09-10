@@ -326,7 +326,7 @@ async def test_runtime_task_update_uses_global_im_notification_target(
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_runtime_notification_enables_direct_reply_continuation(
+async def test_dingtalk_runtime_notification_enables_quoted_reply_continuation(
     test_db: Session,
     test_user,
     monkeypatch: pytest.MonkeyPatch,
@@ -367,6 +367,11 @@ async def test_dingtalk_runtime_notification_enables_direct_reply_continuation(
     address = {
         "deviceId": "device-1",
         "localTaskId": "runtime-1",
+        "modelSelection": {
+            "modelName": "deepseek-v4-pro-responses(public)",
+            "modelType": "public",
+            "options": {"reasoning": "medium"},
+        },
     }
 
     result = await im_notification_dispatcher.send_runtime_task_update(
@@ -385,11 +390,14 @@ async def test_dingtalk_runtime_notification_enables_direct_reply_continuation(
         "content": (
             "任务「Native Codex task」有新的 AI 回复：\n\n"
             "Implemented from native Codex\n\n"
-            "在当前钉钉私聊中直接回复，即可继续该任务。"
+            "引用本通知回复，即可继续该任务。"
         ),
     }
     assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        await im_session_service.get_runtime_task_reply_target(
+            session=session,
+            message_id="query-1",
+        )
         == address
     )
 
@@ -444,7 +452,10 @@ async def test_failed_dingtalk_runtime_notification_does_not_enable_reply(
 
     assert result["sent"] == 0
     assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        await im_session_service.get_runtime_task_reply_target(
+            session=session,
+            message_id="query-1",
+        )
         is None
     )
 

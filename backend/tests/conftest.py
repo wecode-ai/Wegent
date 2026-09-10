@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import hashlib
 import os
 import tempfile
@@ -10,11 +9,9 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Generator, Tuple
 
-import orjson
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from redis.exceptions import WatchError
 from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -88,9 +85,6 @@ class FakeIMSessionRedisClient:
             del zset[member]
         return len(expired)
 
-    def pipeline(self, transaction: bool = True) -> "FakeIMSessionPipeline":
-        return FakeIMSessionPipeline(self._cache, transaction=transaction)
-
     async def aclose(self) -> None:
         return None
 
@@ -100,9 +94,6 @@ class FakeIMSessionCache:
         self.values: dict[str, Any] = {}
         self.expires: dict[str, int | None] = {}
         self.zsets: dict[str, dict[str, float]] = {}
-        self.transition_lock = asyncio.Lock()
-        self.revisions: dict[str, int] = {}
-        self.fail_runtime_notification_transition = False
 
     async def get(self, key: str) -> Any:
         return self.values.get(key)
@@ -110,91 +101,21 @@ class FakeIMSessionCache:
     async def set(self, key: str, value: Any, expire: int | None = None) -> bool:
         self.values[key] = value
         self.expires[key] = expire
-        self._bump_revision(key)
         return True
 
     async def delete(self, key: str) -> bool:
         existed = key in self.values
         self.values.pop(key, None)
         self.expires.pop(key, None)
-        if existed:
-            self._bump_revision(key)
         return existed
 
     async def pop(self, key: str) -> Any:
         value = self.values.pop(key, None)
         self.expires.pop(key, None)
-        if value is not None:
-            self._bump_revision(key)
         return value
 
     async def _get_client(self) -> FakeIMSessionRedisClient:
         return FakeIMSessionRedisClient(self)
-
-    def _bump_revision(self, key: str) -> None:
-        self.revisions[key] = self.revisions.get(key, 0) + 1
-
-
-class FakeIMSessionPipeline:
-    def __init__(self, cache: FakeIMSessionCache, *, transaction: bool) -> None:
-        self._cache = cache
-        self._transaction = transaction
-        self._watched_revisions: dict[str, int] = {}
-        self._commands: list[tuple[str, str, Any]] = []
-
-    async def __aenter__(self) -> "FakeIMSessionPipeline":
-        return self
-
-    async def __aexit__(self, exc_type, exc, traceback) -> None:
-        return None
-
-    async def watch(self, *keys: str) -> None:
-        self._watched_revisions = {
-            key: self._cache.revisions.get(key, 0) for key in keys
-        }
-        # Let concurrent callers capture the same revision before either commits.
-        await asyncio.sleep(0)
-
-    async def get(self, key: str) -> Any:
-        return self._cache.values.get(key)
-
-    def multi(self) -> None:
-        if not self._transaction:
-            raise RuntimeError("Fake IM session pipeline requires transactions")
-
-    def set(self, key: str, value: Any) -> None:
-        self._commands.append(("set", key, value))
-
-    def delete(self, key: str) -> None:
-        self._commands.append(("delete", key, None))
-
-    async def execute(self) -> list[Any]:
-        async with self._cache.transition_lock:
-            if any(
-                self._cache.revisions.get(key, 0) != revision
-                for key, revision in self._watched_revisions.items()
-            ):
-                raise WatchError("Watched IM session cache value changed")
-            if self._cache.fail_runtime_notification_transition:
-                raise RuntimeError("Simulated runtime notification persistence failure")
-
-            results: list[Any] = []
-            for command, key, value in self._commands:
-                if command == "set":
-                    self._cache.values[key] = (
-                        orjson.loads(value)
-                        if isinstance(value, (bytes, bytearray, memoryview))
-                        else value
-                    )
-                    self._cache.expires[key] = None
-                    results.append(True)
-                else:
-                    existed = key in self._cache.values
-                    self._cache.values.pop(key, None)
-                    self._cache.expires.pop(key, None)
-                    results.append(int(existed))
-                self._cache._bump_revision(key)
-            return results
 
 
 @pytest.fixture

@@ -2,17 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 from datetime import datetime, timedelta
 
 import pytest
 
-from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.im_session import IMSessionMode, IMSessionState
 from app.models.user import User
-from app.services.im.session_service import (
-    RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS,
-    im_session_service,
-)
+from app.services.im.session_service import im_session_service
 
 
 @pytest.mark.asyncio
@@ -148,170 +144,6 @@ async def test_bind_active_task_sets_task_mode_and_clears_pending_state(
     assert session.state == IMSessionState.IDLE
     assert session.active_task_id == 7001
     assert session.pending_payload == {}
-
-
-@pytest.mark.asyncio
-async def test_runtime_notification_reply_target_is_latest_and_consumed_once(
-    fake_im_session_cache,
-    test_user: User,
-) -> None:
-    session = await im_session_service.get_or_create_private_session(
-        db=None,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=12,
-        conversation_id="conv-1",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    first_target = {
-        "deviceId": "device-1",
-        "localTaskId": "runtime-1",
-    }
-    latest_target = {
-        "deviceId": "device-2",
-        "localTaskId": "runtime-2",
-    }
-
-    assert await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=first_target,
-    )
-    assert await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=latest_target,
-    )
-
-    cache_key = f"channel:runtime_notification_reply_target:{session.session_key}"
-    assert fake_im_session_cache.expires[cache_key] == (
-        RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS
-    )
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        == latest_target
-    )
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_runtime_notification_reply_target_rejects_invalid_cached_address(
-    fake_im_session_cache,
-    test_user: User,
-) -> None:
-    session = await im_session_service.get_or_create_private_session(
-        db=None,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=12,
-        conversation_id="conv-1",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    cache_key = f"channel:runtime_notification_reply_target:{session.session_key}"
-    fake_im_session_cache.values[cache_key] = {"deviceId": "device-1"}
-
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        is None
-    )
-    assert cache_key not in fake_im_session_cache.values
-
-
-@pytest.mark.asyncio
-async def test_runtime_notification_target_binding_refreshes_concurrent_sessions(
-    fake_im_session_cache,
-    test_user: User,
-) -> None:
-    session = await im_session_service.get_or_create_private_session(
-        db=None,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=12,
-        conversation_id="conv-1",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_runtime_task(
-        None,
-        session=session,
-        runtime_task={"deviceId": "device-old", "localTaskId": "runtime-old"},
-    )
-    notification_target = {
-        "deviceId": "device-new",
-        "localTaskId": "runtime-new",
-    }
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=notification_target,
-    )
-    first_session = IMPrivateSession.from_dict(session.to_dict())
-    second_session = IMPrivateSession.from_dict(session.to_dict())
-
-    results = await asyncio.gather(
-        im_session_service.consume_and_bind_runtime_notification_reply_target(
-            session=first_session
-        ),
-        im_session_service.consume_and_bind_runtime_notification_reply_target(
-            session=second_session
-        ),
-    )
-
-    assert sum(result is not None for result in results) == 1
-    assert first_session.active_runtime_task == notification_target
-    assert second_session.active_runtime_task == notification_target
-    assert first_session.mode == IMSessionMode.TASK
-    assert second_session.mode == IMSessionMode.TASK
-
-
-@pytest.mark.asyncio
-async def test_runtime_notification_target_binding_failure_keeps_target_for_retry(
-    fake_im_session_cache,
-    test_user: User,
-) -> None:
-    session = await im_session_service.get_or_create_private_session(
-        db=None,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=12,
-        conversation_id="conv-1",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    notification_target = {
-        "deviceId": "device-new",
-        "localTaskId": "runtime-new",
-    }
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=notification_target,
-    )
-    fake_im_session_cache.fail_runtime_notification_transition = True
-
-    with pytest.raises(
-        RuntimeError,
-        match="Simulated runtime notification persistence failure",
-    ):
-        await im_session_service.consume_and_bind_runtime_notification_reply_target(
-            session=session
-        )
-
-    cache_key = f"channel:runtime_notification_reply_target:{session.session_key}"
-    assert fake_im_session_cache.values[cache_key] == notification_target
-    assert session.active_runtime_task is None
-
-    fake_im_session_cache.fail_runtime_notification_transition = False
-    consumed_target = (
-        await im_session_service.consume_and_bind_runtime_notification_reply_target(
-            session=session
-        )
-    )
-
-    assert consumed_target == notification_target
-    assert session.active_runtime_task == notification_target
-    assert cache_key not in fake_im_session_cache.values
 
 
 @pytest.mark.asyncio

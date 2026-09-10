@@ -2,15 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
 from app.services.channels.callback import ChannelType
 from app.services.channels.handler import MessageContext
@@ -310,133 +308,42 @@ async def test_runtime_notification_reply_inherits_bound_model_selection(
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_notification_reply_switches_and_keeps_runtime_task(
+async def test_dingtalk_quoted_notification_routes_exact_runtime_task(
     test_db: Session,
     test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    notification_target = {
-        "deviceId": "device-notified",
-        "workspacePath": "/repo/Notified",
-        "localTaskId": "runtime-notified",
-    }
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=notification_target,
-    )
-    _stub_task_lists(monkeypatch)
-
-    first_handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("继续处理这个任务"),
-        port=port,
-    )
-    second_handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("再补一个测试"),
-        port=port,
-    )
-
-    assert first_handled is True
-    assert second_handled is True
-    assert session.mode == IMSessionMode.TASK
-    assert session.active_task_id is None
-    assert session.active_runtime_task == notification_target
-    assert port.continued_tasks == [
-        (None, "继续处理这个任务"),
-        (None, "再补一个测试"),
-    ]
-    assert port.continued_runtime_tasks == [None, None]
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_concurrent_dingtalk_notification_replies_use_notified_runtime_task(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
     session = await _dingtalk_session(test_db, test_user)
     await im_session_service.bind_active_runtime_task(
         test_db,
         session=session,
         runtime_task={"deviceId": "device-old", "localTaskId": "runtime-old"},
     )
-    notification_target = {
-        "deviceId": "device-new",
-        "localTaskId": "runtime-new",
-    }
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=notification_target,
-    )
-    first_session = IMPrivateSession.from_dict(session.to_dict())
-    second_session = IMPrivateSession.from_dict(session.to_dict())
-    first_port = FakeInteractionPort()
-    second_port = FakeInteractionPort()
-    _stub_task_lists(monkeypatch)
-
-    handled = await asyncio.gather(
-        im_interaction_service.route_private_message(
-            db=test_db,
-            user=test_user,
-            im_session=first_session,
-            message_context=_context("第一条回复"),
-            port=first_port,
-        ),
-        im_interaction_service.route_private_message(
-            db=test_db,
-            user=test_user,
-            im_session=second_session,
-            message_context=_context("第二条回复"),
-            port=second_port,
-        ),
-    )
-
-    assert handled == [True, True]
-    assert first_session.active_runtime_task == notification_target
-    assert second_session.active_runtime_task == notification_target
-    assert first_port.continued_tasks == [(None, "第一条回复")]
-    assert second_port.continued_tasks == [(None, "第二条回复")]
-    assert first_port.continued_runtime_tasks == [None]
-    assert second_port.continued_runtime_tasks == [None]
-
-
-@pytest.mark.asyncio
-async def test_dingtalk_explicit_reply_preserves_pending_notification_target(
-    test_db: Session,
-    test_user: User,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    explicit_target = {
-        "deviceId": "device-explicit",
-        "localTaskId": "runtime-explicit",
-    }
-    pending_target = {
-        "deviceId": "device-pending",
-        "localTaskId": "runtime-pending",
+    quoted_target = {
+        "deviceId": "device-notified",
+        "workspacePath": "/repo/Notified",
+        "localTaskId": "runtime-notified",
+        "modelSelection": {
+            "modelName": "deepseek-v4-pro-responses(public)",
+            "modelType": "public",
+            "options": {"reasoning": "medium"},
+        },
     }
     await im_session_service.save_runtime_task_reply_target(
         session=session,
-        message_id=901,
-        runtime_task=explicit_target,
+        message_id="quoted-notification-query-key",
+        runtime_task=quoted_target,
     )
-    await im_session_service.save_runtime_notification_reply_target(
+    await im_session_service.save_runtime_task_reply_target(
         session=session,
-        runtime_task=pending_target,
+        message_id="newer-notification-query-key",
+        runtime_task={
+            "deviceId": "device-newer",
+            "localTaskId": "runtime-newer",
+        },
     )
-    context = _context("回复指定消息")
-    context.extra_data["reply_to_message_id"] = 901
+    context = _context("继续处理这个任务")
+    context.extra_data["reply_to_message_id"] = "quoted-notification-query-key"
 
     handled = await im_interaction_service.route_private_message(
         db=test_db,
@@ -447,209 +354,45 @@ async def test_dingtalk_explicit_reply_preserves_pending_notification_target(
     )
 
     assert handled is True
-    assert session.active_runtime_task == explicit_target
+    assert session.mode == IMSessionMode.TASK
+    assert session.active_runtime_task == quoted_target
+    assert port.continued_tasks == [(None, "继续处理这个任务")]
     assert port.continued_runtime_tasks == [None]
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        == pending_target
-    )
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_notification_reply_preserves_matching_runtime_context(
+async def test_dingtalk_unquoted_message_does_not_switch_runtime_task(
     test_db: Session,
     test_user: User,
 ) -> None:
     port = FakeInteractionPort()
     session = await _dingtalk_session(test_db, test_user)
+    active_target = {"deviceId": "device-old", "localTaskId": "runtime-old"}
     await im_session_service.bind_active_runtime_task(
         test_db,
         session=session,
-        runtime_task={
-            "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "runtime-1",
-            "modelSelection": {"modelName": "gpt-5.6-luna"},
-        },
+        runtime_task=active_target,
     )
-    await im_session_service.save_runtime_notification_reply_target(
+    await im_session_service.save_runtime_task_reply_target(
         session=session,
-        runtime_task={
-            "deviceId": "device-1",
-            "localTaskId": "runtime-1",
-        },
-    )
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("继续"),
-        port=port,
-    )
-
-    assert handled is True
-    assert session.active_runtime_task == {
-        "deviceId": "device-1",
-        "workspacePath": "/repo/Wegent",
-        "localTaskId": "runtime-1",
-        "modelSelection": {"modelName": "gpt-5.6-luna"},
-    }
-
-
-@pytest.mark.asyncio
-async def test_dingtalk_command_does_not_consume_notification_reply_target(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    notification_target = {
-        "deviceId": "device-notified",
-        "localTaskId": "runtime-notified",
-    }
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=notification_target,
-    )
-    _stub_task_lists(monkeypatch)
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("/notify status"),
-        port=port,
-    )
-
-    assert handled is True
-    assert port.continued_tasks == []
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        == notification_target
-    )
-
-
-@pytest.mark.asyncio
-async def test_dingtalk_chat_command_clears_notification_reply_target(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
+        message_id="notification-query-key",
         runtime_task={
             "deviceId": "device-notified",
             "localTaskId": "runtime-notified",
         },
     )
-    _stub_task_lists(monkeypatch)
 
     handled = await im_interaction_service.route_private_message(
         db=test_db,
         user=test_user,
         im_session=session,
-        message_context=_context("/chat"),
+        message_context=_context("没有引用通知"),
         port=port,
     )
 
     assert handled is True
-    assert session.mode == IMSessionMode.CHAT
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_dingtalk_pending_flow_clears_notification_target_after_binding(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    await im_session_service.set_pending_state(
-        test_db,
-        session=session,
-        state=IMSessionState.PENDING_TASK_SWITCH,
-        payload={"task_ids": [101]},
-    )
-    notification_target = {
-        "deviceId": "device-notified",
-        "localTaskId": "runtime-notified",
-    }
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=notification_target,
-    )
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_recent_wework_tasks",
-        lambda db, user_id, limit=5: [{"id": 101, "title": "Existing task"}],
-    )
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.im_task_continuation_service.list_wework_projects",
-        lambda db, user_id, limit=8: [],
-    )
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("1"),
-        port=port,
-    )
-
-    assert handled is True
-    assert port.bound_tasks == [101]
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_dingtalk_expired_pending_flow_allows_notification_reply(
-    test_db: Session,
-    test_user: User,
-) -> None:
-    port = FakeInteractionPort()
-    session = await _dingtalk_session(test_db, test_user)
-    await im_session_service.set_pending_state(
-        test_db,
-        session=session,
-        state=IMSessionState.PENDING_TASK_SWITCH,
-        payload={"task_ids": [101]},
-        expires_at=datetime.now() - timedelta(seconds=1),
-    )
-    notification_target = {
-        "deviceId": "device-notified",
-        "localTaskId": "runtime-notified",
-    }
-    await im_session_service.save_runtime_notification_reply_target(
-        session=session,
-        runtime_task=notification_target,
-    )
-
-    handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
-        im_session=session,
-        message_context=_context("继续通知任务"),
-        port=port,
-    )
-
-    assert handled is True
-    assert session.state == IMSessionState.IDLE
-    assert session.active_runtime_task == notification_target
-    assert port.continued_tasks == [(None, "继续通知任务")]
-    assert (
-        await im_session_service.pop_runtime_notification_reply_target(session=session)
-        is None
-    )
+    assert session.active_runtime_task == active_target
+    assert port.continued_runtime_tasks == [None]
 
 
 @pytest.mark.asyncio

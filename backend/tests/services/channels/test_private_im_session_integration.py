@@ -922,7 +922,7 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
 
 
 @pytest.mark.asyncio
-async def test_task_mode_dingtalk_notification_reply_switches_runtime_task(
+async def test_task_mode_dingtalk_quoted_notification_switches_runtime_task(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
@@ -949,8 +949,9 @@ async def test_task_mode_dingtalk_notification_reply_switches_runtime_task(
             "localTaskId": "codex-active",
         },
     )
-    await im_session_service.save_runtime_notification_reply_target(
+    await im_session_service.save_runtime_task_reply_target(
         session=session,
+        message_id="notification-query-key",
         runtime_task={
             "deviceId": "device-notified",
             "workspacePath": "/repo/Notified",
@@ -984,7 +985,12 @@ async def test_task_mode_dingtalk_notification_reply_switches_runtime_task(
         fake_send_runtime_message,
     )
 
-    handled = await handler.handle_message(_message("回复通知"))
+    handled = await handler.handle_message(
+        _message(
+            "回复通知",
+            extra_data={"reply_to_message_id": "notification-query-key"},
+        )
+    )
 
     assert handled is True
     assert handler.replies == []

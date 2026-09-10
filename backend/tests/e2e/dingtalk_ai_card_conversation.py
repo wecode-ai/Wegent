@@ -7,7 +7,7 @@
 The test uses the migrated CI database and real Redis-backed session/callback
 state. DingTalk transport and the local runtime are the only substituted
 boundaries, so the production command router, runtime event parser, callback
-registry, cross-worker reconstruction, notification reply routing, and AI Card
+registry, cross-worker reconstruction, quoted-notification routing, and AI Card
 emitter run together.
 """
 
@@ -46,7 +46,7 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.im.notification_dispatcher import IMNotificationDispatcher
 from app.services.im.session_service import (
     PRIVATE_SESSION_KEY_PREFIX,
-    RUNTIME_NOTIFICATION_REPLY_TARGET_PREFIX,
+    RUNTIME_TASK_REPLY_TARGET_PREFIX,
     USER_GLOBAL_NOTIFICATION_PREFIX,
     USER_PRIVATE_SESSIONS_PREFIX,
     USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX,
@@ -63,6 +63,7 @@ PRIVATE_THINKING = "private chain of thought must stay inside Wework"
 SECRET_VALUE = "dingtalk-ci-e2e-secret"
 NOTIFIED_DEVICE_ID = "dingtalk-ci-e2e-notified-device"
 NOTIFIED_LOCAL_TASK_ID = "dingtalk-ci-e2e-notified-task"
+NOTIFICATION_PROCESS_QUERY_KEY = "dingtalk-ci-e2e-notification-query"
 
 
 @dataclass(frozen=True)
@@ -245,13 +246,24 @@ class DingTalkNotificationHarness(IMNotificationDispatcher):
         del db
         assert session.channel_type == "dingtalk"
         self.messages.append((session.session_key, text))
-        return {"success": True, "channel_type": "dingtalk"}
+        return {
+            "success": True,
+            "channel_type": "dingtalk",
+            "result": {"processQueryKey": NOTIFICATION_PROCESS_QUERY_KEY},
+        }
 
 
-def _message(content: str, conversation_id: str, sender_id: str) -> Any:
+def _message(
+    content: str,
+    conversation_id: str,
+    sender_id: str,
+    *,
+    quoted_process_query_key: str | None = None,
+) -> Any:
+    text: dict[str, Any] = {"content": content}
     data = {
         "msgtype": "text",
-        "text": {"content": content},
+        "text": text,
         "msgId": f"msg-{uuid.uuid4().hex}",
         "senderId": sender_id,
         "senderStaffId": sender_id,
@@ -262,6 +274,19 @@ def _message(content: str, conversation_id: str, sender_id: str) -> Any:
         "isInAtList": False,
         "atUsers": [],
     }
+    if quoted_process_query_key:
+        text.update(
+            {
+                "isReplyMsg": True,
+                "repliedMsg": {
+                    "msgType": "text",
+                    "msgId": "quoted-dingtalk-message-id",
+                    "senderId": data["chatbotUserId"],
+                    "content": {"text": "CI runtime update"},
+                },
+            }
+        )
+        data["originalProcessQueryKey"] = quoted_process_query_key
     message = dingtalk_stream.ChatbotMessage.from_dict(data)
     message._wegent_callback_data = data
     return message
@@ -288,7 +313,10 @@ async def _cleanup(
         await client.delete(
             f"{PRIVATE_SESSION_KEY_PREFIX}{session_key}",
             conversation_cache_key,
-            f"{RUNTIME_NOTIFICATION_REPLY_TARGET_PREFIX}{session_key}",
+            (
+                f"{RUNTIME_TASK_REPLY_TARGET_PREFIX}{session_key}:"
+                f"{NOTIFICATION_PROCESS_QUERY_KEY}"
+            ),
             *cache_snapshots,
             *(
                 f"{dingtalk_callback_service.redis_key_prefix}{callback_key}"
@@ -441,6 +469,11 @@ async def run() -> None:
             "deviceId": NOTIFIED_DEVICE_ID,
             "workspacePath": "/workspace/notified",
             "localTaskId": NOTIFIED_LOCAL_TASK_ID,
+            "modelSelection": {
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"},
+            },
         }
         previous_runtime_task = {
             "deviceId": "dingtalk-ci-e2e-previous-device",
@@ -481,37 +514,69 @@ async def run() -> None:
                 session_key,
                 "任务「CI notification task」有新的 AI 回复：\n\n"
                 "CI runtime update\n\n"
-                "在当前钉钉私聊中直接回复，即可继续该任务。",
+                "引用本通知回复，即可继续该任务。",
             )
         ]
-        pending_target_key = f"{RUNTIME_NOTIFICATION_REPLY_TARGET_PREFIX}{session_key}"
-        assert await cache_manager.get(pending_target_key) == notified_runtime_task
+        assert (
+            await im_session_service.get_runtime_task_reply_target(
+                session=session,
+                message_id=NOTIFICATION_PROCESS_QUERY_KEY,
+            )
+            == notified_runtime_task
+        )
 
         callback_key = runtime_local_task_callback_key(
             NOTIFIED_DEVICE_ID,
             NOTIFIED_LOCAL_TASK_ID,
         )
         handler.callback_keys.append(callback_key)
+        previous_callback_key = runtime_local_task_callback_key(
+            previous_runtime_task["deviceId"],
+            previous_runtime_task["localTaskId"],
+        )
+        handler.callback_keys.append(previous_callback_key)
+        unquoted_reply = "没有引用通知"
         first_reply = "根据通知继续处理"
         second_reply = "继续补充验证"
         assert await handler.handle_message(
-            _message(first_reply, conversation_id, sender_id)
+            _message(unquoted_reply, conversation_id, sender_id)
         )
-        assert await cache_manager.get(pending_target_key) is None
+        assert await handler.handle_message(
+            _message(
+                first_reply,
+                conversation_id,
+                sender_id,
+                quoted_process_query_key=NOTIFICATION_PROCESS_QUERY_KEY,
+            )
+        )
         assert await handler.handle_message(
             _message(second_reply, conversation_id, sender_id)
         )
 
         assert [request.message for request in runtime_requests] == [
+            unquoted_reply,
             first_reply,
             second_reply,
         ]
-        for request in runtime_requests:
+        assert (
+            runtime_requests[0].address.device_id == previous_runtime_task["deviceId"]
+        )
+        assert (
+            runtime_requests[0].address.local_task_id
+            == previous_runtime_task["localTaskId"]
+        )
+        for request in runtime_requests[1:]:
             assert request.address.device_id == NOTIFIED_DEVICE_ID
             assert request.address.local_task_id == NOTIFIED_LOCAL_TASK_ID
             assert request.source is not None
             assert request.source.channel_type == "dingtalk"
             assert request.source.external_id == session_key
+            assert request.model_selection is not None
+            assert request.model_selection.model_name == (
+                notified_runtime_task["modelSelection"]["modelName"]
+            )
+            assert request.model_selection.model_type == "public"
+            assert request.model_selection.options == {"reasoning": "medium"}
             assert request.client_user_message_id.startswith(
                 f"im:dingtalk:{CHANNEL_ID}:msg-"
             )
