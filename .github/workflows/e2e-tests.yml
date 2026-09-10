@@ -979,6 +979,14 @@ jobs:
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
+      - name: Run Executor Manager resilience E2E tests
+        working-directory: ./executor_manager
+        env:
+          E2E_REDIS_URL: redis://localhost:6379/15
+          OTEL_ENABLED: "false"
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest e2e_tests/ --no-cov -v
+
       - name: Run Executor E2E tests
         env:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}

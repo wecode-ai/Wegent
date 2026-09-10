@@ -554,17 +554,21 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
+        collapseWhenIdle
         isStreaming
         onPause={onPause}
       />
     )
 
+    const form = screen.getByTestId('project-chat-composer-form')
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
     expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('pause-response-button'))
 
     expect(onPause).toHaveBeenCalledTimes(1)
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
   })
 
   test('shows desktop send button for a draft while the assistant is streaming', async () => {

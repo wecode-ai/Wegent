@@ -232,7 +232,11 @@ import {
   TaskSupervisorControl,
   type TaskSupervisorConfig,
 } from './TaskSupervisorControl'
-import { isEditableShortcutTarget, WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
+import {
+  isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
+  WEWORK_OPEN_TERMINAL_EVENT,
+} from '@/lib/keybindings'
 import type {
   ModelSelectionConfig,
   RuntimeName,
@@ -3948,7 +3952,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!paneActive || !paneVisible || rightPanelOpen) return
 
     const handleOpenBrowser = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
+      if (event.defaultPrevented || shouldIgnoreWorkbenchShortcut(event)) return
       const primaryPressed =
         getPlatform() === 'win'
           ? event.ctrlKey && event.shiftKey && !event.metaKey
@@ -3956,11 +3960,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       if (!primaryPressed || event.altKey || event.key.toLowerCase() !== 'b') return
 
       event.preventDefault()
+      event.stopPropagation()
       selectBrowserView()
     }
 
-    window.addEventListener('keydown', handleOpenBrowser)
-    return () => window.removeEventListener('keydown', handleOpenBrowser)
+    window.addEventListener('keydown', handleOpenBrowser, true)
+    return () => window.removeEventListener('keydown', handleOpenBrowser, true)
   }, [paneActive, paneVisible, rightPanelOpen, selectBrowserView])
   const selectTerminalView = useCallback(() => {
     openRightPanelTab(allocateTerminalTab())
@@ -5118,6 +5123,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           className="mb-3"
                         />
                         <BufferedChatInput
+                          autoFocus
                           value={paneSession.input}
                           onChange={paneSession.setInput}
                           onDraftEdit={() => {

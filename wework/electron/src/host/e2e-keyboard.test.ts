@@ -54,6 +54,28 @@ describe('isolated native keyboard verification', () => {
     ])
   })
 
+  test.each([
+    ['Meta+B', 'B', ['meta']],
+    ['Control+B', 'B', ['control']],
+    ['Meta+Alt+B', 'B', ['meta', 'alt']],
+    ['Control+Shift+M', 'M', ['control', 'shift']],
+  ])('sends native shortcut %s without inserting a character', async (key, keyCode, modifiers) => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, key as string, focusWindow, environment)
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode, modifiers }],
+      [{ type: 'keyUp', keyCode, modifiers }],
+    ])
+  })
+
+  test('inserts ordinary text through a native character event', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'x', focusWindow, environment)
+    expect(view.sendInputEvent.mock.calls).toContainEqual([
+      { type: 'char', keyCode: 'x', modifiers: [] },
+    ])
+  })
+
   test.each([{}, { WEWORK_E2E_CONTROL_URL: environment.WEWORK_E2E_CONTROL_URL }])(
     'rejects input without both isolated controller signals',
     async value => {
@@ -66,7 +88,7 @@ describe('isolated native keyboard verification', () => {
     }
   )
 
-  test.each(['Meta+Q', 'Control+W', 'constructor', 'text'])(
+  test.each(['Meta+Q', 'Control+W', 'constructor', 'text', 'Unknown+B'])(
     'rejects unsupported key %s',
     async key => {
       const { view, contents, focusWindow } = fixture()

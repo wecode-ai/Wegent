@@ -453,12 +453,16 @@ export function createDesktopScenario({
   let workflowTaskBindings = []
   let resolveFirstContinuationStarted
   let releaseFirstContinuation
+  let resolveMoonshotFollowUpStarted
   let releaseMoonshotFollowUp
   const firstContinuationStarted = new Promise(resolve => {
     resolveFirstContinuationStarted = resolve
   })
   const firstContinuationRelease = new Promise(resolve => {
     releaseFirstContinuation = resolve
+  })
+  const moonshotFollowUpStarted = new Promise(resolve => {
+    resolveMoonshotFollowUpStarted = resolve
   })
   const moonshotFollowUpRelease = new Promise(resolve => {
     releaseMoonshotFollowUp = resolve
@@ -1411,6 +1415,11 @@ export function createDesktopScenario({
     )
     assert.ok(!popupModelLabel.includes(DEFAULT_MODEL_LABEL))
     await control.command('click', moonshotPopupSend, { visible: true })
+    await withTimeout(
+      moonshotFollowUpStarted,
+      uiTimeoutMs,
+      'The board popup follow-up did not start streaming'
+    )
     const followUpRequests = await waitForValue(
       () => Promise.resolve(upstreamResponseRequests.slice(followUpRequestOffset)),
       requests =>
@@ -1432,40 +1441,51 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: false,
       })
+      await control.command('waitFor', moonshotOverrideCard, {
+        stableMs: 500,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('pointerMove', 'body')
       await control.command('hover', moonshotOverrideCard, { visible: true })
       await control.command('waitFor', moonshotProgressPopup, {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await control.command(
-        'click',
-        `[data-testid="cloud-todo-card-progress-pin-${moonshotOverrideIssue.id}"]`,
-        { visible: true }
-      )
+      const moonshotPopupPause = `${moonshotPopupConversation} [data-testid="pause-response-button"]`
+      await control.command('waitFor', moonshotPopupPause, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'project-automation-board-hover-running-stop-ready.png')
+      await control.command('pointerDown', moonshotPopupPause)
+      await control.command('click', moonshotPopupPause, { visible: true })
+      const moonshotPopupStoppedNotice = `${moonshotPopupConversation} [data-testid="assistant-stopped-notice"]`
+      await control.command('waitFor', moonshotPopupStoppedNotice, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await waitForValue(
         () => control.command('getAttribute', moonshotProgressPopup, { value: 'data-pinned' }),
         value => value === 'true',
-        'The board popup did not stay pinned in place',
+        'The board popup did not pin after the stop action completed',
         uiTimeoutMs
       )
-      await captureScreenshot(control, 'project-automation-board-hover-pinned.png')
-      await control.command('press', 'body', { key: 'Escape' })
+      const moonshotPopupClose = `${moonshotProgressPopup}[data-pinned="true"] [data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}-close"]`
+      await control.command('waitFor', moonshotPopupClose, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'project-automation-board-hover-stopped-pinned.png')
+      await control.command('click', moonshotPopupClose, { visible: true })
       await control.command('waitFor', moonshotProgressPopup, {
         timeoutMs: uiTimeoutMs,
         visible: false,
       })
+      await captureScreenshot(control, 'project-automation-board-hover-closed.png')
     } finally {
       releaseMoonshotFollowUp()
     }
-    await control.command(
-      'waitFor',
-      `[data-testid="cloud-todo-card-final-response-${moonshotOverrideIssue.id}"]`,
-      {
-        text: MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION,
-        timeoutMs: automationRuntimeTimeoutMs,
-        visible: true,
-      }
-    )
 
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       timeoutMs: uiTimeoutMs,
@@ -2823,13 +2843,16 @@ export function createDesktopScenario({
           })
           response.flushHeaders()
           response.write(createSse([responseCreated(responseId)]))
+          resolveMoonshotFollowUpStarted()
           await moonshotFollowUpRelease
-          response.end(
-            createSse([
-              assistantMessage(MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION),
-              responseCompleted(responseId),
-            ])
-          )
+          if (!response.destroyed) {
+            response.end(
+              createSse([
+                assistantMessage(MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION),
+                responseCompleted(responseId),
+              ])
+            )
+          }
           return true
         }
         if (serialized.includes('请确认当前分派结果')) {
