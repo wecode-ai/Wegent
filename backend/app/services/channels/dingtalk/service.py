@@ -127,6 +127,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 client=self._client,
                 channel_id=channel_id,
                 interaction_template_id=self.interaction_card_template_id,
+                get_default_team_id=lambda: get_channel_default_team_id(channel_id),
                 get_default_model_name=lambda: get_channel_default_model_name(
                     channel_id
                 ),

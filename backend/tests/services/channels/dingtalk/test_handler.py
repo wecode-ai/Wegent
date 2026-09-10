@@ -7,11 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.models.im_session import IMSessionMode
 from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import MessageContext
 from app.services.channels.model_selection import ModelSelection
-from app.services.channels.selection_service import channel_selection_service
+from app.services.channels.selection_service import (
+    SelectionOption,
+    channel_selection_service,
+)
 
 
 def test_parse_message_preserves_dingtalk_message_id() -> None:
@@ -172,7 +176,7 @@ async def test_device_mode_migrates_legacy_app_selection_before_routing(
 ) -> None:
     handler = DingTalkChannelHandler(channel_id=77)
     handler.send_text_reply = AsyncMock(return_value=True)
-    handler._get_task_mode_team = MagicMock(return_value=SimpleNamespace(id=10))
+    handler._resolve_new_task_team = AsyncMock(return_value=SimpleNamespace(id=10))
     handler._create_and_process_device_task = AsyncMock(return_value=None)
     route = SimpleNamespace(
         logical_device_id="local-device",
@@ -214,3 +218,116 @@ async def test_device_mode_migrates_legacy_app_selection_before_routing(
     assert handler._create_and_process_device_task.await_args.kwargs["device_id"] == (
         "app-record-1819"
     )
+
+
+@pytest.mark.asyncio
+async def test_new_dingtalk_task_prefers_selected_agent(monkeypatch) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    selected = SimpleNamespace(id=22)
+    db = object()
+    resolve_selected = AsyncMock(return_value=selected)
+    fallback = MagicMock(return_value=SimpleNamespace(id=10))
+    monkeypatch.setattr(
+        "app.services.channels.team_selection.resolve_selected_team",
+        resolve_selected,
+    )
+    handler._get_task_mode_team = fallback
+
+    team = await handler._resolve_new_task_team(db, 7)
+
+    assert team is selected
+    resolve_selected.assert_awaited_once_with(db, 7)
+    fallback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_agent_change_detaches_only_bound_dingtalk_task(monkeypatch) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    db = object()
+    session = SimpleNamespace(
+        mode=IMSessionMode.TASK,
+        active_task_id=41,
+    )
+    clear_active_task = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.im.session_service.im_session_service.clear_active_task",
+        clear_active_task,
+    )
+
+    detached = await handler._after_agent_selection_changed(db, session)
+
+    assert detached is True
+    clear_active_task.assert_awaited_once_with(db, session=session)
+
+
+@pytest.mark.asyncio
+async def test_task_status_distinguishes_current_and_next_agent(monkeypatch) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    db = object()
+    user = SimpleNamespace(id=7)
+    session = SimpleNamespace(
+        mode=IMSessionMode.TASK,
+        active_task_id=41,
+        active_runtime_task=None,
+    )
+    current_team = SimpleNamespace(
+        name="old-agent",
+        json={"metadata": {"displayName": "Old Agent"}},
+    )
+    selected_team = SimpleNamespace(
+        name="new-agent",
+        json={"metadata": {"displayName": "New Agent"}},
+    )
+    monkeypatch.setattr(
+        "app.services.im.task_continuation_service.validate_personal_wework_task",
+        MagicMock(return_value=SimpleNamespace(id=41)),
+    )
+    monkeypatch.setattr(
+        "app.services.im.task_continuation_service.get_task_team",
+        MagicMock(return_value=current_team),
+    )
+    monkeypatch.setattr(
+        "app.services.channels.team_selection.resolve_selected_team",
+        AsyncMock(return_value=selected_team),
+    )
+
+    team_info = await handler._get_status_team_info(db, user, session)
+
+    assert "当前 Task 智能体**: Old Agent" in team_info
+    assert "下一新任务智能体**: New Agent (用户选择)" in team_info
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("argument", [None, "missing-agent"])
+async def test_agent_list_or_invalid_choice_keeps_bound_task(
+    monkeypatch: pytest.MonkeyPatch,
+    argument: str | None,
+) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    handler._get_task_mode_team = MagicMock(return_value=None)
+    handler._after_agent_selection_changed = AsyncMock()
+    monkeypatch.setattr(
+        channel_selection_service,
+        "list_agents",
+        AsyncMock(
+            return_value=[
+                SelectionOption(
+                    value="team:22",
+                    label="Available Agent",
+                    description="命名空间：default",
+                )
+            ]
+        ),
+    )
+    session = SimpleNamespace(mode=IMSessionMode.TASK, active_task_id=41)
+
+    await handler._handle_agent_command(
+        object(),
+        SimpleNamespace(id=7),
+        argument,
+        _message_context(),
+        im_session=session,
+    )
+
+    handler._after_agent_selection_changed.assert_not_awaited()

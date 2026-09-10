@@ -92,6 +92,8 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
         "换模型": "/models",
         "切设备": "/devices",
         "换设备": "/devices",
+        "切智能体": "/agents",
+        "换智能体": "/agents",
         "切任务": "/switch",
         "换任务": "/switch",
     }.get(content, content)
@@ -190,7 +192,7 @@ HELP_MESSAGE = """📋 **可用命令**
 # Status message template
 STATUS_TEMPLATE = """📊 **当前状态**
 
-**当前智能体**: {team_name}
+{team_info}
 **执行模式**: {mode}
 {device_info}**当前模型**: {model_name}
 

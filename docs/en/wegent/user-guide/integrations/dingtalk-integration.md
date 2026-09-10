@@ -96,17 +96,17 @@ Enable the following permissions for your application:
 3. Click **Add Channel**
 4. Fill in the configuration:
 
-| Field                                 | Description                                               | Example                            |
-| ------------------------------------- | --------------------------------------------------------- | ---------------------------------- |
-| **Channel Name**                      | Display name for this channel                             | "DingTalk Bot"                     |
-| **Channel Type**                      | Select platform                                           | DingTalk                           |
-| **Client ID**                         | From Step 3                                               | `dingxxxxxxxx`                     |
-| **Client Secret**                     | From Step 3                                               | `xxxxxxxxxxxxxxxx`                 |
-| **Default Agent**                     | Agent to handle messages                                  | Select from list                   |
-| **Default Model**                     | Override model (optional)                                 | Leave empty to use agent's default |
-| **Enable AI Card**                    | Use streaming AI Card                                     | ✅ Recommended                     |
-| **Conversation Card Template ID**     | Show a Session Settings action after an answer (optional) | `xxxxxxxx.schema`                  |
-| **Session Settings Card Template ID** | Clickable model, device, and task selection (optional)    | `xxxxxxxx.schema`                  |
+| Field                                 | Description                                                   | Example                            |
+| ------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
+| **Channel Name**                      | Display name for this channel                                 | "DingTalk Bot"                     |
+| **Channel Type**                      | Select platform                                               | DingTalk                           |
+| **Client ID**                         | From Step 3                                                   | `dingxxxxxxxx`                     |
+| **Client Secret**                     | From Step 3                                                   | `xxxxxxxxxxxxxxxx`                 |
+| **Default Agent**                     | Agent to handle messages                                      | Select from list                   |
+| **Default Model**                     | Override model (optional)                                     | Leave empty to use agent's default |
+| **Enable AI Card**                    | Use streaming AI Card                                         | ✅ Recommended                     |
+| **Conversation Card Template ID**     | Show a Session Settings action after an answer (optional)     | `xxxxxxxx.schema`                  |
+| **Session Settings Card Template ID** | Clickable model, device, agent, and task selection (optional) | `xxxxxxxx.schema`                  |
 
 5. Click **Save** to create the channel
 6. Toggle **Enable** to activate the channel
@@ -161,16 +161,17 @@ DingTalk AI Cards provide a rich streaming response experience:
 
 ### Clickable session settings
 
-After configuring the **Session Settings Card Template ID**, users can send `设置` to open the console, `切模型` or `切设备` to open a selector, and `切任务` in a direct message to select a task. The existing `/status`, `/models`, `/devices`, and `/switch` commands remain available. Commands with arguments still use their text flow, and a card creation failure falls back to the original text response.
+After configuring the **Session Settings Card Template ID**, users can send `设置` to open the console, `切模型`, `切设备`, or `切智能体` to open a selector, and `切任务` in a direct message to select a task. The existing `/status`, `/models`, `/devices`, `/agents`, and `/switch` commands remain available. Commands with arguments still use their text flow, and a card creation failure falls back to the original text response.
 
-The console displays the current model, device, and direct-message task:
+The console displays the current model, device, direct-message task, current Task agent, and next-new-Task agent:
 
 - Selecting an option applies it immediately and returns the same card to the console.
 - Each page contains up to eight options, with previous, next, refresh, back, and close actions.
 - Offline devices, current options, and non-Claude models that are incompatible with device mode are disabled.
 - Tasks are available only in direct messages and include the user's five most recent Wework tasks.
+- Selecting an agent never mutates an existing Task. In Task mode it detaches the current binding, so the next message enters the new-Task flow; `/switch` can bind the old Task again.
 - In a group, only the user who opened the card can act on it. The server also revalidates identity, ownership, and current availability.
-- Cards contain random 15-minute option tokens rather than internal model, device, or task IDs. Repeated clicks are applied only once.
+- Cards contain random 15-minute option tokens rather than internal model, device, agent, or task IDs. Repeated clicks are applied only once.
 
 When the **Conversation Card Template ID** is also configured, completed, failed, and cancelled answers show a Session Settings action on the answer card. Configuring only the conversation template does not replace the built-in answer card, which prevents a non-functional action.
 

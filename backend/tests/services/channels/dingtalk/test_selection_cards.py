@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from dingtalk_stream import CardCallbackMessage
@@ -52,6 +52,7 @@ def _service() -> DingTalkSelectionCardService:
         client=SimpleNamespace(),
         channel_id=77,
         interaction_template_id="interaction.schema",
+        get_default_team_id=lambda: None,
         get_default_model_name=lambda: None,
         get_user_mapping_config=lambda: {"mode": "select_user", "config": {}},
     )
@@ -80,6 +81,7 @@ def _state(**updates) -> DingTalkSelectionCardState:
         ("设置", None),
         ("/models", SelectionKind.MODEL),
         ("换设备", SelectionKind.DEVICE),
+        ("/agents", SelectionKind.AGENT),
         ("切任务", SelectionKind.TASK),
         ("/models 2", False),
         ("帮我切模型", False),
@@ -108,6 +110,86 @@ def test_render_options_exposes_only_opaque_tokens():
     assert rendered["disabled"] is True
     assert "app-record-42" not in str(card_data)
     assert state.option_values[rendered["token"]] == "app-record-42"
+
+
+@pytest.mark.asyncio
+async def test_agent_selection_unbinds_task_after_persisting(monkeypatch):
+    service = _service()
+    state = _state(kind="agent")
+    session = SimpleNamespace(mode="task", active_task_id=41)
+    db = object()
+    selected = SelectionApplyResult(
+        SelectionKind.AGENT,
+        "New Agent",
+        True,
+        detail="default",
+    )
+    apply_agent = AsyncMock(return_value=selected)
+    clear_active_task = AsyncMock()
+    service._next_task_team = MagicMock(return_value=SimpleNamespace(id=9))
+    service._clear_conversation_task = AsyncMock()
+    monkeypatch.setattr(
+        card_module.channel_selection_service,
+        "apply_agent",
+        apply_agent,
+    )
+    monkeypatch.setattr(
+        card_module.im_session_service,
+        "clear_active_task",
+        clear_active_task,
+    )
+
+    result = await service._apply_kind(
+        db,
+        SimpleNamespace(id=7),
+        session,
+        state,
+        SelectionKind.AGENT,
+        "team:9",
+    )
+
+    apply_agent.assert_awaited_once()
+    service._clear_conversation_task.assert_awaited_once_with(state, 7)
+    clear_active_task.assert_awaited_once_with(db, session=session)
+    assert result.detail == "default|task_unbound"
+
+
+@pytest.mark.asyncio
+async def test_console_renders_current_and_next_task_agents(monkeypatch):
+    service = _service()
+    user = SimpleNamespace(id=7)
+    session = SimpleNamespace(mode="task", active_task_id=41)
+    state = _state()
+    default_team = SimpleNamespace(id=9)
+    service._next_task_team = MagicMock(return_value=default_team)
+    service._current_task_agent_label = MagicMock(return_value="Old Agent")
+    service._next_task_agent_label = AsyncMock(return_value="New Agent（用户选择）")
+    monkeypatch.setattr(
+        card_module.channel_selection_service,
+        "list_models",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        card_module.channel_selection_service,
+        "list_devices",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        card_module.channel_selection_service,
+        "list_agents",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        card_module.channel_selection_service,
+        "list_tasks",
+        AsyncMock(return_value=[]),
+    )
+
+    card_data = await service._render(object(), user, session, state)
+
+    assert card_data["currentTaskAgent"] == "Old Agent"
+    assert card_data["nextTaskAgent"] == "New Agent（用户选择）"
+    assert card_data["showAgent"] is True
 
 
 @pytest.mark.asyncio

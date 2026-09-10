@@ -26,6 +26,7 @@ from app.core.cache import cache_manager
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.db.session import SessionLocal
 from app.models.im_session import IMSessionMode, IMSessionState
+from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.channels import manager as channel_manager_module
@@ -56,6 +57,10 @@ from app.services.channels.model_selection import (
     model_selection_manager,
 )
 from app.services.channels.selection_service import channel_selection_service
+from app.services.channels.team_selection import (
+    TEAM_SELECTION_KEY_PREFIX,
+    team_selection_manager,
+)
 from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.im.session_service import (
@@ -351,7 +356,44 @@ def _message(content: str, conversation_id: str, sender_id: str) -> Any:
     return message
 
 
-def _create_selection_task(db: Session, user_id: int, title: str) -> TaskResource:
+def _create_selection_agent(
+    db: Session,
+    user_id: int,
+    *,
+    name: str,
+    display_name: str,
+) -> Kind:
+    team = Kind(
+        user_id=user_id,
+        kind="Team",
+        name=name,
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {
+                "name": name,
+                "namespace": "default",
+                "displayName": display_name,
+            },
+            "spec": {"collaborationModel": "pipeline", "members": []},
+            "status": {"state": "Available"},
+        },
+    )
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+    return team
+
+
+def _create_selection_task(
+    db: Session,
+    user_id: int,
+    title: str,
+    *,
+    team_name: str,
+) -> TaskResource:
     name = f"dingtalk-selection-e2e-{uuid.uuid4().hex}"
     task = TaskResource(
         user_id=user_id,
@@ -369,7 +411,7 @@ def _create_selection_task(db: Session, user_id: int, title: str) -> TaskResourc
                 "title": title,
                 "prompt": title,
                 "teamRef": {
-                    "name": "wegent-wework",
+                    "name": team_name,
                     "namespace": "default",
                     "user_id": user_id,
                 },
@@ -505,13 +547,35 @@ async def _run_selection_card_flow(user_id: int) -> None:
     )
     model_key = f"{CHANNEL_USER_MODEL_PREFIX}{user_id}"
     device_key = f"{CHANNEL_USER_DEVICE_PREFIX}{user_id}"
+    team_key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
     model_snapshot = await _cache_snapshot(model_key)
     device_snapshot = await _cache_snapshot(device_key)
+    team_snapshot = await _cache_snapshot(team_key)
 
     db = SessionLocal()
     try:
-        task = _create_selection_task(db, user_id, task_title)
+        suffix = uuid.uuid4().hex
+        old_agent = _create_selection_agent(
+            db,
+            user_id,
+            name=f"dingtalk-ci-old-agent-{suffix}",
+            display_name="DingTalk CI Old Agent",
+        )
+        selected_agent = _create_selection_agent(
+            db,
+            user_id,
+            name=f"dingtalk-ci-selected-agent-{suffix}",
+            display_name="DingTalk CI Selected Agent",
+        )
+        task = _create_selection_task(
+            db,
+            user_id,
+            task_title,
+            team_name=old_agent.name,
+        )
         task_id = task.id
+        old_agent_id = old_agent.id
+        selected_agent_id = selected_agent.id
     finally:
         db.close()
 
@@ -558,6 +622,7 @@ async def _run_selection_card_flow(user_id: int) -> None:
         client=object(),
         channel_id=CHANNEL_ID,
         interaction_template_id=INTERACTION_TEMPLATE_ID,
+        get_default_team_id=lambda: old_agent_id,
         get_default_model_name=lambda: None,
         get_user_mapping_config=lambda: {
             "mode": "select_user",
@@ -596,6 +661,7 @@ async def _run_selection_card_flow(user_id: int) -> None:
         direct_entries = [
             ("/models", "model", "Claude E2E"),
             ("/devices", "device", "DingTalk CI Mac"),
+            ("/agents", "agent", "DingTalk CI Selected Agent"),
             ("/switch", "task", task_title),
         ]
         for command, kind, option_label in direct_entries:
@@ -609,7 +675,7 @@ async def _run_selection_card_flow(user_id: int) -> None:
                 option["label"] == option_label
                 for option in direct_card.card_data["options"]
             )
-        assert len(transport.records) == 4
+        assert len(transport.records) == 5
         assert handler.replies == []
 
         non_requester = await _invoke_card_action(
@@ -686,6 +752,100 @@ async def _run_selection_card_flow(user_id: int) -> None:
         assert session.active_task_id == task_id
         assert session.state == IMSessionState.IDLE
 
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "agent"},
+        )
+        agent_token = _option_token(response, "DingTalk CI Selected Agent")
+        action_tokens.append((card.out_track_id, agent_token))
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": agent_token},
+        )
+        card_params = response["cardData"]["cardParamMap"]
+        assert "已切换到智能体：DingTalk CI Selected Agent" in card_params["status"]
+        assert "当前任务未修改" in card_params["status"]
+        assert card_params["currentTaskAgent"] == "未绑定"
+        assert card_params["nextTaskAgent"] == (
+            "DingTalk CI Selected Agent（用户选择）"
+        )
+
+        team_selection = await team_selection_manager.get_selection(user_id)
+        assert team_selection is not None
+        assert team_selection.team_id == selected_agent_id
+        session = await im_session_service.get_session(session_key)
+        assert session is not None
+        assert session.mode == IMSessionMode.TASK
+        assert session.active_task_id is None
+
+        verification_db = SessionLocal()
+        try:
+            persisted_task = verification_db.get(TaskResource, task_id)
+            assert persisted_task is not None
+            assert persisted_task.json["spec"]["teamRef"]["name"] == old_agent.name
+            resolved_team = await handler._resolve_new_task_team(
+                verification_db,
+                user_id,
+            )
+            assert resolved_team is not None
+            assert resolved_team.id == selected_agent_id
+        finally:
+            verification_db.close()
+
+        next_message = "使用卡片选择的智能体创建新任务"
+        assert await handler.handle_message(
+            _message(next_message, conversation_id, sender_id)
+        )
+        session = await im_session_service.get_session(session_key)
+        assert session is not None
+        assert session.state == IMSessionState.PENDING_TASK_CREATION
+        assert session.pending_payload["first_message"] == next_message
+        assert await handler.handle_message(
+            _message("/cancel", conversation_id, sender_id)
+        )
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "task"},
+        )
+        rebound_task_token = _option_token(response, task_title)
+        action_tokens.append((card.out_track_id, rebound_task_token))
+        await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": rebound_task_token},
+        )
+        session = await im_session_service.get_session(session_key)
+        assert session is not None
+        assert session.active_task_id == task_id
+
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "open_kind", "kind": "agent"},
+        )
+        default_agent_token = _option_token(response, "系统默认智能体")
+        action_tokens.append((card.out_track_id, default_agent_token))
+        response = await _invoke_card_action(
+            callback_handler,
+            out_track_id=card.out_track_id,
+            actor_id=sender_id,
+            params={"action": "select", "token": default_agent_token},
+        )
+        card_params = response["cardData"]["cardParamMap"]
+        assert "已恢复默认智能体：DingTalk CI Old Agent" in card_params["status"]
+        assert card_params["currentTaskAgent"] == "未绑定"
+        assert card_params["nextTaskAgent"] == "DingTalk CI Old Agent"
+        assert await team_selection_manager.get_selection(user_id) is None
+
         await save_conversation_card_state(
             out_track_id=answer_card_id,
             channel_id=CHANNEL_ID,
@@ -722,7 +882,11 @@ async def _run_selection_card_flow(user_id: int) -> None:
             cleanup_task = cleanup_db.get(TaskResource, task_id)
             if cleanup_task is not None:
                 cleanup_db.delete(cleanup_task)
-                cleanup_db.commit()
+            for team_id in (old_agent_id, selected_agent_id):
+                cleanup_team = cleanup_db.get(Kind, team_id)
+                if cleanup_team is not None:
+                    cleanup_db.delete(cleanup_team)
+            cleanup_db.commit()
         finally:
             cleanup_db.close()
 
@@ -733,6 +897,7 @@ async def _run_selection_card_flow(user_id: int) -> None:
             await cache_manager.delete(f"{CARD_ACTION_PREFIX}{out_track_id}:{token}")
         await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:model")
         await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:device")
+        await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{user_id}:agent")
         await cache_manager.delete(f"{ACTIVE_CARD_PREFIX}{session_key}:task")
         await cache_manager.delete(f"{PRIVATE_SESSION_KEY_PREFIX}{session_key}")
         await cache_manager.delete(
@@ -747,6 +912,7 @@ async def _run_selection_card_flow(user_id: int) -> None:
             await cache_client.aclose()
         await _restore_cache_snapshot(model_key, model_snapshot)
         await _restore_cache_snapshot(device_key, device_snapshot)
+        await _restore_cache_snapshot(team_key, team_snapshot)
 
 
 async def run() -> None:

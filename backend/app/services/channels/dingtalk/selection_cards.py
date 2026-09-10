@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""DingTalk interactive cards for model, device, and private-task selection."""
+"""DingTalk interactive cards for model, device, agent, and task selection."""
 
 import logging
 import secrets
@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
 from app.db.session import SessionLocal
-from app.models.im_session import IMPrivateSession
+from app.models.im_session import IMPrivateSession, IMSessionMode
+from app.models.kind import Kind
 from app.models.user import User
 from app.services.channels.commands import CommandType, parse_command
 from app.services.channels.device_selection import DeviceType, device_selection_manager
@@ -26,6 +27,7 @@ from app.services.channels.dingtalk.card_transport import (
 )
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
 from app.services.channels.selection_service import (
+    SelectionApplyResult,
     SelectionError,
     SelectionKind,
     SelectionOption,
@@ -142,12 +144,14 @@ class DingTalkSelectionCardService:
         client: Any,
         channel_id: int,
         interaction_template_id: str,
+        get_default_team_id: Callable[[], int | None],
         get_default_model_name: Callable[[], str | None],
         get_user_mapping_config: Callable[[], Any],
     ) -> None:
         self._transport = DingTalkCardTransport(client)
         self._channel_id = channel_id
         self._interaction_template_id = interaction_template_id
+        self._get_default_team_id = get_default_team_id
         self._get_default_model_name = get_default_model_name
         self._get_user_mapping_config = get_user_mapping_config
 
@@ -349,10 +353,16 @@ class DingTalkSelectionCardService:
         state.kind = ""
         state.page = 0
         state.option_values = {}
-        prefix = "已是" if not result.changed else "已切换到"
-        state.status = (
-            f"{prefix}{self._kind_label(result.kind)}：{result.selected_label}"
-        )
+        details = set(result.detail.split("|"))
+        if result.kind == SelectionKind.AGENT and "default" in details:
+            state.status = f"已恢复默认智能体：{result.selected_label}"
+        else:
+            prefix = "已是" if not result.changed else "已切换到"
+            state.status = (
+                f"{prefix}{self._kind_label(result.kind)}：{result.selected_label}"
+            )
+        if result.kind == SelectionKind.AGENT and "task_unbound" in details:
+            state.status += "。当前任务未修改，下一条消息将进入新任务创建流程。"
 
     async def _apply_kind(
         self,
@@ -380,6 +390,28 @@ class DingTalkSelectionCardService:
             if result.changed:
                 await self._clear_conversation_task(state, user.id)
             return result
+        if kind == SelectionKind.AGENT:
+            result = await channel_selection_service.apply_agent(
+                db,
+                user,
+                value,
+                default_team=self._next_task_team(db, user.id),
+            )
+            await self._clear_conversation_task(state, user.id)
+            details = [result.detail] if result.detail else []
+            if (
+                session is not None
+                and session.mode == IMSessionMode.TASK
+                and session.active_task_id is not None
+            ):
+                await im_session_service.clear_active_task(db, session=session)
+                details.append("task_unbound")
+            return SelectionApplyResult(
+                kind=result.kind,
+                selected_label=result.selected_label,
+                changed=result.changed,
+                detail="|".join(details),
+            )
         if session is None:
             raise SelectionError("任务只能在私聊会话中切换。")
         return await channel_selection_service.apply_task(db, user, session, value)
@@ -421,6 +453,13 @@ class DingTalkSelectionCardService:
             default_model_name=self._get_default_model_name(),
         )
         device_options = await channel_selection_service.list_devices(db, user)
+        default_team = self._next_task_team(db, user.id)
+        agent_options = await channel_selection_service.list_agents(
+            db,
+            user,
+            include_default=True,
+            default_team=default_team,
+        )
         task_options = (
             await channel_selection_service.list_tasks(db, user, session)
             if session is not None
@@ -436,6 +475,13 @@ class DingTalkSelectionCardService:
             ),
             "currentDevice": await self._current_device_label(user.id, device_options),
             "currentTask": self._current_task_label(session, task_options),
+            "currentTaskAgent": self._current_task_agent_label(db, user, session),
+            "nextTaskAgent": await self._next_task_agent_label(
+                db,
+                user,
+                default_team,
+            ),
+            "showAgent": True,
             "showTask": state.conversation_type == "private",
             "kind": state.kind,
             "kindLabel": "",
@@ -447,7 +493,11 @@ class DingTalkSelectionCardService:
         if state.kind:
             kind = SelectionKind(state.kind)
             options = self._options_for_kind(
-                kind, model_options, device_options, task_options
+                kind,
+                model_options,
+                device_options,
+                agent_options,
+                task_options,
             )
             card_data.update(self._render_options(state, kind, options))
         return card_data
@@ -553,13 +603,71 @@ class DingTalkSelectionCardService:
         kind: SelectionKind,
         models: list[SelectionOption],
         devices: list[SelectionOption],
+        agents: list[SelectionOption],
         tasks: list[SelectionOption],
     ) -> list[SelectionOption]:
         if kind == SelectionKind.MODEL:
             return models
         if kind == SelectionKind.DEVICE:
             return devices
+        if kind == SelectionKind.AGENT:
+            return agents
         return tasks
+
+    def _next_task_team(self, db: Session, user_id: int) -> Kind | None:
+        from app.services.channels.team_selection import resolve_task_mode_team
+
+        return resolve_task_mode_team(
+            db,
+            user_id,
+            default_team_id=self._get_default_team_id(),
+        )
+
+    async def _next_task_agent_label(
+        self,
+        db: Session,
+        user: User,
+        default_team: Kind | None,
+    ) -> str:
+        from app.services.channels.team_selection import (
+            get_team_display_name,
+            resolve_selected_team,
+        )
+
+        selected = await resolve_selected_team(db, user.id)
+        label = get_team_display_name(selected or default_team)
+        return f"{label}（用户选择）" if selected is not None else label
+
+    def _current_task_agent_label(
+        self,
+        db: Session,
+        user: User,
+        session: IMPrivateSession | None,
+    ) -> str:
+        if session is None or session.mode != IMSessionMode.TASK:
+            return ""
+        if session.active_task_id is None:
+            return "本地运行任务" if session.active_runtime_task else "未绑定"
+
+        from app.services.channels.team_selection import get_team_display_name
+        from app.services.im import task_continuation_service as task_service
+
+        try:
+            task = task_service.validate_personal_wework_task(
+                db,
+                user.id,
+                session.active_task_id,
+            )
+            return get_team_display_name(task_service.get_task_team(db, task))
+        except Exception:
+            logger.warning(
+                "[DingTalkSelectionCard] Failed to resolve active Task Team: "
+                "user_id=%s, task_id=%s",
+                user.id,
+                session.active_task_id,
+                exc_info=True,
+            )
+            return "任务不可用"
 
     def _current_label(self, options: list[SelectionOption], fallback: str) -> str:
         current = next((option.label for option in options if option.is_current), "")
@@ -604,6 +712,7 @@ class DingTalkSelectionCardService:
         return {
             SelectionKind.MODEL: "模型",
             SelectionKind.DEVICE: "设备",
+            SelectionKind.AGENT: "智能体",
             SelectionKind.TASK: "任务",
         }[kind]
 
@@ -668,6 +777,8 @@ def selection_kind_for_message(content: str) -> SelectionKind | None | bool:
         return SelectionKind.MODEL
     if command.command == CommandType.DEVICES:
         return SelectionKind.DEVICE
+    if command.command == CommandType.AGENTS:
+        return SelectionKind.AGENT
     if command.command == CommandType.SWITCH:
         return SelectionKind.TASK
     if command.command == CommandType.STATUS:

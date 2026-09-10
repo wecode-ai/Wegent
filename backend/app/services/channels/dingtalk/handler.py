@@ -28,6 +28,8 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
 from app.db.session import SessionLocal
+from app.models.im_session import IMPrivateSession, IMSessionMode
+from app.models.kind import Kind
 from app.models.user import User
 from app.services.channels.callback import BaseChannelCallbackService, ChannelType
 from app.services.channels.dingtalk.callback import (
@@ -303,6 +305,87 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             interaction_card_template_id=self._interaction_card_template_id,
             channel_id=self._channel_id,
             user_id=message_context.extra_data.get("resolved_user_id"),
+        )
+
+    async def _resolve_new_task_team(
+        self,
+        db: Session,
+        user_id: int,
+    ) -> Optional[Kind]:
+        """Use the DingTalk agent selection for newly created Tasks."""
+
+        from app.services.channels.team_selection import resolve_selected_team
+
+        selected = await resolve_selected_team(db, user_id)
+        return selected or self._get_task_mode_team(db, user_id)
+
+    async def _after_agent_selection_changed(
+        self,
+        db: Session,
+        im_session: Optional[IMPrivateSession],
+    ) -> bool:
+        """Detach an existing DingTalk Task without mutating that Task."""
+
+        if (
+            im_session is None
+            or im_session.mode != IMSessionMode.TASK
+            or im_session.active_task_id is None
+        ):
+            return False
+
+        from app.services.im.session_service import im_session_service
+
+        await im_session_service.clear_active_task(db, session=im_session)
+        return True
+
+    async def _get_status_team_info(
+        self,
+        db: Session,
+        user: User,
+        im_session: Optional[IMPrivateSession],
+    ) -> str:
+        """Distinguish the bound Task Team from the next new Task Team."""
+
+        if im_session is None or im_session.mode != IMSessionMode.TASK:
+            return await super()._get_status_team_info(db, user, im_session)
+
+        from app.services.channels.team_selection import (
+            get_team_display_name,
+            resolve_selected_team,
+        )
+        from app.services.im import task_continuation_service as task_service
+
+        current_label = "未绑定"
+        if im_session.active_task_id is not None:
+            try:
+                task = task_service.validate_personal_wework_task(
+                    db,
+                    user.id,
+                    im_session.active_task_id,
+                )
+                current_label = get_team_display_name(
+                    task_service.get_task_team(db, task)
+                )
+            except Exception:
+                self.logger.warning(
+                    "[DingTalkHandler] Failed to resolve active Task Team: "
+                    "user_id=%s, task_id=%s",
+                    user.id,
+                    im_session.active_task_id,
+                    exc_info=True,
+                )
+                current_label = "任务不可用"
+        elif im_session.active_runtime_task:
+            current_label = "本地运行任务"
+
+        selected = await resolve_selected_team(db, user.id)
+        next_team = selected or self._get_task_mode_team(db, user.id)
+        next_label = get_team_display_name(next_team)
+        if selected is not None:
+            next_label += " (用户选择)"
+        return (
+            f"**当前 Task 智能体**: {current_label}\n"
+            f"**下一新任务智能体**: {next_label}"
         )
 
     async def try_handle_interactive_control(

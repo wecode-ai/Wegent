@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.im_session import IMSessionMode
+from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
@@ -69,7 +69,6 @@ from app.services.channels.model_selection import (
 from app.services.chat.wework_task_defaults import extract_task_device_id
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.session_service import im_session_service
-from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
@@ -554,30 +553,22 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Team Kind object or None
         """
-        config_value = settings.DEFAULT_TEAM_TASK
-        if not config_value or not config_value.strip():
-            return self._get_default_team(db, user_id)
+        from app.services.channels.team_selection import resolve_task_mode_team
 
-        parts = config_value.strip().split("#", 1)
-        name = parts[0].strip()
-        namespace = parts[1].strip() if len(parts) > 1 else "default"
-
-        if not name:
-            return self._get_default_team(db, user_id)
-
-        team = kindReader.get_by_name_and_namespace(
-            db, user_id, KindType.TEAM, namespace, name
+        return resolve_task_mode_team(
+            db,
+            user_id,
+            default_team_id=self.default_team_id,
         )
 
-        if not team:
-            self.logger.warning(
-                f"[{self._channel_type.value}Handler] Task mode team not found: "
-                f"name={name}, namespace={namespace}, user_id={user_id}. "
-                f"Falling back to channel default team."
-            )
-            return self._get_default_team(db, user_id)
+    async def _resolve_new_task_team(
+        self,
+        db: Session,
+        user_id: int,
+    ) -> Optional[Kind]:
+        """Resolve the Team used when this channel creates a new Task."""
 
-        return team
+        return self._get_task_mode_team(db, user_id)
 
     async def _get_selected_or_default_team(
         self, db: Session, user_id: int
@@ -595,32 +586,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Team Kind object or None
         """
-        from app.services.channels.team_selection import team_selection_manager
+        from app.services.channels.team_selection import resolve_selected_team
 
-        # Check if user has a manually selected team
-        selection = await team_selection_manager.get_selection(user_id)
-        if selection:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == selection.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
+        team = await resolve_selected_team(db, user_id)
+        if team is not None:
+            self.logger.info(
+                f"[{self._channel_type.value}Handler] Using user-selected team: "
+                f"{team.name} (id={team.id})"
             )
-            if team:
-                self.logger.info(
-                    f"[{self._channel_type.value}Handler] Using user-selected team: "
-                    f"{team.name} (id={team.id})"
-                )
-                return team
-            else:
-                self.logger.warning(
-                    f"[{self._channel_type.value}Handler] User-selected team not found "
-                    f"or inactive: id={selection.team_id}, clearing selection"
-                )
-                await team_selection_manager.clear_selection(user_id)
+            return team
 
         # Fall back to default team
         return self._get_default_team(db, user_id)
@@ -819,6 +793,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     user=user,
                     command=parsed_cmd,
                     message_context=message_context,
+                    im_session=im_session,
                 )
                 return True
         except Exception as e:
@@ -848,6 +823,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         user: User,
         command: Any,
         message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
     ) -> None:
         """Handle slash commands.
 
@@ -881,7 +857,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self._handle_use_command(db, user, command.argument, message_context)
 
         elif command.command == CommandType.STATUS:
-            await self._handle_status_command(db, user, message_context)
+            await self._handle_status_command(
+                db,
+                user,
+                message_context,
+                im_session=im_session,
+            )
 
         elif command.command == CommandType.MODELS:
             await self._handle_model_command(
@@ -890,7 +871,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         elif command.command == CommandType.AGENTS:
             await self._handle_agent_command(
-                db, user, command.argument, message_context
+                db,
+                user,
+                command.argument,
+                message_context,
+                im_session=im_session,
             )
 
         elif command.command in {
@@ -1357,7 +1342,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> None:
         from app.services.chat.storage.task_manager import create_chat_task
 
-        team = self._get_task_mode_team(db, user.id)
+        team = await self._resolve_new_task_team(db, user.id)
         if not team:
             await self.send_text_reply(message_context, "配置错误: 未配置默认智能体")
             return
@@ -1985,6 +1970,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         db: Session,
         user: User,
         message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
     ) -> None:
         """Handle /status command - show current status."""
         from app.services.device.runtime_route import (
@@ -2029,43 +2015,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             mode = "☁️ 云端执行模式"
             device_info = ""
 
-        # Get team - prioritize user selection over default
-        from app.services.channels.team_selection import team_selection_manager
-
-        team_selection = await team_selection_manager.get_selection(user.id)
-        if team_selection:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == team_selection.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if team:
-                team_json = team.json or {}
-                team_spec = team_json.get("spec", {})
-                display = team_spec.get("displayName") or team.name
-                team_name = f"{display} (用户选择)"
-            else:
-                # Selected team no longer exists, clear it
-                await team_selection_manager.clear_selection(user.id)
-                team = self._get_default_team(db, user.id)
-                if team:
-                    team_json = team.json or {}
-                    team_spec = team_json.get("spec", {})
-                    team_name = team_spec.get("displayName") or team.name
-                else:
-                    team_name = "未配置"
-        else:
-            team = self._get_default_team(db, user.id)
-            if team:
-                team_json = team.json or {}
-                team_spec = team_json.get("spec", {})
-                team_name = team_spec.get("displayName") or team.name
-            else:
-                team_name = "未配置"
+        team_info = await self._get_status_team_info(db, user, im_session)
 
         # Get model selection
         # For device mode, show the actual model that will be used (may be default device model)
@@ -2104,13 +2054,33 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             model_name = self.default_model_name or "默认模型"
 
         message = STATUS_TEMPLATE.format(
+            team_info=team_info,
             mode=mode,
             device_info=device_info,
             model_name=model_name,
-            team_name=team_name,
         )
 
         await self.send_text_reply(message_context, message)
+
+    async def _get_status_team_info(
+        self,
+        db: Session,
+        user: User,
+        im_session: Optional[IMPrivateSession],
+    ) -> str:
+        """Return the provider-neutral Team section for status output."""
+
+        del im_session
+        from app.services.channels.team_selection import (
+            get_team_display_name,
+            resolve_selected_team,
+        )
+
+        team = await resolve_selected_team(db, user.id)
+        selected = team is not None
+        team = team or self._get_default_team(db, user.id)
+        suffix = " (用户选择)" if selected else ""
+        return f"**当前智能体**: {get_team_display_name(team)}{suffix}"
 
     async def _handle_model_command(
         self,
@@ -2194,33 +2164,57 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         user: User,
         argument: Optional[str],
         message_context: MessageContext,
+        im_session: Optional[IMPrivateSession] = None,
     ) -> None:
-        """Handle /agents command - list teams or switch to a team.
+        """Handle /agents using the shared selection service."""
 
-        This command allows users to view and select from their available
-        teams/agents. Users can switch between personal teams, shared teams,
-        and system teams at any time during the conversation.
-
-        Args:
-            db: Database session
-            user: Wegent user
-            argument: Optional argument (team index, name, or 'default')
-            message_context: Message context
-        """
-        from app.services.adapters.team_kinds import team_kinds_service
-        from app.services.channels.team_selection import (
-            TeamSelection,
-            team_selection_manager,
+        from app.services.channels.selection_service import (
+            SelectionError,
+            channel_selection_service,
+            resolve_text_choice,
         )
 
-        # Get all user's teams (personal + shared + system)
-        teams = team_kinds_service.get_user_teams(
-            db=db,
-            user_id=user.id,
-            scope="all",
+        uses_task_default = (
+            im_session is not None and im_session.mode == IMSessionMode.TASK
         )
+        default_team = (
+            self._get_task_mode_team(db, user.id)
+            if uses_task_default
+            else self._get_default_team(db, user.id)
+        )
+        normalized_argument = (argument or "").strip()
 
-        if not teams:
+        if normalized_argument.lower() == "default":
+            try:
+                result = await channel_selection_service.apply_agent(
+                    db,
+                    user,
+                    "default",
+                    default_team=default_team,
+                )
+            except SelectionError as exc:
+                await self.send_text_reply(message_context, f"❌ {exc}")
+                return
+            await self._delete_conversation_task_id(
+                message_context.conversation_id,
+                user.id,
+            )
+            task_unbound = await self._after_agent_selection_changed(db, im_session)
+            await self.send_text_reply(
+                message_context,
+                self._agent_selection_reply(
+                    selected_label=result.selected_label,
+                    namespace=None,
+                    restored_default=True,
+                    task_mode_default=uses_task_default,
+                    task_unbound=task_unbound,
+                ),
+            )
+            return
+
+        options = await channel_selection_service.list_agents(db, user)
+
+        if not options:
             await self.send_text_reply(
                 message_context,
                 AGENTS_HEADER
@@ -2229,125 +2223,96 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
 
-        # With argument - switch to specified team
-        if argument:
-            argument = argument.strip().lower()
-
-            # Support "default" to revert to system default
-            if argument == "default":
-                await team_selection_manager.clear_selection(user.id)
-                await self._delete_conversation_task_id(
-                    message_context.conversation_id, user.id
-                )
-
-                default_team = self._get_default_team(db, user.id)
-                if default_team:
-                    team_json = default_team.json or {}
-                    team_spec = team_json.get("spec", {})
-                    display_name = team_spec.get("displayName") or default_team.name
-                    await self.send_text_reply(
-                        message_context,
-                        f"✅ 已恢复使用系统默认智能体: **{display_name}**\n\n"
-                        "💡 现在开始使用系统配置的智能体进行对话",
-                    )
-                else:
-                    await self.send_text_reply(
-                        message_context,
-                        "✅ 已清除智能体选择\n\n"
-                        "⚠️ 注意: 系统未配置默认智能体，请先使用 `/agents <序号>` 选择智能体",
-                    )
-                return
-
-            matched_team = None
-
-            # Check if argument is a number (team index)
-            if argument.isdigit():
-                team_index = int(argument)
-                if 1 <= team_index <= len(teams):
-                    matched_team = teams[team_index - 1]
-                else:
-                    await self.send_text_reply(
-                        message_context,
-                        f"❌ 无效的智能体序号: {argument}\n\n"
-                        f"当前有 {len(teams)} 个智能体，请使用 `/agents` 查看列表",
-                    )
-                    return
-            else:
-                # Match by name (case-insensitive)
-                argument_lower = argument.lower()
-                for team in teams:
-                    team_name = team.get("name", "").lower()
-                    if team_name == argument_lower:
-                        matched_team = team
-                        break
-
-            if not matched_team:
+        if normalized_argument:
+            option = resolve_text_choice(options, normalized_argument)
+            if option is None:
                 await self.send_text_reply(
                     message_context,
-                    f"❌ 未找到智能体: `{argument}`\n\n使用 `/agents` 查看可用智能体列表",
+                    f"❌ 未找到智能体: `{normalized_argument}`\n\n"
+                    "使用 `/agents` 查看可用智能体列表",
                 )
                 return
-
-            # Save selection to Redis
-            # matched_team is a dictionary from team_kinds_service.get_user_teams()
-            display_name = matched_team.get("name") or "Unnamed"
-            matched_team_id = matched_team.get("id")
-            matched_team_name = matched_team.get("name") or "Unnamed"
-            matched_team_namespace = matched_team.get("namespace") or "default"
-
-            await team_selection_manager.set_selection(
-                user.id,
-                TeamSelection(
-                    team_id=matched_team_id,
-                    team_name=matched_team_name,
-                    team_namespace=matched_team_namespace,
-                    display_name=display_name,
-                ),
-            )
-
-            # Clear conversation cache to start fresh with new team
+            try:
+                result = await channel_selection_service.apply_agent(
+                    db,
+                    user,
+                    option.value,
+                )
+            except SelectionError as exc:
+                await self.send_text_reply(message_context, f"❌ {exc}")
+                return
             await self._delete_conversation_task_id(
-                message_context.conversation_id, user.id
+                message_context.conversation_id,
+                user.id,
             )
-
+            task_unbound = await self._after_agent_selection_changed(db, im_session)
             await self.send_text_reply(
                 message_context,
-                f"✅ 已切换到智能体: **{display_name}**\n\n"
-                f"命名空间: `{matched_team_namespace}`\n"
-                f"💡 现在开始使用新智能体进行对话",
+                self._agent_selection_reply(
+                    selected_label=result.selected_label,
+                    namespace=result.detail,
+                    restored_default=False,
+                    task_mode_default=uses_task_default,
+                    task_unbound=task_unbound,
+                ),
             )
             return
 
-        # No argument - list teams
-        current_selection = await team_selection_manager.get_selection(user.id)
-        current_team_id = current_selection.team_id if current_selection else None
-
         message = AGENTS_HEADER + "\n"
-
-        for idx, team in enumerate(teams, start=1):
-            # team is a dictionary from team_kinds_service.get_user_teams()
-            display_name = team.get("name") or "Unnamed"
-            namespace = team.get("namespace") or "default"
-            team_id = team.get("id")
-
-            # Build status string
+        default_value = f"team:{default_team.id}" if default_team is not None else ""
+        for idx, option in enumerate(options, start=1):
             status_parts = []
-            if team_id == current_team_id:
+            if option.is_current:
                 status_parts.append("⭐ 当前")
-            if team_id == self.default_team_id:
+            if option.value == default_value:
                 status_parts.append("系统默认")
-
             status_str = " - " + ", ".join(status_parts) if status_parts else ""
-
             message += AGENT_ITEM_TEMPLATE.format(
                 index=idx,
-                name=display_name,
-                namespace=namespace,
+                name=option.label,
+                namespace=option.description.removeprefix("命名空间："),
                 status=status_str,
             )
-
         message += AGENTS_FOOTER
         await self.send_text_reply(message_context, message)
+
+    async def _after_agent_selection_changed(
+        self,
+        db: Session,
+        im_session: Optional[IMPrivateSession],
+    ) -> bool:
+        """Apply provider-specific session behavior after an agent change."""
+
+        del db, im_session
+        return False
+
+    def _agent_selection_reply(
+        self,
+        *,
+        selected_label: str,
+        namespace: Optional[str],
+        restored_default: bool,
+        task_mode_default: bool,
+        task_unbound: bool,
+    ) -> str:
+        action = "已选择智能体"
+        if restored_default:
+            action = (
+                "已恢复任务模式默认智能体"
+                if task_mode_default
+                else "已恢复系统默认智能体"
+            )
+        message = f"✅ {action}: **{selected_label}**"
+        if namespace:
+            message += f"\n\n命名空间: `{namespace}`"
+        if task_unbound:
+            return (
+                f"{message}\n\n当前任务不会更换智能体；下一条消息将进入新任务"
+                "创建流程，并使用该智能体。可通过 `/switch` 返回原任务。"
+            )
+        if restored_default:
+            return f"{message}\n\n💡 后续对话将使用系统配置的智能体"
+        return f"{message}\n\n💡 后续对话将使用该智能体"
 
     async def _process_chat_message(
         self,
@@ -2430,7 +2395,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_task_mode_team(db, user.id)
+            team = await self._resolve_new_task_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -2459,7 +2424,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_task_mode_team(db, user.id)
+            team = await self._resolve_new_task_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
