@@ -239,6 +239,14 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(!wecode_executor_dockerfile.contains("file_change_sender"));
     assert!(!wecode_executor_dockerfile.contains("CUSTOM_CONFIG"));
 
+    let wecode_executor_prepare =
+        fs::read_to_string("../wecode/docker/executor/prepare_build.sh").unwrap();
+    assert!(wecode_executor_prepare.contains("rm -rf ./executor ./sdk ./shared"));
+    assert!(wecode_executor_prepare.contains("cp -r ../../../sdk/plugin-auth ./sdk/plugin-auth"));
+    assert!(
+        wecode_executor_prepare.contains("cp -r ../../../sdk/plugin-creator ./sdk/plugin-creator")
+    );
+
     let e2e_workflow = fs::read_to_string("../.github/workflows/e2e-tests.yml").unwrap();
     assert!(!e2e_workflow.contains("python -m executor.main"));
     assert!(!e2e_workflow.contains("Install executor dependencies"));
