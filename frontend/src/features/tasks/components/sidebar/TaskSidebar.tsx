@@ -21,7 +21,7 @@ import {
   Workflow,
   ChevronRight,
   Monitor,
-  Inbox,
+  Handshake,
   Library,
   LayoutGrid,
   Zap,
@@ -36,7 +36,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 import HistoryManageDialog from './HistoryManageDialog'
 import { TaskDndProvider } from '@/features/projects'
-import { useInboxUnreadCount } from '@/features/inbox'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,7 +58,15 @@ const getPathHref = (pathEntry: PathEntry | undefined, fallback: string): string
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox' | 'resource-library'
+  pageType?:
+    | 'chat'
+    | 'code'
+    | 'flow'
+    | 'knowledge'
+    | 'devices'
+    | 'inbox'
+    | 'collaboration'
+    | 'resource-library'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
@@ -108,9 +115,6 @@ export default function TaskSidebar({
   const desktopScrollRef = useRef<HTMLDivElement>(null)
   const mobileScrollRef = useRef<HTMLDivElement>(null)
   const moreNavCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Inbox unread count
-  const { unreadCount: inboxUnreadCount } = useInboxUnreadCount()
 
   // Use external state for search dialog (controlled by parent page)
   const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {})
@@ -172,6 +176,7 @@ export default function TaskSidebar({
     | 'knowledge'
     | 'devices'
     | 'inbox'
+    | 'collaboration'
     | 'resource-library'
     | 'wework'
   interface NavigationButton {
@@ -191,7 +196,7 @@ export default function TaskSidebar({
   const feedPath = getPathHref(paths.feed, '/feed')
   const wikiPath = getPathHref(paths.wiki, '/knowledge')
   const devicesPath = getPathHref(paths.devices, '/devices')
-  const inboxPath = getPathHref(paths.inbox, '/inbox')
+  const collaborationPath = getPathHref(paths.collaboration, '/collaboration')
   const resourceLibraryPath = getPathHref(paths.resourceLibrary, '/resource-library')
   const codingNavItem = getCodingNavItem()
   const isCodeAgentActive =
@@ -239,12 +244,12 @@ export default function TaskSidebar({
       buttonPageType: 'devices',
     },
     {
-      label: t('common:navigation.inbox'),
-      icon: Inbox,
-      path: inboxPath,
-      isActive: pageType === 'inbox',
-      buttonPageType: 'inbox',
-      unreadCount: inboxUnreadCount,
+      label: t('common:navigation.collaboration'),
+      icon: Handshake,
+      path: collaborationPath,
+      isActive: pageType === 'collaboration',
+      buttonPageType: 'collaboration',
+      testId: 'task-sidebar-nav-collaboration-button',
     },
   ]
 

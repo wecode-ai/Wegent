@@ -34,4 +34,11 @@ describe('createBackendWorkbenchServices', () => {
     expect(services.attachmentApi?.uploadAttachment).toBeTypeOf('function')
     expect(services.attachmentApi?.deleteAttachment).toBeTypeOf('function')
   })
+
+  test('provides the shared collaboration API to the desktop host', () => {
+    const services = createBackendWorkbenchServices(baseOptions)
+
+    expect(services.collaborationApi?.listProjects).toBeTypeOf('function')
+    expect(services.collaborationApi?.getBoardSnapshot).toBeTypeOf('function')
+  })
 })

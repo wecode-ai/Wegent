@@ -670,7 +670,7 @@ function runtimeWorkItemReference(
     : null
 }
 
-interface CloudTodoWorkspaceProps {
+export interface CloudTodoWorkspaceProps {
   user: UserProfile
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null

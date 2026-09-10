@@ -27,6 +27,8 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
@@ -89,6 +91,57 @@ def cloud_file_storage(monkeypatch: pytest.MonkeyPatch) -> FakeCloudFileStorage:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _create_chat_message(
+    db: Session,
+    *,
+    user_id: int,
+    role: SubtaskRole,
+    prompt: str,
+    result: dict[str, object] | None = None,
+) -> tuple[TaskResource, Subtask]:
+    task = TaskResource(
+        user_id=user_id,
+        kind="Task",
+        name="Release discussion",
+        namespace="default",
+        json={
+            "kind": "Task",
+            "metadata": {
+                "name": "release-discussion",
+                "namespace": "default",
+            },
+            "spec": {},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
+    db.add(task)
+    db.flush()
+    message = Subtask(
+        user_id=user_id,
+        task_id=task.id,
+        team_id=1,
+        title="Release message",
+        bot_ids=[],
+        role=role,
+        executor_namespace="",
+        executor_name="",
+        prompt=prompt,
+        result=result,
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=1,
+        parent_id=None,
+        error_message="",
+        completed_at=datetime.now(),
+        created_at=datetime.now(),
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(task)
+    db.refresh(message)
+    return task, message
 
 
 def _create_runnable_wegent_team(
@@ -1111,6 +1164,159 @@ def test_backend_routes_gitlab_updates_and_comments(
     assert any(method == "PUT" for method, _, _ in requests)
     assert any(url.endswith("/notes") for _, url, _ in requests)
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
+
+
+def test_internal_issue_comments_are_persisted_and_listed(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "comment", "name": "Comment project"},
+    ).json()
+    issue = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Review comments"},
+    ).json()
+
+    created = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+        json={"body": "Ship after the final review."},
+    )
+    listed = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+    )
+
+    assert created.status_code == 201
+    assert created.json()["body"] == "Ship after the final review."
+    assert created.json()["author"]
+    assert listed.status_code == 200
+    assert listed.json() == [created.json()]
+
+
+def test_chat_message_import_creates_issue_from_immutable_snapshot(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    task, message = _create_chat_message(
+        test_db,
+        user_id=test_user.id,
+        role=SubtaskRole.USER,
+        prompt="Keep this exact decision in the collaboration Issue.",
+    )
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "import", "name": "Imported discussions"},
+    ).json()
+
+    imported = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "new_issue", "title": "Release decision"},
+            "note": "Captured on September 10, 2026.",
+        },
+    )
+
+    assert imported.status_code == 201
+    issue = imported.json()["issue"]
+    assert issue["title"] == "Release decision"
+    assert "Keep this exact decision" in issue["description"]
+    assert "Captured on September 10, 2026." in issue["description"]
+
+    message.prompt = "This later edit must not change the imported Issue."
+    test_db.commit()
+    persisted = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(test_token),
+    )
+    assert persisted.status_code == 200
+    assert "Keep this exact decision" in persisted.json()["description"]
+    assert "later edit" not in persisted.json()["description"]
+
+
+def test_chat_message_import_appends_to_existing_issue_and_rejects_missing_message(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    task, message = _create_chat_message(
+        test_db,
+        user_id=test_user.id,
+        role=SubtaskRole.ASSISTANT,
+        prompt="fallback",
+        result={"value": "The deployment is ready."},
+    )
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "append", "name": "Existing Issue imports"},
+    ).json()
+    issue = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Deployment"},
+    ).json()
+    other_project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "other", "name": "Other imports"},
+    ).json()
+    other_issue = test_client.post(
+        f"/api/v1/cloud-projects/{other_project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unrelated deployment"},
+    ).json()
+
+    imported = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "existing_issue", "issue_id": issue["id"]},
+        },
+    )
+    missing = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id + 10_000],
+            "target": {"kind": "existing_issue", "issue_id": issue["id"]},
+        },
+    )
+    wrong_project = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "existing_issue", "issue_id": other_issue["id"]},
+        },
+    )
+    comments = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+    )
+
+    assert imported.status_code == 201
+    assert imported.json()["issue"]["id"] == issue["id"]
+    assert "The deployment is ready." in imported.json()["comment"]["body"]
+    assert missing.status_code == 404
+    assert wrong_project.status_code == 404
+    assert comments.status_code == 200
+    assert len(comments.json()) == 1
 
 
 def test_todo_lifecycle_and_multiple_local_tasks(

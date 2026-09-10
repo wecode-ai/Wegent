@@ -1,5 +1,7 @@
 import { Check, Cloud, Copy, HardDrive, Plus, Search, Settings2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { CollaborationProjectSummary } from '@wegent/collaboration'
+import '@wegent/collaboration/styles.css'
 import type { CloudLoopItem, CloudMyWorkItem, CloudProjectMember } from '@/api/deliveries'
 import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTime'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -88,10 +90,11 @@ function ProjectSpaceRow({
       }}
       className="group grid h-11 w-full cursor-pointer grid-cols-[minmax(0,1fr)_64px_84px_108px] items-center border-b border-border px-2 text-left transition hover:bg-muted/60"
     >
-      <span className="flex min-w-0 items-center gap-2.5">
-        <LocationIcon className="h-4 w-4 shrink-0 text-text-muted" />
-        <span className="truncate text-sm font-medium">{project.name}</span>
-      </span>
+      <CollaborationProjectSummary
+        project={project}
+        description={project.location === 'local' ? localLabel : project.project_key}
+        leading={<LocationIcon className="h-4 w-4 shrink-0 text-text-muted" />}
+      />
       <span className="text-xs text-text-muted">{taskCountLabel}</span>
       <span className="text-xs text-text-muted">{project.updated_at.slice(5, 10)}</span>
       <span className="flex items-center">

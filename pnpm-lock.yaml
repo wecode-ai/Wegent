@@ -241,6 +241,9 @@ importers:
       '@wegent/chat-core':
         specifier: workspace:*
         version: link:../packages/chat-core
+      '@wegent/collaboration':
+        specifier: workspace:*
+        version: link:../packages/collaboration
       '@xyflow/react':
         specifier: ^12.11.2
         version: 12.11.2(@types/react-dom@19.2.4(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -484,6 +487,21 @@ importers:
         specifier: ^4.1.7
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@24.13.2)(@vitest/coverage-istanbul@4.1.8)(jsdom@28.1.0)(msw@2.14.6(@types/node@24.13.2)(typescript@5.9.3))(vite@8.0.16(@types/node@24.13.2)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.4)(yaml@2.9.0))
 
+  packages/collaboration:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.2.17
+      react:
+        specifier: ^19.2.6
+        version: 19.2.7
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.7
+        version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@24.13.2)(@vitest/coverage-istanbul@4.1.8)(jsdom@28.1.0)(msw@2.14.6(@types/node@24.13.2)(typescript@6.0.3))(vite@8.0.16(@types/node@24.13.2)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.22.4)(yaml@2.9.0))
+
   wework:
     dependencies:
       '@blocknote/core':
@@ -615,6 +633,9 @@ importers:
       '@wegent/chat-core':
         specifier: workspace:*
         version: link:../packages/chat-core
+      '@wegent/collaboration':
+        specifier: workspace:*
+        version: link:../packages/collaboration
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0

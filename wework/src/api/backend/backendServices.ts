@@ -20,6 +20,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
+import { createCollaborationApi } from '@wegent/collaboration'
 import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import { createProjectAutomationApi } from '@/api/projectAutomations'
@@ -96,6 +97,7 @@ export function createBackendWorkbenchServices(
     taskApi,
     deviceApi,
     deliveryApi,
+    collaborationApi: createCollaborationApi(client),
     feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl) : undefined,
     projectSpaceApis: {
       cloud: deliveryApi,

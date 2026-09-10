@@ -26,6 +26,7 @@ from app.models.delivery import (
     LoopItem,
     LoopItemAttachment,
     LoopItemCollaborator,
+    LoopItemComment,
     ProjectAutomationRule,
     ProjectChatAgent,
     adapt_loop_node_values_for_dialect,
@@ -759,6 +760,70 @@ class LoopItemService:
         item = self._get_item_row(db, item_id)
         self._require_item_access(db, item, user_id)
         return item
+
+    def list_comments(
+        self, db: Session, item_id: str, user_id: int
+    ) -> list[dict[str, object]]:
+        self.get(db, item_id, user_id)
+        comments = (
+            db.query(LoopItemComment)
+            .filter(
+                LoopItemComment.loop_item_id == item_id,
+                loop_datetime_is_unset(LoopItemComment.deleted_at),
+            )
+            .order_by(LoopItemComment.created_at.asc())
+            .all()
+        )
+        author_ids = {
+            comment.created_by_user_id
+            for comment in comments
+            if comment.created_by_user_id
+        }
+        authors = (
+            {
+                user.id: user.user_name
+                for user in db.query(User).filter(User.id.in_(author_ids)).all()
+            }
+            if author_ids
+            else {}
+        )
+        return [
+            {
+                "id": comment.id,
+                "body": comment.description,
+                "author": authors.get(comment.created_by_user_id, ""),
+                "web_url": None,
+                "created_at": comment.created_at,
+                "updated_at": comment.updated_at,
+            }
+            for comment in comments
+        ]
+
+    def add_comment(
+        self, db: Session, item_id: str, user_id: int, body: str
+    ) -> dict[str, object]:
+        item = self.get(db, item_id, user_id)
+        self._require_item_access(db, item, user_id, edit=True)
+        comment = LoopItemComment(
+            cloud_project_id=item.cloud_project_id,
+            loop_item_id=item.id,
+            description=body,
+            created_by_user_id=user_id,
+            updated_by_user_id=user_id,
+            status="active",
+        )
+        db.add(comment)
+        db.commit()
+        db.refresh(comment)
+        author = db.get(User, user_id)
+        return {
+            "id": comment.id,
+            "body": comment.description,
+            "author": author.user_name if author else "",
+            "web_url": None,
+            "created_at": comment.created_at,
+            "updated_at": comment.updated_at,
+        }
 
     def list_attachments(
         self, db: Session, item_id: str, user_id: int

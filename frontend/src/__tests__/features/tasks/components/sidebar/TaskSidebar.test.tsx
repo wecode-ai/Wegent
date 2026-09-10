@@ -65,7 +65,7 @@ type MockPaths = {
   code?: { getHref: () => string }
   wiki?: { getHref: () => string }
   devices?: { getHref: () => string }
-  inbox?: { getHref: () => string }
+  collaboration?: { getHref: () => string }
   chat?: { getHref: () => string }
   resourceLibrary?: { getHref: () => string }
 }
@@ -100,7 +100,7 @@ jest.mock('@/config/paths', () => ({
     code: { getHref: () => '/chat?agent=code' },
     wiki: { getHref: () => '/knowledge' },
     devices: { getHref: () => '/devices' },
-    inbox: { getHref: () => '/inbox' },
+    collaboration: { getHref: () => '/collaboration' },
     chat: { getHref: () => '/chat' },
     resourceLibrary: { getHref: () => '/resource-library' },
   }),
@@ -286,7 +286,9 @@ describe('TaskSidebar scroll structure', () => {
     )
     expect(within(fixedSection).getByLabelText('More navigation')).toHaveClass('lucide-layout-grid')
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
-    expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
+    expect(
+      within(fixedSection).queryByText('common:navigation.collaboration')
+    ).not.toBeInTheDocument()
     expect(
       within(fixedSection)
         .getByTestId('resource-library-sidebar-button')
@@ -295,7 +297,9 @@ describe('TaskSidebar scroll structure', () => {
 
     expect(within(scrollableSection).queryByText('common:navigation.wiki')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
-    expect(within(scrollableSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
+    expect(
+      within(scrollableSection).queryByText('common:navigation.collaboration')
+    ).not.toBeInTheDocument()
   })
 
   it('keeps the project section available when there are no history tasks', () => {
@@ -367,7 +371,7 @@ describe('TaskSidebar scroll structure', () => {
       feed: undefined,
       wiki: undefined,
       devices: undefined,
-      inbox: undefined,
+      collaboration: undefined,
       chat: undefined,
       resourceLibrary: undefined,
     })
@@ -397,7 +401,7 @@ describe('TaskSidebar scroll structure', () => {
     const flyout = screen.getByTestId('task-sidebar-more-flyout')
     expect(within(flyout).queryByText('resource-library:title')).not.toBeInTheDocument()
     expect(within(flyout).getByText('devices:my_devices')).toBeInTheDocument()
-    expect(within(flyout).getByText('common:navigation.inbox')).toBeInTheDocument()
+    expect(within(flyout).getByText('common:navigation.collaboration')).toBeInTheDocument()
   })
 
   it('moves secondary navigation back into the scrollable area when the config is disabled', () => {
@@ -413,11 +417,15 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
     expect(within(fixedSection).getByText('resource-library:title')).toBeInTheDocument()
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
-    expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
+    expect(
+      within(fixedSection).queryByText('common:navigation.collaboration')
+    ).not.toBeInTheDocument()
 
     expect(within(scrollableSection).queryByText('resource-library:title')).not.toBeInTheDocument()
     expect(within(scrollableSection).getByText('devices:my_devices')).toBeInTheDocument()
-    expect(within(scrollableSection).getByText('common:navigation.inbox')).toBeInTheDocument()
+    expect(
+      within(scrollableSection).getByText('common:navigation.collaboration')
+    ).toBeInTheDocument()
   })
 
   it('scrolls the sidebar when wheeling over the fixed section', () => {

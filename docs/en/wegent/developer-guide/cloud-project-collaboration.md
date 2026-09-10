@@ -17,6 +17,16 @@ A cloud project is not the existing `Project` model:
 - Local projects owned by different members may independently select the same cloud project; the cloud project stores no reverse link.
 - One TODO may link to many Wework Tasks, while one Task may process at most one active TODO at a time.
 
+## Client reuse boundary
+
+Wegent Web replaces the former **Inbox** entry with **Collaboration** and directly reuses the Backend APIs for cloud projects, board Issues, comments, attachments, shared files, members, and execution records. Web and Wework do not maintain a second domain model or API surface.
+
+Cross-client types, API clients, copy, test contracts, and host-independent React components live in `packages/collaboration`. `CollaborationApp` is the sole primary interface for cloud projects in both Web and Wework. It owns the project home, board, Issue details, comments, attachments, files, members, runs, and project settings; the clients must not maintain parallel cloud-collaboration pages.
+
+Web supplies Next.js routing, notifications, and external-link behavior through a host adapter. Wework uses the same adapter to inject local project storage and a **Desktop tools** entry. Only local projects, terminals, device execution, AI orchestration, and other behavior that depends on Electron, the local filesystem, or the local executor may enter the desktop-specific workspace. New portable behavior must land in the shared package first instead of being copied into both hosts and synchronized later.
+
+When chat messages enter a collaboration space, the Backend creates immutable message snapshots from a source Task the current user is authorized to access. The target may be a new Issue or a comment on an existing Issue. Clients must not write chat text directly as if it were a trusted snapshot.
+
 ## Domain relationships
 
 ```text

@@ -342,6 +342,10 @@ class LoopItemCollaborator(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "collaborator"}
 
 
+class LoopItemComment(LoopNode):
+    __mapper_args__ = {"polymorphic_identity": "comment"}
+
+
 class Delivery(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "delivery"}
 

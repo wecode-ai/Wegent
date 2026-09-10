@@ -1244,11 +1244,32 @@ def add_loop_item_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemCommentResponse:
+    if not external_loop_item_provider.is_external_item(db, item_id):
+        return LoopItemCommentResponse.model_validate(
+            loop_item_service.add_comment(db, item_id, current_user.id, values.body)
+        )
     return LoopItemCommentResponse.model_validate(
         external_loop_item_provider.add_comment(
             db, item_id, current_user.id, values.body
         )
     )
+
+
+@router.get(
+    "/loop-items/{item_id}/comments",
+    response_model=list[LoopItemCommentResponse],
+)
+def list_loop_item_comments(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> list[LoopItemCommentResponse]:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        return []
+    return [
+        LoopItemCommentResponse.model_validate(comment)
+        for comment in loop_item_service.list_comments(db, item_id, current_user.id)
+    ]
 
 
 @router.get(

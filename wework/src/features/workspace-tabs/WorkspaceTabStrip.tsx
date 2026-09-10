@@ -170,7 +170,7 @@ function WorkspaceTabButton({
             tab.id,
             !active && tab.fixed && tab.kind === 'board'
               ? {
-                  title: t('workbench.workspace_tab_board', '工作空间'),
+                  title: t('workbench.workspace_tab_board', '协作'),
                   contentRoute: defaultContentRoute('board'),
                 }
               : undefined
@@ -364,7 +364,7 @@ export function WorkspaceTabStrip({
   const addMenuKinds = (
     [
       ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
-      ['board', Columns3, t('workbench.workspace_tab_board', '工作空间视图')],
+      ['board', Columns3, t('workbench.workspace_tab_board', '协作')],
       ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
     ] as const
   ).filter(([kind]) => availableKindSet.has(kind))
