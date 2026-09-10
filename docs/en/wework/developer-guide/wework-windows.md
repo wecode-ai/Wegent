@@ -68,15 +68,8 @@ Icons, plugins, runtime descriptors, and sidecars come from
 `wework/resources/` and are copied into the application by
 `wework/electron/scripts/prepare-package-assets.mjs`.
 
-The installer also migrates legacy Tauri installations to Electron. It accepts
-the `/P` argument passed by the Tauri updater, reads the legacy
-`Software\you\WeWork` registry entry, and keeps the
-`%LOCALAPPDATA%\WeWork` installation directory. After the Update action
-installs Electron, the legacy client relaunches the same `WeWork.exe` path.
-This avoids a second installation directory and preserves user data.
-The Executor started by Electron continues to use the existing `.wework`
-directory under the user's home directly; no directory copy or data migration
-is performed.
+The installer uses Electron Builder's standard NSIS installation flow without
+custom passive-install arguments or installation registry migration.
 
 ## Verification
 
@@ -107,8 +100,8 @@ same selected shards. Windows path, drive-letter, UNC, named-pipe, and `.exe`
 sidecar behavior must be verified by this Windows job and cannot be inferred
 from another platform passing.
 
-`.github/workflows/wework-app.yml` creates the signed installer, Electron YAML
-update manifest, and legacy Tauri JSON/signature bridge on `windows-latest`.
+`.github/workflows/wework-app.yml` creates the signed installer and Electron
+YAML update manifest on `windows-latest`.
 
 ## Troubleshooting
 

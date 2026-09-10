@@ -60,6 +60,11 @@ describe('local delivery API', () => {
       task_id: 'runtime-2',
       task_title: 'Second task',
       backend_task_id: null,
+      modelSelection: {
+        modelName: 'gpt-5.6-sol',
+        modelType: 'public',
+        options: { reasoning: 'high' },
+      },
       workflow_node_id: null,
       linked_at: '2026-08-21T00:00:00Z',
     }
@@ -72,7 +77,17 @@ describe('local delivery API', () => {
 
     await expect(api.getBoardSnapshot('project-1')).resolves.toMatchObject({
       items: [{ id: 'LOCAL-1' }, { id: 'LOCAL-2' }],
-      task_bindings: [{ id: 7, task_id: 'runtime-2' }],
+      task_bindings: [
+        {
+          id: 7,
+          task_id: 'runtime-2',
+          modelSelection: {
+            modelName: 'gpt-5.6-sol',
+            modelType: 'public',
+            options: { reasoning: 'high' },
+          },
+        },
+      ],
       members: [],
       agents: [],
     })
@@ -83,6 +98,67 @@ describe('local delivery API', () => {
     expect(request).toHaveBeenNthCalledWith(2, 'todos.bindings.batch', {
       task_ids: ['LOCAL-1', 'LOCAL-2'],
     })
+  })
+
+  test('preserves and clears unread state for local board cards', async () => {
+    const unreadTask = {
+      ...taskRecord,
+      metadata: { ...taskRecord.metadata, is_unread: true },
+    }
+    const readTask = {
+      ...unreadTask,
+      metadata: { ...unreadTask.metadata, is_unread: false },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [unreadTask]
+      if (method === 'todos.mark_read') return readTask
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
+      items: [{ id: 'LOCAL-1', is_unread: true }],
+    })
+    await expect(api.markLoopItemRead('LOCAL-1')).resolves.toMatchObject({
+      id: 'LOCAL-1',
+      is_unread: false,
+    })
+    expect(request).toHaveBeenLastCalledWith('todos.mark_read', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+    })
+  })
+
+  test('maps the executor-owned Issue context marker', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') {
+        return [
+          {
+            ...taskRecord,
+            metadata: {
+              tags: [],
+              has_additional_context: false,
+              runtime_projection: {
+                source_title: taskRecord.title,
+                source_description: taskRecord.description,
+              },
+            },
+          },
+          {
+            ...taskRecord,
+            id: 'LOCAL-2',
+            metadata: { tags: [] },
+          },
+        ]
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    const { items } = await api.listLoopItems('project-1')
+
+    expect(items[0].has_additional_context).toBe(false)
+    expect(items[1].has_additional_context).toBe(true)
   })
 
   test('lists every task execution associated with a work-item project', async () => {
@@ -513,7 +589,17 @@ describe('local delivery API', () => {
       throw new Error(`Unexpected method: ${method}`)
     })
     const api = createLocalDeliveryApi(request)
-    const runtimeTask = { deviceId: 'local-device', taskId: 'runtime-1' }
+    const runtimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'public' as const,
+          options: { reasoning: 'high' },
+        },
+      },
+    }
 
     await api.listLoopItems('project-1')
     await api.bindTask('LOCAL-1', runtimeTask, 'Runtime')
@@ -525,7 +611,9 @@ describe('local delivery API', () => {
       task: {
         deviceId: 'local-device',
         taskId: 'runtime-1',
+        runtimeHandle: runtimeTask.runtimeHandle,
         taskTitle: 'Runtime',
+        modelSelection: runtimeTask.runtimeHandle.modelSelection,
       },
     })
   })

@@ -3843,6 +3843,21 @@ async fn codex_instructions_write_rejects_non_string_payload() {
 }
 
 #[tokio::test]
+async fn codex_login_cancel_requires_a_login_id() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+    let result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.auth.login.cancel",
+            "payload": {}
+        }))
+        .await;
+
+    let error = result.expect_err("missing login id should be rejected");
+    assert_eq!(error.code, "invalid_request");
+}
+
+#[tokio::test]
 async fn codex_personality_write_rejects_unsupported_value() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
@@ -3879,7 +3894,7 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
 }
 
 #[test]
-fn transcript_sync_allows_import_before_native_thread_exists() {
+fn transcript_sync_requires_restore_before_native_thread_exists() {
     let index_path = temp_runtime_work_index_path("transcript-sync-pending-thread");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -3899,11 +3914,61 @@ fn transcript_sync_allows_import_before_native_thread_exists() {
             "taskId": "local-task-1",
             "transcriptId": "cloud-transcript-1",
         }))
-        .expect("pending native thread should remain importable");
+        .expect("pending native thread should require native restore");
 
     assert_eq!(result["available"], true);
-    assert_eq!(result["importedThrough"], 3);
-    assert_eq!(result["reason"], "thread_pending");
+    assert_eq!(result["importedThrough"], 0);
+    assert_eq!(result["reason"], "restore_required");
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn transcript_sync_rekeys_the_local_task_when_a_conflicting_turn_forks() {
+    let index_path = temp_runtime_work_index_path("transcript-sync-fork");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "parent-transcript".to_owned(),
+        "/tmp/project".to_owned(),
+        "Local conflicting branch".to_owned(),
+    );
+    link.thread_id = Some("local-thread".to_owned());
+    link.runtime_handle["cloudTranscript"] = json!({
+        "transcriptId": "parent-transcript",
+        "importedThrough": 3,
+        "rolloutBytes": 120,
+    });
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .acknowledge_transcript_turn(json!({
+            "taskId": "parent-transcript",
+            "transcriptId": "fork-transcript",
+            "parentTranscriptId": "parent-transcript",
+            "sequence": 1,
+            "rolloutEnd": 240,
+        }))
+        .expect("fork acknowledgement should move the local task");
+
+    assert_eq!(result["taskId"], "fork-transcript");
+    assert_eq!(result["available"], true);
+    assert!(handler.local_task_link("parent-transcript").is_none());
+    let branch = handler
+        .local_task_link("fork-transcript")
+        .expect("forked local task should use the branch transcript ID");
+    assert_eq!(branch.thread_id.as_deref(), Some("local-thread"));
+    assert_eq!(
+        branch.runtime_handle["cloudTranscript"]["transcriptId"],
+        "fork-transcript"
+    );
+    assert_eq!(
+        branch.runtime_handle["cloudTranscript"]["importedThrough"],
+        1
+    );
+    assert_eq!(
+        branch.runtime_handle["cloudTranscript"]["requiresSnapshot"],
+        false
+    );
     let _ = fs::remove_file(index_path);
 }
 

@@ -406,6 +406,27 @@ impl RuntimeWorkStore {
         self.update_task_with_persistence(local_task_id, updater, true)
     }
 
+    pub fn rekey_task(
+        &self,
+        local_task_id: &str,
+        new_local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> Option<RuntimeTaskLink> {
+        self.refresh_index_from_disk_if_changed();
+        let mut index = self.index.lock().ok()?;
+        if local_task_id != new_local_task_id && index.tasks.contains_key(new_local_task_id) {
+            return None;
+        }
+        let mut task = index.tasks.remove(local_task_id)?;
+        updater(&mut task);
+        task.local_task_id = new_local_task_id.to_owned();
+        let updated = task.clone();
+        index.tasks.insert(new_local_task_id.to_owned(), task);
+        drop(index);
+        self.persist_current_index();
+        Some(updated)
+    }
+
     fn update_task_with_persistence(
         &self,
         local_task_id: &str,

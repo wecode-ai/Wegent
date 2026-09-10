@@ -2,8 +2,8 @@ import { FolderOpen, Loader2, Puzzle, X } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getErrorMessage } from '@/lib/error-message'
 import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
+import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 
 interface SmartAppPluginDialogProps {
   displayName: string
@@ -39,9 +39,10 @@ export function SmartAppPluginDialog({
       onClose()
     } catch (installError) {
       setError(
-        getErrorMessage(
+        getSmartAppErrorMessage(
           installError,
-          t('workbench.smart_app_plugin_install_failed', '添加 DSH 插件失败')
+          t('workbench.smart_app_plugin_install_failed', '添加 DSH 插件失败'),
+          t
         )
       )
     } finally {

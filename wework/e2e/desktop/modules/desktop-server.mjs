@@ -1181,6 +1181,14 @@ class DesktopE2EServer {
       return
     }
 
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
+    ) {
+      json(response, 200, null)
+      return
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
       json(response, 200, { apps: [] })
       return
@@ -2108,6 +2116,12 @@ class DesktopE2EServer {
     }
 
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
+      if (JSON.stringify(body).includes('Read wework-plugin-creator before scaffolding')) {
+        assert.ok(
+          JSON.stringify(body).includes('wework-plugin-creator/SKILL.md'),
+          'Wework Plugin Creator did not resolve its shipped skill'
+        )
+      }
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PLUGIN_CREATOR_COMPLETION_TEXT),
@@ -3290,7 +3304,13 @@ class DesktopE2EServer {
 
     if (this.scenario === 'request_user_input') {
       this.recordScenarioRequest('request_user_input', modelRequest)
-      if (JSON.stringify(body.input).includes('wework-e2e-request-user-input')) {
+      const answer = toolOutputText(body, 'wework-e2e-request-user-input')
+      if (answer !== null) {
+        assert.deepEqual(
+          JSON.parse(answer),
+          { answers: { direction: { answers: ['Complete'] } } },
+          'Codex must receive the selected answer, not a mode restriction error'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           assistantMessage(REQUEST_USER_INPUT_COMPLETION_TEXT),
@@ -4246,6 +4266,20 @@ class DesktopE2EServer {
     )
     assert.ok(applyPatch, `${matrixCaseId(model)} did not advertise apply_patch`)
     if (model.protocol === 'responses') {
+      const hasNativeToolSearch = tools.some(tool => tool?.type === 'tool_search')
+      if (model.modelId === 'gpt-6-astra') {
+        assert.ok(
+          hasNativeToolSearch,
+          `${matrixCaseId(model)} did not preserve Astra native tool_search`
+        )
+      }
+      if (!hasNativeToolSearch) {
+        assert.equal(
+          tools.some(tool => tool?.defer_loading === true),
+          false,
+          `${matrixCaseId(model)} advertised defer_loading without native tool_search`
+        )
+      }
       assert.equal(
         applyPatch.type,
         model.source === 'local' ? 'function' : 'custom',

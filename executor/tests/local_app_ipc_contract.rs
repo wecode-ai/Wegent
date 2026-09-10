@@ -763,6 +763,16 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert_eq!(todos.as_array().unwrap().len(), 2);
     assert_eq!(child["parent_id"], parent["id"]);
 
+    let read_child = server
+        .dispatch(
+            "todos.mark_read",
+            json!({"project_id": project_id, "task_id": child["id"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_child["id"], child["id"]);
+    assert_ne!(read_child["metadata"]["is_unread"], json!(true));
+
     let updated = server
         .dispatch(
             "todos.update",
@@ -886,6 +896,73 @@ async fn app_ipc_reconciles_runtime_status_at_task_service_boundaries() {
         .unwrap();
 
     assert_eq!(*reconciliations.lock().unwrap(), 2);
+}
+
+#[tokio::test]
+async fn app_ipc_preserves_task_binding_model_selection() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Bound Model",
+                "project_key": "MODEL",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {"title": "Preserve the session model"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    let binding = server
+        .dispatch(
+            "todos.bind",
+            json!({
+                "project_id": project["id"],
+                "item_id": task["id"],
+                "task": {
+                    "deviceId": "local-device",
+                    "taskId": "runtime-model-1",
+                    "taskTitle": "Preserve the session model",
+                    "modelSelection": {
+                        "modelName": "gpt-5.6-sol",
+                        "modelType": "public",
+                        "options": {"reasoning": "high"}
+                    }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(binding["modelSelection"]["modelName"], "gpt-5.6-sol");
+    let bindings = server
+        .dispatch("todos.bindings.batch", json!({"task_ids": [task["id"]]}))
+        .await
+        .unwrap();
+    assert_eq!(
+        bindings[0]["modelSelection"],
+        json!({
+            "modelName": "gpt-5.6-sol",
+            "modelType": "public",
+            "options": {"reasoning": "high"}
+        })
+    );
 }
 
 #[tokio::test]
@@ -1604,6 +1681,17 @@ async fn app_ipc_lists_codex_skills_from_runtime_directories() {
     assert_eq!(response["ok"], true);
     assert_eq!(response["result"]["success"], true);
     let skills = response["result"]["stdout"].as_array().unwrap();
+    assert_eq!(skills.len(), 4);
+    let creator = skills
+        .iter()
+        .find(|skill| skill["name"] == "wework-plugin-creator")
+        .unwrap();
+    assert_eq!(creator["source"], "codex");
+    assert!(Path::new(creator["path"].as_str().unwrap()).is_file());
+    let skills = skills
+        .iter()
+        .filter(|skill| skill["name"] != "wework-plugin-creator")
+        .collect::<Vec<_>>();
     assert_eq!(skills.len(), 3);
     assert_eq!(skills[0]["name"], json!("codex-review"));
     assert_eq!(

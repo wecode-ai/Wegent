@@ -9,8 +9,9 @@ title: Plugin account authentication
 
 The implementation includes the Backend, native Executor, background account connections,
 Python SDK 0.7.1, and email and DWS native adapters. Isolated real Backend, Electron and
-remote-executor E2E tests cover 17 assertions, including runtime-copy execution, password
-updates, offline OAuth refresh, recoverable DWS handoff and device revocation. Email 0.2.3
+remote-executor E2E tests cover 20 assertions, including runtime-copy execution, password
+updates, offline OAuth refresh, recoverable DWS handoff, device revocation, and managed
+status, logout and relogin through the original local entry. Email 0.2.3
 has also passed a real-account read on a simulated remote device in a local test environment.
 Five-platform adapter packaging, public-repository build CI and internal declarative plugin
 builds are connected. Production publication, real-provider OAuth and native Windows
@@ -74,6 +75,28 @@ is sufficient; plugin authors need no additional installation hook or device int
 callbacks must only read existing state and fail without initiating login when no credential exists.
 After an exclusive DWS handoff, Wework commands detect the durable transfer receipt and use the
 account broker, requiring backend connectivity. The original external CLI grant is removed.
+
+### Existing local login entry and managed connections
+
+Managed plugins declaring both `localAuth` and `accountAuth` retain their original login entry.
+Health checks first probe authentication still owned locally, preserving offline local use. When
+that authentication has been removed or is unavailable, the native executor checks the account
+connection and current device grant. Local-auth children also receive the existing business broker
+environment, allowing SDK-based local calls with managed authentication.
+
+Logout first suspends synchronization for the plugin provenance and connector, disconnects its
+account connections so subsequent cloud calls lose authorization, and then runs local cleanup.
+Provider OAuth revocation uses the existing background queue. Failed local cleanup can be retried
+without restoring cloud access. A staged exclusive handoff returns `plugin_auth_transfer_pending`:
+its recovery must finish before logout can proceed. Plugin logout commands must clean up local
+state idempotently even when the provider token is already invalid.
+
+A successful login through the original entry records a synchronization intent bound to the source
+device instance, permitting fresh authentication to reconnect a disconnected account. Ordinary
+background probes cannot authorize this transition. Expired intents can be renewed; enrollment
+clears the pending marker, and logout fences existing intents. This integration uses the existing
+export, exclusive handoff, refresh and revoke contracts. It adds no plugin authentication protocol
+and exposes no account-management operations through the business broker.
 
 ## Backend configuration
 
@@ -225,3 +248,32 @@ Source-only packages cannot be published as complete native plugins.
 Local build and mocked GitLab API regression checks do not prove a remote pipeline
 has executed. Actual merged-MR publication requires pushed code, deployed services
 and verification in the configured release environment.
+
+### Local authorization diagnostic stream
+
+Local authorization commands can emit JSON lines prefixed with
+`WEWORK_PLUGIN_AUTH_DIAGNOSTIC:` on stderr. The Executor consumes them before the
+command exits and records allowlisted fields in the existing `executor.log`,
+which is already included in unified feedback exports. Stdout remains the command
+JSON result; plugins must not write directly to the Executor log file.
+
+Every local authorization invocation records start, process exit, completion, error,
+or cancellation with a host-generated invocation ID, manifest plugin name (null if
+unavailable), and elapsed time. Command success means invocation and JSON parsing
+succeeded, not that authentication succeeded; authentication status remains in the
+plugin JSON result.
+
+Any plugin can supply detailed diagnostics. Stage and status are required; platform,
+reason, error_code, hexadecimal 32-character attempt_id, and numeric exit_code and
+system_code are optional. Plugin-defined codes accept 1–64 ASCII letters, digits,
+underscores, hyphens, dots, or colons. Status is started, ok, or failed. Free-form text,
+unknown fields, and self-reported plugin identity are discarded. Never put credentials
+in code fields. The host attaches the manifest identity instead.
+
+Lines are limited to 4096 bytes and each invocation to 256 detailed events; the pipe
+continues draining after the limit. Stdout JSON behavior remains unchanged. Events
+already received remain available after timeout or cancellation.
+
+The email plugin must also emit this protocol and relay Windows stderr. Updating
+only the host cannot recover output discarded by the plugin launcher. Diagnostics
+do not include accounts, passwords, command arguments, or raw exception text.

@@ -68,6 +68,8 @@ const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
 const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
     "features.tool_call_mcp_elicitation=false";
 const CODEX_ENABLE_UPDATE_PLAN_OVERRIDE: &str = "tools.update_plan.enabled=true";
+const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
+    "features.default_mode_request_user_input=true";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
@@ -3359,6 +3361,7 @@ fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
     overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
+    overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
     overrides
 }
 
@@ -5004,26 +5007,6 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     Value::Object(params)
-}
-
-pub(crate) async fn start_codex_app_server_thread(
-    client: &CodexAppServerClient,
-    request: &ExecutionRequest,
-) -> Result<String, String> {
-    let launch_config = build_codex_launch_config(request)?;
-    client
-        .ensure_process_for_launch_config(&launch_config)
-        .await?;
-    let response = client
-        .request("thread/start", thread_start_params(request, &launch_config))
-        .await?;
-    let thread_id = thread_id_from_response(
-        "thread/start",
-        &response,
-        launch_config.model_provider.as_deref(),
-    )?;
-    bind_local_proxy_thread(&launch_config, &thread_id)?;
-    Ok(thread_id)
 }
 
 fn thread_fork_params(

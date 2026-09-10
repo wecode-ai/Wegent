@@ -8,6 +8,20 @@ The Wework desktop application uses Electron. Formal builds and releases are
 handled by `.github/workflows/wework-app.yml`, which produces Electron
 installers for macOS, Windows, and Linux.
 
+Both macOS arm64 and x64 releases use the Apple Silicon `macos-14` runner. The
+x64 build verifies Rosetta 2 and then installs x64 Node.js through
+`actions/setup-node`. Before installing dependencies, the workflow checks that
+the running Node.js architecture matches the target. Harness Runtime native
+dependencies follow the running Node.js architecture, so selecting an Electron
+Builder target alone cannot cross-build the complete runtime. If the
+architectures differ, correct the Node.js architecture and rebuild; do not
+reuse artifacts built for the wrong architecture or rerun only publication.
+
+When formal macOS arm64 package verification fails, the workflow prunes large
+temporary runtime directories and uploads desktop E2E diagnostics retained for
+seven days. Use those logs to establish the root cause instead of hiding a
+failure through reruns or weaker E2E assertions.
+
 ## Version and artifacts
 
 The release version is written to `wework/package.json` and
@@ -30,7 +44,7 @@ WeWork_<version>_windows_x64-setup.exe
 WeWork_<version>_linux_x64.AppImage
 ```
 
-## Automatic updates and the Tauri migration
+## Automatic updates
 
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
@@ -50,27 +64,9 @@ only one full-download recovery. The release workflow must fail when any
 required blockmap is missing. Differential plans, cumulative transferred bytes,
 and fallback reasons are written to `app-update.log`.
 
-The same release also emits signed manifests and artifacts for the legacy Tauri
-updater so installed Tauri builds can migrate through the existing Update UI:
-
-- On macOS, the signed Electron `WeWork.app` is additionally packed as an
-  `.app.tar.gz`. The Tauri updater replaces the bundle in place while the
-  bundle identifier and executable name remain unchanged.
-- On Windows, the Tauri updater downloads the Electron NSIS installer. The
-  installer accepts Tauri's passive `/P` argument and inherits the legacy
-  `Software\you\WeWork` registry entry and `%LOCALAPPDATA%\WeWork` installation
-  directory. It removes the old installation, writes Electron to the same path,
-  and the legacy relaunch starts Electron.
-- Electron directly reuses the legacy Executor Home at `~/.wework`; it does not
-  copy or migrate executor data. Local projects, tasks, sessions, and the Wework
-  Codex Home continue to load from that directory. The application identifier
-  `io.wecode.wework` and product name `WeWork` stay unchanged.
-- Linux continues to use manual AppImage replacement.
-
-Formal releases require the platform signing credentials plus
-`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The Tauri
-key signs only the bridge artifacts consumed by legacy clients. Subsequent
-Electron updates use the SHA-512 values in the YAML manifests.
+The release workflow emits only Electron YAML update manifests and component
+manifests. macOS and Windows use Electron's ZIP and NSIS update paths. Linux
+continues to use manual AppImage replacement.
 
 ## Initial package and component updates
 
@@ -226,6 +222,16 @@ readiness, and includes bytes transferred before a failed differential attempt.
 The local Squirrel.Mac handoff of the cached ZIP is not counted as network
 traffic.
 
+When one component download encounters an explicitly transient transport
+failure, the client makes at most three attempts, waiting one second and then
+two seconds before retrying. Retries are limited to interrupted connections,
+DNS, connection, or request timeouts, HTTP 408, HTTP 429, and HTTP 5xx
+responses. Other HTTP 4xx responses, archive size or SHA-256 mismatches, and
+extracted-content SHA-256 mismatches are not retried and remain real update
+failures. Bytes transferred by a failed component attempt are removed from the
+current progress before retrying. Failure events in `app-update.log` record the
+sanitized error type, code, message, and first-level cause without logging URLs.
+
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it
 to `PATH`, points `WEWORK_NODE_PATH`, `NODE`, and `npm_node_execpath` at
@@ -347,8 +353,8 @@ locks.
 
 `.github/workflows/wework-app.yml` supports stable and beta channels, an
 optional version override, parallel builds for three platforms, Actions
-artifacts, formal GitHub Releases, and rolling manifests for both Electron and
-legacy Tauri clients. The workflow automatically selects a component or full
+artifacts, formal GitHub Releases, and rolling Electron and component
+manifests. The workflow automatically selects a component or full
 publication from the source changes since the last published state; there is
 no manual release-kind input. Stable releases advance both stable and beta
 channels; beta releases advance only beta. The workflow installs the
@@ -357,9 +363,9 @@ the unified Electron build command. Desktop resource changes belong in
 `wework/resources/` or the Electron packaging scripts, not in a duplicated
 workflow resource list.
 
-A rolling channel may skip an equal-version upload only when both Electron YAML
-manifests, all three legacy Tauri JSON manifests, and component manifests for
-all four build targets exist. The workflow repairs an incomplete equal version
-and fails for an incomplete newer version instead of overwriting it with an
-older release. Component archives are never overwritten and are uploaded only
-when their content-addressed asset name is absent.
+A rolling channel may skip an equal-version upload only when both Electron
+YAML manifests and component manifests for all four build targets exist. The
+workflow repairs an incomplete equal version and fails for an incomplete newer
+version instead of overwriting it with an older release. Component archives
+are never overwritten and are uploaded only when their content-addressed asset
+name is absent.

@@ -21,6 +21,7 @@ from app.services.device.terminal_session_service import (
     REVOKE_TERMINAL_SESSION_SCRIPT,
     TERMINAL_SESSION_REVOCATION_PAYLOAD,
     RedisTerminalSessionStore,
+    TerminalSessionAuthorizationUnavailable,
     TerminalSessionService,
 )
 from tests.services.device.terminal_session_fakes import InMemoryTerminalSessionStore
@@ -607,14 +608,32 @@ async def test_terminal_session_listener_failure_denies_cached_authorization():
         store=store,
         invalidation_listener=listener,
     )
-    await service.register(_record(), ttl_seconds=60)
+    record = _record()
+    await service.register(record, ttl_seconds=60)
     listener.coherent = False
 
-    assert await service.get("terminal-1") is None
-    assert service.is_revoked("terminal-1") is True
+    with pytest.raises(TerminalSessionAuthorizationUnavailable):
+        await service.get("terminal-1")
+    assert service.is_revoked("terminal-1") is False
     assert store.get_calls == []
     with pytest.raises(RuntimeError, match="failing closed"):
         await service.register(_record("terminal-2"), ttl_seconds=60)
+
+    listener.coherent = True
+    assert await service.get("terminal-1") == record
+
+
+@pytest.mark.asyncio
+async def test_terminal_session_store_failure_is_authorization_unavailable():
+    store = CountingTerminalSessionStore()
+    store.get = AsyncMock(side_effect=RuntimeError("store unavailable"))
+    service = TerminalSessionService(store=store)
+
+    with pytest.raises(
+        TerminalSessionAuthorizationUnavailable,
+        match="store is unavailable",
+    ):
+        await service.get("terminal-1")
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
+  'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
@@ -49,8 +50,10 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
+  'project-event-sources': './scenarios/project-event-sources.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
+  'board-focus-view': './scenarios/board-focus-view.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -60,6 +63,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-account-auth',
+  'codex-account-login',
   'cloud-space-mention',
   'change-request-status',
   'claude-runtime',
@@ -67,6 +71,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-harness',
   'harness-apps',
   'offline-local-project-space',
+  'board-focus-view',
   'cloud-context-resilience',
   'plugin-development',
   'task-attachments',
@@ -89,6 +94,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'renderer-storage',
   'tray-lifecycle',
   'temporary-chat',
+  'project-event-sources',
   'browser-annotation-core',
   'browser-annotation-anchors',
   'browser-annotation-design',

@@ -31,7 +31,12 @@ import {
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
-import type { Attachment, RuntimeProjectPluginRef, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelSelectionConfig,
+  RuntimeProjectPluginRef,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
@@ -81,6 +86,7 @@ interface LocalTaskBindingRecord {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
   workflow_node_id?: string | null
   binding_type: 'system' | 'user'
   linked_at: string
@@ -653,7 +659,11 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     content_revision: 1,
-    is_unread: false,
+    has_additional_context:
+      typeof record.metadata.has_additional_context === 'boolean'
+        ? record.metadata.has_additional_context
+        : true,
+    is_unread: record.metadata.is_unread === true,
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -991,7 +1001,12 @@ export function createLocalDeliveryApi(
       return localTask(record)
     },
     async markLoopItemRead(itemId: string) {
-      return api.getLoopItem(itemId)
+      const projectId = await resolveProjectId(itemId)
+      const record = await request<LocalLoopItemRecord>('todos.mark_read', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      return localTask(record)
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {
@@ -1132,6 +1147,8 @@ export function createLocalDeliveryApi(
       workflowNodeId?: string | null
     ) {
       const projectId = await resolveProjectId(itemId)
+      const modelSelection =
+        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       await request('todos.bind', {
         project_id: projectId,
         item_id: itemId,
@@ -1139,6 +1156,7 @@ export function createLocalDeliveryApi(
           ...task,
           ...(taskTitle ? { taskTitle } : {}),
           ...(workflowNodeId ? { workflowNodeId } : {}),
+          ...(modelSelection ? { modelSelection } : {}),
         },
       })
     },

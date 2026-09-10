@@ -636,9 +636,26 @@ function getCommandExecutable(command?: string): string {
   return executable?.toLowerCase() ?? ''
 }
 
-function unwrapShellCommand(command: string): string {
-  const match = command.match(/(?:^|\s)-lc\s+(['"])([\s\S]*)\1/)
-  return (match?.[2] ?? command).trim()
+export function unwrapShellCommand(command: string): string {
+  let current = command.trim()
+
+  for (let depth = 0; depth < 4; depth += 1) {
+    const words = splitShellWords(current)
+    const executableIndex = getExecutableWordIndex(words)
+    const executable = basename(words[executableIndex] ?? '').toLowerCase()
+    const commandArgument = words[executableIndex + 2]
+    if (
+      !['bash', 'dash', 'sh', 'zsh'].includes(executable) ||
+      words[executableIndex + 1] !== '-lc' ||
+      !commandArgument ||
+      words.length !== executableIndex + 3
+    ) {
+      break
+    }
+    current = commandArgument.trim()
+  }
+
+  return current
 }
 
 function isCompletedToolBlock(block: ToolBlock): boolean {

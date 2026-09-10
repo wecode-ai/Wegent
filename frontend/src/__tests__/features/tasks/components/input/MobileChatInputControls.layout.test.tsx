@@ -140,6 +140,17 @@ jest.mock('@/features/tasks/components/selector/VideoSettingsPopover', () => ({
   ),
 }))
 
+jest.mock('@/features/tasks/components/selector/ImageSizeSelector', () => ({
+  __esModule: true,
+  default: ({ inline, selectedSize }: { inline?: boolean; selectedSize?: string }) => (
+    <div
+      data-testid="image-size-selector-inline"
+      data-inline={inline ? 'true' : 'false'}
+      data-selected-size={selectedSize}
+    />
+  ),
+}))
+
 jest.mock('@/features/tasks/components/selector/MobileRepositorySelector', () => ({
   __esModule: true,
   default: () => <button type="button">Repository</button>,
@@ -604,7 +615,7 @@ describe('MobileChatInputControls layout', () => {
     expect(screen.getByTestId('send-button')).toBeInTheDocument()
   })
 
-  it('shows the image agent and model selectors in the primary row', () => {
+  it('moves image model and size controls out of the primary row', () => {
     render(
       <MobileChatInputControls
         {...buildProps()}
@@ -612,19 +623,53 @@ describe('MobileChatInputControls layout', () => {
         selectedImageModel={null}
         onImageModelChange={jest.fn()}
         isImageModelsLoading={false}
+        selectedImageSize="2048x2048"
+        onImageSizeChange={jest.fn()}
       />
     )
 
     expect(screen.getByTestId('mobile-team-selector-slot')).toContainElement(
       screen.getByTestId('mobile-team-selector')
     )
-    expect(screen.getByTestId('mobile-image-model-selector-slot')).toContainElement(
-      screen.getByTestId('mobile-image-model-selector')
-    )
+    expect(screen.queryByTestId('mobile-image-model-selector-slot')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-image-model-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-image-configuration-button')).toHaveClass('h-11', 'w-11')
+
+    fireEvent.click(screen.getByTestId('mobile-image-configuration-button'))
+
+    const imageConfiguration = screen.getByTestId('mobile-image-configuration')
+    expect(imageConfiguration).toContainElement(screen.getByTestId('mobile-image-model-selector'))
+    expect(imageConfiguration).toContainElement(screen.getByTestId('image-size-selector-inline'))
     expect(screen.getByTestId('mobile-image-model-selector')).toHaveAttribute(
       'data-trigger-variant',
-      'compact'
+      'settings-row'
+    )
+    expect(screen.getByTestId('image-size-selector-inline')).toHaveAttribute('data-inline', 'true')
+    expect(screen.getByTestId('image-size-selector-inline')).toHaveAttribute(
+      'data-selected-size',
+      '2048x2048'
     )
     expect(screen.queryByTestId('mobile-model-selector-slot')).not.toBeInTheDocument()
+  })
+
+  it('marks the mobile image configuration trigger when a model is required', () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        taskType="image"
+        selectedImageModel={null}
+        onImageModelChange={jest.fn()}
+        isModelSelectionRequired
+      />
+    )
+
+    expect(screen.getByTestId('mobile-image-configuration-button')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    expect(screen.getByTestId('mobile-image-configuration-button')).toHaveClass(
+      'border-error',
+      'text-error'
+    )
   })
 })

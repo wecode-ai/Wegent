@@ -25,6 +25,8 @@ export function workflowNodeStatusLabel(
 ): string {
   if (status === 'blocked') return t('todo.workflow_node_blocked')
   if (status === 'ready') return t('todo.workflow_node_ready')
+  if (status === 'waiting') return t('todo.workflow_node_waiting')
+  if (status === 'reacting') return t('todo.workflow_node_reacting')
   if (status === 'queued') return t('todo.workflow_node_queued')
   if (status === 'running') return t('todo.workflow_node_running')
   if (status === 'awaiting_approval') return t('todo.workflow_node_awaiting_approval')

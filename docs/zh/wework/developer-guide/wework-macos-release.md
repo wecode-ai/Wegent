@@ -8,6 +8,17 @@ Wework 桌面应用使用 Electron。正式构建和发布由
 `.github/workflows/wework-app.yml` 负责；该工作流同时生成 macOS、Windows 和
 Linux 的 Electron 安装包。
 
+macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建先
+校验 Rosetta 2，再通过 `actions/setup-node` 安装 x64 Node.js；安装依赖前，
+工作流校验运行中的 Node.js 架构与目标架构一致。Harness Runtime 的原生依赖按
+运行中的 Node.js 架构准备，仅指定 Electron Builder 的目标架构不足以交叉构建
+完整运行环境。架构不匹配时应修正 Node.js 架构并重新构建，不能复用错误架构的
+产物或仅重跑发布步骤。
+
+正式 macOS arm64 包验证失败时，工作流会清理体积较大的临时运行时目录，并上传
+保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
+E2E 断言隐藏失败。
+
 ## 版本与产物
 
 发布版本同时写入 `wework/package.json` 和 `wework/electron/package.json`。正式
@@ -29,7 +40,7 @@ WeWork_<version>_windows_x64-setup.exe
 WeWork_<version>_linux_x64.AppImage
 ```
 
-## 自动升级与 Tauri 迁移
+## 自动升级
 
 Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 `latest*.yml` 或 `beta*.yml`，下载完成后先关闭本地运行时，再安装并重启。
@@ -44,24 +55,9 @@ macOS 和 Windows 的正式版本 Release 必须分别包含 ZIP 和 NSIS 安装
 缺少任一 blockmap 时发布流程必须失败。差分计划、累计下载量和回退原因记录在应用
 日志目录的 `app-update.log` 中。
 
-为让已安装的 Tauri 版本直接使用设置页的“升级”迁移到 Electron，同一次发布还会
-生成旧 updater 协议的 JSON 和签名产物：
-
-- macOS：将签名后的 Electron `WeWork.app` 额外打成 `.app.tar.gz`，Tauri updater
-  原位替换应用包，应用标识和可执行文件名保持不变。
-- Windows：Tauri updater 下载 Electron NSIS 安装器。安装器兼容 Tauri 的 `/P`
-  被动安装参数，并继承旧版 `Software\you\WeWork` 注册表项及
-  `%LOCALAPPDATA%\WeWork` 安装目录；旧安装被卸载后，Electron 写回同一路径，旧版
-  的 relaunch 因此直接启动 Electron。
-- Electron 直接使用旧版的 Executor Home `~/.wework`，不会复制或迁移执行器
-  数据；本地项目、任务、会话和 Wework Codex Home 继续从原目录读取。应用标识
-  `io.wecode.wework` 和产品名 `WeWork` 保持不变。
-- Linux 暂不提供应用内自动升级，继续使用 AppImage 手工替换。
-
-正式发布必须同时配置现有平台签名凭据和
-`TAURI_SIGNING_PRIVATE_KEY`/`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。后者只用于给
-兼容旧 Tauri updater 的桥接产物签名；Electron 后续升级使用 YAML 清单中的
-SHA-512 校验。
+发布流程只生成 Electron YAML 更新清单和组件清单。macOS 和 Windows 使用
+Electron 自身的 ZIP/NSIS 更新链路；Linux 暂不提供应用内自动升级，继续使用
+AppImage 手工替换。
 
 ## 初始包与组件更新
 
@@ -170,6 +166,13 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 宿主下载、校验和安装就绪阶段，并累计差分失败前已经传输的字节；Squirrel.Mac 对
 本地缓存 ZIP 的安装交接不计入网络下载量。
 
+单个组件下载遇到明确的瞬时传输失败时，客户端最多尝试三次，并在失败后分别等待
+一秒、两秒再重试。可重试范围仅包括连接中断、DNS/连接/请求超时、HTTP 408、429
+和 5xx。HTTP 4xx（408、429 除外）、压缩包大小或 SHA-256 不匹配、解包内容
+SHA-256 不匹配不得重试，必须保留为真实更新失败。失败尝试已传输的组件字节会在
+重试前从当前进度扣除。`app-update.log` 的失败事件记录脱敏后的错误类型、错误码、
+消息及首层 cause，URL 不写入日志。
+
 Wework 不再打包或下载第二份 Node。启动时会在用户数据目录生成轻量 `node`
 入口，将 `PATH`、`WEWORK_NODE_PATH`、`NODE` 和 `npm_node_execpath` 统一指向
 Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex skill 中
@@ -267,14 +270,14 @@ pnpm --filter wework ai:verify start --packaged true
 ## GitHub Actions
 
 `.github/workflows/wework-app.yml` 支持稳定版与测试版渠道、可选版本覆盖、三平台
-并行构建、Actions artifact、正式 GitHub Release，以及 Electron/Tauri 两套滚动
-升级清单。发布类型由工作流根据上次发布后的源码变化自动判断，不提供人工选择；
+并行构建、Actions artifact、正式 GitHub Release，以及 Electron 和组件滚动升级
+清单。发布类型由工作流根据上次发布后的源码变化自动判断，不提供人工选择；
 稳定版同时推进 stable 和 beta 渠道，测试版只推进 beta 渠道。工作流安装
 `wework/electron` 自己的依赖，准备 bundled sidecars，再调用统一的 Electron
 构建命令。桌面资源变化应修改 `wework/resources/` 或 Electron 打包脚本，不要在
 workflow 中复制另一份资源列表。
 
-滚动通道只有在 Electron YAML、三平台旧 Tauri JSON 和四个构建目标的组件清单全部
-存在时，才可因版本未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是
-不完整的更高版本，工作流必须失败，避免用旧版本覆盖。组件压缩包不可覆盖，只能在
-对应内容哈希尚不存在时上传。
+滚动通道只有在 Electron YAML 和四个构建目标的组件清单全部存在时，才可因版本
+未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是不完整的更高版本，
+工作流必须失败，避免用旧版本覆盖。组件压缩包不可覆盖，只能在对应内容哈希尚不
+存在时上传。

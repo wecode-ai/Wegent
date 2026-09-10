@@ -56,6 +56,7 @@ import { useOffPageDocumentPolling } from '../hooks/useOffPageDocumentPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
 import { documentViewOf } from '@/types/knowledge'
 import type {
+  DocumentProtection,
   KnowledgeBase,
   KnowledgeContentOrigin,
   KnowledgeDocument,
@@ -83,9 +84,20 @@ import {
 import { findDocumentByName, findDocumentForDeepLink } from '../utils/document-lookup'
 import { createDocumentsFromAttachments } from '../utils/document-creation'
 import { DocumentSourceWorkspaceHeader } from './DocumentSourceWorkspaceHeader'
+import { getDocumentProtection } from '@/apis/knowledge'
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
+
+const failClosedDocumentProtection: DocumentProtection = {
+  original_download_allowed: false,
+  watermark_text: null,
+}
+
+interface DocumentProtectionState {
+  requestKey: string | null
+  protection: DocumentProtection
+}
 
 export function resolveCurrentDocumentSnapshot(
   selectedDocument: KnowledgeDocument | null,
@@ -264,6 +276,13 @@ export function DocumentList({
   readOnly = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
+  const documentProtectionRequestKey = `${knowledgeBase.id}:${String(
+    knowledgeBase.allow_document_download
+  )}`
+  const [documentProtectionState, setDocumentProtectionState] = useState<DocumentProtectionState>({
+    requestKey: null,
+    protection: failClosedDocumentProtection,
+  })
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
@@ -272,6 +291,40 @@ export function DocumentList({
   const previousRefreshTokenRef = useRef(refreshToken)
   // Expand-all view: show full folder+document tree when KB document_count < 200
   const [isExpandAllView, setIsExpandAllView] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setDocumentProtectionState({
+      requestKey: null,
+      protection: failClosedDocumentProtection,
+    })
+    void getDocumentProtection(knowledgeBase.id)
+      .then(protection => {
+        if (!cancelled) {
+          setDocumentProtectionState({
+            requestKey: documentProtectionRequestKey,
+            protection,
+          })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDocumentProtectionState({
+            requestKey: null,
+            protection: failClosedDocumentProtection,
+          })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [documentProtectionRequestKey, knowledgeBase.id])
+
+  const documentProtection =
+    documentProtectionState.requestKey === documentProtectionRequestKey
+      ? documentProtectionState.protection
+      : failClosedDocumentProtection
+  const allowDownload = documentProtection.original_download_allowed
 
   // Folder state
   const {
@@ -1502,6 +1555,7 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
+                allowDownload={allowDownload}
                 onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
                 onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
@@ -1560,6 +1614,7 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
                 ragConfigured={ragConfigured}
+                allowDownload={allowDownload}
                 onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
                 onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
@@ -1633,6 +1688,8 @@ export function DocumentList({
         knowledgeBaseName={knowledgeBase.name}
         knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
         isOrganization={isOrganization}
+        allowDownload={allowDownload}
+        watermarkText={documentProtection.watermark_text}
       />
       <DocumentUpload
         knowledgeBaseId={knowledgeBase.id}

@@ -130,12 +130,6 @@ class Settings(BaseSettings):
     # Graceful shutdown
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
 
-    # Data Table Configuration
-    # JSON string containing table provider credentials (DingTalk, etc.)
-    # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
-    # This is shared configuration between backend and chat_shell, uses validation_alias to read from DATA_TABLE_CONFIG (no prefix)
-    DATA_TABLE_CONFIG: str = Field(default="", validation_alias="DATA_TABLE_CONFIG")
-
     # Tool Display Configuration
     # Comma-separated list of keywords to match tool names (uses substring matching)
     # Empty string or "*" means all tools will display details

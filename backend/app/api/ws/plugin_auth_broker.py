@@ -11,6 +11,7 @@ from app.schemas.plugin_account_auth import (
     PluginNativeAutomation,
     PluginNativeEnrollment,
     PluginNativeExecution,
+    PluginNativeLocalLifecycle,
     PluginNativePreparation,
     PluginNativeRead,
     PluginOAuthFinish,
@@ -111,6 +112,19 @@ def _exchange_sync(
             or identity.runtime_instance_id != instance_id
         ):
             raise PluginAccountAuthError("plugin_auth_stale_device_socket", 403)
+        if operation == "local_lifecycle":
+            from app.services.plugin_auth_local_lifecycle import (
+                plugin_auth_local_lifecycle,
+            )
+
+            result = plugin_auth_local_lifecycle.exchange(
+                db,
+                user_id=user_id,
+                device_id=device_id,
+                request=PluginNativeLocalLifecycle.model_validate(data),
+            )
+            db.commit()
+            return {"success": True, **result}
         if operation == "automatic":
             request = PluginNativeAutomation.model_validate(data)
             result = plugin_auth_automation.reconcile(

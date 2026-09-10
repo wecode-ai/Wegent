@@ -405,6 +405,39 @@ describe('SmartAppManager', () => {
       'Smart app project is not a linked project root'
     )
   })
+
+  test('rejects and removes an oversized release archive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-oversized-export-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    const archivePath = join(root, 'oversized.zip')
+    await mkdir(parent)
+    await writeFile(archivePath, 'placeholder')
+    const report = verificationReport()
+    const manager = createManager(root, {
+      verify: vi.fn().mockResolvedValue(report),
+      inspect: vi.fn().mockResolvedValue(report),
+      pack: vi.fn().mockResolvedValue({
+        archivePath,
+        sha256: 'a'.repeat(64),
+        sizeBytes: 50 * 1024 * 1024 + 1,
+        manifest: validManifest(),
+        report,
+      }),
+    })
+    const linked = await manager.createDirectory({
+      parentPath: parent,
+      name: 'oversized-app',
+      displayName: 'Oversized App',
+      description: 'Oversized export fixture',
+      template: 'web',
+    })
+
+    await expect(manager.export(linked.id)).rejects.toThrow(
+      '发布包超过 50 MB，请使用项目打包命令生成发布产物'
+    )
+    await expect(stat(archivePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 })
 
 function createManager(

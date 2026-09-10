@@ -27,6 +27,7 @@ import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
+import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -326,8 +327,19 @@ const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
   source: 'cloud',
   protocol,
   optionIds: [`desktop-e2e-cloud-${protocol}`],
-  labels: [protocol === 'chat' ? 'moonshot-kimi-k3' : `desktop-e2e-cloud-${protocol}`],
-  modelId: protocol === 'chat' ? 'moonshot-kimi-k3' : `desktop-e2e-cloud-${protocol}-upstream`,
+  labels: [
+    protocol === 'responses'
+      ? 'gpt-6-astra'
+      : protocol === 'chat'
+        ? 'moonshot-kimi-k3'
+        : `desktop-e2e-cloud-${protocol}`,
+  ],
+  modelId:
+    protocol === 'responses'
+      ? 'gpt-6-astra'
+      : protocol === 'chat'
+        ? 'moonshot-kimi-k3'
+        : `desktop-e2e-cloud-${protocol}-upstream`,
 }))
 const MODEL_PROTOCOL_MATRIX_CASES = [
   ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
@@ -414,7 +426,10 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'app_version',
   'arch',
   'distinct_id',
+  'domain',
+  'event_schema_version',
   'feature',
+  'failure_stage',
   'locale',
   'os',
   'release_channel',
@@ -517,7 +532,7 @@ const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
 const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
 const VERIFIES_INITIAL_TELEMETRY_CONSENT =
-  !SELECTED_DESKTOP_SEGMENT || SELECTED_DESKTOP_SEGMENT === 'telemetry-consent'
+  shouldAcceptInitialTelemetryConsent(SELECTED_DESKTOP_SEGMENT)
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..', '..')

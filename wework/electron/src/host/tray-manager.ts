@@ -56,7 +56,6 @@ export interface TrayAdapter<TMenu = unknown> {
   setToolTip(tooltip: string): void
   setTitle?(title: string): void
   getGUID?(): string | null
-  destroy(): void
 }
 
 export interface TrayManagerDependencies<
@@ -228,15 +227,6 @@ export class ElectronTrayManager<
     })
     this.tray = tray
     this.applyState()
-  }
-
-  destroy(): void {
-    if (!this.tray) {
-      return
-    }
-
-    this.tray.destroy()
-    this.tray = null
   }
 
   setState(state: TrayMenuState): void {

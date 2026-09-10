@@ -391,6 +391,7 @@ class LoopItemTaskBindingResponse(BaseModel):
         alias="modelSelection",
     )
     workflow_node_id: str | None = None
+    change_requests: list[dict[str, Any]] = Field(default_factory=list)
     linked_by_user_id: int
     linked_at: datetime
     unlinked_at: datetime | None

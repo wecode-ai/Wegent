@@ -42,6 +42,7 @@ async fn attach(transport: &RecordingTransport, version: Option<u64>) -> Value {
         payload["protocol_version"] = json!(version);
     }
     if version == Some(2) {
+        payload["browser_socket_id"] = json!("browser-sid");
         payload["consumer_id"] = json!("consumer-1");
         payload["last_acked_sequence"] = json!(0);
     }
@@ -497,6 +498,159 @@ async fn legacy_backend_rejection_and_transport_failure_retry_output_and_exit() 
             json!({"session_id": "terminal-compat", "data": "retained"})
         );
     }
+}
+
+#[tokio::test]
+async fn permanent_backend_rejection_retires_terminal_without_reconnecting_device() {
+    let (handler, terminal) = fixture(VecDeque::from([b"stale output".to_vec()]));
+    let transport = RecordingTransport::default();
+    transport
+        .terminal_responses
+        .lock()
+        .unwrap()
+        .push_back(Ok(json!({
+            "success": false,
+            "error": "Terminal session does not belong to this device",
+            "code": "terminal_session_device_mismatch",
+            "retryable": false,
+            "terminal_end_dispatched": true,
+        })));
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(10);
+    let runner = LocalBackendRunner::with_task_runner(
+        config,
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_session_handler(handler);
+    let task = tokio::spawn(runner.run_forever());
+    wait_until(|| transport.handler("terminal:attach").is_some()).await;
+    assert_eq!(attach(&transport, Some(2)).await["success"], true);
+    wait_until(|| *transport.terminal_completion_count.lock().unwrap() == 1).await;
+    let heartbeat_count = || {
+        transport
+            .emits()
+            .iter()
+            .filter(|call| call.event == "device:heartbeat")
+            .count()
+    };
+    wait_until(|| heartbeat_count() >= 3).await;
+
+    assert_eq!(*transport.connects.lock().unwrap(), 1);
+    assert_eq!(*transport.disconnects.lock().unwrap(), 0);
+    assert_eq!(
+        transport
+            .calls()
+            .iter()
+            .filter(|call| call.event == "terminal:output")
+            .count(),
+        1,
+    );
+    {
+        let terminal = terminal.lock().unwrap();
+        assert!(terminal.terminated);
+        assert!(terminal.closed);
+    }
+
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test]
+async fn permanent_rejection_waits_for_frontend_end_dispatch_before_retiring() {
+    let (handler, terminal) = fixture(VecDeque::from([b"stale output".to_vec()]));
+    let transport = RecordingTransport::default();
+    transport.terminal_responses.lock().unwrap().extend([
+        Ok(json!({
+            "success": false,
+            "error": "Terminal session not found",
+            "code": "terminal_session_not_found",
+            "retryable": false,
+        })),
+        Ok(json!({
+            "success": false,
+            "error": "Terminal session not found",
+            "code": "terminal_session_not_found",
+            "retryable": false,
+            "terminal_end_dispatched": true,
+        })),
+    ]);
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(10);
+    let runner = LocalBackendRunner::with_task_runner(
+        config,
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_session_handler(handler);
+    let task = tokio::spawn(runner.run_forever());
+    wait_until(|| transport.handler("terminal:attach").is_some()).await;
+    assert_eq!(attach(&transport, Some(2)).await["success"], true);
+    wait_until(|| *transport.terminal_completion_count.lock().unwrap() == 2).await;
+
+    assert_eq!(*transport.connects.lock().unwrap(), 1);
+    assert_eq!(*transport.disconnects.lock().unwrap(), 0);
+    let calls = transport
+        .calls()
+        .into_iter()
+        .filter(|call| call.event == "terminal:output")
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].payload, calls[1].payload);
+    assert_eq!(calls[0].payload["browser_socket_id"], "browser-sid");
+    {
+        let terminal = terminal.lock().unwrap();
+        assert!(terminal.terminated);
+        assert!(terminal.closed);
+    }
+
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test]
+async fn authorization_unavailable_retries_session_without_reconnecting_device() {
+    let (handler, terminal) = fixture(VecDeque::from([b"retained output".to_vec()]));
+    let transport = RecordingTransport::default();
+    transport.terminal_responses.lock().unwrap().extend([
+        Ok(json!({
+            "success": false,
+            "error": "Terminal session authorization is temporarily unavailable",
+            "code": "terminal_session_authorization_unavailable",
+            "retryable": true,
+        })),
+        Ok(json!({"success": true})),
+    ]);
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(10);
+    let runner = LocalBackendRunner::with_task_runner(
+        config,
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_session_handler(handler);
+    let task = tokio::spawn(runner.run_forever());
+    wait_until(|| transport.handler("terminal:attach").is_some()).await;
+    assert_eq!(attach(&transport, Some(2)).await["success"], true);
+    wait_until(|| *transport.terminal_completion_count.lock().unwrap() == 2).await;
+
+    assert_eq!(*transport.connects.lock().unwrap(), 1);
+    assert_eq!(*transport.disconnects.lock().unwrap(), 0);
+    let calls = transport
+        .calls()
+        .into_iter()
+        .filter(|call| call.event == "terminal:output")
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].payload, calls[1].payload);
+    {
+        let terminal = terminal.lock().unwrap();
+        assert!(!terminal.terminated);
+        assert!(!terminal.closed);
+    }
+
+    task.abort();
+    let _ = task.await;
 }
 
 #[tokio::test]
