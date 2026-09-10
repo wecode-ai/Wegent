@@ -1,25 +1,29 @@
-import { Check, Cloud, Copy, FolderOpen, GitBranch, Info, Link2, Laptop } from 'lucide-react'
+import { GitBranch, Info, Link2 } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { buildConversationOutputs } from '@/features/dsh-runtime/conversationOutputs'
+import type {
+  ConversationOutputsHostService,
+  ConversationSummaryResource,
+  EnvironmentHostService,
+} from '@/features/dsh-runtime/conversationHostServices'
+import { WEWORK_HOST_SERVICES } from '@/features/dsh-runtime/conversationHostServices'
+import type { ConversationSummarySurfaceServices } from '@/features/dsh-runtime/conversationSummarySurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
-import { copyTextToClipboard } from '@/lib/clipboard'
-import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
+import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
-import {
-  findWorkbenchDevice,
-  getExecutorOfflineDeviceId,
-  getWorkbenchDeviceUnavailableDisplayName,
-  isWorkbenchDeviceOnline,
-} from '@/lib/workbench-device'
 import type { DeviceInfo, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { WorkbenchMessage } from '@/types/workbench'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
+  isGitRepository?: boolean
+  messages?: readonly WorkbenchMessage[]
   popoverContainer: HTMLElement | null
   docked?: boolean
   open: boolean
@@ -36,6 +40,7 @@ interface EnvironmentInfoPopoverProps {
   onGenerateBranchName?: (sourceText: string) => Promise<string>
   branchNameSource?: string
   onOpenChangesReview?: () => void
+  onOpenWorkspaceFile?: (path: string) => void
   onDeliver?: () => void
   todoLabel?: string
   onManageTodo?: () => void
@@ -48,21 +53,32 @@ const FLOATING_POPOVER_WIDTH = 300
 const FLOATING_POPOVER_GAP = 8
 const FLOATING_POPOVER_MARGIN = 16
 
-function compactWorkspacePath(workspacePath: string): string {
-  const segments = workspacePath
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]+/)
-    .filter(Boolean)
-  return segments.at(-1) || workspacePath
+function commandStringArgument(args: unknown, key: string): string {
+  if (typeof args !== 'object' || args === null) return ''
+  const value = Reflect.get(args, key)
+  return typeof value === 'string' ? value : ''
 }
 
-function normalizeWorkspacePathForComparison(workspacePath: string): string {
-  const normalizedPath = normalizeRuntimeWorkspacePath(workspacePath.replace(/\\/g, '/'))
-  return /^(?:[A-Za-z]:|\/\/)/.test(normalizedPath) ? normalizedPath.toLowerCase() : normalizedPath
+function gitRepositoryContextValue(
+  info: EnvironmentInfo,
+  isGitRepository?: boolean
+): boolean | undefined {
+  if (isGitRepository !== undefined) return isGitRepository
+  if (info.isGitRepository === false) return false
+  if (
+    info.isGitRepository === true ||
+    Boolean(info.branchName?.trim()) ||
+    Boolean(info.additions || info.deletions)
+  ) {
+    return true
+  }
+  return info.loading === true ? undefined : true
 }
 
 export function EnvironmentInfoPopover({
   info,
+  isGitRepository,
+  messages = [],
   popoverContainer,
   docked = true,
   open,
@@ -79,6 +95,7 @@ export function EnvironmentInfoPopover({
   onGenerateBranchName,
   branchNameSource,
   onOpenChangesReview,
+  onOpenWorkspaceFile,
   onDeliver,
   todoLabel,
   onManageTodo,
@@ -87,85 +104,16 @@ export function EnvironmentInfoPopover({
   onRunSupervisorNow,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
   const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
-  const executionDeviceId = info.executionDeviceId ?? info.deviceId
-  const device = executionDeviceId ? findWorkbenchDevice(devices, executionDeviceId) : undefined
-  const deviceName = device?.name?.trim() || ''
-  const executionLabel =
-    info.executionTarget === 'cloud'
-      ? t('workbench.environment_cloud_device')
-      : t('workbench.environment_local', '本地')
-  const executionTargetLabel = t('workbench.environment_execution_target')
-  const deviceLabel = t('workbench.environment_device')
-  const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
-  const executorDisplayName =
-    info.executionTarget === 'cloud' && !isWorkbenchDeviceOnline(device ?? null)
-      ? getWorkbenchDeviceUnavailableDisplayName(device ?? null) || deviceDisplayName
-      : deviceDisplayName
-  const ExecutorIcon = info.executionTarget === 'cloud' ? Cloud : Laptop
-  const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
-  const offlineDeviceId = getExecutorOfflineDeviceId(info.error)
-  const offlineDevice = offlineDeviceId ? findWorkbenchDevice(devices, offlineDeviceId) : null
-  const displayError = offlineDeviceId
-    ? t('workbench.conversation_device_offline_notice', {
-        device:
-          getWorkbenchDeviceUnavailableDisplayName(offlineDevice) ||
-          t('workbench.current_device', '当前设备'),
-      })
-    : info.error
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
-  const normalizedWorkspacePath = info.workspacePath
-    ? normalizeWorkspacePathForComparison(info.workspacePath)
-    : ''
-  const workspacePathIsProjectRoot = Boolean(
-    normalizedWorkspacePath &&
-    info.workspaceRoots?.some(
-      workspaceRoot =>
-        normalizeWorkspacePathForComparison(workspaceRoot) === normalizedWorkspacePath
-    )
-  )
-  const workspacePaths =
-    info.workspacePath && !workspacePathIsProjectRoot
-      ? [info.workspacePath]
-      : info.workspaceRoots && info.workspaceRoots.length > 0
-        ? info.workspaceRoots
-        : info.workspacePath
-          ? [info.workspacePath]
-          : []
-  async function handleCopyWorkspacePath(workspacePath: string) {
-    await copyTextToClipboard(workspacePath)
-    if (copiedWorkspacePathTimeoutRef.current !== null) {
-      window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-    }
-    setCopiedWorkspacePath(workspacePath)
-    copiedWorkspacePathTimeoutRef.current = window.setTimeout(() => {
-      setCopiedWorkspacePath(current => (current === workspacePath ? null : current))
-      copiedWorkspacePathTimeoutRef.current = null
-    }, 2000)
-  }
-
-  useEffect(
-    () => () => {
-      if (copiedWorkspacePathTimeoutRef.current !== null) {
-        window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-      }
-    },
-    []
-  )
 
   function handleToggleOpen() {
     const nextOpen = !open
-    if (nextOpen && !docked) {
-      setFloatingPopoverStyle(getFloatingPopoverPosition())
-    }
+    if (nextOpen && !docked) setFloatingPopoverStyle(getFloatingPopoverPosition())
     onOpenChange(nextOpen)
-    if (nextOpen) {
-      void onRefresh?.()
-    }
+    if (nextOpen) void onRefresh?.()
   }
 
   useEffect(() => {
@@ -191,6 +139,51 @@ export function EnvironmentInfoPopover({
       left: `${Math.max(FLOATING_POPOVER_MARGIN, Math.min(anchor.right - FLOATING_POPOVER_WIDTH, maxLeft))}px`,
       top: `${anchor.bottom + FLOATING_POPOVER_GAP}px`,
     }
+  }
+
+  const environmentService: EnvironmentHostService = {
+    read: () => ({ devices, info }),
+  }
+  const outputsService: ConversationOutputsHostService = {
+    read: () => buildConversationOutputs(messages),
+  }
+  const services: ConversationSummarySurfaceServices = {
+    getService<T>(id: string): T | undefined {
+      if (id === WEWORK_HOST_SERVICES.environment) return environmentService as T
+      if (id === WEWORK_HOST_SERVICES.conversationOutputs) return outputsService as T
+      return undefined
+    },
+    async openResource(resource: ConversationSummaryResource) {
+      if (resource.kind === 'url') {
+        await openExternalUrl(resource.url, { target: 'system' })
+        return
+      }
+      onOpenWorkspaceFile?.(resource.path)
+    },
+    async executeCommand(id, args) {
+      switch (id) {
+        case 'environment.refresh':
+          return onRefresh?.()
+        case 'git.commit':
+          return onCommitChanges?.(commandStringArgument(args, 'message'))
+        case 'git.commit-and-push':
+          return onCommitAndPushChanges?.(commandStringArgument(args, 'message'))
+        case 'git.push':
+          return onPushChanges?.()
+        case 'git.list-branches':
+          return onListBranches?.() ?? []
+        case 'git.checkout-branch':
+          return onCheckoutBranch?.(commandStringArgument(args, 'branchName'))
+        case 'git.create-branch':
+          return onCreateBranch?.(commandStringArgument(args, 'branchName'))
+        case 'git.generate-branch-name':
+          return onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? ''
+        case 'git.open-changes-review':
+          return onOpenChangesReview?.()
+        default:
+          throw new Error(`Unsupported conversation summary command: ${id}`)
+      }
+    },
   }
 
   const popoverPortalContainer = docked
@@ -226,164 +219,70 @@ export function EnvironmentInfoPopover({
               docked ? 'ml-2 mt-3' : 'fixed z-system'
             )}
           >
-            <h2 className="mb-3 text-sm font-medium text-text-primary">
-              {t('workbench.environment_summary_title', '环境')}
-            </h2>
+            <DshContributionSlotSurface
+              attachedClassName="contents"
+              props={{
+                context: {
+                  'conversation.available': true,
+                  'conversation.title': branchNameSource,
+                  'workspace.isGitRepository': gitRepositoryContextValue(info, isGitRepository),
+                },
+                docked,
+                onClose: () => onOpenChange(false),
+                services,
+              }}
+              slot={WEWORK_DSH_SLOTS.conversationSummary}
+            />
 
-            <div className="space-y-3">
-              <section
-                data-testid="environment-device-section"
-                className="flex w-full min-w-0 flex-col gap-1"
-              >
-                {workspacePaths.map((workspacePath, index) => {
-                  const copied = copiedWorkspacePath === workspacePath
-                  const displayWorkspacePath = compactWorkspacePath(workspacePath)
-                  return (
-                    <div
-                      key={workspacePath}
-                      className="flex min-h-11 min-w-0 items-start gap-2 py-1 md:min-h-0"
-                      data-testid={`environment-workspace-root-row-${index}`}
-                    >
-                      <FolderOpen
-                        className="mt-0.5 h-4 w-4 shrink-0 text-text-muted"
-                        aria-hidden="true"
-                      />
+            {(onManageTodo || onDeliver || (supervisor && onConfigureSupervisor)) && (
+              <div className="mt-3 space-y-3">
+                {(onManageTodo || onDeliver) && (
+                  <section className="border-t border-border pt-3">
+                    {onManageTodo && (
                       <button
                         type="button"
-                        data-testid={
-                          index === 0
-                            ? 'environment-workspace-path-button'
-                            : `environment-workspace-root-button-${index}`
-                        }
-                        onClick={() => void handleCopyWorkspacePath(workspacePath)}
-                        title={workspacePath}
-                        aria-label={`${t('workbench.environment_workspace_path')} · ${workspacePath}`}
-                        className="flex min-h-11 min-w-0 flex-1 items-start gap-1 rounded text-left hover:text-text-primary md:min-h-0"
+                        data-testid="environment-todo-binding-button"
+                        onClick={onManageTodo}
+                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
                       >
-                        <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
-                        <span
-                          data-testid={
-                            index === 0
-                              ? 'environment-workspace-path'
-                              : `environment-workspace-root-${index}`
-                          }
-                          className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
-                        >
-                          {displayWorkspacePath}
+                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                          <Link2 className="h-[18px] w-[18px]" />
                         </span>
-                        <span
-                          data-testid={
-                            index === 0
-                              ? 'environment-workspace-path-copy-icon'
-                              : `environment-workspace-root-copy-icon-${index}`
-                          }
-                          className={cn(
-                            'mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center',
-                            copied ? 'text-green-500' : 'text-text-muted'
-                          )}
-                          aria-hidden="true"
-                        >
-                          {copied ? (
-                            <Check className="h-3.5 w-3.5" />
-                          ) : (
-                            <Copy className="h-3.5 w-3.5" />
-                          )}
+                        <span className="min-w-0 flex-1 truncate">
+                          {todoLabel || '关联项目空间'}
                         </span>
-                        {copied && (
-                          <span role="status" className="sr-only">
-                            {t('workbench.environment_copied')}
-                          </span>
-                        )}
                       </button>
-                    </div>
-                  )
-                })}
-                <div
-                  data-testid="environment-execution-target-row"
-                  title={`${executionTargetLabel} · ${executionLabel}; ${deviceTitle}`}
-                  className="flex h-7 min-w-0 items-center gap-2 text-xs text-text-secondary"
-                >
-                  <ExecutorIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-                  <span className="sr-only">
-                    {executionTargetLabel} · {executionLabel} ·{' '}
-                  </span>
-                  <div data-testid="environment-device-button" className="min-w-0 truncate">
-                    <span className="sr-only">{deviceLabel}</span>
-                    <span data-testid="environment-device-name" className="whitespace-nowrap">
-                      {executorDisplayName}
-                    </span>
-                  </div>
-                </div>
-              </section>
-
-              <DshContributionSlotSurface
-                attachedClassName="contents"
-                props={{
-                  branchNameSource,
-                  docked,
-                  info,
-                  onCheckoutBranch,
-                  onClose: () => onOpenChange(false),
-                  onCommitAndPushChanges,
-                  onCommitChanges,
-                  onCreateBranch,
-                  onGenerateBranchName,
-                  onListBranches,
-                  onOpenChangesReview,
-                  onPushChanges,
-                  onRefresh,
-                }}
-                slot={WEWORK_DSH_SLOTS.environmentSection}
-              />
-              {(onManageTodo || onDeliver) && (
-                <section className="border-t border-border pt-3">
-                  {onManageTodo && (
-                    <button
-                      type="button"
-                      data-testid="environment-todo-binding-button"
-                      onClick={onManageTodo}
-                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                    >
-                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                        <Link2 className="h-[18px] w-[18px]" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{todoLabel || '关联项目空间'}</span>
-                    </button>
-                  )}
-                  {onDeliver && (
-                    <button
-                      type="button"
-                      data-testid="environment-delivery-button"
-                      onClick={onDeliver}
-                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                    >
-                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                        <GitBranch className="h-[18px] w-[18px]" />
-                      </span>
-                      <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
-                    </button>
-                  )}
-                </section>
-              )}
-              {supervisor && onConfigureSupervisor && (
-                <section
-                  data-testid="environment-supervisor-section"
-                  className="border-t border-border pt-3"
-                >
-                  <TaskSupervisorStatusButton
-                    supervisor={supervisor}
-                    onClick={onConfigureSupervisor}
-                    onRunNow={onRunSupervisorNow}
-                  />
-                </section>
-              )}
-            </div>
-
-            {displayError && (
-              <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-                {displayError}
-              </p>
+                    )}
+                    {onDeliver && (
+                      <button
+                        type="button"
+                        data-testid="environment-delivery-button"
+                        onClick={onDeliver}
+                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                      >
+                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                          <GitBranch className="h-[18px] w-[18px]" />
+                        </span>
+                        <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
+                      </button>
+                    )}
+                  </section>
+                )}
+                {supervisor && onConfigureSupervisor && (
+                  <section
+                    data-testid="environment-supervisor-section"
+                    className="border-t border-border pt-3"
+                  >
+                    <TaskSupervisorStatusButton
+                      supervisor={supervisor}
+                      onClick={onConfigureSupervisor}
+                      onRunNow={onRunSupervisorNow}
+                    />
+                  </section>
+                )}
+              </div>
             )}
+
             {!docked && floatingFooter && (
               <div className="mt-3 border-t border-border pt-3">{floatingFooter}</div>
             )}

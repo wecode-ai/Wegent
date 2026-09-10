@@ -9,7 +9,7 @@ import {
   runtimeTaskChangeRequestTarget,
   useTaskChangeRequest,
 } from '@/features/workbench/changeRequestMonitor'
-import type { ProjectWithTasks } from '@/types/api'
+import type { ProjectWithTasks, RuntimeDeviceWorkspace } from '@/types/api'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -39,6 +39,7 @@ export interface WorkbenchPaneEnvironment {
   workspaceTarget: WorkspaceTarget | null
   workspaceTargetError: string | null
   environmentInfo: EnvironmentInfo
+  conversationSummaryIsGitRepository: boolean | undefined
   projectWork: ProjectWorkControls
   refreshEnvironmentInfo: () => Promise<void>
   commitEnvironmentChanges: (message: string) => Promise<void>
@@ -51,6 +52,40 @@ export interface WorkbenchPaneEnvironment {
   listEnvironmentBranches: () => Promise<string[]>
   checkoutEnvironmentBranch: (branchName: string) => Promise<void>
   createEnvironmentBranch: (branchName: string) => Promise<void>
+}
+
+export function resolveConversationSummaryIsGitRepository({
+  environmentInfo,
+  project,
+  projectWorkspace,
+}: {
+  environmentInfo: EnvironmentInfo
+  project: ProjectWithTasks | null
+  projectWorkspace: Pick<
+    RuntimeDeviceWorkspace,
+    'repoRootFingerprint' | 'repoUrl' | 'workspacePath'
+  > | null
+}): boolean | undefined {
+  if (project?.config?.workspace?.source === 'git') return true
+  const rawEnvironmentWorkspacePath = environmentInfo.workspacePath
+  const environmentWorkspacePath = rawEnvironmentWorkspacePath
+    ? normalizeRuntimeWorkspacePath(rawEnvironmentWorkspacePath)
+    : ''
+  const projectWorkspacePaths = [
+    project?.config?.workspace?.localPath,
+    projectWorkspace?.workspacePath,
+  ].flatMap(path => (path ? [normalizeRuntimeWorkspacePath(path)] : []))
+  if (
+    environmentInfo.isGitRepository !== undefined &&
+    environmentWorkspacePath &&
+    projectWorkspacePaths.includes(environmentWorkspacePath)
+  ) {
+    return environmentInfo.isGitRepository
+  }
+  if (projectWorkspace) {
+    return Boolean(projectWorkspace.repoRootFingerprint?.trim() || projectWorkspace.repoUrl?.trim())
+  }
+  return environmentInfo.isGitRepository
 }
 
 export function resolveSelectedWorkspaceProject({
@@ -123,7 +158,7 @@ export function useWorkbenchPaneEnvironment({
   } = useWorkbenchPaneContext()
   const runtimeWorkApi = services?.runtimeWorkApi
   const { t } = useTranslation('common')
-  const environmentExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.environmentSection)
+  const environmentExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.conversationSummary)
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
     environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
@@ -184,6 +219,11 @@ export function useWorkbenchPaneEnvironment({
     }
     return workspaces.length === 1 ? workspaces[0] : null
   }, [projectWork.selectedDeviceWorkspaceId, selectedWorkspaceProject, state.runtimeWork?.projects])
+  const conversationSummaryIsGitRepository = resolveConversationSummaryIsGitRepository({
+    environmentInfo,
+    project: selectedWorkspaceProject ?? activeConversationProject,
+    projectWorkspace: selectedProjectDeviceWorkspace,
+  })
   const selectedWorktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectDeviceWorkspace)
   const selectedWorktreeDevice = findWorkbenchDevice(state.devices, selectedWorktreeDeviceId)
   const projectedWorktreeAvailability = useMemo(
@@ -742,6 +782,7 @@ export function useWorkbenchPaneEnvironment({
     workspaceTarget: activeWorkspaceTarget,
     workspaceTargetError,
     environmentInfo: sharedEnvironmentInfo,
+    conversationSummaryIsGitRepository,
     projectWork: {
       ...projectWork,
       worktreeAvailability,

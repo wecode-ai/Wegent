@@ -146,6 +146,10 @@ export default defineConfig({
           __dirname,
           'dsh/ui-git/src/workspace-menu-section.tsx'
         ),
+        'wework-ui-outputs-conversation-summary': path.resolve(
+          __dirname,
+          'dsh/ui-outputs/src/conversation-summary.tsx'
+        ),
         'wework-ui-plugin-center-catalog': path.resolve(
           __dirname,
           'dsh/ui-plugin-center/src/catalog-route.tsx'

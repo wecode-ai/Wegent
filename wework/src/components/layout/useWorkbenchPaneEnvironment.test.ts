@@ -3,9 +3,103 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import {
   applySharedChangeRequestSnapshot,
+  resolveConversationSummaryIsGitRepository,
   resolveEnvironmentExecutionDeviceId,
   resolveSelectedWorkspaceProject,
 } from './useWorkbenchPaneEnvironment'
+
+describe('resolveConversationSummaryIsGitRepository', () => {
+  test('uses project repository metadata instead of an unrelated task environment', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: true,
+        },
+        project: {
+          id: 7,
+          name: 'Documents',
+          tasks: [],
+          config: {
+            workspace: { source: 'local_path', localPath: '/workspace/documents' },
+          },
+        },
+        projectWorkspace: {
+          repoRootFingerprint: null,
+          repoUrl: null,
+          workspacePath: '/workspace/documents',
+        },
+      })
+    ).toBe(false)
+  })
+
+  test('uses fresh environment inspection when it matches the project workspace', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: true,
+          workspacePath: '/workspace/repository',
+        },
+        project: {
+          id: 8,
+          name: 'Repository',
+          tasks: [],
+          config: {
+            workspace: { source: 'local_path', localPath: '/workspace/repository' },
+          },
+        },
+        projectWorkspace: {
+          repoRootFingerprint: null,
+          repoUrl: null,
+          workspacePath: '/workspace/repository',
+        },
+      })
+    ).toBe(true)
+  })
+
+  test('recognizes local Git projects from repository metadata', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: false,
+        },
+        project: {
+          id: 8,
+          name: 'Repository',
+          tasks: [],
+        },
+        projectWorkspace: {
+          repoRootFingerprint: 'sha256:repository',
+          repoUrl: null,
+          workspacePath: '/workspace/repository',
+        },
+      })
+    ).toBe(true)
+  })
+
+  test('falls back to environment classification before project metadata is available', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: true,
+        },
+        project: null,
+        projectWorkspace: null,
+      })
+    ).toBe(true)
+  })
+})
 
 describe('resolveSelectedWorkspaceProject', () => {
   test('uses the active Runtime project when it is absent from the persisted project list', () => {

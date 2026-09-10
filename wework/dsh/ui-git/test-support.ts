@@ -33,11 +33,12 @@ export async function installGitUiTestContributions() {
           order: 50,
         },
       ],
-      [WEWORK_DSH_SLOTS.environmentSection]: [
+      [WEWORK_DSH_SLOTS.conversationSummary]: [
         {
-          id: 'git-change-request',
+          id: 'git-summary',
           module: 'plugins/wework-ui-git-environment-section.js',
           order: 50,
+          when: { key: 'workspace.isGitRepository', notEquals: false },
         },
       ],
       [WEWORK_DSH_SLOTS.boardCardStatus]: [

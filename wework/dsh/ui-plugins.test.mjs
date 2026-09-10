@@ -13,6 +13,7 @@ const packages = [
   'ui-home-focus',
   'ui-home-developer',
   'ui-git',
+  'ui-outputs',
 ]
 
 async function loadPlugin(packageName) {
@@ -139,7 +140,7 @@ test('Git contributes UI only through generic positional extension points', asyn
     'wework.project.work.section',
     'wework.runtime-profile.workspace-policy',
     'wework.task.status',
-    'wework.environment.section',
+    'wework.conversation.summary',
     'wework.board.card.status',
     'wework.settings.page',
   ])
@@ -152,18 +153,33 @@ test('Git contributes UI only through generic positional extension points', asyn
       'wework.project.work.section',
       'wework.runtime-profile.workspace-policy',
       'wework.task.status',
-      'wework.environment.section',
+      'wework.conversation.summary',
       'wework.board.card.status',
     ]
   )
   assert.deepEqual(
     registrations.slice(4, 7).map(entry => entry.options.name),
-    ['wework.task.status', 'wework.environment.section', 'wework.board.card.status']
+    ['wework.task.status', 'wework.conversation.summary', 'wework.board.card.status']
   )
   assert.deepEqual(
     registrations.slice(7).map(entry => entry.options.id),
     ['git-hosting', 'worktrees']
   )
+})
+
+test('outputs contributes the non-Git conversation summary', async () => {
+  const { injections, registrations } = await registrationsOf('ui-outputs')
+  assert.deepEqual(injections, ['wework.conversation.summary'])
+  assert.equal(registrations.length, 1)
+  assert.equal(registrations[0].options.name, 'wework.conversation.summary')
+  assert.equal(
+    registrations[0].descriptor.module,
+    'plugins/wework-ui-outputs-conversation-summary.js'
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(registrations[0].descriptor.when)), {
+    key: 'workspace.isGitRepository',
+    equals: false,
+  })
 })
 
 test('workbench modes contribute mutually exclusive home implementations', async () => {

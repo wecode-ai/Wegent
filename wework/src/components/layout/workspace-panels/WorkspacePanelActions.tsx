@@ -37,6 +37,7 @@ import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWor
 import { WorkspaceToolbarExtensions } from './WorkspaceToolbarExtensions'
 import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { WorkbenchMessage } from '@/types/workbench'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface WorkspacePanelActionsProps {
@@ -52,6 +53,8 @@ interface WorkspacePanelActionsProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceSessionApi?: WorkspaceSessionApi
   environmentInfo: EnvironmentInfo
+  conversationSummaryIsGitRepository?: boolean
+  conversationMessages?: readonly WorkbenchMessage[]
   environmentInfoPopoverContainer: HTMLElement | null
   environmentInfoVisible?: boolean
   environmentInfoDocked?: boolean
@@ -68,6 +71,7 @@ interface WorkspacePanelActionsProps {
   onGenerateEnvironmentBranch?: (sourceText: string) => Promise<string>
   environmentBranchNameSource?: string
   onOpenEnvironmentChangesReview: () => void
+  onOpenConversationWorkspaceFile?: (path: string) => void
   onDeliver?: () => void
   todoLabel?: string
   onManageTodo?: () => void
@@ -89,6 +93,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   workspaceTarget = null,
   workspaceSessionApi,
   environmentInfo,
+  conversationSummaryIsGitRepository,
+  conversationMessages = [],
   environmentInfoPopoverContainer,
   environmentInfoVisible = true,
   environmentInfoDocked = true,
@@ -105,6 +111,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onGenerateEnvironmentBranch,
   environmentBranchNameSource,
   onOpenEnvironmentChangesReview,
+  onOpenConversationWorkspaceFile,
   onDeliver,
   todoLabel,
   onManageTodo,
@@ -309,6 +316,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         <EnvironmentInfoPopover
           key={environmentInfoDocked ? 'docked' : 'floating'}
           info={environmentInfo}
+          isGitRepository={conversationSummaryIsGitRepository}
+          messages={conversationMessages}
           popoverContainer={environmentInfoPopoverContainer}
           docked={environmentInfoDocked}
           open={environmentInfoOpen}
@@ -325,6 +334,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onGenerateBranchName={onGenerateEnvironmentBranch}
           branchNameSource={environmentBranchNameSource}
           onOpenChangesReview={onOpenEnvironmentChangesReview}
+          onOpenWorkspaceFile={onOpenConversationWorkspaceFile}
           onDeliver={onDeliver}
           todoLabel={todoLabel}
           onManageTodo={onManageTodo}

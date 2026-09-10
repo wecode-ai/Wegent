@@ -137,6 +137,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-ui-home-focus': expect.stringContaining('wework-ui-home-focus'),
         '@wegent/dsh-ui-home-developer': expect.stringContaining('wework-ui-home-developer'),
         '@wegent/dsh-ui-git': expect.stringContaining('wework-ui-git'),
+        '@wegent/dsh-ui-outputs': expect.stringContaining('wework-ui-outputs'),
       },
       dsh: {
         profile: {
@@ -161,6 +162,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-ui-home-focus',
             '@wegent/dsh-ui-home-developer',
             '@wegent/dsh-ui-git',
+            '@wegent/dsh-ui-outputs',
           ],
         },
       },
@@ -228,6 +230,9 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-outputs', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await root.remove()
   })
@@ -818,6 +823,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
       ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
       ['@wegent/dsh-ui-git', 'wework-ui-git'],
+      ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )
   await mkdir(join(packageRoot, 'lib'), { recursive: true })

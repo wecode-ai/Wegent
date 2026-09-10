@@ -10,7 +10,7 @@ The host declares these standard extension points:
 - `wework.app`
 - `wework.plugins.action`
 - `wework.task.status`
-- `wework.environment.section`
+- `wework.conversation.summary`
 - `wework.home`
 - `wework.board.card.status`
 - `wework.workspace.menu.section`
@@ -72,6 +72,14 @@ the export, the plugin is omitted from the browser boot graph.
 Standalone plugins cannot import private Wework React hooks. Localize visible
 copy with `ctx.wework.localization.translate({ en: '...', 'zh-CN': '...' })`;
 `getLocale()` is available when formatting logic needs the active locale code.
+
+`wework.conversation.summary` is a candidate-contribution list for the
+conversation summary area. Independent plugins may declare summary views with
+generic `when` conditions, and the host renders only the first matching entry.
+The slot exposes only generic context, command execution, resource opening,
+and host-service lookup by ID. Domain data such as Git state and conversation
+outputs remains owned by independent host services and is not part of the
+extension-point contract.
 
 The installable example shipped by the **Wework Plugin Developer** Skill at
 [`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)

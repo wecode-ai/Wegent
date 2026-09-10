@@ -40,7 +40,7 @@ window.__ModuleLoader__.load({
       'wework.internal.workspace': {
         'wework.board.card.status': { kind: 'list', scope: 'root' },
         'wework.composer.action': { kind: 'list', scope: 'session-maybe' },
-        'wework.environment.section': { kind: 'list', scope: 'session-maybe' },
+        'wework.conversation.summary': { kind: 'list', scope: 'session-maybe' },
         'wework.project.work.section': { kind: 'list', scope: 'session-maybe' },
         'wework.task.status': { kind: 'list', scope: 'root' },
         'wework.workspace.menu.section': { kind: 'list', scope: 'session-maybe' },

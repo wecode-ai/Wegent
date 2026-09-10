@@ -26,6 +26,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
   ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
+  ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
@@ -53,6 +54,7 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-home-focus',
   '@wegent/dsh-ui-home-developer',
   '@wegent/dsh-ui-git',
+  '@wegent/dsh-ui-outputs',
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 

@@ -262,14 +262,14 @@ operations instead of arbitrary command execution.
 
 ## Contextual contribution surfaces
 
-| Extension point              | Purpose                                               | Required or important descriptor fields        | Component props                                                                      |
-| ---------------------------- | ----------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `wework.composer.action`     | Adds an action beside the composer context controls.  | `id`; optionally `module`, `order`.            | `{ compact, disabled }`.                                                             |
-| `wework.plugins.action`      | Adds an action to Wework plugin management.           | `id`, `label`; optionally `labelKey`, `order`. | Host plugin-management callbacks, including `onCreate` for create actions, plus `t`. |
-| `wework.task.status`         | Adds status UI beside a task.                         | `id`; optionally `module`, `order`.            | `{ task }`.                                                                          |
-| `wework.environment.section` | Adds content to environment details.                  | `id`; optionally `module`, `order`.            | `{ info }`.                                                                          |
-| `wework.home`                | Replaces the empty-task home hero above the Composer. | `id`; optionally `module`, `order`.            | `{ heading, onSelectSuggestion }`.                                                   |
-| `wework.board.card.status`   | Adds status UI to a board card.                       | `id`; optionally `module`, `order`.            | Board item identifiers and card context, including `itemId`.                         |
+| Extension point               | Purpose                                                  | Required or important descriptor fields                                    | Component props                                                                                                                           |
+| ----------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `wework.composer.action`      | Adds an action beside the composer context controls.     | `id`; optionally `module`, `order`.                                        | `{ compact, disabled }`.                                                                                                                  |
+| `wework.plugins.action`       | Adds an action to Wework plugin management.              | `id`, `label`; optionally `labelKey`, `order`.                             | Host plugin-management callbacks, including `onCreate` for create actions, plus `t`.                                                      |
+| `wework.task.status`          | Adds status UI beside a task.                            | `id`; optionally `module`, `order`.                                        | `{ task }`.                                                                                                                               |
+| `wework.conversation.summary` | Selects one summary surface for the active conversation. | `id`; optionally `module`, `order`, and generic `when` context expression. | Generic context plus command execution, resource opening, and host-service lookup by ID. Domain data is supplied by independent services. |
+| `wework.home`                 | Replaces the empty-task home hero above the Composer.    | `id`; optionally `module`, `order`.                                        | `{ heading, onSelectSuggestion }`.                                                                                                        |
+| `wework.board.card.status`    | Adds status UI to a board card.                          | `id`; optionally `module`, `order`.                                        | Board item identifiers and card context, including `itemId`.                                                                              |
 
 ## Shell surfaces
 

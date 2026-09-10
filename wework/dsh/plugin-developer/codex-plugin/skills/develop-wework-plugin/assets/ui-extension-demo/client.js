@@ -252,7 +252,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function DemoEnvironmentSection({ info }) {
+    function DemoConversationSummary({ services }) {
+      const info = services?.getService?.('wework.environment')?.read?.().info
       return createElement(
         'div',
         { 'data-testid': 'dsh-extension-demo-environment-section' },
@@ -313,12 +314,12 @@ window.__ModuleLoader__.load({
         component: DemoTaskStatus,
       },
       {
-        slot: 'wework.environment.section',
+        slot: 'wework.conversation.summary',
         descriptor: {
           id: 'dsh-extension-demo.environment-section',
-          order: 90,
+          order: 0,
         },
-        component: DemoEnvironmentSection,
+        component: DemoConversationSummary,
       },
       {
         slot: 'wework.board.card.status',

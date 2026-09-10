@@ -9,7 +9,7 @@
 - `wework.app`
 - `wework.plugins.action`
 - `wework.task.status`
-- `wework.environment.section`
+- `wework.conversation.summary`
 - `wework.home`
 - `wework.board.card.status`
 - `wework.workspace.menu.section`
@@ -66,6 +66,11 @@ desktop capability 调用这些能力。
 独立插件不能导入 Wework 私有的 React Hook。用户可见文本应通过
 `ctx.wework.localization.translate({ en: '...', 'zh-CN': '...' })` 本地化；
 `getLocale()` 可用于确实需要语言代码的格式化逻辑。
+
+`wework.conversation.summary` 是会话摘要区域的候选贡献列表。多个独立插件可以
+声明带通用 `when` 条件的摘要视图，宿主只渲染第一个匹配项。扩展点本身只提供
+通用上下文、命令执行、资源打开和按 ID 获取宿主服务的能力；Git、输出内容等业务
+数据由宿主服务提供，不属于扩展点协议。
 
 “Wework 插件开发”Skill 携带的可安装示例位于
 [`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)，
