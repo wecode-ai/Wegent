@@ -1244,11 +1244,19 @@ if [[ "$wework_desktop_cloud_job" == *"name: Set up Node workspace"* ]] ||
   exit 1
 fi
 
-managed_components_exclusion='!wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**'
+managed_components_exclusion='!wework/test-results/desktop-e2e/**/managed-components/**'
 if [[ "$(grep -Fc "$managed_components_exclusion" "$wework_workflow")" -ne 7 ]] ||
   [[ "$(grep -Fc "$managed_components_exclusion" \
     "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
   printf 'Every Wework desktop diagnostics upload must exclude materialized components\n' >&2
+  exit 1
+fi
+
+test_archive_exclusion='!wework/test-results/desktop-e2e/**/*.zip'
+if [[ "$(grep -Fc "$test_archive_exclusion" "$wework_workflow")" -ne 7 ]] ||
+  [[ "$(grep -Fc "$test_archive_exclusion" \
+    "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
+  printf 'Every Wework desktop diagnostics upload must exclude test archives\n' >&2
   exit 1
 fi
 
@@ -1260,9 +1268,9 @@ if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 7 ]] ||
 fi
 
 for generated_path_exclusion in \
-  '!wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**' \
-  '!wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**' \
-  '!wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/managed-runtimes/**' \
+  '!wework/test-results/desktop-e2e/**/dsh-core/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**' \
   '!wework/test-results/desktop-e2e/**/harness-runtime/**' \
   '!wework/test-results/desktop-e2e/**/node-runtime/**' \
   '!wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**'; do

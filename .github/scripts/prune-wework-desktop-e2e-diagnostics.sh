@@ -18,7 +18,18 @@ find "$diagnostics_root" \
 
 find "$diagnostics_root" \
   -type d \
-  -path '*/electron-user-data/managed-components' \
+  \( -name 'managed-components' -o -name 'managed-runtimes' \) \
+  -prune \
+  -exec rm -rf {} +
+
+find "$diagnostics_root" \
+  -type d \
+  -name 'profiles' \
+  \( \
+    -path '*/dsh-core/profiles' -o \
+    -path '*/Harness/profiles' -o \
+    -path '*/harness-apps/instances/*/profiles' \
+  \) \
   -prune \
   -exec rm -rf {} +
 
@@ -31,3 +42,18 @@ find "$diagnostics_root" -type d \( \
   -name 'GrShaderCache' -o \
   -name 'ShaderCache' \
 \) -prune -exec rm -rf {} +
+
+find "$diagnostics_root" \
+  -mindepth 2 \
+  -maxdepth 2 \
+  -type f \
+  \( \
+    -name '*.tar' -o \
+    -name '*.tar.gz' -o \
+    -name '*.tar.zst' -o \
+    -name '*.tgz' -o \
+    -name '*.zip' -o \
+    -name 'wegent-executor' -o \
+    -name 'wegent-executor.exe' \
+  \) \
+  -delete

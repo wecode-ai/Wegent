@@ -71,11 +71,16 @@ describe('desktop E2E result retention', () => {
       'electron-user-data/harness-apps/instances/app-1/profiles',
       'electron-user-data/managed-components',
       'electron-user-data/managed-runtimes',
+      'electron-user-data/plugin-development/dev-1/user-data/dsh-core/profiles',
+      'electron-user-data/plugin-development/dev-1/user-data/managed-components',
+      'electron-user-data/plugin-development/dev-1/user-data/managed-runtimes',
     ]
     await Promise.all(
       transientUserDataDirectories.map(path => createDirectoryWithFile(join(resultDirectory, path)))
     )
     await writeFile(join(resultDirectory, 'wegent-executor'), 'binary\n')
+    await writeFile(join(resultDirectory, 'component-update.tar.gz'), 'archive\n')
+    await writeFile(join(resultDirectory, 'dws-native.zip'), 'archive\n')
     await writeFile(join(resultDirectory, 'app.log'), 'diagnostic\n')
     await createDirectoryWithFile(join(resultDirectory, 'electron-user-data', 'Local Storage'))
 
@@ -89,6 +94,8 @@ describe('desktop E2E result retention', () => {
       await expectMissing(join(resultDirectory, path))
     }
     await expectMissing(join(resultDirectory, 'wegent-executor'))
+    await expectMissing(join(resultDirectory, 'component-update.tar.gz'))
+    await expectMissing(join(resultDirectory, 'dws-native.zip'))
     await expectExists(join(resultDirectory, 'app.log'))
     await expectExists(join(resultDirectory, 'electron-user-data', 'Local Storage', 'payload'))
   })
@@ -99,15 +106,36 @@ describe('desktop E2E result retention', () => {
     const managedComponents = join(
       resultDirectory,
       'electron-user-data',
+      'plugin-development',
+      'dev-1',
+      'user-data',
       'managed-components',
       'composed',
       'wework-core-plugins'
     )
-    const cache = join(resultDirectory, 'electron-user-data', 'Cache')
+    const nestedProfiles = join(
+      resultDirectory,
+      'electron-user-data',
+      'plugin-development',
+      'dev-1',
+      'user-data',
+      'dsh-core',
+      'profiles'
+    )
+    const cache = join(
+      resultDirectory,
+      'electron-user-data',
+      'plugin-development',
+      'dev-1',
+      'user-data',
+      'Cache'
+    )
     const workspace = join(resultDirectory, 'workspace')
     await createDirectoryWithFile(managedComponents)
+    await createDirectoryWithFile(nestedProfiles)
     await createDirectoryWithFile(cache)
     await createDirectoryWithFile(workspace)
+    await writeFile(join(resultDirectory, 'dws-native.zip'), 'archive\n')
     await writeFile(join(resultDirectory, 'app.log'), 'diagnostic\n')
 
     await execFileAsync(
@@ -115,9 +143,20 @@ describe('desktop E2E result retention', () => {
       [resultRoot]
     )
 
-    await expectMissing(join(resultDirectory, 'electron-user-data', 'managed-components'))
+    await expectMissing(
+      join(
+        resultDirectory,
+        'electron-user-data',
+        'plugin-development',
+        'dev-1',
+        'user-data',
+        'managed-components'
+      )
+    )
+    await expectMissing(nestedProfiles)
     await expectMissing(cache)
     await expectMissing(workspace)
+    await expectMissing(join(resultDirectory, 'dws-native.zip'))
     await expectExists(join(resultDirectory, 'app.log'))
   })
 
