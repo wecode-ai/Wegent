@@ -375,6 +375,32 @@ async def test_runtime_terminal_event_notifies_im_dispatcher(
         status=expected_status,
         content=expected_content,
         source=None,
+        turn_key=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_terminal_event_passes_turn_key_to_notification(
+    monkeypatch,
+    runtime_notification_sender,
+):
+    namespace = DeviceNamespace()
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.completed",
+            "taskId": "runtime-375023196",
+            "subtaskId": "runtime-375023196-0",
+            "data": {"value": "Task finished"},
+            "eventSeq": 101,
+        },
+    )
+
+    assert result == {"success": True}
+    assert runtime_notification_sender.await_args.kwargs["turn_key"] == (
+        "runtime-375023196-0"
     )
 
 
