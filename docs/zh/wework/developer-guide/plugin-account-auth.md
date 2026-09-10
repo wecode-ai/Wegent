@@ -230,3 +230,15 @@ pnpm --filter wework e2e:desktop --cloud-only --segment plugin-account-auth
 
 本地构建与模拟 GitLab API 的回归验证不等于远程流水线已运行；真实 MR 合并后的
 市场发布仍需待代码推送、服务部署与发布环境验证。
+
+## 授权来源分组
+
+插件可通过 connector 的 `displayName`、`description` 与 `authorizationGroup`
+声明一个展示入口和多个认证来源。`authorizationGroup` 包含 `id` 与 `displayName`；
+同一插件内相同组 ID 的连接合并展示，选择来源后仍以原始 connector slug 调用
+本机认证。组内来源应为可独立使用的替代账号体系，连接一个即可使用插件。
+分组不改变账号身份、凭据存储或设备授权，不要求迁移已有连接。
+
+需要登录按钮时同时声明现有 `localAuth` 命令和 `accountAuth` 导出适配器。
+只有 `accountAuth` 的连接不会查询云端 OAuth 应用目录；页面提示通过原本机登录
+流程完成认证。包解析、本机目录转换及精简缓存都保留分组信息。

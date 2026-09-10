@@ -248,3 +248,19 @@ Source-only packages cannot be published as complete native plugins.
 Local build and mocked GitLab API regression checks do not prove a remote pipeline
 has executed. Actual merged-MR publication requires pushed code, deployed services
 and verification in the configured release environment.
+
+## Grouping authentication sources
+
+Connectors may declare `displayName`, `description`, and `authorizationGroup`
+(with `id` and `displayName`). Within one plugin, connectors with the same group
+ID share one visible entry. The source picker invokes authentication using the
+original connector slug. Sources in a group must be independent alternatives:
+one connected source is sufficient to use the plugin.
+Grouping does not change account identity, credential storage, or device grants;
+existing connections do not need migration.
+
+Provide the existing `localAuth` commands alongside the `accountAuth` export
+adapter to offer a login button. An accountAuth-only connection never queries
+the cloud OAuth app catalog; the UI directs users to the original local login
+flow. Package parsing, local catalog conversion, and compact caches preserve
+group metadata.

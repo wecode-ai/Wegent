@@ -103,6 +103,8 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
       connectors: [
         {
           slug: 'mail',
+          displayName: 'git.intra.weibo.com',
+          authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
           authPolicy: 'on_install',
           localAuth: {
             kind: 'browser_oauth',
@@ -130,6 +132,8 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
         },
         {
           slug: 'oauth',
+          displayName: 'gitlab.weibo.cn',
+          authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
           authPolicy: 'optional',
           accountAuth: {
             protocolVersion: 1,
@@ -140,6 +144,8 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
         },
         {
           slug: 'transfer',
+          displayName: 'git.staff.sina.com.cn',
+          authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
           authPolicy: 'optional',
           accountAuth: {
             protocolVersion: 1,
@@ -472,6 +478,22 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
         !page.testIds.includes('local-connector-auth-dialog'),
         'Install required a second authorization'
       )
+      await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
+      await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
+      await control.command('waitFor', '[data-testid="plugin-connector-source-dialog"]', {
+        text: 'git.staff.sina.com.cn',
+      })
+      await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+        value: 'oauth',
+      })
+      await control.command('click', '[data-testid="plugin-connector-source-continue"]')
+      // An account export declaration is not a cloud OAuth app registration.
+      await control.command('waitFor', '[data-testid="plugin-detail-action-error"]', {
+        text: '此连接尚未提供页面登录入口',
+      })
+      await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
+      await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
+      await control.command('click', '[data-testid="plugin-connector-source-cancel"]')
       await captureScreenshot(control, 'plugin-auth-transparent-detail.png', 'body')
 
       await waitForValue(
@@ -602,15 +624,21 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} read`
       await invokeCloud('plugin_auth_device_not_granted')
       assert.equal((await localAuth('health')).status, 'need_login')
-      const login = await localAuth('start')
-      assert.ok(login.sessionId)
-      const loginResult = await waitForValue(
-        () => localAuth('poll', login.sessionId),
-        result => ['ok', 'error', 'expired'].includes(result.status),
-        workbenchReadyTimeoutMs,
-        'The original local login entry did not finish'
+      await control.command('click', '[data-testid="plugins-button"]')
+      await control.command(
+        'waitFor',
+        `[data-testid="plugins-installed-strip-item-${installedId}"]`
       )
-      assert.equal(loginResult.status, 'ok')
+      await control.command('click', `[data-testid="plugins-installed-strip-item-${installedId}"]`)
+      await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
+      await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
+      await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+        value: 'mail',
+      })
+      await control.command('click', '[data-testid="plugin-connector-source-continue"]')
+      await control.command('waitFor', '[data-testid="plugin-connector-section"]', {
+        text: '已连接 · git.intra.weibo.com',
+      })
       await waitForValue(
         () => connectionFor('mail'),
         item => item?.status === 'connected' && item.device_ids.includes(CLOUD_DEVICE_ID),
@@ -635,9 +663,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       })
       // Return to the visible plugin detail after a long background-only workflow.
       await control.command('click', '[data-testid="plugins-button"]')
-      await control.command('waitFor', '[data-testid="plugins-workspace"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
       const finalPage = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(!finalPage.testIds.some(id => id.startsWith('plugin-account-')))
       await captureScreenshot(control, 'plugin-auth-automatic-complete.png', 'body')

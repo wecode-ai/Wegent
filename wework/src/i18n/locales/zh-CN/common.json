@@ -2489,9 +2489,9 @@
     "plugins_local_browser_title": "在浏览器中授权",
     "plugins_local_browser_description": "Wework 会准备所需的本机工具并打开浏览器。登录信息仅保存在此设备的凭据库。",
     "plugins_local_browser_preparing": "正在准备本机授权工具…",
-    "plugins_local_browser_waiting": "请在浏览器中确认授权，完成后会自动继续。",
+    "plugins_local_browser_waiting": "请完成弹出的授权流程，完成后会自动继续",
     "plugins_local_browser_verifying": "正在验证本机登录状态…",
-    "plugins_local_browser_device_only": "凭据仅保存在此设备",
+    "plugins_local_browser_device_only": "本机安全授权",
     "plugins_local_browser_failed": "浏览器授权未完成，请重试。",
     "plugins_local_browser_start_failed": "无法启动浏览器授权",
     "plugins_local_browser_retry": "重新授权",
@@ -3679,7 +3679,13 @@
     "board_automation_run": "运行",
     "board_automation_running": "启动中…",
     "board_automation_run_started": "已启动运行",
-    "board_automation_save_first": "请先保存更改再运行"
+    "board_automation_save_first": "请先保存更改再运行",
+    "plugin_connector_source": "认证站点",
+    "plugin_connector_connected": "已连接",
+    "plugin_connector_source_hint": "选择你使用的认证站点，连接一个账号即可。",
+    "plugin_connector_optional": "可选应用连接",
+    "plugin_connector_chat_login": "此连接尚未提供页面登录入口，请在插件对话中按提示完成本机登录。",
+    "plugin_connector_required": "安装和使用此插件需要授权"
   },
   "delivery": {
     "action": "交付",

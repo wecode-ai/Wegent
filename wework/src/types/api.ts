@@ -2145,6 +2145,8 @@ export interface InstalledPluginComponents {
   mcps: PluginMCPComponent[]
   connectors?: Array<{
     slug: string
+    displayName?: string | null
+    authorizationGroup?: { id: string; displayName: string } | null
     authPolicy: 'on_install' | 'on_use' | 'optional'
     localAuth?: PluginLocalAuthDefinition | null
     accountAuth?: {
