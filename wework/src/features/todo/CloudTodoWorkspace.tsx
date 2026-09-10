@@ -5909,6 +5909,7 @@ export function CloudTodoWorkspace({
               localProjectIdForItem(selectedItem) ??
               (isMyTasksBoard ? selectedLocalProject?.id : null)
             }
+            taskRequest={taskComposerRequest.taskRequest}
             inheritFromTask={taskComposerRequest.inheritFromTask}
             workflowNodeId={taskComposerRequest.workflowNodeId}
             onAddressChange={() => {
