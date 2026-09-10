@@ -489,7 +489,7 @@ jobs:
         run: |
           curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
 
-      - name: Run DingTalk private-chat AI Card E2E
+      - name: Run DingTalk private-chat card E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
