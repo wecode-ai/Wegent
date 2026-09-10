@@ -22,9 +22,8 @@ layout can leave pages nothing points at any more, and neither the agent nor the
 has the whole picture; starting from an empty version is what clears them.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from fnmatch import fnmatchcase
 from typing import Optional, Sequence
 
 from app.repository.file_status import STRUCTURAL_STATUSES
@@ -57,38 +56,13 @@ class ChangedPath:
         return self.status[:1].upper() in STRUCTURAL_STATUSES
 
 
-# Files that describe how the project is built or what it depends on. A change here
-# usually reshapes the architecture the wiki describes, so it earns a full rebuild
-# even when only one file moved.
-DEFAULT_MANIFEST_PATTERNS: tuple[str, ...] = (
-    "package.json",
-    "pnpm-workspace.yaml",
-    "pyproject.toml",
-    "requirements*.txt",
-    "go.mod",
-    "Cargo.toml",
-    "pom.xml",
-    "build.gradle*",
-    "Makefile",
-    "Dockerfile",
-    "docker-compose*.yml",
-    "*/package.json",
-    "*/pyproject.toml",
-    "*/go.mod",
-    "*/Cargo.toml",
-)
-
-
 @dataclass(frozen=True)
 class RunModePolicy:
     """Thresholds that promote an incremental run to a full rebuild."""
 
-    max_changed_files: int = 50
-    max_structural_moves: int = 15
     max_changed_ratio: float = 0.25
     max_incrementals_since_full: int = 10
     max_days_since_full: float = 30.0
-    manifest_patterns: tuple[str, ...] = field(default=DEFAULT_MANIFEST_PATTERNS)
 
 
 DEFAULT_POLICY = RunModePolicy()
@@ -114,11 +88,6 @@ class RunModeDecision:
         return RunMode(self.mode) == RunMode.INCREMENTAL
 
 
-def _matches_manifest(path: str, patterns: Sequence[str]) -> bool:
-    """Match case-sensitively, so behaviour does not depend on the host platform."""
-    return any(fnmatchcase(path, pattern) for pattern in patterns)
-
-
 def decide_run_mode(
     *,
     head_commit: str,
@@ -128,6 +97,7 @@ def decide_run_mode(
     days_since_full: Optional[float] = None,
     policy: RunModePolicy = DEFAULT_POLICY,
     total_source_files: Optional[int] = None,
+    require_total_source_files: bool = False,
     force_full: bool = False,
 ) -> RunModeDecision:
     """Choose the mode for one run.
@@ -140,8 +110,14 @@ def decide_run_mode(
         incrementals_since_full: Incremental runs completed since the last full one.
         days_since_full: Days since the last full run, if one has happened.
         policy: Thresholds to apply.
-        total_source_files: Files under consideration at ``head_commit``, used for the
-            proportional threshold; skipped when unknown.
+        total_source_files: Known tracked-file count from the published checkout,
+            used for the proportional threshold. It is skipped for historical
+            versions that have no count yet.
+        require_total_source_files: Whether this run must know the repository size
+            before it can trust the proportional threshold. The runner enables this
+            for historical published versions after attempting to read their file
+            tree; failures stay conservative rather than silently skipping the
+            only size-based guard.
         force_full: Whether an explicit caller requested a fresh full rebuild.
     """
     if force_full:
@@ -163,31 +139,10 @@ def decide_run_mode(
         # than paying for a rebuild.
         return RunModeDecision(RunMode.SKIP, "no documented files changed")
 
-    manifests = [
-        change.path
-        for change in changed_paths
-        if _matches_manifest(change.path, policy.manifest_patterns)
-    ]
-    if manifests:
-        return RunModeDecision(
-            RunMode.FULL, f"build or dependency manifest changed: {manifests[0]}"
-        )
-
-    # Files appearing, disappearing or moving reshape what the wiki documents far more
-    # than edits do, so a burst of them earns a rebuild sooner than plain edits.
-    structural = [change for change in changed_paths if change.is_structural_move]
-    if len(structural) > policy.max_structural_moves:
+    if require_total_source_files and not total_source_files:
         return RunModeDecision(
             RunMode.FULL,
-            f"{len(structural)} files added, removed or renamed, over the limit of "
-            f"{policy.max_structural_moves}",
-        )
-
-    if len(changed_paths) > policy.max_changed_files:
-        return RunModeDecision(
-            RunMode.FULL,
-            f"{len(changed_paths)} files changed, over the limit of "
-            f"{policy.max_changed_files}",
+            "repository file count is unavailable, rebuilding to stay correct",
         )
 
     if total_source_files and total_source_files > 0:
@@ -195,7 +150,8 @@ def decide_run_mode(
         if ratio > policy.max_changed_ratio:
             return RunModeDecision(
                 RunMode.FULL,
-                f"{ratio:.0%} of files changed, over the limit of "
+                f"{ratio:.0%} of files changed ({len(changed_paths)} of "
+                f"{total_source_files} tracked files), over the limit of "
                 f"{policy.max_changed_ratio:.0%}",
             )
 

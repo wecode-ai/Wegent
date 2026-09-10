@@ -125,6 +125,7 @@ interface ScrollableMessageAreaProps {
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
   initialScrollPosition?: 'restore' | 'latest'
+  scrollOrigin?: 'top' | 'bottom'
 }
 
 export const ScrollableMessageArea = memo(function ScrollableMessageArea(
@@ -213,6 +214,7 @@ function areScrollableMessageAreaPropsEqual(
       : null,
     previous.onLoadTranscriptGap !== next.onLoadTranscriptGap ? 'onLoadTranscriptGap' : null,
     previous.initialScrollPosition !== next.initialScrollPosition ? 'initialScrollPosition' : null,
+    previous.scrollOrigin !== next.scrollOrigin ? 'scrollOrigin' : null,
   ].filter((key): key is string => key !== null)
 
   return changed.length === 0
@@ -265,11 +267,12 @@ function ScrollableMessagePaneContent({
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
   initialScrollPosition = 'restore',
+  scrollOrigin = 'top',
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
   const internalScrollRef = useRef<HTMLDivElement>(null)
   const scrollRef = externalScrollRef ?? internalScrollRef
-  const bottomOrigin = externalScrollRef !== undefined
+  const bottomOrigin = externalScrollRef !== undefined || scrollOrigin === 'bottom'
   const activeScrollRefRef = useRef(scrollRef)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyFooterRef = useRef<HTMLDivElement>(null)
@@ -1335,9 +1338,13 @@ function ScrollableMessagePaneContent({
       <div
         ref={internalScrollRef}
         data-testid={scrollTestId}
+        data-scroll-origin={bottomOrigin ? 'bottom' : 'top'}
         className={cn(
           'h-full overflow-y-auto',
           stickyFooter && 'flex flex-col',
+          bottomOrigin &&
+            externalScrollRef === undefined &&
+            'flex flex-col-reverse [overflow-anchor:none]',
           (turnNavigationLoading || turnNavigationTargetMessageId || autoScrollSuspended) &&
             '[overflow-anchor:none]',
           scrollerClassName
