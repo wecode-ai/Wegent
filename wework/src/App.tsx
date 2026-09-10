@@ -391,7 +391,7 @@ export function WorkspaceTabSurface({
 
   const workbenchContent = (
     <>
-      {harnessAppInstallationId && smartAppsEnabled ? (
+      {harnessAppInstallationId && (smartAppsEnabled || harnessAppLaunchActive) ? (
         <HarnessAppAutoLauncher
           installationId={harnessAppInstallationId}
           onStartupSettled={settleHarnessAppStartup}

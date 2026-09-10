@@ -262,6 +262,7 @@ describe('bundled plugin resources', () => {
     expect(builderConfig).toContain('productName: identity.productName')
     expect(builderConfig).toContain('executableName: identity.executableName')
     expect(builderConfig).toContain('weworkAppId: identity.identifier')
+    expect(builderConfig).toContain("schemes: ['wework']")
     expect(signingKeychainStep).toContain('security import')
     expect(signingKeychainStep).toContain('security list-keychains -d user -s')
     expect(signingKeychainStep).toContain(

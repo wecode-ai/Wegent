@@ -31,6 +31,7 @@ import {
   preparePluginTrial,
 } from '@/features/plugins/preparePluginTrial'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import { parseSmartAppOpenRoute } from '@/features/harness-apps/smartAppDeepLink'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
@@ -89,13 +90,24 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const searchParams = new URLSearchParams(search)
   const smartAppsRequested = searchParams.get('app_type') === 'smart_app'
+  const smartAppsDeepLinkRequested = Boolean(parseSmartAppOpenRoute(search))
   const smartAppsView = searchParams.get('view')
 
   useEffect(() => {
-    if (smartAppsRequested && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
+    if (
+      smartAppsRequested &&
+      !smartAppsDeepLinkRequested &&
+      experimentalFeatures.loaded &&
+      !experimentalFeatures.enabled
+    ) {
       navigateTo('/sites')
     }
-  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, smartAppsRequested])
+  }, [
+    experimentalFeatures.enabled,
+    experimentalFeatures.loaded,
+    smartAppsDeepLinkRequested,
+    smartAppsRequested,
+  ])
   const {
     state,
     cloudWorkStatus,
@@ -504,7 +516,7 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
           continuingSiteId={continuingSiteId}
           createError={createError}
           createNotice={createNotice}
-          smartAppsEnabled={experimentalFeatures.enabled}
+          smartAppsEnabled={experimentalFeatures.enabled || smartAppsDeepLinkRequested}
           smartAppsContent={
             smartAppsView === 'owned' ? (
               <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" onNavigate={onNavigate} />

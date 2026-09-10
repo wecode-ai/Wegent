@@ -107,6 +107,39 @@ describe('Wework scheme bridge', () => {
     expect(openTab).toHaveBeenCalledOnce()
   })
 
+  it('keeps a Smart app link pending until cloud authentication is restored', async () => {
+    isElectronRuntime.mockReturnValue(true)
+    invokeDesktopHost.mockImplementation(async (capability: string) =>
+      capability === 'navigation.pendingSchemes'
+        ? [{ id: 3, url: 'wework://smart-app/42' }]
+        : undefined
+    )
+    const connection = {
+      status: 'restoring',
+      isConnected: false,
+      token: null,
+    } as CloudConnectionContextValue
+    const view = (value: CloudConnectionContextValue) => (
+      <CloudConnectionContext.Provider value={value}>
+        <WeworkSchemeBridge />
+      </CloudConnectionContext.Provider>
+    )
+    const rendered = render(view(connection))
+    await act(async () => {})
+    expect(openTab).not.toHaveBeenCalled()
+    expect(invokeDesktopHost).not.toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 3 })
+
+    rendered.rerender(
+      view({ ...connection, status: 'connected', isConnected: true, token: 'test-token' })
+    )
+    await waitFor(() =>
+      expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 3 })
+    )
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('auxiliary', {
+      contentRoute: '/sites?app_type=smart_app&action=open&smartAppId=42',
+    })
+  })
+
   it('opens the board homepage without a cloud account', () => {
     render(<WeworkSchemeBridge />)
     act(() => {

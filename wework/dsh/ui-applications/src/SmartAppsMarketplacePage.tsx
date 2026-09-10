@@ -69,7 +69,12 @@ import {
   type HarnessAppInstallationsChangedDetail,
 } from '@/features/harness-apps/harnessAppInstallationsChanged'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
+import { smartAppDeepLink } from '@/features/harness-apps/smartAppDeepLink'
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
+import {
+  smartAppErrorMessage,
+  useSmartAppDeepLinkOpen,
+} from '@/features/harness-apps/useSmartAppDeepLinkOpen'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
@@ -349,6 +354,7 @@ export function SmartAppsMarketplacePage({
   )
   const {
     changeModel,
+    hasCompletedModelLoad,
     hasSelectedModel,
     modelOptions,
     open: openInstalledApp,
@@ -359,6 +365,19 @@ export function SmartAppsMarketplacePage({
     onBusyChange: setBusy,
     onError: setError,
     onRefresh: refresh,
+  })
+  useSmartAppDeepLinkOpen({
+    api,
+    hasCompletedModelLoad,
+    isMarketplaceLoading: loading,
+    mode,
+    modelOptions,
+    openInstalledApp,
+    setBusy,
+    setError,
+    setInstalled,
+    startInstalledApp,
+    stopInstalledApp,
   })
   const installModelKey = modelKey || modelOptions[0]?.key || ''
   const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
@@ -2124,6 +2143,7 @@ function SmartAppShareDialog({
   const [scope, setScope] = useState<'private' | 'restricted' | 'public'>('restricted')
   const [targets, setTargets] = useState<SmartAppAccessTarget[]>([])
   const [saving, setSaving] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     void api
@@ -2167,6 +2187,17 @@ function SmartAppShareDialog({
       )
     } finally {
       setSaving(false)
+    }
+  }
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(smartAppDeepLink(item.id))
+      setLinkCopied(true)
+      setError(null)
+    } catch (value) {
+      setError(
+        getErrorMessage(value, t('workbench.smart_apps_link_copy_failed', '分享链接复制失败'))
+      )
     }
   }
   return (
@@ -2235,6 +2266,24 @@ function SmartAppShareDialog({
                     )}
               </p>
             )}
+            {access.scope !== 'private' ? (
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-border/40 bg-surface/30 p-2">
+                <code className="min-w-0 flex-1 truncate px-2 text-xs text-text-secondary">
+                  {smartAppDeepLink(item.id)}
+                </code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-testid="smart-app-share-copy-link"
+                  onClick={() => void copyLink()}
+                >
+                  <Copy className="h-4 w-4" />
+                  {linkCopied
+                    ? t('workbench.smart_apps_link_copied', '已复制')
+                    : t('workbench.smart_apps_copy_link', '复制链接')}
+                </Button>
+              </div>
+            ) : null}
           </>
         ) : (
           <p className="mt-5 text-sm text-text-muted">

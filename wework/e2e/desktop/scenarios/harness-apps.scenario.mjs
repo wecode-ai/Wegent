@@ -1077,6 +1077,19 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-05a-public-snapshot-listed.png', 'body')
+      await control.command('click', sharedVisibilitySelector)
+      await control.command('waitFor', '[data-testid="smart-app-share-copy-link"]', {
+        text: '复制链接',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-05b-share-link.png', 'body')
+      await control.command('click', '[data-testid="smart-app-share-copy-link"]')
+      await control.command('waitFor', '[data-testid="smart-app-share-copy-link"]', {
+        text: '已复制',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-05c-share-link-copied.png', 'body')
+      await control.command('click', '[data-testid="smart-app-share-close"]')
       await control.command('click', '[data-testid="smart-app-access-view-marketplace"]')
       await control.command(
         'waitFor',
@@ -1621,6 +1634,25 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Smart apps remained visible after experimental features were disabled'
       )
       await captureScreenshot(control, 'harness-apps-16-experimental-disabled.png', 'body')
+      await control.command('press', 'body', { key: 'Escape' })
+
+      await control.command('navigate', 'body', {
+        value: '/sites?app_type=smart_app&action=open&smartAppId=1',
+      })
+      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-17-deep-link-received.png', 'body')
+      await control.command('waitFor', '[data-testid="app-iframe-harness-market-1"]', {
+        timeoutMs: 600_000,
+      })
+      await captureScreenshot(control, 'harness-apps-18-deep-link-opened.png', 'body')
+      const deepLinkSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        deepLinkSnapshot.location.includes('/sites?app_type=smart_app') &&
+          !deepLinkSnapshot.location.includes('action=open'),
+        `Smart app deep link was not consumed after opening: ${deepLinkSnapshot.location}`
+      )
     },
   }
 }

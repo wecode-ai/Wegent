@@ -1,6 +1,9 @@
+import { smartAppOpenRoute } from '@/features/harness-apps/smartAppDeepLink'
+
 export type WeworkDestination =
   | { kind: 'boards' }
   | { kind: 'board'; projectId: string; itemId?: string }
+  | { kind: 'smartApp'; smartAppId: number }
   | { kind: 'task'; deviceId: string; taskId: string }
 
 function segment(value: string): string | null {
@@ -46,6 +49,10 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       const taskId = segment(parts[1])
       return deviceId && taskId ? { kind: 'task', deviceId, taskId } : null
     }
+    if (url.hostname === 'smart-app' && parts.length === 1 && /^[1-9]\d*$/.test(parts[0])) {
+      const smartAppId = Number(parts[0])
+      return Number.isSafeInteger(smartAppId) ? { kind: 'smartApp', smartAppId } : null
+    }
     return null
   } catch {
     return null
@@ -54,6 +61,7 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
 
 export function weworkDestinationRoute(destination: WeworkDestination): string {
   if (destination.kind === 'boards') return '/todo'
+  if (destination.kind === 'smartApp') return smartAppOpenRoute(destination.smartAppId)
   if (destination.kind === 'task') {
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
   }

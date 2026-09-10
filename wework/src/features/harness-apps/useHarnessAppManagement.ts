@@ -79,6 +79,12 @@ export function useHarnessAppManagement({
         return
       }
       onError(null)
+      beginHarnessAppLaunch(
+        installation.id,
+        installation.manifest.displayName,
+        () => openHarnessAppTab(workspaceTabs, installation),
+        'preparingRuntime'
+      )
       openHarnessAppTab(workspaceTabs, installation)
     },
     [hasSelectedModel, onError, t, workspaceTabs]
@@ -171,6 +177,7 @@ export function useHarnessAppManagement({
   return {
     changeModel,
     hasSelectedModel,
+    hasCompletedModelLoad: projectChat.hasCompletedModelLoad,
     modelOptions,
     open,
     start,

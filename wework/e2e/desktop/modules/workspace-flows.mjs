@@ -175,6 +175,8 @@ const HARNESS_MILESTONE_SCREENSHOTS = new Set([
   'harness-apps-03a-official-running.png',
   'harness-apps-03b4-plugin-reloaded.png',
   'harness-apps-04a-publish-dialog-zh.png',
+  'harness-apps-05b-share-link.png',
+  'harness-apps-05c-share-link-copied.png',
   'harness-apps-08-native-page.png',
   'harness-apps-08a-workbench-loaded.png',
   'harness-apps-08b-workbench-add-menu.png',
@@ -182,6 +184,8 @@ const HARNESS_MILESTONE_SCREENSHOTS = new Set([
   'harness-apps-09-running.png',
   'harness-apps-15-returned-to-marketplace.png',
   'harness-apps-16-experimental-disabled.png',
+  'harness-apps-17-deep-link-received.png',
+  'harness-apps-18-deep-link-opened.png',
 ])
 
 async function captureVerificationScreenshot(control, name, selector = 'body') {

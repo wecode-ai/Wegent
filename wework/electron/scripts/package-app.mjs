@@ -104,6 +104,12 @@ try {
       join(repositoryRoot, 'LICENSE'),
     ],
     icon,
+    protocols: [
+      {
+        name: 'Wework',
+        schemes: ['wework'],
+      },
+    ],
     prune: false,
   })
 

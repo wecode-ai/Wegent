@@ -462,6 +462,7 @@ export function useWorkbenchModels({
     models,
     selectedModel,
     selectedModelOptions,
+    hasCompletedModelLoad,
     isSelectionReady,
     isConfiguredModelUnavailable: configuredModelUnavailable,
     setSelectedModel,

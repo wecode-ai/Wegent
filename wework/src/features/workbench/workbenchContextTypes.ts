@@ -207,6 +207,7 @@ export interface WorkbenchContextValue {
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
+    hasCompletedModelLoad: boolean
     isModelSelectionReady: boolean
     input: string
     composerError?: string | null
