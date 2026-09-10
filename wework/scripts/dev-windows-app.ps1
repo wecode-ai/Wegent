@@ -38,8 +38,9 @@ Environment:
   WEWORK_DEV_COMPONENT_RESOURCES   Component links. Defaults to the worktree dependency cache.
   WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
   WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
-  WEWORK_HARNESS_RUNTIME_CACHE_ROOT
-                                   Harness runtime asset cache root.
+  WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT
+                                   Harness runtime asset cache root. Defaults to
+                                   %LOCALAPPDATA%\wegent\wework-dev\harness-runtime.
   CARGO_TARGET_DIR                 Explicit Cargo target directory. Overrides auto cache.
   WEGENT_CARGO_TARGET_ROOT         Root containing shared Cargo targets.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
@@ -361,15 +362,10 @@ $DEV_CACHE_ROOT = if ($env:WEWORK_DEV_CACHE_ROOT) {
 } else {
   Join-Path $WEWORK_DIR 'node_modules\.cache\wework-dev'
 }
-$env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT) {
-  $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT.TrimEnd('\')
-} else {
-  Join-Path $DEV_CACHE_ROOT 'harness-runtime'
-}
 $env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT) {
   $env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT.TrimEnd('\')
 } else {
-  $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT
+  Join-Path $DEV_CACHE_ROOT 'harness-runtime'
 }
 if ($env:WEWORK_DEV_HARNESS_RUNTIME_ROOT) {
   $env:WEWORK_HARNESS_RUNTIME_ROOT = $env:WEWORK_DEV_HARNESS_RUNTIME_ROOT

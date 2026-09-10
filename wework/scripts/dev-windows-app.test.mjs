@@ -35,4 +35,19 @@ describe('dev-windows-app', () => {
     expect(source).toContain('dev-wework-app-watch.mjs')
     expect(source).toContain('WEWORK_APP_WATCH_READY_FILE')
   })
+
+  test('materializes the dev harness runtime in the worktree and shares only the asset cache', async () => {
+    const source = await readFile(scriptPath, 'utf8')
+
+    expect(source).toContain(
+      "$env:WEWORK_HARNESS_RUNTIME_ROOT = Join-Path $WEWORK_DIR 'node_modules\\.cache\\harness-runtime-dev'"
+    )
+    expect(source).toContain(
+      '$env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT)'
+    )
+    expect(source).toContain("Join-Path $DEV_CACHE_ROOT 'harness-runtime'")
+    expect(source).not.toContain(
+      '$env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT)'
+    )
+  })
 })
