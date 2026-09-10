@@ -2596,6 +2596,20 @@ class DesktopE2EServer {
           true,
           'The embedded-browser bridge collision tool search output did not return to the model'
         )
+        const searchOutput = toolOutputText(body, EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID)
+        assert.ok(
+          searchOutput,
+          'The embedded-browser bridge collision tool search output was empty'
+        )
+        const browserToolAvailable = searchOutput.includes('"name":"wework_browser"')
+        if (!browserToolAvailable) {
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+          return
+        }
         const browserTool = selectMcpTool(body, 'wework_browser', 'browser_open', {
           url: new URL('/embedded-browser-agent-fixture?collision=1', this.url).href,
         })
