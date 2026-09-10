@@ -3024,31 +3024,6 @@ mod tests {
     }
 
     #[test]
-    fn degraded_preload_skills_exclude_skills_that_are_also_required() {
-        let request = ExecutionRequest {
-            extra: Map::from_iter([
-                ("required_skills".to_owned(), json!(["required-skill"])),
-                (
-                    "preload_skills".to_owned(),
-                    json!(["required-skill", "preload-skill"]),
-                ),
-            ]),
-            ..ExecutionRequest::default()
-        };
-        let report = SkillDeploymentReport {
-            skill_count: 2,
-            success_skills: Vec::new(),
-            failed_skills: vec!["preload-skill".to_owned(), "required-skill".to_owned()],
-            failed_skill_reasons: BTreeMap::new(),
-        };
-
-        let degraded =
-            degraded_preload_skill_names(&request, &hard_required_skill_names(&request), &report);
-
-        assert_eq!(degraded, vec!["preload-skill".to_owned()]);
-    }
-
-    #[test]
     fn request_api_base_url_prefers_env_over_payload_backend_url() {
         let _lock = crate::test_env::lock();
         let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");

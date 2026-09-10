@@ -22,7 +22,9 @@ use tokio::{
 };
 use wegent_executor::{
     agents::{AgentCommandPlanner, AgentProcessEngine},
+    config::device::DeviceConfig,
     emitter::{EventEnvelope, ResponsesEventBuilder},
+    logging::init_executor_logging,
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
 };
@@ -378,6 +380,7 @@ async fn claude_runtime_degrades_to_on_demand_loading_when_preload_skill_downloa
     let workspace_root = unique_dir("claude-preload-skill-failure-workspace");
     let log_path = unique_dir("claude-preload-skill-failure-log").join("args.json");
     let fake_claude = write_fake_claude(&log_path);
+    let executor_log_dir = unique_dir("claude-preload-skill-failure-executor-log");
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let backend_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
@@ -393,6 +396,12 @@ async fn claude_runtime_degrades_to_on_demand_loading_when_preload_skill_downloa
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
+    let _executor_log_dir = EnvGuard::set(
+        "WEGENT_EXECUTOR_LOG_DIR",
+        &executor_log_dir.display().to_string(),
+    );
+    let _file_log = EnvGuard::remove("WEGENT_EXECUTOR_DISABLE_FILE_LOG");
+    init_executor_logging(&DeviceConfig::default());
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
         "codex",
@@ -433,6 +442,91 @@ async fn claude_runtime_degrades_to_on_demand_loading_when_preload_skill_downloa
     );
     assert!(log_path.exists());
     assert!(!home.join(".claude/skills/abtest-file-analyzer").exists());
+    let executor_log = fs::read_to_string(executor_log_dir.join("executor.log")).unwrap();
+    assert!(
+        executor_log.contains("preload Skill deployment degraded to on-demand loading"),
+        "{executor_log}"
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn claude_runtime_does_not_report_required_skill_as_degraded() {
+    let _lock = env_lock().await;
+    let home = unique_dir("claude-required-preload-home");
+    let workspace_root = unique_dir("claude-required-preload-workspace");
+    let log_path = unique_dir("claude-required-preload-log").join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let executor_log_dir = unique_dir("claude-required-preload-executor-log");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _ = read_http_request_headers(&mut stream).await;
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
+    let _executor_log_dir = EnvGuard::set(
+        "WEGENT_EXECUTOR_LOG_DIR",
+        &executor_log_dir.display().to_string(),
+    );
+    let _file_log = EnvGuard::remove("WEGENT_EXECUTOR_DISABLE_FILE_LOG");
+    init_executor_logging(&DeviceConfig::default());
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "7801".to_owned(),
+        subtask_id: "104".to_owned(),
+        prompt: json!("use required and preloaded skill"),
+        auth_token: Some("task-token".to_owned()),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode",
+            "skills": ["abtest-file-analyzer"]
+        }]),
+        extra: serde_json::Map::from_iter([
+            (
+                "skill_refs".to_owned(),
+                json!({
+                    "abtest-file-analyzer": {
+                        "skill_id": 237510,
+                        "namespace": "default"
+                    }
+                }),
+            ),
+            (
+                "required_skills".to_owned(),
+                json!(["abtest-file-analyzer"]),
+            ),
+            ("preload_skills".to_owned(), json!(["abtest-file-analyzer"])),
+        ]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "required Skill deployment failed: abtest-file-analyzer (backend download failed with HTTP 404)".to_owned()
+        }
+    );
+    assert!(!log_path.exists());
+    let executor_log = fs::read_to_string(executor_log_dir.join("executor.log")).unwrap();
+    assert!(
+        !executor_log.contains("degraded to on-demand loading"),
+        "{executor_log}"
+    );
     server.await.unwrap();
 }
 
