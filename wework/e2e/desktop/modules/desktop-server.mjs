@@ -98,6 +98,8 @@ import {
   DROPPED_PATH_FILE_NAME,
   DROPPED_PATH_FOLDER_NAME,
   EARLIER_TOOL_BLOCK_ID,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
   EMBEDDED_BROWSER_SETUP_PROMPT,
   FILE_PANEL_ANCHOR_PROMPT,
@@ -252,6 +254,9 @@ const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
 const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
 const EMBEDDED_BROWSER_SETUP_SEARCH_ID = 'wework-embedded-browser-setup-search'
 const EMBEDDED_BROWSER_SETUP_OPEN_ID = 'wework-embedded-browser-setup-open'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID =
+  'wework-embedded-browser-bridge-collision-search'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID = 'wework-embedded-browser-bridge-collision-open'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
@@ -753,6 +758,7 @@ class DesktopE2EServer {
       [
         'initial',
         'embedded_browser_setup',
+        'embedded_browser_bridge_collision',
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
@@ -2522,6 +2528,120 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'embedded_browser_bridge_collision') {
+      this.recordScenarioRequest('embedded_browser_bridge_collision', modelRequest)
+      const requestNumber = this.scenarioRequests.get('embedded_browser_bridge_collision').length
+      const serialized = JSON.stringify(body)
+      assert.ok(
+        serialized.includes(EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT),
+        'The embedded-browser bridge collision request lost its prompt'
+      )
+
+      if (requestNumber === 1) {
+        if (requestAdvertisesProgrammaticExec(body)) {
+          const browserUrl = new URL('/embedded-browser-agent-fixture?collision=1', this.url).href
+          const program = [
+            "const browserOpen = ALL_TOOLS.find(tool => tool.name === 'browser_open' || (tool.name.includes('wework_browser') && tool.name.endsWith('browser_open')))",
+            "if (!browserOpen) throw new Error('Wework browser_open unavailable')",
+            `const result = await tools[browserOpen.name](${JSON.stringify({ url: browserUrl })})`,
+            'text(JSON.stringify(result))',
+          ].join('\n')
+          const exec = selectProgrammaticExec(body, program)
+          this.writeSse(response, [
+            responseCreated(responseId),
+            customToolCall(EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID, exec.name, exec.input),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const search = selectToolSearch(body, 'Wework browser open')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestAdvertisesProgrammaticExec(body)) {
+        assert.equal(requestNumber, 2, `Unexpected bridge collision request ${requestNumber}`)
+        assert.equal(
+          requestContainsToolOutput(body, EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID),
+          true,
+          'The embedded-browser bridge collision programmatic output did not return to the model'
+        )
+        const browserOutput = toolOutputText(body, EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID)
+        assert.ok(browserOutput, 'The embedded-browser bridge collision output was empty')
+        assert.ok(
+          serializedOutputReportsSuccess(browserOutput) &&
+            !browserOutput.includes('Foreign embedded browser bridge'),
+          'The browser tool followed a foreign bridge runtime record'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        assert.equal(
+          requestContainsToolOutput(body, EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID),
+          true,
+          'The embedded-browser bridge collision tool search output did not return to the model'
+        )
+        const searchOutput = toolOutputText(body, EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID)
+        assert.ok(
+          searchOutput,
+          'The embedded-browser bridge collision tool search output was empty'
+        )
+        const browserToolAvailable = searchOutput.includes('"name":"wework_browser"')
+        if (!browserToolAvailable) {
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const browserTool = selectMcpTool(body, 'wework_browser', 'browser_open', {
+          url: new URL('/embedded-browser-agent-fixture?collision=1', this.url).href,
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID,
+            browserTool.namespace,
+            browserTool.name,
+            browserTool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 3, `Unexpected bridge collision request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID),
+        true,
+        'The embedded-browser bridge collision tool output did not return to the model'
+      )
+      assert.ok(
+        findNestedString(
+          body,
+          value => value.includes('"ok": true') || value.includes('\\"ok\\": true')
+        ),
+        'The browser tool followed a foreign bridge runtime record'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

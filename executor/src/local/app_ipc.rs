@@ -79,11 +79,13 @@ pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {
         Some("executor.plugin_auth.migrate") => 280,
         Some("executor.plugin_auth.run") => 200,
+        Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
         _ => APP_IPC_REQUEST_TIMEOUT_SECONDS,
     }
 }
@@ -1661,6 +1663,7 @@ impl AppIpcServer {
         })?;
 
         let request = CommandRequest {
+            command_key: Some(command_key.to_owned()),
             command: command.command.to_owned(),
             argv: command
                 .argv
@@ -2787,26 +2790,6 @@ async fn handle_builtin_device_command(
     params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
     match command_key {
-        "home_dir" => Some((
-            CommandResult::ok(
-                dirs::home_dir()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| ".".to_string()),
-            ),
-            None,
-        )),
-        "pwd" => Some((
-            CommandResult::ok(
-                std::env::current_dir()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|_| ".".to_string()),
-            ),
-            None,
-        )),
-        "project_workspace_root" => match project_workspace_root_path() {
-            Ok(path) => Some((CommandResult::ok(path), None)),
-            Err(error) => Some((CommandResult::error(error, 0.0, false), None)),
-        },
         "mkdir_p" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -3049,35 +3032,6 @@ fn is_git_workspace_inspection_command(command_key: &str) -> bool {
             | "git_status_porcelain"
             | "git_remote_url"
     )
-}
-
-#[cfg(windows)]
-fn project_workspace_root_path() -> Result<String, String> {
-    if let Ok(value) = env::var("WEGENT_EXECUTOR_PROJECTS_DIR") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_owned());
-        }
-    }
-    if let Ok(value) = env::var("WECODE_HOME") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed)
-                .join("wegent-executor")
-                .join("workspace")
-                .join("projects")
-                .display()
-                .to_string());
-        }
-    }
-    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
-    Ok(home
-        .join(".wecode")
-        .join("wegent-executor")
-        .join("workspace")
-        .join("projects")
-        .display()
-        .to_string())
 }
 
 pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
@@ -3634,9 +3588,21 @@ mod tests {
     use tokio::time::Duration;
 
     use super::{
-        app_ipc_request_metadata, is_bulk_app_ipc_event, local_app_command, AppIpcServer,
-        BlockingSingleFlight,
+        app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
+        local_app_command, AppIpcServer, BlockingSingleFlight,
     };
+
+    #[test]
+    fn transcript_export_allows_large_snapshot_packaging() {
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.transcript.export")),
+            10 * 60
+        );
+        assert_eq!(
+            app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
+            75
+        );
+    }
 
     #[test]
     fn app_ipc_request_metadata_includes_device_command_key() {

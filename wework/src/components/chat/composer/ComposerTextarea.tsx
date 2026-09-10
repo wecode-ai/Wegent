@@ -1662,7 +1662,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
               skillLoadingLabel={t('workbench.loading_slash_command_skills')}
               skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
               skillRetryLabel={t('workbench.retry_local_skills')}
-              onSelectCommand={command => selectSlashCommand(command)}
+              onSelectCommand={command => selectSlashCommand(command, activeMenu?.trigger)}
               onHighlightCommand={setSelectedIndex}
               onRetrySkills={() => loadLocalMentions({ force: true })}
             />

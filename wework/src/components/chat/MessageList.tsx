@@ -2062,13 +2062,15 @@ export function AssistantMessage({
   )
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
-  const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
-    if (options) {
-      onOpenWorkspaceFile?.(path, options)
-      return
-    }
-    onOpenWorkspaceFile?.(path)
-  }
+  const openFileFromLink = onOpenWorkspaceFile
+    ? (path: string, options?: WorkspaceFileOpenOptions) => {
+        if (options) {
+          onOpenWorkspaceFile(path, options)
+          return
+        }
+        onOpenWorkspaceFile(path)
+      }
+    : undefined
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
   const processingTimeline = shouldShowProcessingSummary
     ? processingSegments.map((segment, index) => (
@@ -2250,7 +2252,7 @@ export function AssistantMessage({
           {canShowFinalArtifacts && memoryCitations.length > 0 && (
             <CodexMemoryCitations citations={memoryCitations} onOpenFile={onOpenWorkspaceFile} />
           )}
-          {canShowFinalArtifacts && references.length > 0 && (
+          {canShowFinalArtifacts && references.length > 0 && openFileFromLink && (
             <CodexReferenceList references={references} onOpenFile={openFileFromLink} />
           )}
           {message.status === 'failed' && (
@@ -2673,22 +2675,26 @@ function AssistantErrorCard({
         <p className="text-sm font-semibold leading-5 text-text-primary">{title}</p>
         <p className="mt-0.5 text-xs leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            data-testid="assistant-error-switch-model-retry"
-            onClick={() => onSwitchModel?.(message)}
-            className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
-          >
-            {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
-          </button>
-          <button
-            type="button"
-            data-testid="assistant-error-retry"
-            onClick={() => onRetry?.(message)}
-            className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
-          >
-            {t('assistant_error.actions.retry', '重试')}
-          </button>
+          {onSwitchModel ? (
+            <button
+              type="button"
+              data-testid="assistant-error-switch-model-retry"
+              onClick={() => onSwitchModel(message)}
+              className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
+            >
+              {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
+            </button>
+          ) : null}
+          {onRetry ? (
+            <button
+              type="button"
+              data-testid="assistant-error-retry"
+              onClick={() => onRetry(message)}
+              className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+            >
+              {t('assistant_error.actions.retry', '重试')}
+            </button>
+          ) : null}
           {hasErrorDetails && (
             <button
               type="button"

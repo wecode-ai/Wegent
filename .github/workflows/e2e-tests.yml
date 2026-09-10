@@ -37,9 +37,9 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
@@ -521,7 +521,7 @@ jobs:
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests serially
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 4
         timeout-minutes: 15
         working-directory: ./frontend
         env:
@@ -978,6 +978,14 @@ jobs:
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
+
+      - name: Run Executor Manager resilience E2E tests
+        working-directory: ./executor_manager
+        env:
+          E2E_REDIS_URL: redis://localhost:6379/15
+          OTEL_ENABLED: "false"
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest e2e_tests/ --no-cov -v
 
       - name: Run Executor E2E tests
         env:

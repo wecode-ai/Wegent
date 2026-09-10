@@ -29,6 +29,8 @@ describe('slimPluginComponentsForCache', () => {
         connectors: [
           {
             slug: 'github',
+            displayName: 'github.com',
+            authorizationGroup: { id: 'github', displayName: 'GitHub account' },
             authPolicy: 'on_use',
             description: 'Connect GitHub',
           },
@@ -59,6 +61,8 @@ describe('slimPluginComponentsForCache', () => {
       connectors: [
         {
           slug: 'github',
+          displayName: 'github.com',
+          authorizationGroup: { id: 'github', displayName: 'GitHub account' },
           authPolicy: 'on_use',
           localAuth: null,
           description: 'Connect GitHub',

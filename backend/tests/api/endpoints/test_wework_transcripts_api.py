@@ -509,6 +509,42 @@ def test_creates_branch_without_copying_parent_objects(
     assert test_db.query(WeworkTranscriptTurn).count() == 0
 
 
+def test_normalizes_stale_future_fork_point_to_parent_head(
+    test_client, test_token, test_db
+):
+    _lease(test_client, test_token)
+    parent = test_db.query(WeworkTranscript).one()
+    parent.current_sequence = 11
+    test_db.commit()
+    request = {
+        "clientId": "client-b",
+        "ttlSeconds": 60,
+        "parentTranscriptId": "transcript-1",
+        "forkedAtSequence": 15,
+    }
+
+    branch = test_client.post(
+        "/api/wework-transcripts/fork-device-b/lease",
+        headers=_headers(test_token),
+        json=request,
+    )
+    retry = test_client.post(
+        "/api/wework-transcripts/fork-device-b/lease",
+        headers=_headers(test_token),
+        json=request,
+    )
+
+    assert branch.status_code == 200
+    assert retry.status_code == 200
+    item = (
+        test_db.query(WeworkTranscript)
+        .filter(WeworkTranscript.transcript_id == "fork-device-b")
+        .one()
+    )
+    assert item.parent_transcript_id == "transcript-1"
+    assert item.forked_at_sequence == 11
+
+
 def test_download_streams_the_object_through_backend(
     test_client, test_token, test_db, monkeypatch
 ):

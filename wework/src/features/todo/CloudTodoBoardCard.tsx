@@ -316,6 +316,7 @@ interface CloudTodoBoardCardProps {
   onPreviewPinnedChange?: (pinned: boolean) => void
   onMarkRead?: (item: CloudLoopItem) => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   display: BoardCardDisplaySettings
   processingStatus: boolean
   agentNames?: Record<string, string>
@@ -340,6 +341,7 @@ export function CloudTodoBoardCard({
   onPreviewPinnedChange,
   onMarkRead,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
   display,
   processingStatus,
   agentNames,
@@ -557,8 +559,6 @@ export function CloudTodoBoardCard({
       closeLabel={t('common.close', '关闭')}
       estimatedWidth={480}
       estimatedHeight={620}
-      placement="viewport-right"
-      viewportTop={48}
       cardClassName="w-[480px] max-w-[calc(100vw-1rem)]"
       content={
         <RuntimeTaskProgressPopup
@@ -570,6 +570,7 @@ export function CloudTodoBoardCard({
           pinned={previewPinned}
           onPin={() => onPreviewPinnedChange?.(true)}
           onLoadRuntimeGoal={onLoadRuntimeGoal}
+          onOpenRuntimeTask={onOpenRuntimeTask}
         />
       }
     >
@@ -635,6 +636,7 @@ function RuntimeTaskProgressSummary({
   repairingChangeRequest,
   onContinueChangeRequestRepair,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
@@ -645,6 +647,7 @@ function RuntimeTaskProgressSummary({
   repairingChangeRequest: boolean
   onContinueChangeRequestRepair?: () => Promise<void>
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const taskAddress = useMemo<RuntimeTaskAddress>(
@@ -663,14 +666,12 @@ function RuntimeTaskProgressSummary({
     void onLoadRuntimeGoal(taskAddress)
   }, [binding.runtimeGoalLoaded, onLoadRuntimeGoal, taskAddress])
   const activity = useRuntimeTaskActivity(activityAddress)
-  const liveMessage = useRuntimeTaskLatestAssistantMessage(taskAddress)
+  const liveMessage = useRuntimeTaskLatestAssistantMessage(activity.active ? taskAddress : null)
   const cachedFinalResponse = useRuntimeTaskFinalResponse(
-    item.status === 'in_review' ? taskAddress : null
+    item.status === 'in_review' && !activity.active ? taskAddress : null
   )
   const finalResponseText = binding.finalResponsePreview ?? cachedFinalResponse
-  const responseText = activity.active
-    ? liveMessage?.content?.trim() || null
-    : liveMessage?.content || finalResponseText
+  const responseText = activity.active ? liveMessage?.content?.trim() || null : finalResponseText
   const responsePreview = responseText ? latestResponseLine(responseText) : null
   const taskTitle = binding.task_title || binding.task_id
   const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
@@ -742,9 +743,10 @@ function RuntimeTaskProgressSummary({
             runtimeContext={{ cloudProjectId: String(item.cloud_project_id) }}
             sendEphemeral={false}
             collapseComposerWhenIdle
-            initialScrollPosition="latest"
+            scrollOrigin="bottom"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}
             placeholder={t('workbench.task_activity_inline_placeholder')}
+            onOpenRuntimeTask={onOpenRuntimeTask}
           />
         </div>
       ) : responsePreview ? (
@@ -813,6 +815,7 @@ function RuntimeTaskProgressPopup({
   pinned,
   onPin,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
   bindings: CloudTodoBoardTaskBinding[]
@@ -822,6 +825,7 @@ function RuntimeTaskProgressPopup({
   pinned: boolean
   onPin: () => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const visibleBindings = focusedBindingId
@@ -882,6 +886,7 @@ function RuntimeTaskProgressPopup({
                 changeRequestSnapshot={null}
                 repairingChangeRequest={false}
                 onLoadRuntimeGoal={onLoadRuntimeGoal}
+                onOpenRuntimeTask={onOpenRuntimeTask}
               />
             </div>
           ))}

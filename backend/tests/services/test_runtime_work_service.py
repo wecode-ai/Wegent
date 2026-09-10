@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
@@ -1997,6 +1998,56 @@ async def test_delete_archived_conversations_bulk_groups_by_device(
 
 
 @pytest.mark.asyncio
+async def test_send_runtime_message_preserves_executor_queue_status(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_send_execution_request",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "accepted": True,
+                "taskId": "codex-1",
+                "status": "queued",
+                "queuePosition": 2,
+            }
+        ),
+    )
+
+    response = await runtime_work_service.send_runtime_message(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeSendRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                localTaskId="codex-1",
+            ),
+            message="continue",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.status == "queued"
+    assert response.queue_position == 2
+
+
+@pytest.mark.asyncio
 async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_rows(
     test_db,
     test_user,
@@ -2657,6 +2708,7 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
             taskId="codex-queue-44",
             runtime="codex",
             message="Implement the issue",
+            forceStart=True,
             bot=[{"id": "robot-1", "name": "Robot", "shell_type": "Codex"}],
             origin={
                 "type": "board_task",
@@ -2669,6 +2721,7 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
     assert compiled.target.workspace_path == "/srv/workspaces/Wegent"
     assert compiled.payload["workspacePath"] == "/srv/workspaces/Wegent"
     assert compiled.payload["schemaVersion"] == 2
+    assert compiled.payload["forceStart"] is True
     assert "local_project_id" not in compiled.payload
     assert compiled.payload["executionRequest"]["project_workspace_path"] == (
         "/srv/workspaces/Wegent"
@@ -4580,6 +4633,27 @@ async def test_runtime_transfer_direct_hosts_filters_loopback_for_cross_device(
                 "client_ip": "127.0.0.1",
             }
         ),
+    )
+
+    assert (
+        await runtime_work_service._runtime_transfer_direct_hosts(
+            db=None,
+            user_id=7,
+            device_id="target-device",
+            peer_device_id="source-device",
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_transfer_direct_hosts_ignores_redis_failure(monkeypatch):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_online_info",
+        AsyncMock(side_effect=RedisConnectionError("Redis unavailable")),
     )
 
     assert (

@@ -1,3 +1,4 @@
+import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -298,6 +299,7 @@ export function PluginsWorkspace({
   const [pendingLocalConnectorAuth, setPendingLocalConnectorAuth] = useState<{
     target: LocalConnectorAuthTarget
     title: string
+    description?: string
     resolve: () => void
     reject: (error: Error) => void
   } | null>(null)
@@ -2300,11 +2302,16 @@ export function PluginsWorkspace({
     }
   }
 
-  const promptLocalConnectorAuth = (input: { target: LocalConnectorAuthTarget; title: string }) =>
+  const promptLocalConnectorAuth = (input: {
+    target: LocalConnectorAuthTarget
+    title: string
+    description?: string
+  }) =>
     new Promise<void>((resolve, reject) => {
       setPendingLocalConnectorAuth({
         target: input.target,
         title: input.title,
+        description: input.description,
         resolve,
         reject,
       })
@@ -2451,12 +2458,15 @@ export function PluginsWorkspace({
           : plugin && 'name' in plugin
             ? String(plugin.name)
             : slug
-      const displayName =
+      const pluginDisplayName =
         plugin && 'raw' in plugin
           ? plugin.raw.spec.displayName || pluginKey
           : plugin && 'displayName' in plugin
             ? String(plugin.displayName || plugin.name)
             : pluginKey
+      const displayName = localConnector.displayName
+        ? `${pluginDisplayName} · ${localConnector.displayName}`
+        : pluginDisplayName
       const target: LocalConnectorAuthTarget = {
         pluginKey,
         connectorSlug: slug,
@@ -2495,6 +2505,7 @@ export function PluginsWorkspace({
       try {
         await promptLocalConnectorAuth({
           target,
+          description: localConnector.description || undefined,
           title: isLocalBrowserConnector(localConnector)
             ? t('workbench.plugins_local_browser_login_title', {
                 defaultValue: `授权 ${displayName}`,
@@ -2513,6 +2524,11 @@ export function PluginsWorkspace({
             : t('workbench.plugins_local_auth_cancelled', '已取消授权')
         )
       }
+      return
+    }
+
+    if (connectors.some(connector => connector.slug === slug && connector.accountAuth)) {
+      reportDetailError(t('workbench.plugin_connector_chat_login'))
       return
     }
 
@@ -3683,16 +3699,29 @@ export function PluginsWorkspace({
     }
   }, [cloudMarketplaceAvailable, currentDeviceId, marketplaceCacheKeyValue, pluginApi])
 
-  const { selectedPlugin, selectedMarketplacePlugin, dismissPluginReferenceDetail } =
-    usePluginDetailSelection({
-      pluginReference,
-      pluginMarketplaceState,
-      installedPlugins,
-      selectedPluginId,
-      selectedMarketplacePluginId,
-      setSelectedPluginId,
-      setSelectedMarketplacePluginId,
-    })
+  const {
+    selectedPlugin: selectedPluginSummary,
+    selectedMarketplacePlugin,
+    dismissPluginReferenceDetail,
+  } = usePluginDetailSelection({
+    pluginReference,
+    pluginMarketplaceState,
+    installedPlugins,
+    selectedPluginId,
+    selectedMarketplacePluginId,
+    setSelectedPluginId,
+    setSelectedMarketplacePluginId,
+  })
+
+  const selectedPlugin = useInstalledPluginDetail(
+    selectedPluginSummary,
+    localPluginApi.readInstalledPluginDetail,
+    (pluginId, error) =>
+      setPluginDetailActionError({
+        pluginId,
+        message: getErrorMessage(error, 'Unable to load plugin details'),
+      })
+  )
 
   useEffect(() => {
     void refreshPublicationRequests().catch(() => undefined)
@@ -4162,6 +4191,7 @@ export function PluginsWorkspace({
           open
           target={pendingLocalConnectorAuth.target}
           title={pendingLocalConnectorAuth.title}
+          description={pendingLocalConnectorAuth.description}
           onSuccess={() => {
             const pending = pendingLocalConnectorAuth
             setPendingLocalConnectorAuth(null)
@@ -4774,9 +4804,7 @@ export function PluginsWorkspace({
             }
             installMarketplacePlugin(detailedMarketplacePlugin, prompt)
           }}
-          onManageConnector={slug =>
-            void managePluginConnector(slug, installedDetail ?? selectedMarketplacePlugin)
-          }
+          onManageConnector={slug => void managePluginConnector(slug, detailPlugin)}
           connectorAuthBySlug={localConnectorAuthBySlug}
         />
         {pluginShareDialog}

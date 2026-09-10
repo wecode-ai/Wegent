@@ -5,8 +5,9 @@
 use std::{
     collections::HashSet,
     env, fs,
-    io::{Read, Write},
+    io::{Cursor, Read, Write},
     path::{Component, Path, PathBuf},
+    process::Command,
 };
 
 use aes_gcm::{
@@ -87,12 +88,19 @@ pub(crate) struct ExportRequest {
     pub task_id: String,
     pub title: String,
     pub workspace_path: PathBuf,
+    pub workspace_snapshot: Option<WorkspaceSnapshot>,
     pub thread_id: String,
     pub sequence: u64,
     pub base_sequence: u64,
     pub rollout_start: u64,
     pub snapshot: bool,
     pub encryption_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceSnapshot {
+    pub git_common_dir: PathBuf,
+    pub reference: String,
 }
 
 #[derive(Debug, Clone)]
@@ -194,7 +202,11 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
                 .map_err(|error| format!("failed to serialize transcript manifest: {error}"))?,
         )?;
         append_bytes(&mut archive, ROLLOUT_PATH, &rollout[rollout_start..])?;
-        append_workspace(&mut archive, &request.workspace_path)?;
+        append_workspace(
+            &mut archive,
+            &request.workspace_path,
+            request.workspace_snapshot.as_ref(),
+        )?;
         archive
             .into_inner()
             .and_then(GzEncoder::finish)
@@ -615,10 +627,20 @@ fn append_bytes(
 fn append_workspace(
     archive: &mut Builder<GzEncoder<fs::File>>,
     workspace: &Path,
+    snapshot: Option<&WorkspaceSnapshot>,
 ) -> Result<(), String> {
-    if !workspace.is_dir() {
-        return Err(format!("workspace does not exist: {}", workspace.display()));
+    if workspace.is_dir() {
+        return append_workspace_directory(archive, workspace);
     }
+    let snapshot =
+        snapshot.ok_or_else(|| format!("workspace does not exist: {}", workspace.display()))?;
+    append_workspace_snapshot(archive, snapshot)
+}
+
+fn append_workspace_directory(
+    archive: &mut Builder<GzEncoder<fs::File>>,
+    workspace: &Path,
+) -> Result<(), String> {
     let mut total_bytes = 0_u64;
     for entry in WalkBuilder::new(workspace)
         .hidden(false)
@@ -656,22 +678,98 @@ fn append_workspace(
                 .metadata()
                 .map_err(|error| format!("failed to inspect workspace member: {error}"))?
                 .len();
-            if size > MAX_WORKSPACE_FILE_BYTES {
-                return Err(format!(
-                    "workspace member exceeds the {MAX_WORKSPACE_FILE_BYTES}-byte limit: {}",
-                    relative.display()
-                ));
-            }
-            total_bytes = total_bytes
-                .checked_add(size)
-                .ok_or_else(|| "workspace is too large to synchronize".to_owned())?;
-            if total_bytes > MAX_WORKSPACE_BYTES {
-                return Err("workspace is too large to synchronize".to_owned());
-            }
+            validate_workspace_member_size(relative, size, &mut total_bytes)?;
         }
         archive
             .append_path_with_name(path, Path::new(WORKSPACE_PREFIX).join(relative))
             .map_err(|error| format!("failed to append workspace member: {error}"))?;
+    }
+    Ok(())
+}
+
+fn append_workspace_snapshot(
+    archive: &mut Builder<GzEncoder<fs::File>>,
+    snapshot: &WorkspaceSnapshot,
+) -> Result<(), String> {
+    let mut command = Command::new("git");
+    crate::local::native_git::clear_local_git_env(&mut command);
+    command
+        .arg("--git-dir")
+        .arg(&snapshot.git_common_dir)
+        .args(["archive", "--format=tar", &snapshot.reference, "--", "."]);
+    for name in EXCLUDED_NAMES {
+        command.arg(format!(":(exclude,glob){name}/**"));
+        command.arg(format!(":(exclude,glob)**/{name}/**"));
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("failed to read workspace snapshot: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to read workspace snapshot {}: {}",
+            snapshot.reference,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let mut source = Archive::new(Cursor::new(output.stdout));
+    let mut total_bytes = 0_u64;
+    for entry in source
+        .entries()
+        .map_err(|error| format!("failed to open workspace snapshot: {error}"))?
+    {
+        let mut entry =
+            entry.map_err(|error| format!("failed to read workspace snapshot member: {error}"))?;
+        let relative = entry
+            .path()
+            .map_err(|error| format!("invalid workspace snapshot path: {error}"))?
+            .to_path_buf();
+        if unsafe_path(&relative)
+            || relative
+                .components()
+                .any(|part| EXCLUDED_NAMES.contains(&part.as_os_str().to_string_lossy().as_ref()))
+        {
+            continue;
+        }
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            continue;
+        }
+        let size = entry.size();
+        if entry_type.is_file() {
+            validate_workspace_member_size(&relative, size, &mut total_bytes)?;
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(entry_type);
+        header.set_mode(entry.header().mode().unwrap_or(0o600));
+        header.set_size(size);
+        header.set_cksum();
+        archive
+            .append_data(
+                &mut header,
+                Path::new(WORKSPACE_PREFIX).join(&relative),
+                &mut entry,
+            )
+            .map_err(|error| format!("failed to append workspace snapshot member: {error}"))?;
+    }
+    Ok(())
+}
+
+fn validate_workspace_member_size(
+    relative: &Path,
+    size: u64,
+    total_bytes: &mut u64,
+) -> Result<(), String> {
+    if size > MAX_WORKSPACE_FILE_BYTES {
+        return Err(format!(
+            "workspace member exceeds the {MAX_WORKSPACE_FILE_BYTES}-byte limit: {}",
+            relative.display()
+        ));
+    }
+    *total_bytes = total_bytes
+        .checked_add(size)
+        .ok_or_else(|| "workspace is too large to synchronize".to_owned())?;
+    if *total_bytes > MAX_WORKSPACE_BYTES {
+        return Err("workspace is too large to synchronize".to_owned());
     }
     Ok(())
 }
@@ -1022,9 +1120,118 @@ mod tests {
 
     use super::*;
 
+    fn git(path: &Path, args: &[&str]) -> std::process::Output {
+        let mut command = Command::new("git");
+        crate::local::native_git::clear_local_git_env(&mut command);
+        command
+            .current_dir(path)
+            .args(args)
+            .output()
+            .expect("git should start")
+    }
+
+    fn assert_git(path: &Path, args: &[&str]) {
+        let output = git(path, args);
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     fn environment_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    #[test]
+    fn packages_a_deleted_workspace_from_its_managed_git_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(&source).unwrap();
+        for args in [
+            vec!["init"],
+            vec!["config", "user.name", "Wegent Test"],
+            vec!["config", "user.email", "test@wegent.local"],
+        ] {
+            assert_git(&source, &args);
+        }
+        fs::write(source.join("tracked.txt"), "base\n").unwrap();
+        assert_git(&source, &["add", "."]);
+        assert_git(&source, &["commit", "-m", "base"]);
+        assert_git(
+            &source,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                workspace.to_str().expect("temporary path must be UTF-8"),
+            ],
+        );
+        fs::write(workspace.join("tracked.txt"), "snapshot content\n").unwrap();
+        fs::create_dir_all(workspace.join("node_modules/package")).unwrap();
+        fs::write(
+            workspace.join("node_modules/package/ignored.txt"),
+            "ignored\n",
+        )
+        .unwrap();
+        assert_git(&workspace, &["add", "-f", "."]);
+        assert_git(&workspace, &["commit", "-m", "snapshot"]);
+        let reference = String::from_utf8(git(&workspace, &["rev-parse", "HEAD"]).stdout)
+            .unwrap()
+            .trim()
+            .to_owned();
+        assert_git(
+            &source,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                workspace.to_str().expect("temporary path must be UTF-8"),
+            ],
+        );
+
+        let archive_path = root.path().join("workspace.tgz");
+        let output = fs::File::create(&archive_path).unwrap();
+        let encoder = GzEncoder::new(output, Compression::default());
+        let mut archive = Builder::new(encoder);
+        append_workspace(
+            &mut archive,
+            &workspace,
+            Some(&WorkspaceSnapshot {
+                git_common_dir: source.join(".git"),
+                reference,
+            }),
+        )
+        .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let input = fs::File::open(archive_path).unwrap();
+        let mut restored = Archive::new(GzDecoder::new(input));
+        let mut files = restored
+            .entries()
+            .unwrap()
+            .map(|entry| {
+                let mut entry = entry.unwrap();
+                let path = entry.path().unwrap().to_path_buf();
+                let mut content = String::new();
+                if entry.header().entry_type().is_file() {
+                    entry.read_to_string(&mut content).unwrap();
+                }
+                (path, content)
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|left, right| left.0.cmp(&right.0));
+
+        assert!(files.iter().any(|(path, content)| {
+            path == Path::new("workspace/tracked.txt") && content == "snapshot content\n"
+        }));
+        assert!(!files
+            .iter()
+            .any(|(path, _)| path.starts_with("workspace/node_modules")));
     }
 
     #[test]
@@ -1098,6 +1305,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: workspace.clone(),
+            workspace_snapshot: None,
             thread_id: thread_id.to_owned(),
             sequence: 1,
             base_sequence: 0,
@@ -1111,6 +1319,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: workspace.clone(),
+            workspace_snapshot: None,
             thread_id: thread_id.to_owned(),
             sequence: 1,
             base_sequence: 0,
@@ -1142,6 +1351,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: workspace.clone(),
+            workspace_snapshot: None,
             thread_id: thread_id.to_owned(),
             sequence: 2,
             base_sequence: 1,
@@ -1222,6 +1432,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: restored.workspace_path.clone(),
+            workspace_snapshot: None,
             thread_id: restored.thread_id.clone(),
             sequence: 3,
             base_sequence: 2,

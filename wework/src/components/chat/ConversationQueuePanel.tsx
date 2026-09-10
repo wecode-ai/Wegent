@@ -20,6 +20,7 @@ interface ConversationQueuePanelProps {
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   onCancelQueuedMessage?: (id: string) => void
+  onForceStartQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onInterruptAndSendQueuedMessage?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
@@ -33,6 +34,7 @@ export function ConversationQueuePanel({
   queuedMessages,
   guidanceMessages,
   onCancelQueuedMessage,
+  onForceStartQueuedMessage,
   onSendQueuedAsGuidance,
   onInterruptAndSendQueuedMessage,
   onEditQueuedMessage,
@@ -51,7 +53,7 @@ export function ConversationQueuePanel({
   const queuedMessageIds = useMemo(
     () =>
       visibleQueuedMessages
-        .filter(message => message.status === 'queued')
+        .filter(message => message.status === 'queued' && !message.runtimeQueued)
         .map(message => message.id),
     [visibleQueuedMessages]
   )
@@ -129,11 +131,18 @@ export function ConversationQueuePanel({
                 error={message.error}
                 notice={message.notice}
                 deliveryMode={message.deliveryMode}
+                runtimeQueued={message.runtimeQueued}
+                runtimeQueuePosition={message.runtimeQueuePosition}
                 mode="queue"
+                onForceStart={onForceStartQueuedMessage}
                 onGuide={onSendQueuedAsGuidance}
                 onInterrupt={onInterruptAndSendQueuedMessage}
                 onEdit={onEditQueuedMessage}
-                canReorder={message.status === 'queued' && queuedMessageIds.length > 1}
+                canReorder={
+                  message.status === 'queued' &&
+                  !message.runtimeQueued &&
+                  queuedMessageIds.length > 1
+                }
                 onCancel={onCancelQueuedMessage}
               />
             ))}
@@ -160,7 +169,10 @@ interface QueueRowProps {
   error?: string
   notice?: string
   deliveryMode?: QueuedWorkbenchMessage['deliveryMode']
+  runtimeQueued?: boolean
+  runtimeQueuePosition?: number | null
   mode: 'queue' | 'guidance'
+  onForceStart?: (id: string) => void
   onGuide?: (id: string) => void
   onEdit?: (id: string) => void
   onInterrupt?: (id: string) => void
@@ -175,7 +187,10 @@ function QueueRow({
   error,
   notice,
   deliveryMode,
+  runtimeQueued = false,
+  runtimeQueuePosition,
   mode,
+  onForceStart,
   onGuide,
   onEdit,
   onInterrupt,
@@ -194,7 +209,7 @@ function QueueRow({
   } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
   const isSendingGuidance = isBusy && deliveryMode === 'guidance'
-  const showInlineInterrupt = Boolean(onInterrupt)
+  const showInlineInterrupt = Boolean(onInterrupt) && !runtimeQueued
   const statusText =
     status === 'failed'
       ? (error ?? '发送失败')
@@ -204,7 +219,13 @@ function QueueRow({
           ? isSendingGuidance
             ? '引导中'
             : (notice ?? '正在发送')
-          : null
+          : runtimeQueued
+            ? runtimeQueuePosition
+              ? t('workbench.runtime_follow_up_queued_position', {
+                  position: runtimeQueuePosition,
+                })
+              : t('workbench.runtime_follow_up_queued')
+            : null
 
   return (
     <div
@@ -245,7 +266,20 @@ function QueueRow({
         )}
       </span>
       <div className="flex shrink-0 items-center gap-1">
-        {mode === 'queue' && !isSendingGuidance && onGuide && (
+        {runtimeQueued && onForceStart && (
+          <button
+            type="button"
+            data-testid={`queue-force-start-button-${id}`}
+            onClick={() => onForceStart(id)}
+            disabled={isBusy}
+            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0"
+            aria-label={t('workbench.runtime_follow_up_force_start')}
+          >
+            <Zap className="h-3.5 w-3.5" />
+            <span>{t('workbench.runtime_follow_up_force_start')}</span>
+          </button>
+        )}
+        {mode === 'queue' && !runtimeQueued && !isSendingGuidance && onGuide && (
           <button
             type="button"
             data-testid={`queue-guidance-button-${id}`}
@@ -276,13 +310,14 @@ function QueueRow({
             data-testid={`queue-cancel-button-${id}`}
             onClick={() => onCancel?.(id)}
             disabled={isBusy}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0 sm:px-2"
-            aria-label="移除队列消息"
+            className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-muted hover:bg-muted hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0"
+            aria-label={runtimeQueued ? t('common.cancel') : '移除队列消息'}
           >
             <Trash2 className="h-3.5 w-3.5" />
+            {runtimeQueued && <span>{t('common.cancel')}</span>}
           </button>
         )}
-        {mode === 'queue' && !isBusy && onEdit && (
+        {mode === 'queue' && !runtimeQueued && !isBusy && onEdit && (
           <ActionMenu
             ariaLabel="更多队列操作"
             testId={`queue-more-button-${id}`}

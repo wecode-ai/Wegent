@@ -2477,6 +2477,56 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }
 
+  test('focuses the home composer when the startup device becomes available', async () => {
+    const localDevice = createLocalSkillDevice()
+    const layout = (ready: boolean) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...baseProps.state, standaloneDeviceId: localDevice.device_id }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: ready ? [localDevice] : [],
+          currentStandaloneDeviceId: localDevice.device_id,
+        }}
+      />
+    )
+    const { rerender } = render(layout(false))
+    const composer = screen.getByTestId('chat-message-input')
+    expect(composer).toHaveAttribute('contenteditable', 'false')
+    composer.blur()
+    expect(composer).not.toHaveFocus()
+
+    rerender(layout(true))
+
+    expect(screen.getByTestId('chat-message-input')).toBe(composer)
+    expect(composer).toHaveAttribute('contenteditable', 'true')
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('refocuses the home composer when the app window becomes active', async () => {
+    renderWorkspacePanelLayout()
+    const composer = screen.getByTestId('chat-message-input')
+    await waitFor(() => expect(composer).toHaveFocus())
+    composer.blur()
+
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('preserves an explicitly focused home control on window activation', async () => {
+    renderWorkspacePanelLayout()
+    const modelButton = screen.getByTestId('model-selector-button')
+    modelButton.focus()
+
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+    await waitForComposerFocusRequest()
+
+    expect(modelButton).toHaveFocus()
+  })
+
   test('focuses a restored conversation when its composer mounts', async () => {
     const { composer } = renderFocusableConversation()
 
@@ -6739,10 +6789,12 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('uses separate browser shortcuts for the closed and open right panel', async () => {
     renderWorkspacePanelLayout()
+    const composer = screen.getByTestId('chat-message-input')
+    composer.focus()
 
     expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
 
-    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+    fireEvent.keyDown(composer, { key: 'b', metaKey: true, shiftKey: true })
 
     expect(await screen.findByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
       'aria-selected',
@@ -6754,14 +6806,14 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('workspace-browser-url-input')).toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: 't', metaKey: true })
+    fireEvent.keyDown(composer, { key: 't', metaKey: true })
 
     expect(await screen.findByTestId('right-workspace-browser-tab-2')).toHaveAttribute(
       'aria-selected',
       'true'
     )
 
-    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+    fireEvent.keyDown(composer, { key: 'b', metaKey: true, shiftKey: true })
 
     expect(screen.queryByTestId('right-workspace-browser-tab-3')).not.toBeInTheDocument()
   })
@@ -7420,7 +7472,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: 'f', metaKey: true, altKey: true })
+    fireEvent.keyDown(screen.getByTestId('chat-message-input'), {
+      key: 'f',
+      metaKey: true,
+      altKey: true,
+    })
 
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()

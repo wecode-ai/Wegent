@@ -516,8 +516,9 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
             f"[SandboxAPI] Failed to update heartbeat for sandbox {sandbox_id}"
         )
         raise HTTPException(
-            status_code=500,
+            status_code=503,
             detail="Failed to update heartbeat",
+            headers={"Retry-After": "1"},
         )
 
     # Get sandbox info to check if Claude configuration should be returned

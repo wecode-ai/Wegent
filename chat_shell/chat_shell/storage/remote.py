@@ -20,6 +20,8 @@ from chat_shell.storage.interfaces import (
     ToolResultStoreInterface,
 )
 from shared.telemetry.context import get_request_id
+from shared.telemetry.http import internal_http_event_hooks
+from shared.utils.http_client import traced_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,8 @@ class RemoteHistoryStore(HistoryStoreInterface):
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
 
-            self._client = httpx.AsyncClient(
+            self._client = traced_async_client(
+                event_hooks=internal_http_event_hooks(),
                 base_url=self.base_url,
                 headers=headers,
                 timeout=self.timeout,
@@ -115,7 +118,6 @@ class RemoteHistoryStore(HistoryStoreInterface):
         url = f"/chat/history/{session_id}"
         full_url = f"{self.base_url}{url}"
         request_id = get_request_id()
-        request_headers = {"X-Request-ID": request_id} if request_id else None
         logger.info(
             "[RemoteHistoryStore_TRACE] get_history_start session_id=%s "
             "before_message_id=%s limit=%s is_group_chat=%s request_id=%s "
@@ -138,7 +140,6 @@ class RemoteHistoryStore(HistoryStoreInterface):
                 "GET",
                 url,
                 params=params,
-                headers=request_headers,
             )
             build_ms = (time.perf_counter() - build_start) * 1000
 
@@ -171,17 +172,12 @@ class RemoteHistoryStore(HistoryStoreInterface):
             messages = [Message.from_dict(m) for m in data.get("messages", [])]
             parse_ms = (time.perf_counter() - parse_start) * 1000
             total_ms = (time.perf_counter() - total_start) * 1000
-            http_elapsed_ms = (
-                response.elapsed.total_seconds() * 1000
-                if response.elapsed is not None
-                else None
-            )
             logger.info(
                 "[RemoteHistoryStore_PERF] get_history session_id=%s "
                 "before_message_id=%s limit=%s is_group_chat=%s status=%d "
                 "message_count=%d request_id=%s client_reused=%s client_ms=%.2f "
                 "build_ms=%.2f headers_ms=%.2f body_read_ms=%.2f request_ms=%.2f "
-                "http_elapsed_ms=%s parse_ms=%.2f total_ms=%.2f content_length=%s "
+                "parse_ms=%.2f total_ms=%.2f content_length=%s "
                 "body_bytes=%d http_version=%s wall_start_utc=%s",
                 session_id,
                 before_message_id,
@@ -196,7 +192,6 @@ class RemoteHistoryStore(HistoryStoreInterface):
                 headers_ms,
                 body_read_ms,
                 request_ms,
-                f"{http_elapsed_ms:.2f}" if http_elapsed_ms is not None else "",
                 parse_ms,
                 total_ms,
                 response.headers.get("content-length", "unknown"),
@@ -403,7 +398,8 @@ class RemoteToolResultStore(ToolResultStoreInterface):
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
 
-            self._client = httpx.AsyncClient(
+            self._client = traced_async_client(
+                event_hooks=internal_http_event_hooks(),
                 base_url=self.base_url,
                 headers=headers,
                 timeout=self.timeout,

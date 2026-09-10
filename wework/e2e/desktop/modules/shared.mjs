@@ -122,6 +122,10 @@ const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMP
 const EMBEDDED_BROWSER_SETUP_PROMPT =
   'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP: create a local task before opening the browser.'
 const EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP_COMPLETE'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_BRIDGE_COLLISION: open the browser after another live bridge replaces the shared runtime record.'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
 const QUEUE_DIRECT_SECOND = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_SECOND'
@@ -1192,12 +1196,18 @@ async function triggerModelReloadUntilCloudFailure(control) {
   )
 }
 
-async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
+async function sendPromptUntilScenarioRequest(
+  control,
+  selector,
+  prompt,
+  scenario,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const scenarioRequest = control.awaitScenarioRequest(scenario)
   await sendPrompt(control, selector, prompt)
   return withTimeout(
     scenarioRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
     `The model service did not receive the ${scenario} request`
   )
 }
@@ -1537,6 +1547,8 @@ export {
   GUIDANCE_SCROLL_COMPLETION_TEXT,
   EMBEDDED_BROWSER_SETUP_PROMPT,
   EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   QUEUE_DIRECT_INITIAL,
   QUEUE_DIRECT_FIRST,
   QUEUE_DIRECT_SECOND,

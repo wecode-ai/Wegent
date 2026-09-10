@@ -575,11 +575,10 @@ function LiveProcessingPreview({
           overflowY: hasExpandedDetail ? 'visible' : 'auto',
         }}
       >
-        {rows.map((row, index) => (
+        {rows.map(row => (
           <LiveProcessingPreviewRow
             key={row.id}
             row={row}
-            shimmer={isProcessingRowRunning(row) && index === rows.length - 1}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             fileEditDurations={fileEditDurations}
             onExpandedChange={updateExpandedRow}
@@ -602,7 +601,6 @@ function LiveProcessingPreview({
 
 function LiveProcessingPreviewRow({
   row,
-  shimmer,
   durationStartedAt,
   durationEndAt,
   fileEditDurations,
@@ -612,7 +610,6 @@ function LiveProcessingPreviewRow({
   onOpenSubagent,
 }: {
   row: ProcessingDisplayRow
-  shimmer: boolean
   durationStartedAt?: number
   durationEndAt?: number
   fileEditDurations: FileEditDurationsByBlock
@@ -647,7 +644,6 @@ function LiveProcessingPreviewRow({
       <ToolBlockItem
         block={row.block}
         compact
-        shimmer={shimmer}
         durationStartedAt={durationStartedAt}
         durationEndAt={durationEndAt}
         fileEditDurations={fileEditDurations}
@@ -665,7 +661,6 @@ function LiveProcessingPreviewRow({
   return (
     <ToolBlockItem
       block={row.block}
-      shimmer={shimmer}
       durationStartedAt={durationStartedAt}
       durationEndAt={durationEndAt}
       fileEditDurations={fileEditDurations}
@@ -673,13 +668,6 @@ function LiveProcessingPreviewRow({
       stateKey={stateKey}
     />
   )
-}
-
-function isProcessingRowRunning(row: ProcessingDisplayRow): boolean {
-  if (row.type === 'activity_group') {
-    return row.blocks.some(block => block.status !== 'done' && block.status !== 'error')
-  }
-  return row.block.status !== 'done' && row.block.status !== 'error'
 }
 
 function countProcessingActivityKinds(rows: ProcessingDisplayRow[]) {

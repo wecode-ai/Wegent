@@ -118,7 +118,7 @@ export function LocalConnectorAuthDialog({
                 />
               )}
               <span className="text-sm text-muted-foreground">
-                {t('workbench.plugins_local_browser_device_only', '凭据仅保存在此设备')}
+                {t('workbench.plugins_local_browser_device_only', '本机安全授权')}
               </span>
             </div>
           ) : qrSrc ? (

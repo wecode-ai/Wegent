@@ -1326,6 +1326,144 @@ fn codex_cached_transcripts_never_expose_offset_pagination() {
 }
 
 #[test]
+fn latest_codex_transcript_prefers_completed_notification_cache() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        })],
+    );
+    let mut messages = vec![
+        json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "Open the browser",
+            "status": "done",
+            "turnId": "turn-1",
+        }),
+        json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "",
+            "status": "cancelled",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+        }),
+    ];
+
+    merge_latest_completed_transcript_messages(&mut messages, &link, None, None);
+
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1]["content"], "Final answer");
+    assert_eq!(messages[1]["status"], "done");
+}
+
+#[test]
+fn latest_codex_transcript_preserves_provider_processing_timeline() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-turn-1",
+            "role": "assistant",
+            "content": "Final answer",
+            "status": "done",
+            "turnId": "turn-1",
+            "subtaskId": "turn-1",
+            "blocks": [],
+            "runtimeItems": [{
+                "id": "final-text",
+                "type": "assistant_text",
+                "content": "Final answer",
+            }],
+        })],
+    );
+    let mut messages = vec![json!({
+        "id": "assistant-turn-1",
+        "role": "assistant",
+        "content": "",
+        "status": "cancelled",
+        "turnId": "turn-1",
+        "subtaskId": "turn-1",
+        "blocks": [{
+            "id": "tool-1",
+            "type": "tool",
+            "tool_name": "exec_command",
+            "status": "done",
+        }],
+        "runtimeItems": [{
+            "id": "tool-1",
+            "type": "block",
+        }],
+        "fileChanges": {
+            "files": [{"path": "verification.txt"}],
+        },
+    })];
+
+    merge_latest_completed_transcript_messages(&mut messages, &link, None, None);
+
+    assert_eq!(messages[0]["content"], "Final answer");
+    assert_eq!(messages[0]["status"], "done");
+    assert_eq!(messages[0]["blocks"][0]["id"], "tool-1");
+    assert_eq!(messages[0]["runtimeItems"][0]["id"], "tool-1");
+    assert_eq!(
+        messages[0]["fileChanges"]["files"][0]["path"],
+        "verification.txt"
+    );
+}
+
+#[test]
+fn paginated_codex_transcript_does_not_append_latest_completed_cache() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({
+            "id": "assistant-latest",
+            "role": "assistant",
+            "content": "Latest answer",
+            "status": "done",
+            "turnId": "turn-latest",
+        })],
+    );
+    let mut messages = vec![json!({
+        "id": "assistant-old",
+        "role": "assistant",
+        "content": "Older answer",
+        "status": "done",
+        "turnId": "turn-old",
+    })];
+
+    merge_latest_completed_transcript_messages(&mut messages, &link, Some("older-page"), None);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["content"], "Older answer");
+}
+
+#[test]
 fn active_codex_items_replace_stale_paginated_items() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");

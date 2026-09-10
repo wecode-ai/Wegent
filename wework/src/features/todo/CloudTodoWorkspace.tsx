@@ -238,6 +238,7 @@ type PendingExecutionConfiguration = {
         type: 'move'
         columnKey: string
         beforeItemId: string | null
+        forceStart: boolean
       }
     | {
         type: 'save'
@@ -1417,6 +1418,13 @@ export function CloudTodoWorkspace({
     contextKey: string
     itemId: string
   } | null>(null)
+  const openBoardRuntimeTask = useCallback(
+    (address: RuntimeTaskAddress) => {
+      setPinnedBoardPreview(null)
+      return onOpenRuntimeTask?.(address)
+    },
+    [onOpenRuntimeTask]
+  )
   const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
     useState<PendingExecutionConfiguration | null>(null)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
@@ -3401,7 +3409,8 @@ export function CloudTodoWorkspace({
     columnKey: string,
     beforeItemId: string | null = null,
     executionResult?: IssueExecutionConfigResult,
-    automationRuleId?: string
+    automationRuleId?: string,
+    forceStart = false
   ): Promise<boolean> {
     const item = items.find(candidate => candidate.id === itemId)
     const column = boardColumns.find(candidate => candidate.key === columnKey)
@@ -3429,7 +3438,7 @@ export function CloudTodoWorkspace({
     if (needsExecutionConfig && !executionResult) {
       openExecutionConfiguration({
         item: executionItem,
-        continuation: { type: 'move', columnKey, beforeItemId },
+        continuation: { type: 'move', columnKey, beforeItemId, forceStart },
       })
       return false
     }
@@ -3582,14 +3591,48 @@ export function CloudTodoWorkspace({
         taskBindingCount,
       })
       if (shouldOpenTaskComposer) {
+        const initialInput = workItemTaskInput(locatedUpdated)
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
         setBackgroundTaskItemId(column.status === 'in_progress' ? locatedUpdated.id : null)
         openTaskComposer({
           workItemId: locatedUpdated.id,
-          initialInput: workItemTaskInput(locatedUpdated),
+          initialInput,
           backgroundAfterSend: column.status === 'in_progress',
+          taskRequest: forceStart
+            ? {
+                runtime: 'codex',
+                message: initialInput,
+                forceStart: true,
+              }
+            : undefined,
         })
+      } else if (forceStart && workbench) {
+        const addresses = new Map<string, RuntimeTaskAddress>()
+        for (const binding of itemTaskBindings[item.id] ?? []) {
+          const address = { deviceId: binding.device_id, taskId: binding.task_id }
+          addresses.set(runtimeConversationKey(address), address)
+        }
+        for (const address of runtimeAddressesByWorkItem.get(
+          `${item.cloud_project_id}:${item.id}`
+        ) ?? []) {
+          addresses.set(runtimeConversationKey(address), address)
+        }
+        const queuedAddresses = [...addresses.values()].filter(address => {
+          const task = runtimeTasksByKey.get(runtimeConversationKey(address))
+          return task?.status?.trim().toLowerCase() === 'queued'
+        })
+        const forceStartResults = await Promise.allSettled(
+          queuedAddresses.map(address => workbench.forceStartRuntimeTask(address))
+        )
+        const failedForceStart = forceStartResults.find(result => result.status === 'rejected')
+        if (failedForceStart?.status === 'rejected') {
+          console.error('[Wework project board] queued task force start failed', {
+            itemId: locatedUpdated.id,
+            error: failedForceStart.reason,
+          })
+          setBoardError(t('workbench.runtime_task_force_start_failed'))
+        }
       } else if (
         enteringExecution &&
         shouldRevealWorkItemWorkflowActions(
@@ -3622,7 +3665,8 @@ export function CloudTodoWorkspace({
               columnKey,
               beforeItemId,
               executionResult,
-              selectedAutomationId
+              selectedAutomationId,
+              forceStart
             )
             if (!moved) {
               throw new Error(
@@ -3665,13 +3709,27 @@ export function CloudTodoWorkspace({
             return target.status === column.status
           })
         : null
-      if (targetColumn) void moveItem(activeId, targetColumn.key, beforeCardId)
+      if (targetColumn) {
+        const source = items.find(candidate => candidate.id === activeId)
+        const forceStart =
+          nativeGroupBy === 'status' &&
+          source?.status === 'pending' &&
+          isProcessingStatus(targetColumn.status)
+        void moveItem(activeId, targetColumn.key, beforeCardId, undefined, undefined, forceStart)
+      }
       return
     }
     const status = boardStatusFromDropId(event.over?.id)
     if (status) {
       const column = boardColumns.find(candidate => candidate.key === status)
-      if (column) void moveItem(activeId, column.key)
+      if (column) {
+        const source = items.find(candidate => candidate.id === activeId)
+        const forceStart =
+          nativeGroupBy === 'status' &&
+          source?.status === 'pending' &&
+          isProcessingStatus(column.status)
+        void moveItem(activeId, column.key, null, undefined, undefined, forceStart)
+      }
     }
   }
 
@@ -5316,6 +5374,7 @@ export function CloudTodoWorkspace({
                                       }
                                       onMarkRead={markItemRead}
                                       onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
+                                      onOpenRuntimeTask={openBoardRuntimeTask}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
@@ -5457,7 +5516,9 @@ export function CloudTodoWorkspace({
                   pending.item.id,
                   pending.continuation.columnKey,
                   pending.continuation.beforeItemId,
-                  result
+                  result,
+                  undefined,
+                  pending.continuation.forceStart
                 )
               } else {
                 await saveExecutionConfiguration(pending.item, result)
@@ -5927,6 +5988,7 @@ export function CloudTodoWorkspace({
               localProjectIdForItem(selectedItem) ??
               (isMyTasksBoard ? selectedLocalProject?.id : null)
             }
+            taskRequest={taskComposerRequest.taskRequest}
             inheritFromTask={taskComposerRequest.inheritFromTask}
             workflowNodeId={taskComposerRequest.workflowNodeId}
             onAddressChange={() => {

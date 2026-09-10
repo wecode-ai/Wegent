@@ -260,7 +260,22 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("runtime_queue_failed", error))
     }
 
-    pub(super) async fn spawn_turn(&self, mut turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
+    pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
+        self.spawn_turn_with_capacity_override(turn, false).await
+    }
+
+    pub(super) async fn spawn_forced_turn(
+        &self,
+        turn: SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        self.spawn_turn_with_capacity_override(turn, true).await
+    }
+
+    async fn spawn_turn_with_capacity_override(
+        &self,
+        mut turn: SpawnTurnRequest,
+        force_start: bool,
+    ) -> Result<(), AppIpcError> {
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
@@ -270,7 +285,11 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
-            let turn_to_start = scheduler.enqueue(turn);
+            let turn_to_start = if force_start {
+                Some(scheduler.enqueue_forced(turn))
+            } else {
+                scheduler.enqueue(turn)
+            };
             let queued_turns = turn_to_start
                 .is_none()
                 .then(|| scheduler.queued_turns.clone());
@@ -1525,6 +1544,29 @@ mod tests {
             vec!["waiting"]
         );
         assert_eq!(scheduler.active_tasks, 1);
+    }
+
+    #[test]
+    fn forced_enqueue_starts_new_work_without_disturbing_the_existing_queue() {
+        let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
+        assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
+        assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
+
+        assert_eq!(
+            scheduler
+                .enqueue_forced(scheduled_turn("forced"))
+                .local_task_id,
+            "forced"
+        );
+        assert_eq!(scheduler.active_tasks, 2);
+        assert_eq!(
+            scheduler
+                .queued_turns
+                .iter()
+                .map(|turn| turn.local_task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["waiting"]
+        );
     }
 
     #[test]

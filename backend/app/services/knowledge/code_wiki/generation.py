@@ -73,6 +73,7 @@ from app.services.knowledge.code_wiki.version_store import (
 logger = logging.getLogger(__name__)
 
 SOURCE_COMMIT_KEY = "commit"
+SOURCE_TRACKED_FILE_COUNT_KEY = "trackedFileCount"
 
 # Why a run failed, reached only through the two helpers below.
 #
@@ -179,6 +180,26 @@ def published_commit(db: Session, knowledge_base: Kind) -> str:
     return str((generation.source_snapshot or {}).get(SOURCE_COMMIT_KEY, "") or "")
 
 
+def published_tracked_file_count(db: Session, knowledge_base: Kind) -> Optional[int]:
+    """Tracked-file count from the snapshot currently visible to readers.
+
+    This is deliberately optional. Versions produced before the submit skill began
+    reporting it still have a valid commit and can still use the absolute run-mode
+    limits; treating an absent value as a made-up repository size would distort the
+    proportional limit instead.
+    """
+    current = published_generation_id(knowledge_base)
+    if not current:
+        return None
+    generation = db.get(WikiGeneration, current)
+    if generation is None:
+        return None
+    value = (generation.source_snapshot or {}).get(SOURCE_TRACKED_FILE_COUNT_KEY)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
 def start_generation(
     db: Session,
     *,
@@ -187,6 +208,7 @@ def start_generation(
     head_commit: str,
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
+    require_total_source_files: bool = False,
     project_id: int = 0,
     team_id: int = 0,
     team_id_for_mode: Optional[Callable[[RunMode], int]] = None,
@@ -205,6 +227,9 @@ def start_generation(
         changed_paths: Diff since the published commit, or ``None`` when unknown —
             in which case a full rebuild is chosen rather than a guess.
         total_source_files: Repository size, used by the change-ratio threshold.
+        require_total_source_files: Whether an existing Wiki without an inherited
+            count must fall back to a full rebuild when its file tree could not be
+            read.
         project_id: Registry row this version belongs to. A real foreign key, so a
             version cannot be written without one.
         team_id: Team the generation task belongs to.
@@ -277,6 +302,7 @@ def start_generation(
         last_commit=last_commit or None,
         changed_paths=changed_paths,
         total_source_files=total_source_files,
+        require_total_source_files=require_total_source_files,
         incrementals_since_full=since_full[0],
         days_since_full=since_full[1],
         force_full=force_full,

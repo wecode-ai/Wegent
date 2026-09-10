@@ -158,6 +158,17 @@ pub(crate) fn emit_response_event(
                 payload_object.insert("taskTitle".to_owned(), Value::String(title));
             }
         }
+        if let Some(model_selection) = request
+            .extra
+            .get("modelSelection")
+            .or_else(|| request.extra.get("model_selection"))
+            .filter(|value| value.is_object())
+        {
+            if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut)
+            {
+                payload_object.insert("modelSelection".to_owned(), model_selection.clone());
+            }
+        }
     }
     if let Some(generated_user_message) = request.extra.get("runtime_generated_user_message") {
         if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
@@ -2701,10 +2712,20 @@ mod tests {
         let request = ExecutionRequest {
             task_id: "task-1".to_owned(),
             subtask_id: "codex-turn-1".to_owned(),
-            extra: Map::from_iter([(
-                "runtimeTaskTitle".to_owned(),
-                json!("Analyze production issue"),
-            )]),
+            extra: Map::from_iter([
+                (
+                    "runtimeTaskTitle".to_owned(),
+                    json!("Analyze production issue"),
+                ),
+                (
+                    "modelSelection".to_owned(),
+                    json!({
+                        "modelName": "deepseek-v4-pro-responses(public)",
+                        "modelType": "public",
+                        "options": {"reasoning": "medium"}
+                    }),
+                ),
+            ]),
             ..ExecutionRequest::default()
         };
 
@@ -2728,7 +2749,16 @@ mod tests {
         let progress = event_rx.try_recv().expect("progress event");
         let terminal = event_rx.try_recv().expect("terminal event");
         assert!(progress["payload"].get("taskTitle").is_none());
+        assert!(progress["payload"].get("modelSelection").is_none());
         assert_eq!(terminal["payload"]["taskTitle"], "Analyze production issue");
+        assert_eq!(
+            terminal["payload"]["modelSelection"],
+            json!({
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"}
+            })
+        );
     }
 
     #[test]

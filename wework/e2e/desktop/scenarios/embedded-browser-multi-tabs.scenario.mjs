@@ -307,7 +307,9 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
         'true',
         'The browser shortcut checkpoint did not start with the right panel closed'
       )
-      await control.command('press', 'body', { key: OPEN_BROWSER_WHILE_CLOSED_KEY })
+      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
+        key: OPEN_BROWSER_WHILE_CLOSED_KEY,
+      })
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
 
       await callBridge(bridgeIdentity, { action: 'open', url: fixtureAUrl, timeoutMs: 8000 })
@@ -399,7 +401,9 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       )
       const firstBrowserLabel = (await callBridge(bridgeIdentity, { action: 'status' })).label
       const secondBrowserLabel = firstBrowserLabel + '-2'
-      await control.command('press', 'body', { key: OPEN_BROWSER_WHILE_CLOSED_KEY })
+      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
+        key: OPEN_BROWSER_WHILE_CLOSED_KEY,
+      })
       await waitForSnapshot(
         control,
         snapshot =>
@@ -414,7 +418,9 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       await control.command('click', RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR)
       await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
       await control.command('click', RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR)
-      await control.command('press', 'body', { key: OPEN_BROWSER_WHILE_OPEN_KEY })
+      await control.command('nativePress', ACTIVE_COMPOSER_SELECTOR, {
+        key: OPEN_BROWSER_WHILE_OPEN_KEY,
+      })
       const mixedTabsSnapshot = await waitForSnapshot(
         control,
         snapshot =>
