@@ -1124,6 +1124,12 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
 
+    fn git_test_command() -> Command {
+        let mut command = Command::new("git");
+        crate::local::native_git::clear_local_git_env(&mut command);
+        command
+    }
+
     #[test]
     fn packages_a_deleted_workspace_from_its_managed_git_snapshot() {
         let root = tempfile::tempdir().unwrap();
@@ -1135,7 +1141,7 @@ mod tests {
             vec!["config", "user.name", "Wegent Test"],
             vec!["config", "user.email", "test@wegent.local"],
         ] {
-            assert!(Command::new("git")
+            assert!(git_test_command()
                 .current_dir(&source)
                 .args(args)
                 .status()
@@ -1143,19 +1149,19 @@ mod tests {
                 .success());
         }
         fs::write(source.join("tracked.txt"), "base\n").unwrap();
-        assert!(Command::new("git")
+        assert!(git_test_command()
             .current_dir(&source)
             .args(["add", "."])
             .status()
             .unwrap()
             .success());
-        assert!(Command::new("git")
+        assert!(git_test_command()
             .current_dir(&source)
             .args(["commit", "-m", "base"])
             .status()
             .unwrap()
             .success());
-        assert!(Command::new("git")
+        assert!(git_test_command()
             .current_dir(&source)
             .args(["worktree", "add", "--detach"])
             .arg(&workspace)
@@ -1169,20 +1175,20 @@ mod tests {
             "ignored\n",
         )
         .unwrap();
-        assert!(Command::new("git")
+        assert!(git_test_command()
             .current_dir(&workspace)
             .args(["add", "-f", "."])
             .status()
             .unwrap()
             .success());
-        assert!(Command::new("git")
+        assert!(git_test_command()
             .current_dir(&workspace)
             .args(["commit", "-m", "snapshot"])
             .status()
             .unwrap()
             .success());
         let reference = String::from_utf8(
-            Command::new("git")
+            git_test_command()
                 .current_dir(&workspace)
                 .args(["rev-parse", "HEAD"])
                 .output()
@@ -1192,7 +1198,7 @@ mod tests {
         .unwrap()
         .trim()
         .to_owned();
-        assert!(Command::new("git")
+        assert!(git_test_command()
             .current_dir(&source)
             .args(["worktree", "remove", "--force"])
             .arg(&workspace)
