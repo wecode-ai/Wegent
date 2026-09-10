@@ -387,6 +387,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 for key, value in callback.headers.extensions.items()
                 if key.lower() == "x-request-id"
                 and isinstance(value, str)
+                and value.isprintable()
                 and value.strip()
             ),
             None,

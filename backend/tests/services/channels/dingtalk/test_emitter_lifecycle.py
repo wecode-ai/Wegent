@@ -7,9 +7,40 @@ import pytest
 
 from app.services.channels.dingtalk import emitter as emitter_module
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
+from shared.models import EventType, ExecutionEvent
 from tests.services.channels.dingtalk.test_emitter import FakeCache, card_factory
 from tests.services.channels.dingtalk.test_streaming_backpressure import block_update
 from tests.services.channels.test_terminal_result_delivery import FakeCallbackService
+
+
+@pytest.mark.asyncio
+async def test_missing_shared_progress_preserves_local_projection(
+    monkeypatch, card_factory
+):
+    cache = FakeCache()
+    monkeypatch.setattr(emitter_module, "cache_manager", cache)
+    emitter = StreamingResponseEmitter(object(), object(), "card-1")
+    emitter.set_shared_content_key("shared-card")
+    emitter.MIN_UPDATE_INTERVAL = 0
+    await emitter.emit_start(1, 2)
+    await emitter.emit(
+        ExecutionEvent.create(
+            EventType.TOOL_RESULT,
+            task_id=1,
+            subtask_id=2,
+            tool_name="Read",
+            data={"status": "completed"},
+        )
+    )
+    await emitter.flush()
+    del cache.structured[emitter._progress_state_key]
+    await emitter.emit_thinking(1, 2, "检查配置", is_reasoning_summary=True)
+    await emitter.flush()
+
+    state = cache.structured[emitter._progress_state_key]
+    assert state["recent"] == ["工具完成：Read"]
+    assert card_factory[0].updates[-1].count("检查配置") == 1
+    await emitter.close()
 
 
 @pytest.mark.asyncio

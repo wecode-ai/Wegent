@@ -1239,8 +1239,34 @@ class ExecutionDispatcher:
             await self._dispatch_image_generation(request, emitter)
             return
 
-        # Default: route to chat_shell via OpenAI client
+        from shared.telemetry.context import request_context
+
+        openai_request = OpenAIRequestConverter.from_execution_request(request)
+        metadata = openai_request.get("metadata", {})
+        request_id, request_id_source = self._resolve_request_id(request, metadata)
+        metadata["request_id"] = request_id
+        openai_request["metadata"] = metadata
+
+        with request_context(request_id):
+            await self._dispatch_chat_shell_sse(
+                request, target, emitter, openai_request, request_id_source
+            )
+
+    async def _dispatch_chat_shell_sse(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        emitter: ResultEmitter,
+        openai_request: dict[str, Any],
+        request_id_source: str,
+    ) -> None:
+        """Stream a Chat Shell response within the caller's scoped request context."""
         from app.services.chat.storage.session import session_manager
+        from shared.telemetry.context.propagation import (
+            get_trace_context_for_propagation,
+        )
+
+        request_id = openai_request["metadata"]["request_id"]
 
         # OpenAI client appends /responses to base_url, so we need to include /v1
         # e.g., base_url=http://127.0.0.1:8100/v1 -> POST http://127.0.0.1:8100/v1/responses
@@ -1270,22 +1296,6 @@ class ExecutionDispatcher:
             api_key="dummy",  # Not used by chat_shell but required by client
             timeout=300.0,
         )
-
-        # Convert ExecutionRequest to OpenAI format
-        openai_request = OpenAIRequestConverter.from_execution_request(request)
-
-        # Ensure request_id is set in metadata for backend -> chat_shell correlation.
-        # Preserve existing request_id if provided by upstream backend request context.
-        metadata = openai_request.get("metadata", {})
-        request_id, request_id_source = self._resolve_request_id(request, metadata)
-        metadata["request_id"] = request_id
-        from shared.telemetry.context.propagation import (
-            get_trace_context_for_propagation,
-        )
-        from shared.telemetry.context.span import set_request_context
-
-        set_request_context(request_id)
-        openai_request["metadata"] = metadata
 
         # Get tools from openai_request (includes MCP servers converted to tools)
         tools = openai_request.get("tools", [])

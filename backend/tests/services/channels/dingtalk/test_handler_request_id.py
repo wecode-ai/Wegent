@@ -91,6 +91,24 @@ async def test_ingress_logs_and_outbound_request_share_id(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsafe_id",
+    ["req\ninjected", "req\rinjected", "req\tinjected", "req\x00", "req\x7f"],
+)
+async def test_callback_rejects_request_ids_with_control_characters(unsafe_id):
+    observed = []
+
+    async def receive(context):
+        observed.append(span.get_request_id())
+
+    handler = WegentChatbotHandler(on_message=receive)
+    result = await handler.process(_callback(headers={"X-Request-ID": unsafe_id}))
+
+    assert result == (AckMessage.STATUS_OK, "OK")
+    assert re.fullmatch(r"[0-9a-f]{8}", observed[0])
+
+
+@pytest.mark.asyncio
 async def test_generated_id_reaches_execution_request(monkeypatch):
     from app.services.chat.trigger import unified
     from shared.models import ExecutionRequest

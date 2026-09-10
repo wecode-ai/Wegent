@@ -519,10 +519,11 @@ class StreamingResponseEmitter(ResultEmitter):
         state = _CompactProgressState.from_dict(self._progress.to_dict())
         if self._progress_state_key:
             cached = await cache_manager.get(self._progress_state_key)
-            state = _CompactProgressState.from_dict(cached)
-            if state.mode == "progress":
-                for update in updates:
-                    update(state)
+            if cached is not None:
+                state = _CompactProgressState.from_dict(cached)
+                if state.mode == "progress":
+                    for update in updates:
+                        update(state)
         if content:
             state.mode = "answer"
         # Keep local projection current, including events received during the read.
