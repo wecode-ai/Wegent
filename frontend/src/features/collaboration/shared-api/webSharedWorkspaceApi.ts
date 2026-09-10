@@ -467,16 +467,6 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
   },
 ] as const
 
-export class UnsupportedWorkspaceCapabilityError extends Error {
-  readonly capability: string
-
-  constructor(capability: string, reason: string) {
-    super(`Unsupported workspace capability "${capability}": ${reason}`)
-    this.name = 'UnsupportedWorkspaceCapabilityError'
-    this.capability = capability
-  }
-}
-
 function encoded(value: string | number): string {
   return encodeURIComponent(String(value))
 }

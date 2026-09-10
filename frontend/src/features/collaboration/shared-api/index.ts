@@ -4,7 +4,6 @@
 
 export {
   createWebSharedWorkspaceApi,
-  UnsupportedWorkspaceCapabilityError,
   WEB_SHARED_WORKSPACE_CAPABILITIES,
 } from './webSharedWorkspaceApi'
 export type {
