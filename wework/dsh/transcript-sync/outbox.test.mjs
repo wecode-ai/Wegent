@@ -123,6 +123,36 @@ test('persists an automatic branch route for later turns across restart', async 
   reopened.close()
 })
 
+test('persists a corrected branch point when the cloud parent is behind', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+  const turn = {
+    transcriptId: 'shared-transcript',
+    taskId: 'local-task',
+    title: 'Shared transcript',
+    sequence: 16,
+    turnId: 'conflicting-turn',
+    sessionId: 'local-session',
+  }
+
+  outbox.enqueue(turn, 15)
+  outbox.fork(outbox.first(), 'fork-stable-id', 11)
+  outbox.close()
+
+  const reopened = new SqliteSyncOutbox(path)
+  assert.deepEqual(reopened.first(), {
+    ...turn,
+    transcriptId: 'fork-stable-id',
+    baseSequence: 0,
+    cloudSequence: 1,
+    parentTranscriptId: 'shared-transcript',
+    forkedAtSequence: 11,
+  })
+  reopened.close()
+})
+
 test('discards every pending turn and route for an orphaned session', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

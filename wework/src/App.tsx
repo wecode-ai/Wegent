@@ -118,9 +118,11 @@ import {
 } from '@/features/workspace-tabs/workspaceTabs'
 import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
 import type { User } from '@/types/api'
+import { TelemetryAgent } from '@/telemetry/TelemetryAgent'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
-import { track, useTelemetryEnabled } from '@/telemetry/client'
-import { telemetryDomainForFeature, telemetryFeatureForLocation } from '@/telemetry/routes'
+import { track } from '@/telemetry/client'
+import { resolveTelemetryRoute } from '@/telemetry/routeRegistry'
+import { telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
@@ -510,7 +512,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ) ?? []
     ),
   }))
-  const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
   useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
@@ -572,16 +573,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }, [])
 
   const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
-  const telemetryDomain = telemetryDomainForFeature(telemetryFeature)
+  const smartAppRoute = resolveTelemetryRoute(path, search)
 
   useEffect(() => {
-    track(
-      'feature_opened',
-      telemetryDomain
-        ? { domain: telemetryDomain, feature: telemetryFeature }
-        : { feature: telemetryFeature }
-    )
-  }, [path, telemetryDomain, telemetryEnabled, telemetryFeature])
+    if (smartAppRoute) return
+    track('feature_opened', { feature: telemetryFeature })
+  }, [path, smartAppRoute, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)
@@ -721,6 +718,7 @@ function MainApp() {
           <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
+              <TelemetryAgent />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>
