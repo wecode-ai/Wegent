@@ -13,6 +13,7 @@ import pytest
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
 from shared.models import EventType
+from shared.telemetry.context import get_request_id, request_context
 
 
 class _FakeEvent:
@@ -58,12 +59,14 @@ def _build_fake_openai_module(calls: dict, events=None):
             tools,
             stream,
             extra_body,
+            extra_headers,
         ):
             calls["model"] = model
             calls["input"] = input
             calls["instructions"] = instructions
             calls["tools"] = tools
             calls["stream"] = stream
+            calls["extra_headers"] = extra_headers
             calls["extra_body"] = extra_body
             return _FakeStream(events)
 
@@ -118,6 +121,10 @@ async def test_dispatch_sse_keeps_existing_metadata_request_id():
     ):
         await dispatcher._dispatch_sse(request, target, emitter)
 
+    assert (
+        calls["extra_headers"]["X-Request-ID"]
+        == calls["extra_body"]["metadata"]["request_id"]
+    )
     assert calls["extra_body"]["metadata"]["request_id"] == "metadata-request-id"
 
 
@@ -153,6 +160,10 @@ async def test_dispatch_sse_uses_request_request_id_when_metadata_missing():
     ):
         await dispatcher._dispatch_sse(request, target, emitter)
 
+    assert (
+        calls["extra_headers"]["X-Request-ID"]
+        == calls["extra_body"]["metadata"]["request_id"]
+    )
     assert calls["extra_body"]["metadata"]["request_id"] == "backend-request-id"
 
 
@@ -188,7 +199,54 @@ async def test_dispatch_sse_generates_request_id_when_missing():
     ):
         await dispatcher._dispatch_sse(request, target, emitter)
 
+    assert (
+        calls["extra_headers"]["X-Request-ID"]
+        == calls["extra_body"]["metadata"]["request_id"]
+    )
     assert calls["extra_body"]["metadata"]["request_id"] == "req_77"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, RuntimeError, asyncio.CancelledError])
+async def test_sequential_sse_dispatches_restore_caller_context(failure):
+    dispatcher = ExecutionDispatcher()
+    target = ExecutionTarget(
+        mode=CommunicationMode.SSE,
+        url="http://chat-shell",
+        namespace=None,
+        event="task:execute",
+        room=None,
+    )
+    calls = {}
+    emitter = AsyncMock()
+    session_manager = AsyncMock()
+    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.is_cancelled.return_value = False
+
+    async def unregister(subtask_id):
+        assert get_request_id() == f"dispatch-{subtask_id}"
+        if failure:
+            raise failure("cleanup interrupted")
+
+    session_manager.unregister_stream.side_effect = unregister
+    with (
+        request_context("caller-context"),
+        patch.dict("sys.modules", {"openai": _build_fake_openai_module(calls)}),
+        patch(
+            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            side_effect=lambda request: {"model": "test-model", "input": "hello"},
+        ),
+        patch("app.services.chat.storage.session.session_manager", session_manager),
+    ):
+        for number in (1, 2):
+            request = _make_request(number, f"dispatch-{number}")
+            if failure:
+                with pytest.raises(failure, match="cleanup interrupted"):
+                    await dispatcher._dispatch_sse(request, target, emitter)
+            else:
+                await dispatcher._dispatch_sse(request, target, emitter)
+            assert get_request_id() == "caller-context"
+            assert calls["extra_headers"]["X-Request-ID"] == f"dispatch-{number}"
 
 
 @pytest.mark.asyncio

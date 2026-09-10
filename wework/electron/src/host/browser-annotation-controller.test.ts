@@ -174,16 +174,60 @@ describe('BrowserAnnotationController', () => {
     ).toBeNull()
   })
 
-  test('increments the runtime revision for annotation mode and original view changes', () => {
-    const { controller } = harness()
+  test('increments the runtime revision after the original view is rendered', () => {
+    const { controller, sent } = harness()
     const initialRevision = controller.state(LABEL).runtimeRevision
 
     controller.start(LABEL, 'batch')
     expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 1)
     controller.setOriginalView(LABEL, true)
+    expect(controller.state(LABEL)).toMatchObject({
+      originalView: false,
+      runtimeRevision: initialRevision + 1,
+    })
+    const renderRequestId = (
+      sent.at(-1)?.payload as {
+        renderRequestId?: number
+      }
+    ).renderRequestId
+    controller.handleRuntimeEvent(7, {
+      type: 'runtime-rendered',
+      renderRequestId,
+    })
+    expect(controller.state(LABEL).originalView).toBe(true)
     expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 2)
     controller.stop(LABEL)
     expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 3)
+  })
+
+  test('ignores a stale original view render acknowledgement', () => {
+    const { controller, sent } = harness()
+    controller.start(LABEL, 'batch')
+
+    controller.setOriginalView(LABEL, true)
+    const staleRequestId = (
+      sent.at(-1)?.payload as {
+        renderRequestId?: number
+      }
+    ).renderRequestId
+    controller.setOriginalView(LABEL, false)
+    const currentRequestId = (
+      sent.at(-1)?.payload as {
+        renderRequestId?: number
+      }
+    ).renderRequestId
+
+    controller.handleRuntimeEvent(7, {
+      type: 'runtime-rendered',
+      renderRequestId: staleRequestId,
+    })
+    expect(controller.state(LABEL).originalView).toBe(false)
+
+    controller.handleRuntimeEvent(7, {
+      type: 'runtime-rendered',
+      renderRequestId: currentRequestId,
+    })
+    expect(controller.state(LABEL).originalView).toBe(false)
   })
 
   test('replaces an anchor without changing comment identity', async () => {
