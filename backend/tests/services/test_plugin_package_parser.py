@@ -63,7 +63,7 @@ def test_authorization_group_survives_package_parsing_without_merging_accounts()
             },
         }
         for index, host in enumerate(
-            ["git.intra.weibo.com", "gitlab.weibo.cn", "git.staff.sina.com.cn"]
+            ["git.one.example", "git.two.example", "git.three.example"]
         )
     ]
     buffer = io.BytesIO()

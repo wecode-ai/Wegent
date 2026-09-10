@@ -3,15 +3,13 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { PluginConnectorSection } from './PluginConnectorSection'
 
-const connectors = ['git.intra.weibo.com', 'gitlab.weibo.cn', 'git.staff.sina.com.cn'].map(
-  (host, i) => ({
-    slug: `tianhe-${i}`,
-    displayName: host,
-    description: `Use the PAT from ${host}`,
-    authPolicy: 'optional' as const,
-    authorizationGroup: { id: 'tianhe', displayName: '天河账号' },
-  })
-)
+const connectors = ['git.one.example', 'git.two.example', 'git.three.example'].map((host, i) => ({
+  slug: `tianhe-${i}`,
+  displayName: host,
+  description: `Use the PAT from ${host}`,
+  authPolicy: 'optional' as const,
+  authorizationGroup: { id: 'tianhe', displayName: '天河账号' },
+}))
 
 beforeEach(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {

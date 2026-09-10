@@ -103,7 +103,7 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
       connectors: [
         {
           slug: 'mail',
-          displayName: 'git.intra.weibo.com',
+          displayName: 'git.one.example',
           authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
           authPolicy: 'on_install',
           localAuth: {
@@ -132,7 +132,7 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
         },
         {
           slug: 'oauth',
-          displayName: 'gitlab.weibo.cn',
+          displayName: 'git.two.example',
           authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
           authPolicy: 'optional',
           accountAuth: {
@@ -144,7 +144,7 @@ print(json.dumps({"status":"ok" if sys.argv[1] != "health" or source.exists() el
         },
         {
           slug: 'transfer',
-          displayName: 'git.staff.sina.com.cn',
+          displayName: 'git.three.example',
           authorizationGroup: { id: 'sites', displayName: 'Authentication sites' },
           authPolicy: 'optional',
           accountAuth: {
@@ -481,7 +481,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
       await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
       await control.command('waitFor', '[data-testid="plugin-connector-source-dialog"]', {
-        text: 'git.staff.sina.com.cn',
+        text: 'git.three.example',
       })
       await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
         value: 'oauth',
@@ -637,7 +637,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
       })
       await control.command('click', '[data-testid="plugin-connector-source-continue"]')
       await control.command('waitFor', '[data-testid="plugin-connector-section"]', {
-        text: '已连接 · git.intra.weibo.com',
+        text: '已连接 · git.one.example',
       })
       await waitForValue(
         () => connectionFor('mail'),
