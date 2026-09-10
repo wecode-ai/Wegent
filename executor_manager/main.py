@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 
+from executor_manager.common.redis_factory import RedisClientFactory
 from executor_manager.services.sandbox import get_sandbox_manager
 from routers.routers import app  # Import the FastAPI app defined in routes.py
 
@@ -89,6 +90,12 @@ async def lifespan(app):
     task_consumer = None
     offline_consumer = None
 
+    redis_ready = await RedisClientFactory.initialize()
+    if not redis_ready:
+        logger.error(
+            "Redis initialization did not complete; services will retry lazily"
+        )
+
     # Start task queue consumers for async processing
     # Start both online (immediate) and offline (21:00-08:00) consumers
     logger.info(f"Starting task queue consumers for pool '{service_pool}'")
@@ -132,6 +139,9 @@ async def lifespan(app):
     if sandbox_manager:
         logger.info("Stopping SandboxManager...")
         await sandbox_manager.stop_gc_task()
+
+    await RedisClientFactory.close()
+    logger.info("Redis clients closed")
 
     # Shutdown OpenTelemetry
     if otel_config.enabled:
