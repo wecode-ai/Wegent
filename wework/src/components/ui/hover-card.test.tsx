@@ -1,4 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createPortal } from 'react-dom'
 import { HoverCard } from './hover-card'
@@ -284,7 +286,7 @@ describe('HoverCard', () => {
     expect(screen.queryByTestId('pinned-hover-card')).not.toBeInTheDocument()
   })
 
-  test('pins only interactions inside the configured region', () => {
+  test('pins only interactions inside the configured region', async () => {
     render(
       <HoverCard
         testId="scoped-pinned-hover-card"
@@ -312,7 +314,63 @@ describe('HoverCard', () => {
 
     fireEvent.pointerDown(screen.getByLabelText('Reply'))
     fireEvent.focus(screen.getByLabelText('Reply'))
+    fireEvent.click(screen.getByLabelText('Reply'))
+    await act(async () => Promise.resolve())
     expect(screen.getByTestId('scoped-pinned-hover-card-close')).toBeInTheDocument()
+  })
+
+  test('lets a pointer action finish before controlled pinning changes the card', async () => {
+    const events: string[] = []
+    const ControlledCard = () => {
+      const [pinned, setPinned] = useState(false)
+      const [active, setActive] = useState(true)
+      return (
+        <HoverCard
+          testId="controlled-action-hover-card"
+          interactive
+          openOnFocus
+          pinOnInteraction
+          pinOnInteractionSelector="[data-pin-region]"
+          pinned={pinned}
+          onPinnedChange={nextPinned => {
+            events.push(nextPinned ? 'pin' : 'unpin')
+            setPinned(nextPinned)
+          }}
+          content={
+            <div data-pin-region>
+              {!pinned ? <span>Unpinned controls</span> : null}
+              {active ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    events.push('action')
+                    setActive(false)
+                  }}
+                >
+                  Stop response
+                </button>
+              ) : (
+                <span>Response stopped</span>
+              )}
+            </div>
+          }
+        >
+          <button type="button">Current task</button>
+        </HoverCard>
+      )
+    }
+
+    render(<ControlledCard />)
+    fireEvent.focus(screen.getByText('Current task'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Stop response' }))
+
+    expect(events).toEqual(['action', 'pin'])
+    expect(screen.getByTestId('controlled-action-hover-card')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    expect(screen.getByTestId('controlled-action-hover-card-close')).toHaveClass('z-10')
   })
 
   test('keeps a controlled pinned card open until its owner clears the pinned state', () => {
