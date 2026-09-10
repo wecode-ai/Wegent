@@ -63,7 +63,7 @@ domain、path、secure、httpOnly、sameSite、partitioned 等元数据。不得
 
 ## Capability 设计
 
-Workbench runtime 的 HostPipe 创建时绑定 Smart App tab ID。插件只能调用：
+Workbench runtime 的 HostPipe 创建时绑定 Smart App tab ID。截图接口包括：
 
 - `dshCapture.capabilities`：返回 owner-view 区域截图是否可用；
 - `dshCapture.ownerRect`：接受 `{x, y, width, height}`，返回 PNG data URL。

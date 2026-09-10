@@ -42,6 +42,37 @@ async function enableExperimentalFeatures(control) {
   await control.command('waitFor', `${selector}[aria-checked="true"]`, { stableMs: 300 })
 }
 
+async function verifyMicrophoneDiagnostics(origin) {
+  const capability = 'deviceDiagnostics.microphone'
+  const initial = await invoke(origin, capability)
+  assert.equal(initial.schemaVersion, 1)
+  assert.equal(initial.platform, process.platform)
+  assert.equal(initial.inputDeviceKind, 'unknown')
+  assert.ok(Number.isFinite(Date.parse(initial.checkedAt)))
+  assert.ok(['ok', 'blocked', 'warning', 'unknown', 'unsupported'].includes(initial.status))
+  if (process.platform === 'darwin') {
+    assert.notEqual(initial.status, 'unsupported')
+    assert.ok(['open', 'closed', 'not-present'].includes(initial.checks.lidState))
+    for (const signature of [initial.checks.appSignature, initial.checks.audioHelperSignature]) {
+      assert.equal(typeof signature.hardenedRuntime, 'boolean')
+      assert.equal(typeof signature.audioInputEntitlement, 'boolean')
+    }
+    assert.equal(typeof initial.checks.usageDescriptionPresent, 'boolean')
+  } else {
+    assert.equal(initial.code, 'MICROPHONE_DIAGNOSTICS_UNSUPPORTED')
+  }
+  const invalid = await invokeFailure(origin, capability, { inputDeviceKind: 'default' })
+  assert.equal(invalid.code, 'invalid_params')
+  const recovered = await invoke(origin, capability, { inputDeviceKind: 'external' })
+  assert.equal(recovered.inputDeviceKind, 'external')
+  assert.equal(recovered.checks.permission, initial.checks.permission)
+  assert.equal(
+    recovered.issues.some(issue => issue.code.includes('LID_CLOSED')),
+    false
+  )
+  return { initial, invalid, recovered }
+}
+
 export function createDesktopScenario({ resultDir }) {
   return {
     async verify(control) {
@@ -81,6 +112,10 @@ export function createDesktopScenario({ resultDir }) {
         assert.equal(ownerLabel, `smart-app:${workbench.id}`)
 
         const workbenchOrigin = new URL(webUrl).origin
+        const microphoneDiagnostics = {
+          core: await verifyMicrophoneDiagnostics(origin),
+          workbench: await verifyMicrophoneDiagnostics(workbenchOrigin),
+        }
         const capabilities = await invoke(workbenchOrigin, 'dshCapture.capabilities')
         assert.deepEqual(capabilities, { available: true })
 
@@ -115,7 +150,7 @@ export function createDesktopScenario({ resultDir }) {
 
         await writeFile(
           join(resultDir, 'dsh-owner-capture.json'),
-          `${JSON.stringify({ captured: true, invalidRejected: true, hiddenRejected: true }, null, 2)}\n`,
+          `${JSON.stringify({ captured: true, invalidRejected: true, hiddenRejected: true, microphoneDiagnostics }, null, 2)}\n`,
           'utf8'
         )
       } finally {

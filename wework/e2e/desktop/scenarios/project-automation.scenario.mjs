@@ -453,11 +453,15 @@ export function createDesktopScenario({
   let workflowTaskBindings = []
   let resolveFirstContinuationStarted
   let releaseFirstContinuation
+  let releaseMoonshotFollowUp
   const firstContinuationStarted = new Promise(resolve => {
     resolveFirstContinuationStarted = resolve
   })
   const firstContinuationRelease = new Promise(resolve => {
     releaseFirstContinuation = resolve
+  })
+  const moonshotFollowUpRelease = new Promise(resolve => {
+    releaseMoonshotFollowUp = resolve
   })
 
   const cloudRequest = (pathname, options) => {
@@ -1417,29 +1421,46 @@ export function createDesktopScenario({
       CLOUD_MODEL_UPSTREAM_ID,
       'The board popup follow-up used the global default instead of the task model'
     )
-    await control.command('press', 'body', { key: 'Escape' })
-    await control.command('hover', moonshotOverrideCard, { visible: true })
-    await control.command('waitFor', moonshotProgressPopup, {
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
+    try {
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
+      await control.command('hover', moonshotOverrideCard, { visible: true })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `[data-testid="cloud-todo-card-progress-pin-${moonshotOverrideIssue.id}"]`,
+        { visible: true }
+      )
+      await waitForValue(
+        () => control.command('getAttribute', moonshotProgressPopup, { value: 'data-pinned' }),
+        value => value === 'true',
+        'The board popup did not stay pinned in place',
+        uiTimeoutMs
+      )
+      await captureScreenshot(control, 'project-automation-board-hover-pinned.png')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
+    } finally {
+      releaseMoonshotFollowUp()
+    }
     await control.command(
-      'click',
-      `[data-testid="cloud-todo-card-progress-pin-${moonshotOverrideIssue.id}"]`,
-      { visible: true }
+      'waitFor',
+      `[data-testid="cloud-todo-card-final-response-${moonshotOverrideIssue.id}"]`,
+      {
+        text: MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION,
+        timeoutMs: automationRuntimeTimeoutMs,
+        visible: true,
+      }
     )
-    await waitForValue(
-      () => control.command('getAttribute', moonshotProgressPopup, { value: 'data-pinned' }),
-      value => value === 'true',
-      'The board popup did not stay pinned in place',
-      uiTimeoutMs
-    )
-    await captureScreenshot(control, 'project-automation-board-hover-pinned.png')
-    await control.command('press', 'body', { key: 'Escape' })
-    await control.command('waitFor', moonshotProgressPopup, {
-      timeoutMs: uiTimeoutMs,
-      visible: false,
-    })
 
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       timeoutMs: uiTimeoutMs,
@@ -2790,11 +2811,20 @@ export function createDesktopScenario({
           return true
         }
         if (serialized.includes(MOONSHOT_OVERRIDE_FOLLOW_UP)) {
-          writeEvents([
-            responseCreated(responseId),
-            assistantMessage(MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION),
-            responseCompleted(responseId),
-          ])
+          response.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          })
+          response.flushHeaders()
+          response.write(createSse([responseCreated(responseId)]))
+          await moonshotFollowUpRelease
+          response.end(
+            createSse([
+              assistantMessage(MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION),
+              responseCompleted(responseId),
+            ])
+          )
           return true
         }
         if (serialized.includes('请确认当前分派结果')) {

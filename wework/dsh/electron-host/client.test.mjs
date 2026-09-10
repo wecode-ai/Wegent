@@ -45,13 +45,10 @@ test('provides one Renderer service backed by the same-origin host route', async
   })
   const generation = client.createWeworkDesktopClient()
 
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(await generation.service.describe())),
-    {
-      protocolVersion: 1,
-      capabilities: ['app.getVersion', 'rendererHealth.getState'],
-    }
-  )
+  assert.deepEqual(JSON.parse(JSON.stringify(await generation.service.describe())), {
+    protocolVersion: 1,
+    capabilities: ['app.getVersion', 'rendererHealth.getState'],
+  })
   assert.deepEqual(
     JSON.parse(JSON.stringify(await generation.service.shell.openExternal('https://example.com'))),
     {
@@ -62,6 +59,15 @@ test('provides one Renderer service backed by the same-origin host route', async
   assert.equal(requests[0].url, '/wework/electron-host/v1')
   assert.equal(requests[0].init.credentials, 'same-origin')
   assert.equal(requests[1].url, '/wework/electron-host/v1/invoke')
+  await generation.service.deviceDiagnostics.microphone()
+  await generation.service.deviceDiagnostics.microphone({ inputDeviceKind: 'built-in' })
+  assert.deepEqual(
+    requests.slice(2).map(({ init }) => JSON.parse(init.body)),
+    [
+      { capability: 'deviceDiagnostics.microphone', params: {} },
+      { capability: 'deviceDiagnostics.microphone', params: { inputDeviceKind: 'built-in' } },
+    ]
+  )
 })
 
 test('preserves structured Host errors and rejects retained generation references', async () => {
@@ -78,13 +84,15 @@ test('preserves structured Host errors and rejects retained generation reference
   const failed = client.createWeworkDesktopClient()
   await assert.rejects(
     () => failed.service.window.close(),
-    error =>
-      error.code === 'capability_denied' &&
-      error.details.capability === 'window.close'
+    error => error.code === 'capability_denied' && error.details.capability === 'window.close'
   )
 
   const disposed = client.createWeworkDesktopClient()
   disposed.dispose()
+  await assert.rejects(
+    () => disposed.service.deviceDiagnostics.microphone(),
+    error => error.code === 'service_disposed'
+  )
   await assert.rejects(
     () => disposed.service.window.getState(),
     error => error.code === 'service_disposed'
@@ -116,9 +124,7 @@ test('registers and disposes the Renderer Cordis service with its generation', a
 })
 
 test('exports package metadata required by the DSH client registry', async () => {
-  const packageJson = JSON.parse(
-    await readFile(new URL('./package.json', import.meta.url), 'utf8')
-  )
+  const packageJson = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
   assert.equal(packageJson.exports['./client'], './client.js')
   assert.equal(packageJson.exports['./package.json'], './package.json')
   assert.equal(packageJson.dsh.client.platform, 'web')
