@@ -1187,6 +1187,13 @@
       }
     },
     "reader": {
+      "update": "更新 Wiki",
+      "updateTitle": "更新 Wiki",
+      "updateDescription": "选择本次更新方式。实际模式由服务端检查仓库后决定。",
+      "checkAndUpdate": "检查并更新（推荐）",
+      "checkAndUpdateHint": "没有变化时不生成；适合增量时增量更新，否则自动全量更新。",
+      "fullUpdate": "全量重新生成",
+      "startUpdate": "开始更新",
       "regenerate": "重新生成",
       "regenerating": "生成中…",
       "upToDate": "仓库自上次生成后没有变化",
@@ -1202,6 +1209,8 @@
       "backToChat": "回到对话",
       "openNavigation": "页面导航",
       "generateFirst": "开始生成",
+      "generateFirstTitle": "生成 Wiki",
+      "generateFirstDescription": "将读取仓库并生成首个文档版本，通常需要几分钟。",
       "regenerateConfirmTitle": "重新生成这个 wiki？",
       "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
       "cancelConfirmTitle": "终止本次生成？",
@@ -1263,13 +1272,12 @@
       "current": "当前版本",
       "none": "还没有生成记录",
       "mode": {
-        "full": "全量",
-        "incremental": "增量",
-        "custom": "自定义"
+        "full": "全量生成",
+        "incremental": "增量更新",
+        "custom": "自定义生成"
       },
       "commitUnreported": "未记录 commit",
       "taskFailed": "执行任务失败",
-      "strategy": "策略：{{strategy}}",
       "republish": "恢复此版本",
       "republished": "已恢复该版本",
       "republishedDescription": "页面内容已刷新。",

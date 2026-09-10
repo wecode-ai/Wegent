@@ -7,8 +7,9 @@ const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
 
 test('exports a native segment with a separate structured summary', async () => {
   const client = {
-    async request(method, params) {
+    async request(method, params, timeoutMs) {
       if (method === 'runtime.tasks.transcript') {
+        assert.equal(timeoutMs, undefined)
         assert.deepEqual(params, { taskId: 'task-1', limit: 100 })
         return {
           turns: [
@@ -29,6 +30,7 @@ test('exports a native segment with a separate structured summary', async () => 
         }
       }
       assert.equal(method, 'runtime.tasks.transcript.export')
+      assert.equal(timeoutMs, 10 * 60 * 1000)
       assert.deepEqual(params, {
         transcriptId: 'transcript-1',
         taskId: 'task-1',

@@ -1359,6 +1359,10 @@ describe('DesktopSidebar', () => {
 
     fireEvent.keyDown(window, { key: 'p', metaKey: true, shiftKey: true })
     expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    input.dataset.testid = 'chat-message-input'
+    input.focus()
+    fireEvent.keyDown(input, { key: 'p', metaKey: true, shiftKey: true })
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
     input.remove()
   })
 
