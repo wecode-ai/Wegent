@@ -91,7 +91,19 @@ describe('EnvironmentInfoPopover', () => {
           deletions: '',
           executionTarget: 'local',
           isGitRepository: false,
+          executionDeviceId: 'local-device',
+          workspacePath: '/workspace/non-git-task',
         }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'local-device',
+            name: 'Local Executor',
+            status: 'online',
+            is_default: true,
+            device_type: 'local',
+          },
+        ]}
         messages={[
           {
             id: 'assistant-output',
@@ -108,8 +120,10 @@ describe('EnvironmentInfoPopover', () => {
     )
 
     expect(screen.getByTestId('conversation-output-summary')).toHaveTextContent('输出内容')
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('non-git-task')
+    expect(screen.getByTestId('environment-device-name')).toHaveTextContent('Local Executor')
     expect(screen.getByTestId('conversation-output-list')).toHaveTextContent('report.md')
-    expect(screen.queryByTestId('environment-device-section')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-device-section')).toBeInTheDocument()
     expect(screen.queryByTestId('environment-git-section')).not.toBeInTheDocument()
   })
 

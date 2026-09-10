@@ -515,19 +515,6 @@ export function useWorkbenchPaneEnvironment({
         environmentWorkspaceReady,
       })
 
-      if (!environmentExtensionsAvailable) {
-        setEnvironmentInfo({
-          additions: '',
-          deletions: '',
-          executionTarget: 'local',
-          isGitRepository: false,
-          loading: false,
-          branchLoading: false,
-        })
-        logLoad('extension_unavailable')
-        return
-      }
-
       if (workspaceTargetResolving) {
         if (showLoading) {
           setEnvironmentInfo(info => ({ ...info, loading: true, branchLoading: true }))
@@ -660,7 +647,6 @@ export function useWorkbenchPaneEnvironment({
       changeRequestStatusEnabled,
       currentRuntimeTask,
       environmentWorkspaceReady,
-      environmentExtensionsAvailable,
       loadEnvironmentInfo,
       workspaceRoots,
       workspaceTargetError,
@@ -678,10 +664,7 @@ export function useWorkbenchPaneEnvironment({
   }, [changeRequestMonitor, changeRequestStatusEnabled, loadCurrentEnvironmentInfo])
 
   useEffect(() => {
-    if (
-      !environmentExtensionsAvailable ||
-      (!activeConversationProjectKey && !currentRuntimeTaskKey)
-    ) {
+    if (!activeConversationProjectKey && !currentRuntimeTaskKey) {
       return
     }
     void loadCurrentEnvironmentInfo({ force: false, showLoading: true })
@@ -689,14 +672,13 @@ export function useWorkbenchPaneEnvironment({
     activeConversationProjectKey,
     activeWorkspaceTargetKey,
     currentRuntimeTaskKey,
-    environmentExtensionsAvailable,
     loadCurrentEnvironmentInfo,
     workspaceProjectKey,
   ])
 
   useEffect(() => {
     const wasRefreshActive = previousEnvironmentRefreshActive.current
-    const shouldRefreshEnvironment = environmentExtensionsAvailable && environmentRefreshActive
+    const shouldRefreshEnvironment = environmentRefreshActive
     previousEnvironmentRefreshActive.current = shouldRefreshEnvironment
 
     if (!shouldRefreshEnvironment) {
@@ -710,7 +692,7 @@ export function useWorkbenchPaneEnvironment({
       void loadCurrentEnvironmentInfo({ force: true, showLoading: false })
     }, 30_000)
     return () => window.clearInterval(intervalId)
-  }, [environmentExtensionsAvailable, environmentRefreshActive, loadCurrentEnvironmentInfo])
+  }, [environmentRefreshActive, loadCurrentEnvironmentInfo])
 
   const commitPaneEnvironmentChanges = useCallback(
     async (message: string) => {

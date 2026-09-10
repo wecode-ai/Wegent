@@ -218,16 +218,9 @@ test('renders the demo components without Wework-private React imports', async (
     ['wework.task.status', { task: { title: 'Demo task' } }, 'dsh-extension-demo-task-status'],
     [
       'wework.conversation.summary',
-      {
-        services: {
-          getService: id =>
-            id === 'wework.environment'
-              ? { read: () => ({ info: { workspacePath: '/workspace' } }) }
-              : undefined,
-        },
-      },
-      'dsh-extension-demo-environment-section',
-      '/workspace',
+      {},
+      'dsh-extension-demo-summary-section',
+      'Demo summary section',
     ],
     ['wework.board.card.status', { itemId: 'DEMO-1' }, 'dsh-extension-demo-board-card-status'],
     [

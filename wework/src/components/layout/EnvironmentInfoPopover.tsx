@@ -18,6 +18,7 @@ import type { DeviceInfo, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
+import { EnvironmentSummaryOverview } from './EnvironmentSummaryOverview'
 import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
 
 interface EnvironmentInfoPopoverProps {
@@ -219,6 +220,7 @@ export function EnvironmentInfoPopover({
               docked ? 'ml-2 mt-3' : 'fixed z-system'
             )}
           >
+            <EnvironmentSummaryOverview devices={devices} info={info} />
             <DshContributionSlotSurface
               attachedClassName="contents"
               props={{

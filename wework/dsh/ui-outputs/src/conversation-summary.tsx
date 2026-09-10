@@ -29,7 +29,7 @@ export default function OutputsConversationSummary({ services }: ConversationSum
   if (!summary) return null
 
   return (
-    <div data-testid="conversation-output-summary">
+    <section className="mt-3 border-t border-border pt-3" data-testid="conversation-output-summary">
       <h2 className="mb-3 text-sm font-medium text-text-primary">
         {t('workbench.output_summary_title', '输出内容')}
       </h2>
@@ -101,6 +101,6 @@ export default function OutputsConversationSummary({ services }: ConversationSum
           </div>
         </section>
       )}
-    </div>
+    </section>
   )
 }
