@@ -41,7 +41,8 @@ const MOONSHOT_OVERRIDE_ISSUE_TITLE = 'Issue 临时云端 Moonshot 覆盖本地 
 const MOONSHOT_OVERRIDE_FOLLOW_UP =
   'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP: verify immutable task model routing.'
 const MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION =
-  'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP_COMPLETE\n\n[打开任务文件](README.md)'
+  'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP_COMPLETE'
+const MOONSHOT_OVERRIDE_INITIAL_COMPLETION = '真实自动化执行已完成。\n\n[打开任务文件](README.md)'
 const CLOUD_MODEL_UPSTREAM_ID = 'desktop-e2e-public-upstream-model'
 
 const PROJECT = {
@@ -446,6 +447,7 @@ export function createDesktopScenario({
   let personalApiKey = null
   let managerToolCalls = 0
   const upstreamResponseRequests = []
+  let moonshotOverrideIssueId = null
   let uiProject = { ...PROJECT }
   let nextBoardItemSequence = 201
   let orchestratedItemId = null
@@ -1125,6 +1127,7 @@ export function createDesktopScenario({
         }),
       }
     )
+    moonshotOverrideIssueId = moonshotOverrideIssue.id
     assert.equal(moonshotOverrideIssue.assignee_agent_id, localDefaultAgent.id)
     assert.equal(
       moonshotOverrideIssue.execution_config?.execution_device_id,
@@ -1329,6 +1332,7 @@ export function createDesktopScenario({
     const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
     const moonshotPopupInput = `${moonshotPopupConversation} [data-testid="chat-message-input"]`
     const moonshotPopupSend = `${moonshotPopupConversation} [data-testid="send-message-button"]`
+    const taskFileLink = `${moonshotPopupConversation} [data-testid="assistant-markdown-link"]`
     await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
     await control.command('hover', moonshotOverrideCard, { visible: true })
     await control.command('waitFor', moonshotProgressPopup, {
@@ -1391,6 +1395,42 @@ export function createDesktopScenario({
       `The board popup did not start from the latest message: ${JSON.stringify(popupScrollMetrics)}`
     )
     await captureScreenshot(control, 'project-automation-board-hover-stable-latest.png')
+    await control.command('waitFor', taskFileLink, {
+      text: '打开任务文件',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', taskFileLink, { visible: true })
+    await control.command(
+      'waitFor',
+      '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]',
+      {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
+    await waitForValue(
+      async () => JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
+      snapshot =>
+        snapshot.workbench?.currentRuntimeTask?.taskId === moonshotExecution.runtimeTaskId,
+      'The board-popup file action did not return to its bound Runtime task',
+      uiTimeoutMs
+    )
+    await control.command('click', '[data-testid="new-chat-button"]', { visible: true })
+    await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', boardWorkspaceTabSelector, { visible: true })
+    await control.command('waitFor', moonshotOverrideCard, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('hover', moonshotOverrideCard, { visible: true })
+    await control.command('waitFor', moonshotProgressPopup, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     const followUpRequestOffset = upstreamResponseRequests.length
     await control.command('click', moonshotPopupInput, { visible: true })
     await waitForValue(
@@ -2994,7 +3034,11 @@ export function createDesktopScenario({
         }
         writeEvents([
           responseCreated(responseId),
-          assistantMessage('真实自动化执行已完成。'),
+          assistantMessage(
+            serialized.includes(`task_id: ${moonshotOverrideIssueId}`)
+              ? MOONSHOT_OVERRIDE_INITIAL_COMPLETION
+              : '真实自动化执行已完成。'
+          ),
           responseCompleted(responseId),
         ])
         return true
