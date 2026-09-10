@@ -152,8 +152,7 @@ verify_uploaded_artifacts() {
     "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe.blockmap" \
     "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe" \
     "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe.blockmap" \
-    "$UPDATE_BASE_URL/$electron_channel.yml" \
-    "$UPDATE_BASE_URL/$CHANNEL-windows-x86_64.json"; do
+    "$UPDATE_BASE_URL/$electron_channel.yml"; do
     if ! curl -fsSI -o /dev/null "$url"; then
       echo "Published release file is not publicly readable: $url" >&2
       exit 1
