@@ -60,6 +60,11 @@ describe('local delivery API', () => {
       task_id: 'runtime-2',
       task_title: 'Second task',
       backend_task_id: null,
+      modelSelection: {
+        modelName: 'gpt-5.6-sol',
+        modelType: 'public',
+        options: { reasoning: 'high' },
+      },
       workflow_node_id: null,
       linked_at: '2026-08-21T00:00:00Z',
     }
@@ -72,7 +77,17 @@ describe('local delivery API', () => {
 
     await expect(api.getBoardSnapshot('project-1')).resolves.toMatchObject({
       items: [{ id: 'LOCAL-1' }, { id: 'LOCAL-2' }],
-      task_bindings: [{ id: 7, task_id: 'runtime-2' }],
+      task_bindings: [
+        {
+          id: 7,
+          task_id: 'runtime-2',
+          modelSelection: {
+            modelName: 'gpt-5.6-sol',
+            modelType: 'public',
+            options: { reasoning: 'high' },
+          },
+        },
+      ],
       members: [],
       agents: [],
     })
@@ -574,7 +589,17 @@ describe('local delivery API', () => {
       throw new Error(`Unexpected method: ${method}`)
     })
     const api = createLocalDeliveryApi(request)
-    const runtimeTask = { deviceId: 'local-device', taskId: 'runtime-1' }
+    const runtimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'public' as const,
+          options: { reasoning: 'high' },
+        },
+      },
+    }
 
     await api.listLoopItems('project-1')
     await api.bindTask('LOCAL-1', runtimeTask, 'Runtime')
@@ -586,7 +611,9 @@ describe('local delivery API', () => {
       task: {
         deviceId: 'local-device',
         taskId: 'runtime-1',
+        runtimeHandle: runtimeTask.runtimeHandle,
         taskTitle: 'Runtime',
+        modelSelection: runtimeTask.runtimeHandle.modelSelection,
       },
     })
   })

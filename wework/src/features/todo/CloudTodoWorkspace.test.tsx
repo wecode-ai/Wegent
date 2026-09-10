@@ -20,7 +20,7 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
-import type { User } from '@/types/api'
+import type { RuntimeTaskCreateRequest, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
 import {
   isSelfManagedWorkItem,
@@ -229,8 +229,10 @@ vi.mock('./BackgroundTaskStarter', () => ({
     onAddressChange,
     onTaskCreated,
     prepareTask,
+    taskRequest,
   }: {
     onAddressChange: (address: { deviceId: string; taskId: string }) => void
+    taskRequest?: RuntimeTaskCreateRequest | null
     onTaskCreated?: (
       address: { deviceId: string; taskId: string },
       localProject: { id: number; name: string; tasks: [] } | null
@@ -243,6 +245,7 @@ vi.mock('./BackgroundTaskStarter', () => ({
     <button
       type="button"
       data-testid="mock-start-background-task"
+      data-task-request={JSON.stringify(taskRequest ?? null)}
       onClick={() => {
         const address = { deviceId: 'local-device', taskId: 'runtime-created' }
         const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
@@ -1271,6 +1274,11 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-card-tool-WEG-1-tool-2')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-3')).toBeInTheDocument()
     expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBeNull()
+
+    expect(await screen.findByTestId('cloud-todo-card-goal-WEG-1-2')).toHaveAttribute(
+      'title',
+      expect.stringContaining('验证看板悬浮预览始终展示当前会话目标和最新进展')
+    )
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
@@ -3908,6 +3916,17 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(screen.getByTestId('mock-start-background-task')).toBeInTheDocument()
+    expect(
+      JSON.parse(
+        screen.getByTestId('mock-start-background-task').getAttribute('data-task-request') ?? 'null'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        message: 'Start release work',
+        title: 'Start release work',
+        cloudProjectId: '11',
+      })
+    )
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
