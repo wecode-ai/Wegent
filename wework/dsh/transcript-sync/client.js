@@ -12,6 +12,8 @@ window.__ModuleLoader__.load({
         enabled: service.configuration.get(CONFIGURATION_ID)?.enabled !== false,
         error: null,
         pending: false,
+        status: null,
+        statusPending: false,
       }
       const listeners = new Set()
       const publish = patch => {
@@ -27,8 +29,36 @@ window.__ModuleLoader__.load({
         async reconcile() {
           try {
             await backend.request('setEnabled', { enabled: snapshot.enabled })
+            await this.refreshStatus()
           } catch (error) {
             publish({ error: error instanceof Error ? error.message : String(error) })
+          }
+        },
+        async refreshStatus() {
+          if (snapshot.statusPending) return
+          publish({ statusPending: true })
+          try {
+            const status = await backend.request('getStatus', {})
+            publish({ status, statusPending: false })
+          } catch (error) {
+            publish({
+              error: error instanceof Error ? error.message : String(error),
+              statusPending: false,
+            })
+          }
+        },
+        async retry() {
+          if (snapshot.statusPending) return
+          publish({ error: null, statusPending: true })
+          try {
+            const status = await backend.request('flush', {})
+            publish({ status, statusPending: false })
+          } catch (error) {
+            publish({
+              error: error instanceof Error ? error.message : String(error),
+              statusPending: false,
+            })
+            await this.refreshStatus()
           }
         },
         async setEnabled(enabled) {
@@ -38,6 +68,7 @@ window.__ModuleLoader__.load({
             await backend.request('setEnabled', { enabled })
             service.configuration.update(CONFIGURATION_ID, { enabled })
             publish({ enabled, pending: false })
+            await this.refreshStatus()
           } catch (error) {
             publish({
               error: error instanceof Error ? error.message : String(error),
@@ -50,7 +81,15 @@ window.__ModuleLoader__.load({
 
     function SyncSettingsSection({ service, store }) {
       const [snapshot, setSnapshot] = useState(store.getSnapshot())
-      useEffect(() => store.subscribe(setSnapshot), [store])
+      useEffect(() => {
+        const unsubscribe = store.subscribe(setSnapshot)
+        void store.refreshStatus()
+        const timer = setInterval(() => void store.refreshStatus(), 5000)
+        return () => {
+          clearInterval(timer)
+          unsubscribe()
+        }
+      }, [store])
       const label = service.localization.translate({
         en: 'Synchronize conversations and settings across devices',
         'zh-CN': '跨设备同步会话和配置',
@@ -59,9 +98,7 @@ window.__ModuleLoader__.load({
         en: 'When disabled, Wework keeps working locally and does not upload or download cloud data.',
         'zh-CN': '关闭后 Wework 仍可在本机正常工作，但不会上传或下载云端数据。',
       })
-      const status = snapshot.enabled
-        ? service.localization.translate({ en: 'Synchronization enabled', 'zh-CN': '同步已开启' })
-        : service.localization.translate({ en: 'Synchronization disabled', 'zh-CN': '同步已关闭' })
+      const syncStatus = synchronizationStatus(snapshot, service)
 
       return createElement(
         'section',
@@ -109,24 +146,156 @@ window.__ModuleLoader__.load({
                 'data-testid': 'transcript-sync-enabled-status',
                 style: { color: 'rgb(var(--color-text-muted))' },
               },
-              snapshot.pending
-                ? service.localization.translate({ en: 'Saving…', 'zh-CN': '正在保存…' })
-                : status
-            ),
-            snapshot.error
-              ? createElement(
-                  'span',
-                  {
-                    'data-testid': 'transcript-sync-settings-error',
-                    role: 'alert',
-                    style: { color: 'rgb(var(--color-error))' },
-                  },
-                  snapshot.error
-                )
-              : null
+              snapshot.pending || snapshot.statusPending
+                ? service.localization.translate({ en: 'Updating…', 'zh-CN': '正在更新…' })
+                : syncStatus.label
+            )
           )
+        ),
+        createElement(
+          'div',
+          {
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              marginLeft: '28px',
+              marginTop: '8px',
+            },
+          },
+          snapshot.status
+            ? createElement(
+                'span',
+                {
+                  'data-testid': 'transcript-sync-runtime-status',
+                  style: {
+                    color: syncStatus.color,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '2px',
+                  },
+                },
+                createElement(
+                  'span',
+                  null,
+                  service.localization.translate({
+                    en: `${snapshot.status.pendingTurns} turns waiting to upload`,
+                    'zh-CN': `待上传 ${snapshot.status.pendingTurns} 轮`,
+                  })
+                ),
+                createElement(
+                  'span',
+                  null,
+                  service.localization.translate({
+                    en: `${snapshot.status.transcripts} cloud conversations discovered`,
+                    'zh-CN': `已发现 ${snapshot.status.transcripts} 个云端会话`,
+                  })
+                ),
+                createElement(
+                  'span',
+                  null,
+                  service.localization.translate({
+                    en: `Last successful sync: ${formatTimestamp(snapshot.status.lastSuccessAt, 'Never')}`,
+                    'zh-CN': `最近成功：${formatTimestamp(snapshot.status.lastSuccessAt, '暂无')}`,
+                  })
+                )
+              )
+            : null,
+          snapshot.status?.lastError
+            ? createElement(
+                'span',
+                {
+                  'data-testid': 'transcript-sync-runtime-error',
+                  role: 'alert',
+                  style: { color: 'rgb(var(--color-error))' },
+                },
+                snapshot.status.lastError
+              )
+            : null,
+          snapshot.enabled
+            ? createElement(
+                'button',
+                {
+                  'data-testid': 'transcript-sync-retry-button',
+                  disabled: snapshot.statusPending,
+                  onClick: () => void store.retry(),
+                  style: {
+                    alignSelf: 'flex-start',
+                    background: 'transparent',
+                    border: '1px solid rgb(var(--color-border))',
+                    borderRadius: '6px',
+                    color: 'rgb(var(--color-text-primary))',
+                    cursor: snapshot.statusPending ? 'default' : 'pointer',
+                    padding: '6px 10px',
+                  },
+                  type: 'button',
+                },
+                service.localization.translate({ en: 'Retry now', 'zh-CN': '立即重试' })
+              )
+            : null,
+          snapshot.error
+            ? createElement(
+                'span',
+                {
+                  'data-testid': 'transcript-sync-settings-error',
+                  role: 'alert',
+                  style: { color: 'rgb(var(--color-error))' },
+                },
+                snapshot.error
+              )
+            : null
         )
       )
+    }
+
+    function synchronizationStatus(snapshot, service) {
+      if (!snapshot.enabled) {
+        return {
+          color: 'rgb(var(--color-text-muted))',
+          label: service.localization.translate({
+            en: 'Synchronization disabled',
+            'zh-CN': '同步已关闭',
+          }),
+        }
+      }
+      if (snapshot.status?.syncing) {
+        return {
+          color: 'rgb(var(--color-text-muted))',
+          label: service.localization.translate({ en: 'Synchronizing…', 'zh-CN': '正在同步…' }),
+        }
+      }
+      if (snapshot.status?.lastError) {
+        return {
+          color: 'rgb(var(--color-error))',
+          label: service.localization.translate({
+            en: 'Synchronization failed',
+            'zh-CN': '同步失败',
+          }),
+        }
+      }
+      if (snapshot.status?.pendingTurns > 0) {
+        return {
+          color: 'rgb(var(--color-text-muted))',
+          label: service.localization.translate({
+            en: 'Waiting to synchronize',
+            'zh-CN': '等待同步',
+          }),
+        }
+      }
+      return {
+        color: 'rgb(var(--color-text-muted))',
+        label: service.localization.translate({
+          en: 'Synchronization is up to date',
+          'zh-CN': '同步正常',
+        }),
+      }
+    }
+
+    function formatTimestamp(value, fallback) {
+      if (typeof value !== 'string' || !value) return fallback
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return fallback
+      return date.toLocaleString()
     }
 
     return {

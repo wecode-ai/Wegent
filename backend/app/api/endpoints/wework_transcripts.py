@@ -6,7 +6,9 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -33,8 +35,6 @@ from app.schemas.wework_transcript import (
     TranscriptListResponse,
     TranscriptResponse,
     TranscriptSegmentCommitRequest,
-    TranscriptSegmentPrepareResponse,
-    TranscriptSegmentRequest,
     TranscriptTurnResponse,
     TranscriptTurnsResponse,
 )
@@ -171,48 +171,28 @@ def release_lease_endpoint(
 
 
 @router.post(
-    "/{transcript_id}/segments/prepare",
-    response_model=TranscriptSegmentPrepareResponse,
-    response_model_by_alias=True,
-)
-def prepare_segment_upload_endpoint(
-    transcript_id: str,
-    request: TranscriptSegmentRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    upload_url, upload_fields, expires_at = _translate(
-        lambda: wework_transcript_service.prepare_segment_upload(
-            db,
-            user_id=current_user.id,
-            transcript_id=transcript_id,
-            request=request,
-        )
-    )
-    return {
-        "uploadUrl": upload_url,
-        "uploadFields": upload_fields,
-        "expiresAt": expires_at,
-    }
-
-
-@router.post(
     "/{transcript_id}/segments",
     response_model=TranscriptAppendResponse,
     response_model_by_alias=True,
 )
-def commit_segment_endpoint(
+def upload_segment_endpoint(
     transcript_id: str,
-    request: TranscriptSegmentCommitRequest,
+    metadata: str = Form(...),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    try:
+        request = TranscriptSegmentCommitRequest.model_validate_json(metadata)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
     transcript, appended = _translate(
-        lambda: wework_transcript_service.commit_segment(
+        lambda: wework_transcript_service.upload_segment(
             db,
             user_id=current_user.id,
             transcript_id=transcript_id,
             request=request,
+            source=file.file,
         )
     )
     return {
@@ -291,11 +271,12 @@ def get_archive_download_endpoint(
             archive_id=archive_id,
         )
     )
-    return {
-        "downloadUrl": _translate(
-            lambda: wework_transcript_storage.download_url(archive.storage_key)
-        )
-    }
+    stream = _translate(lambda: wework_transcript_storage.stream(archive.storage_key))
+    return StreamingResponse(
+        stream,
+        media_type="application/octet-stream",
+        headers={"Content-Length": str(archive.size_bytes)},
+    )
 
 
 def _lease_response(transcript: WeworkTranscript) -> TranscriptLeaseResponse:

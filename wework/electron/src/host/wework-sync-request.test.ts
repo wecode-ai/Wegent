@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'vitest'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
+  createWeworkSyncFetchInit,
   createWeworkSyncRequestSignal,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
+  readWeworkSyncResponse,
   WEWORK_SYNC_REQUEST_TIMEOUT_MS,
 } from './wework-sync-request.js'
 
@@ -47,5 +52,58 @@ describe('Wework sync request normalization', () => {
       signal.addEventListener('abort', () => resolve(), { once: true })
     })
     expect(signal.aborted).toBe(true)
+  })
+
+  test('builds authenticated multipart uploads to the backend', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-sync-upload-'))
+    const path = join(directory, 'segment.enc')
+    await writeFile(path, 'encrypted transcript')
+
+    const request = await createWeworkSyncFetchInit(
+      {
+        apiBaseUrl: 'https://cloud.example.com/api',
+        path: '/wework-transcripts/task-1/segments',
+        method: 'POST',
+        body: { sequence: 1 },
+        file: {
+          path,
+          name: 'segment.tgz.aes256gcm',
+          contentType: 'application/octet-stream',
+        },
+      },
+      'Bearer token'
+    )
+
+    expect(request.headers).toEqual({ authorization: 'Bearer token' })
+    expect(request.body).toBeInstanceOf(FormData)
+    const form = request.body as FormData
+    expect(form.get('metadata')).toBe('{"sequence":1}')
+    expect(await (form.get('file') as File).text()).toBe('encrypted transcript')
+  })
+
+  test('streams authenticated backend downloads to a local file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-sync-download-'))
+    const path = join(directory, 'segment.enc')
+
+    const body = await readWeworkSyncResponse(
+      new Response('encrypted transcript', {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+      }),
+      path,
+      Buffer.byteLength('encrypted transcript')
+    )
+
+    expect(body).toEqual({ path })
+    expect(await readFile(path, 'utf8')).toBe('encrypted transcript')
+  })
+
+  test('rejects backend downloads that exceed their declared size', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-sync-download-'))
+    const path = join(directory, 'segment.enc')
+
+    await expect(readWeworkSyncResponse(new Response('oversized'), path, 4)).rejects.toThrow(
+      'exceeds its declared size'
+    )
   })
 })

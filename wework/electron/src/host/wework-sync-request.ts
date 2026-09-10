@@ -1,7 +1,85 @@
 import { CloudCredentialError } from './cloud-credential-service.js'
+import { createWriteStream, openAsBlob } from 'node:fs'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 
 const REQUEST_ORIGIN = 'https://wework-sync.local'
 export const WEWORK_SYNC_REQUEST_TIMEOUT_MS = 30_000
+
+export interface WeworkSyncRequest {
+  apiBaseUrl: string
+  path: string
+  method: 'GET' | 'POST' | 'PUT'
+  body?: unknown
+  downloadPath?: string
+  downloadSizeBytes?: number
+  file?: {
+    path: string
+    name: string
+    contentType: string
+  }
+}
+
+export async function readWeworkSyncResponse(
+  response: Response,
+  downloadPath?: string,
+  downloadSizeBytes?: number
+): Promise<unknown> {
+  if (downloadPath && response.ok) {
+    if (!response.body) {
+      throw new CloudCredentialError('request_failed', 'Wework sync download body is missing')
+    }
+    if (
+      typeof downloadSizeBytes !== 'number' ||
+      !Number.isSafeInteger(downloadSizeBytes) ||
+      downloadSizeBytes < 1
+    ) {
+      throw new CloudCredentialError('request_failed', 'Wework sync download size is invalid')
+    }
+    const expectedSizeBytes = downloadSizeBytes
+    let receivedBytes = 0
+    const sizeLimit = new Transform({
+      transform(chunk, _encoding, callback) {
+        receivedBytes += chunk.length
+        if (receivedBytes > expectedSizeBytes) {
+          callback(
+            new CloudCredentialError(
+              'request_failed',
+              'Wework sync download exceeds its declared size'
+            )
+          )
+          return
+        }
+        callback(null, chunk)
+      },
+      flush(callback) {
+        if (receivedBytes !== expectedSizeBytes) {
+          callback(
+            new CloudCredentialError(
+              'request_failed',
+              'Wework sync download does not match its declared size'
+            )
+          )
+          return
+        }
+        callback()
+      },
+    })
+    await pipeline(
+      Readable.from(response.body as AsyncIterable<Uint8Array>),
+      sizeLimit,
+      createWriteStream(downloadPath, { mode: 0o600 })
+    )
+    return { path: downloadPath }
+  }
+  const text = await response.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
 
 export function createWeworkSyncRequestSignal(
   timeoutMs = WEWORK_SYNC_REQUEST_TIMEOUT_MS
@@ -34,6 +112,39 @@ export function normalizeWeworkSyncPath(value: string): string {
     throw pathNotAllowed()
   }
   return `${url.pathname}${url.search}`
+}
+
+export async function createWeworkSyncFetchInit(
+  request: WeworkSyncRequest,
+  authorization: string
+): Promise<RequestInit> {
+  if (request.file) {
+    if (request.body === undefined) {
+      throw new CloudCredentialError('request_failed', 'Wework sync upload metadata is missing')
+    }
+    const form = new FormData()
+    form.append('metadata', JSON.stringify(request.body))
+    form.append(
+      'file',
+      await openAsBlob(request.file.path, { type: request.file.contentType }),
+      request.file.name
+    )
+    return {
+      method: request.method,
+      signal: createWeworkSyncRequestSignal(10 * 60 * 1000),
+      headers: { authorization },
+      body: form,
+    }
+  }
+  return {
+    method: request.method,
+    signal: createWeworkSyncRequestSignal(),
+    headers: {
+      authorization,
+      ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+  }
 }
 
 function pathNotAllowed(): CloudCredentialError {

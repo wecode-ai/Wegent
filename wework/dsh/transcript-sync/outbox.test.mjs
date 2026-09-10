@@ -123,6 +123,58 @@ test('persists an automatic branch route for later turns across restart', async 
   reopened.close()
 })
 
+test('discards every pending turn and route for an orphaned session', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const path = join(directory, 'outbox.sqlite3')
+  const outbox = new SqliteSyncOutbox(path)
+
+  outbox.enqueue({
+    transcriptId: 'orphaned-transcript',
+    taskId: 'orphaned-task',
+    title: 'Orphaned',
+    sequence: 1,
+    turnId: 'orphaned-turn-1',
+    sessionId: 'orphaned-session',
+  })
+  outbox.enqueue({
+    transcriptId: 'orphaned-transcript',
+    taskId: 'orphaned-task',
+    title: 'Orphaned',
+    sequence: 2,
+    turnId: 'orphaned-turn-2',
+    sessionId: 'orphaned-session',
+  })
+  outbox.enqueue({
+    transcriptId: 'retained-transcript',
+    taskId: 'retained-task',
+    title: 'Retained',
+    sequence: 1,
+    turnId: 'retained-turn-1',
+    sessionId: 'retained-session',
+  })
+
+  assert.deepEqual(outbox.sessionIds(), ['orphaned-session', 'retained-session'])
+  assert.equal(outbox.firstForSession('orphaned-session').turnId, 'orphaned-turn-1')
+  assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), true)
+  assert.equal(outbox.hasPendingTranscript('missing-transcript'), false)
+  assert.equal(outbox.discardSession('orphaned-session'), 2)
+  assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), false)
+  assert.equal(outbox.count(), 1)
+  assert.equal(outbox.first().turnId, 'retained-turn-1')
+
+  outbox.enqueue({
+    transcriptId: 'orphaned-transcript',
+    taskId: 'orphaned-task',
+    title: 'Recreated',
+    sequence: 3,
+    turnId: 'orphaned-turn-3',
+    sessionId: 'orphaned-session',
+  })
+  assert.equal(outbox.firstForSession('orphaned-session').cloudSequence, 1)
+  outbox.close()
+})
+
 test('upgrades an existing locator outbox without copying transcript bodies', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-sync-outbox-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

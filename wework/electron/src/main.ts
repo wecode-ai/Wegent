@@ -121,9 +121,10 @@ import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
-  createWeworkSyncRequestSignal,
+  createWeworkSyncFetchInit,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
+  readWeworkSyncResponse,
 } from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -1429,24 +1430,18 @@ async function configureDesktopRuntime(): Promise<void> {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
             const path = normalizeWeworkSyncPath(request.path)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
-            const response = await fetch(`${apiBaseUrl}${path}`, {
-              method: request.method,
-              signal: createWeworkSyncRequestSignal(),
-              headers: {
-                authorization: `${credential.tokenType} ${credential.accessToken}`,
-                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
-              },
-              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-            })
-            const text = await response.text()
-            let body: unknown = null
-            if (text) {
-              try {
-                body = JSON.parse(text)
-              } catch {
-                body = text
-              }
-            }
+            const response = await fetch(
+              `${apiBaseUrl}${path}`,
+              await createWeworkSyncFetchInit(
+                request,
+                `${credential.tokenType} ${credential.accessToken}`
+              )
+            )
+            const body = await readWeworkSyncResponse(
+              response,
+              request.downloadPath,
+              request.downloadSizeBytes
+            )
             return { status: response.status, body }
           },
         },
