@@ -197,4 +197,58 @@ describe('BackgroundTaskStarter', () => {
       )
     )
   })
+
+  it('passes a force-start create intent to the runtime composer', async () => {
+    const taskRequest: RuntimeTaskCreateRequest = {
+      runtime: 'codex',
+      message: 'Implement cloud MCP',
+      forceStart: true,
+    }
+    mocks.createConversation.mockResolvedValue({
+      deviceId: 'local-device',
+      taskId: 'runtime-created',
+    })
+
+    render(
+      <BackgroundTaskStarter
+        project={{
+          id: 11,
+          name: 'Wegent V4',
+          description: '',
+        }}
+        localProjects={[]}
+        task={{
+          id: 'WEG-1',
+          cloud_project_id: 11,
+          sequence_number: 1,
+          parent_id: null,
+          created_by_user_id: 1,
+          assignee_user_id: null,
+          title: 'Implement cloud MCP',
+          description: '',
+          status: 'in_progress',
+          priority: 'high',
+          due_at: null,
+          sort_order: 0,
+          current_delivery_id: null,
+          version: 1,
+          created_at: '2026-07-22T00:00:00Z',
+          updated_at: '2026-07-22T00:00:00Z',
+          completed_at: null,
+        }}
+        input="Implement cloud MCP"
+        taskRequest={taskRequest}
+        onAddressChange={vi.fn()}
+        onError={vi.fn()}
+      />
+    )
+
+    await waitFor(() =>
+      expect(mocks.useComposer).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          taskRequest,
+        })
+      )
+    )
+  })
 })

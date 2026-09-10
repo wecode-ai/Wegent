@@ -167,7 +167,7 @@ vi.mock('./AiChatModal', () => ({
       taskId: string
     }) => void | Promise<void | (() => void | Promise<void>)>
     workflowNodeId?: string
-    initialTaskRequest?: { projectId?: number; modelId?: string }
+    initialTaskRequest?: { projectId?: number; modelId?: string; forceStart?: boolean }
     initialTaskInput?: string
   }) => (
     <div
@@ -178,6 +178,7 @@ vi.mock('./AiChatModal', () => ({
       data-workflow-node-id={workflowNodeId}
       data-task-project-id={initialTaskRequest?.projectId}
       data-task-model-id={initialTaskRequest?.modelId}
+      data-task-force-start={String(initialTaskRequest?.forceStart ?? false)}
       data-initial-task-input={initialTaskInput}
     >
       <button
@@ -3963,6 +3964,107 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', inboxItem.id)
   })
 
+  it('forces a newly created runtime task when pending work is dragged into execution', async () => {
+    const pendingItem = { ...item, status: 'pending' as const }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [pendingItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => pendingItem)
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    fireEvent.click(screen.getByTestId('mock-dnd-drag-to-in-progress'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith('WEG-1', {
+        version: pendingItem.version,
+        status: 'in_progress',
+      })
+    )
+    expect(screen.getByTestId('mock-start-background-task')).toHaveAttribute(
+      'data-task-request',
+      JSON.stringify({
+        runtime: 'codex',
+        message: 'Implement cloud MCP',
+        forceStart: true,
+      })
+    )
+  })
+
+  it('force starts an existing queued runtime task dragged from pending into execution', async () => {
+    const pendingItem = { ...item, status: 'pending' as const }
+    const forceStartRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [pendingItem] }))
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => pendingItem)
+    const workbench = {
+      forceStartRuntimeTask,
+      projectChat: { requestCatalogs: vi.fn() },
+    } as unknown as WorkbenchContextValue
+
+    render(
+      <WorkbenchContext.Provider value={workbench}>
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          runtimeWork={{
+            projects: [
+              {
+                project: { id: 91, name: 'Runtime project' },
+                deviceWorkspaces: [
+                  {
+                    deviceId: 'local-device',
+                    workspacePath: '/tmp/runtime-project',
+                    available: true,
+                    tasks: [
+                      {
+                        taskId: 'runtime-248868498',
+                        workspacePath: '/tmp/runtime-project',
+                        title: pendingItem.title,
+                        runtime: 'codex',
+                        status: 'queued',
+                        running: false,
+                        runtimeHandle: {
+                          cloudProjectId: String(project.id),
+                          loopItemId: pendingItem.id,
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalTasks: 1,
+          }}
+          services={workbenchServices}
+        />
+      </WorkbenchContext.Provider>
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    fireEvent.click(screen.getByTestId('mock-dnd-drag-to-in-progress'))
+
+    await waitFor(() =>
+      expect(forceStartRuntimeTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'local-device',
+          taskId: 'runtime-248868498',
+        })
+      )
+    )
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+  })
+
   it('opens execution configuration on the first move when automation adds a workflow', async () => {
     const inboxItem = { ...item, status: 'inbox' as const }
     const automatedItem = {
@@ -3993,6 +4095,7 @@ describe('CloudTodoWorkspace', () => {
     }
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [inboxItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => inboxItem)
     workbenchServices.deliveryApi!.updateLoopItem = vi.fn(async () => automatedItem)
 
@@ -4029,7 +4132,7 @@ describe('CloudTodoWorkspace', () => {
 
   it('asks the user to choose one automation before moving into processing', async () => {
     const user = userEvent.setup()
-    const inboxItem = { ...item, status: 'inbox' as const }
+    const inboxItem = { ...item, status: 'pending' as const }
     const selectedItem = {
       ...inboxItem,
       status: 'in_progress' as const,
@@ -4037,6 +4140,7 @@ describe('CloudTodoWorkspace', () => {
     }
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [inboxItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => inboxItem)
     workbenchServices.deliveryApi!.updateLoopItem = vi
       .fn()
@@ -4087,6 +4191,14 @@ describe('CloudTodoWorkspace', () => {
         version: inboxItem.version,
         status: 'in_progress',
         automation_rule_id: 'automation-review',
+      })
+    )
+    expect(screen.getByTestId('mock-start-background-task')).toHaveAttribute(
+      'data-task-request',
+      JSON.stringify({
+        runtime: 'codex',
+        message: 'Implement cloud MCP',
+        forceStart: true,
       })
     )
     expect(screen.queryByTestId('automation-selection-options')).not.toBeInTheDocument()

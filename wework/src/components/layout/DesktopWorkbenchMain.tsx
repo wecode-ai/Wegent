@@ -4984,6 +4984,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         onResumeGoal={resumeCurrentGoal}
                                         onClearGoal={clearCurrentGoal}
                                         onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                                        onForceStartQueuedMessage={
+                                          paneSession.forceStartQueuedMessage
+                                        }
                                         onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                                         queuePaused={paneSession.queuedMessagesPaused}
                                         onResumeQueue={paneSession.resumeQueuedMessages}
@@ -5246,6 +5249,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           onResumeGoal={resumeCurrentGoal}
                           onClearGoal={clearCurrentGoal}
                           onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                          onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
                           onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                           queuePaused={paneSession.queuedMessagesPaused}
                           onResumeQueue={paneSession.resumeQueuedMessages}
