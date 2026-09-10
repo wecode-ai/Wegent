@@ -6,8 +6,9 @@
 
 from typing import TYPE_CHECKING, Any
 
-from dingtalk_stream.card_replier import AICardReplier, AICardStatus
+from dingtalk_stream.card_replier import AICardStatus
 
+from app.services.channels.dingtalk.card import DingTalkMarkdownCard
 from app.services.channels.dingtalk.card_transport import stringify_card_data
 
 if TYPE_CHECKING:
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
     from dingtalk_stream.stream import DingTalkStreamClient
 
 
-class DingTalkConversationCardInstance(AICardReplier):
+class DingTalkConversationCardInstance(DingTalkMarkdownCard):
     """Match the SDK AI-card interface while using an administrator template."""
 
     def __init__(

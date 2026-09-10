@@ -261,8 +261,8 @@ def create_app(
         if request.url.path == "/":
             return await call_next(request)
 
-        # Generate request ID
-        request_id = str(uuid.uuid4())[:8]
+        # Preserve the upstream correlation ID at the HTTP entry point.
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
         request.state.request_id = request_id
         start_time = time.time()
 
@@ -277,17 +277,7 @@ def create_app(
             request.url.path,
         )
 
-        # Extract and attach trace context from headers
-        # BaseHTTPMiddleware runs in a new async task, so contextvars from
-        # OTEL ASGI middleware are not propagated. We need to manually extract
-        # and attach the trace context to enable distributed tracing.
-        from opentelemetry import context as otel_context
-        from opentelemetry.propagate import extract
-
-        headers_dict = dict(request.headers)
-        extracted_ctx = extract(headers_dict)
-        token = otel_context.attach(extracted_ctx)
-
+        # The OTel ASGI middleware owns extraction and span lifetime.
         # Set request context for logging (works even without OTEL)
         from shared.telemetry.context import (
             set_request_context,
@@ -355,6 +345,7 @@ def create_app(
         # Process request
         try:
             response = await call_next(request)
+            response.headers.setdefault("X-Request-ID", request_id)
             process_time = (time.time() - start_time) * 1000
 
             # For streaming responses, wrap the body iterator to log after completion
@@ -371,8 +362,6 @@ def create_app(
                         logger.info(
                             f"response: {request.method} {request.url.path} {response.status_code} {total_time:.2f}ms {request_id} (streamed)"
                         )
-                        # Detach trace context after streaming completes
-                        otel_context.detach(token)
 
                 response.body_iterator = logging_body_iterator()
             else:
@@ -380,13 +369,10 @@ def create_app(
                 logger.info(
                     f"response: {request.method} {request.url.path} {response.status_code} {process_time:.2f}ms {request_id}"
                 )
-                # Detach trace context for non-streaming responses
-                otel_context.detach(token)
 
             return response
         except Exception:
-            # Detach trace context on error
-            otel_context.detach(token)
+            logger.exception("request failed: %s %s", request.method, request.url.path)
             raise
 
     # Include v1 response router
