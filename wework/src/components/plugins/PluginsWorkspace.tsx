@@ -4869,10 +4869,9 @@ function PluginMarketplaceWorkspace({
             </div>
           ) : null}
           <div className="min-w-0 flex-1">
-            <h2 className="sr-only">{t('workbench.plugin_management_tab_plugins', '插件')}</h2>
-            <h1 className="plugin-market-title text-text-primary">
+            <h2 className="plugin-market-title text-text-primary">
               {t('workbench.plugins_marketplace_title', '插件市场')}
-            </h1>
+            </h2>
             <p className="mt-1 max-w-2xl text-sm leading-5 text-text-secondary">
               {t(
                 'workbench.plugins_marketplace_subtitle',

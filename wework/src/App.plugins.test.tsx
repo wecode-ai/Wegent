@@ -2254,8 +2254,8 @@ describe('App plugins route', () => {
     )
     expect(screen.getByTestId('plugins-search-input')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-installed-strip')).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Skills' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'MCP' })).toBeInTheDocument()
   })
 
   test('collapses and expands the desktop sidebar on plugin routes', async () => {
