@@ -119,6 +119,7 @@ import {
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
+import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
   createWeworkSyncRequestSignal,
@@ -1492,9 +1493,13 @@ async function configureDesktopRuntime(): Promise<void> {
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
             trayManager?.setState(state)
+            syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
             void trayNativeStatus?.refresh()
           },
-          traySnapshot: () => trayManager?.snapshot() ?? null,
+          traySnapshot: () => {
+            const snapshot = trayManager?.snapshot()
+            return snapshot ? { ...snapshot, dockBadge: app.dock?.getBadge() ?? null } : null
+          },
           openWorkspace: openWorkspaceWindow,
           popoutWindowSnapshot: () => ({
             exists: Boolean(popoutWindow && !popoutWindow.isDestroyed()),
@@ -1667,7 +1672,7 @@ if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     logStartupStep('electron-ready', 'completed')
     if (process.platform === 'darwin' && app.dock && developmentDockIdentity) {
-      app.dock.setBadge(developmentDockIdentity.badge)
+      syncDockBadge(app.dock, 0, developmentDockIdentity.badge)
       console.info('[development] Dock identity configured', developmentDockIdentity)
     }
     logStartupStep('log-retention-start', 'started')
