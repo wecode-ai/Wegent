@@ -153,8 +153,7 @@ export function CollaborationWorkspace(props: CloudTodoWorkspaceProps) {
     () => (collaborationAvailable ? createWeworkCollaborationApi(props.services) : null),
     [collaborationAvailable, props.services]
   )
-  const useDesktopWorkspace =
-    !api || activeProjectRef?.projectStore === 'local' || desktopProjectKey === activeProjectKey
+  const useDesktopWorkspace = !api || desktopProjectKey === activeProjectKey
 
   if (useDesktopWorkspace) return <CloudTodoWorkspace {...props} />
 

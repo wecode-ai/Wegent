@@ -1,4 +1,5 @@
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
+export { reorderLaneItems } from '@wegent/collaboration'
 
 export const columns: Array<{ status: CloudLoopItem['status']; label: string }> = [
   { status: 'inbox', label: '收集箱' },
@@ -47,45 +48,4 @@ export function memberNameById(
 ): string | null {
   if (userId === null) return null
   return members.find(member => member.user_id === userId)?.user_name ?? null
-}
-
-// Computes the flat item list and lane id order after moving `itemId` into
-// the lane identified by its own parent layer and `status`, inserted before
-// `beforeItemId` (appended at the end when null). Returns null when the drop
-// would not change anything.
-export function reorderLaneItems(
-  items: CloudLoopItem[],
-  itemId: string,
-  status: CloudLoopItem['status'],
-  beforeItemId: string | null
-): { items: CloudLoopItem[]; laneIds: string[] } | null {
-  const item = items.find(candidate => candidate.id === itemId)
-  if (!item) return null
-  const inLane = (candidate: CloudLoopItem) =>
-    candidate.parent_id === item.parent_id && candidate.status === status && candidate.id !== itemId
-  const currentLaneIds = items.filter(inLane).map(candidate => candidate.id)
-  if (item.status === status) {
-    // Nothing to do when a plain lane drop keeps the card inside its lane, or
-    // when the card is already right before its drop target.
-    if (!beforeItemId) return null
-    const laneOrder = items.filter(
-      candidate => candidate.parent_id === item.parent_id && candidate.status === status
-    )
-    const itemIndex = laneOrder.findIndex(candidate => candidate.id === itemId)
-    if (laneOrder[itemIndex + 1]?.id === beforeItemId) return null
-  }
-  const laneIds = [...currentLaneIds]
-  const beforeIndex = beforeItemId ? laneIds.indexOf(beforeItemId) : -1
-  laneIds.splice(beforeIndex >= 0 ? beforeIndex : laneIds.length, 0, itemId)
-  const laneItems = new Map(items.filter(inLane).map(candidate => [candidate.id, candidate]))
-  laneItems.set(itemId, { ...item, status })
-  // Board rendering only depends on the relative order inside each lane, so
-  // the reordered lane can move to the end of the flat list as a block.
-  return {
-    items: [
-      ...items.filter(candidate => !inLane(candidate) && candidate.id !== itemId),
-      ...laneIds.map(id => laneItems.get(id)!),
-    ],
-    laneIds,
-  }
 }

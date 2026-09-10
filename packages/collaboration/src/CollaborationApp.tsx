@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import type { CollaborationApi } from './api'
+import { CollaborationBoard } from './CollaborationBoard'
 import { collaborationMessages, type CollaborationLocale } from './i18n'
 import { collaborationTestIds } from './testIds'
 import { CollaborationProjectSummary } from './CollaborationProjectSummary'
@@ -20,6 +21,7 @@ import type {
   CollaborationPriority,
   CollaborationProject,
   CollaborationStatus,
+  CollaborationUser,
   CollaborationView,
 } from './types'
 
@@ -102,7 +104,7 @@ export function CollaborationApp({
           api.getBoardSnapshot(projectId),
         ])
         setProject(nextProject)
-        setIssues(snapshot.items.filter(item => item.parent_id == null))
+        setIssues(snapshot.items)
         setMembers(snapshot.members)
         setError(null)
       } catch {
@@ -270,10 +272,21 @@ export function CollaborationApp({
             ))}
           </nav>
           {host.location.view === 'board' && (
-            <Board
+            <CollaborationBoard
               project={project}
               issues={issues}
-              messages={messages}
+              statuses={projectStatuses(project)}
+              labels={{
+                noIssues: messages.noIssues,
+                search: messages.searchIssues,
+                groupBy: messages.groupBy,
+                groupStatus: messages.groupStatus,
+                groupPriority: messages.groupPriority,
+                groupAssignee: messages.groupAssignee,
+                groupTag: messages.groupTag,
+                unassigned: messages.unassigned,
+                noTag: messages.noTag,
+              }}
               onOpen={issue =>
                 host.navigate({
                   projectId: project.id,
@@ -281,15 +294,16 @@ export function CollaborationApp({
                   view: 'board',
                 })
               }
-              onMove={async (issue, status) => {
+              onReorder={async (issue, status, laneIds, optimisticItems) => {
                 try {
-                  const updated = await api.updateIssue(issue.id, {
-                    version: issue.version,
+                  setIssues(optimisticItems)
+                  const updated = await api.reorderIssues(project.id, {
+                    parent_id: issue.parent_id,
                     status,
+                    item_ids: laneIds,
                   })
-                  setIssues(current =>
-                    current.map(item => (item.id === updated.id ? updated : item))
-                  )
+                  const updatedById = new Map(updated.map(item => [item.id, item]))
+                  setIssues(current => current.map(item => updatedById.get(item.id) ?? item))
                 } catch (moveError) {
                   if (errorStatus(moveError) === 409) {
                     await loadProject(project.id, false)
@@ -297,6 +311,29 @@ export function CollaborationApp({
                   } else {
                     notify(messages.saveFailed)
                   }
+                }
+              }}
+              onGroupByChange={async groupBy => {
+                const currentConfig = project.board_config ?? {
+                  group_by: 'status' as const,
+                  processing_start_status_id: projectStatuses(project)[1]?.id ?? null,
+                  statuses: projectStatuses(project),
+                }
+                setProject({
+                  ...project,
+                  board_config: { ...currentConfig, group_by: groupBy },
+                })
+                try {
+                  setProject(
+                    await api.updateProject(project.id, {
+                      version: project.version,
+                      board_config: { ...currentConfig, group_by: groupBy },
+                    })
+                  )
+                } catch (updateError) {
+                  if (errorStatus(updateError) === 409) await loadProject(project.id, false)
+                  else setProject(project)
+                  notify(messages.saveFailed)
                 }
               }}
             />
@@ -312,7 +349,14 @@ export function CollaborationApp({
             />
           )}
           {host.location.view === 'members' && (
-            <MembersView members={members} messages={messages} />
+            <MembersView
+              api={api}
+              project={project}
+              members={members}
+              messages={messages}
+              onChange={setMembers}
+              onError={() => notify(messages.saveFailed)}
+            />
           )}
           {host.location.view === 'runs' && (
             <RunsView
@@ -478,84 +522,6 @@ function ProjectHome({
         </div>
       )}
     </>
-  )
-}
-
-function Board({
-  project,
-  issues,
-  messages,
-  onOpen,
-  onMove,
-}: {
-  project: CollaborationProject
-  issues: CollaborationIssue[]
-  messages: Messages
-  onOpen(issue: CollaborationIssue): void
-  onMove(issue: CollaborationIssue, status: string): Promise<void>
-}) {
-  return (
-    <div className="collaboration-board" data-testid={collaborationTestIds.board}>
-      {projectStatuses(project).map((status, statusIndex, statuses) => {
-        const statusIssues = issues
-          .filter(issue => issue.status === status.id)
-          .sort((left, right) => left.sort_order - right.sort_order)
-        return (
-          <section className="collaboration-column" key={status.id}>
-            <header>
-              <span className={`collaboration-status collaboration-status-${status.color}`} />
-              <strong>{status.name}</strong>
-              <small>{statusIssues.length}</small>
-            </header>
-            <div data-testid={`collaboration-column-${status.id}`}>
-              {statusIssues.length === 0 && (
-                <p className="collaboration-column-empty">{messages.noIssues}</p>
-              )}
-              {statusIssues.map(issue => (
-                <article
-                  className="collaboration-issue-card"
-                  data-testid={collaborationTestIds.issue(issue.id)}
-                  key={issue.id}
-                >
-                  <button type="button" onClick={() => onOpen(issue)}>
-                    <small>
-                      {project.project_key}-{issue.sequence_number}
-                    </small>
-                    <strong>{issue.title}</strong>
-                    <span className={`collaboration-priority priority-${issue.priority}`}>
-                      {issue.priority}
-                    </span>
-                    {issue.assignee_name && <span>{issue.assignee_name}</span>}
-                  </button>
-                  <div className="collaboration-card-move">
-                    {statusIndex > 0 && (
-                      <button
-                        type="button"
-                        aria-label={`Move ${issue.title} left`}
-                        data-testid={`collaboration-issue-${issue.id}-move-left`}
-                        onClick={() => void onMove(issue, statuses[statusIndex - 1].id)}
-                      >
-                        ←
-                      </button>
-                    )}
-                    {statusIndex < statuses.length - 1 && (
-                      <button
-                        type="button"
-                        aria-label={`Move ${issue.title} right`}
-                        data-testid={`collaboration-issue-${issue.id}-move-right`}
-                        onClick={() => void onMove(issue, statuses[statusIndex + 1].id)}
-                      >
-                        →
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )
-      })}
-    </div>
   )
 }
 
@@ -845,15 +811,82 @@ function FilesView({
 }
 
 function MembersView({
+  api,
+  project,
   members,
   messages,
+  onChange,
+  onError,
 }: {
+  api: CollaborationApi
+  project: CollaborationProject
   members: CollaborationMember[]
   messages: Messages
+  onChange(members: CollaborationMember[]): void
+  onError(): void
 }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<CollaborationUser[]>([])
+  const [searching, setSearching] = useState(false)
+  const canManage = project.access_role === 'Owner' || project.access_role === 'Maintainer'
+  const search = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!query.trim()) return
+    setSearching(true)
+    try {
+      const memberIds = new Set(members.map(member => member.user_id))
+      setResults((await api.searchUsers(query.trim())).filter(user => !memberIds.has(user.id)))
+    } catch {
+      onError()
+    } finally {
+      setSearching(false)
+    }
+  }
   return (
     <section className="collaboration-panel" data-testid={collaborationTestIds.members}>
-      <h2>{messages.members}</h2>
+      <header>
+        <h2>{messages.members}</h2>
+        {canManage && (
+          <form className="collaboration-member-search" onSubmit={search}>
+            <input
+              data-testid="collaboration-member-search"
+              value={query}
+              placeholder={messages.searchMembers}
+              onChange={event => setQuery(event.target.value)}
+            />
+            <button type="submit" disabled={!query.trim() || searching}>
+              {messages.search}
+            </button>
+          </form>
+        )}
+      </header>
+      {results.length > 0 && (
+        <ul className="collaboration-member-results">
+          {results.map(user => (
+            <li key={user.id}>
+              <span>
+                <strong>{user.user_name}</strong>
+                <small>{user.email}</small>
+              </span>
+              <button
+                type="button"
+                data-testid={`collaboration-member-add-${user.id}`}
+                onClick={async () => {
+                  try {
+                    const added = await api.addMember(project.id, user.id)
+                    onChange([...members, added])
+                    setResults(current => current.filter(item => item.id !== user.id))
+                  } catch {
+                    onError()
+                  }
+                }}
+              >
+                {messages.add}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {members.length === 0 ? (
         <p>{messages.emptyMembers}</p>
       ) : (
@@ -864,7 +897,47 @@ function MembersView({
                 <strong>{member.user_name}</strong>
                 <small>{member.email}</small>
               </span>
-              <span>{member.role}</span>
+              {canManage && member.role !== 'Owner' ? (
+                <span className="collaboration-member-actions">
+                  <select
+                    aria-label={`${messages.role}: ${member.user_name}`}
+                    value={member.role}
+                    onChange={async event => {
+                      try {
+                        const updated = await api.updateMember(project.id, member.user_id, {
+                          role: event.target.value as Exclude<CollaborationMember['role'], 'Owner'>,
+                        })
+                        onChange(
+                          members.map(item => (item.user_id === updated.user_id ? updated : item))
+                        )
+                      } catch {
+                        onError()
+                      }
+                    }}
+                  >
+                    <option value="Maintainer">Maintainer</option>
+                    <option value="Developer">Developer</option>
+                    <option value="Reporter">Reporter</option>
+                  </select>
+                  <button
+                    type="button"
+                    aria-label={`${messages.remove}: ${member.user_name}`}
+                    data-testid={`collaboration-member-remove-${member.user_id}`}
+                    onClick={async () => {
+                      try {
+                        await api.removeMember(project.id, member.user_id)
+                        onChange(members.filter(item => item.user_id !== member.user_id))
+                      } catch {
+                        onError()
+                      }
+                    }}
+                  >
+                    {messages.remove}
+                  </button>
+                </span>
+              ) : (
+                <span>{member.role}</span>
+              )}
             </li>
           ))}
         </ul>

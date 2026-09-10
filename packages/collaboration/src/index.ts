@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from './api'
+export * from './board'
 export * from './CollaborationApp'
+export * from './CollaborationBoard'
 export * from './CollaborationProjectSummary'
 export * from './i18n'
 export * from './testIds'

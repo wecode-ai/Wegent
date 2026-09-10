@@ -12,6 +12,8 @@ import type {
   CollaborationMember,
   CollaborationPriority,
   CollaborationProject,
+  CollaborationRole,
+  CollaborationUser,
 } from './types'
 
 export interface CollaborationHttpClient {
@@ -33,9 +35,18 @@ export interface CollaborationApi {
   }): Promise<CollaborationProject>
   updateProject(
     projectId: string,
-    data: Partial<Pick<CollaborationProject, 'name' | 'description' | 'visibility'>> & {
-      version: number
-    }
+    data: Partial<
+      Pick<
+        CollaborationProject,
+        | 'name'
+        | 'description'
+        | 'visibility'
+        | 'tags'
+        | 'provider_config'
+        | 'board_config'
+        | 'card_display'
+      >
+    > & { version: number }
   ): Promise<CollaborationProject>
   getBoardSnapshot(projectId: string): Promise<CollaborationBoardSnapshot>
   getIssue(issueId: string): Promise<CollaborationIssue>
@@ -69,7 +80,7 @@ export interface CollaborationApi {
   ): Promise<CollaborationIssue>
   reorderIssues(
     projectId: string,
-    data: { parent_id: null; status: string; item_ids: string[] }
+    data: { parent_id: string | null; status: string; item_ids: string[] }
   ): Promise<CollaborationIssue[]>
   listComments(issueId: string): Promise<CollaborationComment[]>
   addComment(issueId: string, body: string): Promise<CollaborationComment>
@@ -77,6 +88,21 @@ export interface CollaborationApi {
   addAttachment(issueId: string, file: File): Promise<CollaborationAttachment>
   deleteAttachment(attachmentId: string): Promise<void>
   listMembers(projectId: string): Promise<CollaborationMember[]>
+  searchUsers(query: string): Promise<CollaborationUser[]>
+  addMember(
+    projectId: string,
+    userId: number,
+    role?: Exclude<CollaborationRole, 'Owner'>
+  ): Promise<CollaborationMember>
+  updateMember(
+    projectId: string,
+    userId: number,
+    data: {
+      role?: Exclude<CollaborationRole, 'Owner'>
+      capability_description?: string
+    }
+  ): Promise<CollaborationMember>
+  removeMember(projectId: string, userId: number): Promise<void>
   listFiles(projectId: string): Promise<CollaborationFile[]>
   createFolder(projectId: string, path: string): Promise<CollaborationFile>
   uploadFile(projectId: string, file: File, path?: string): Promise<CollaborationFile>
@@ -147,6 +173,27 @@ export function createCollaborationApi(client: CollaborationHttpClient): Collabo
     },
     listMembers(projectId) {
       return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/members`)
+    },
+    async searchUsers(query) {
+      const response = await client.get<{ users: CollaborationUser[] }>(
+        `/users/search?q=${encodeURIComponent(query)}&limit=20`
+      )
+      return response.users
+    },
+    addMember(projectId, userId, role = 'Developer') {
+      return client.post(`/v1/cloud-projects/${encodeURIComponent(projectId)}/members`, {
+        user_id: userId,
+        role,
+      })
+    },
+    updateMember(projectId, userId, data) {
+      return client.patch(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/members/${userId}`,
+        data
+      )
+    },
+    removeMember(projectId, userId) {
+      return client.delete(`/v1/cloud-projects/${encodeURIComponent(projectId)}/members/${userId}`)
     },
     async listFiles(projectId) {
       const response = await client.get<{ items: CollaborationFile[] }>(

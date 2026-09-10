@@ -9,6 +9,7 @@ import type { CloudProject } from '@/api/deliveries'
 import type { DeliveryApi, WorkbenchServices } from '@/features/workbench/workbenchServices'
 
 import {
+  collaborationIssueId,
   collaborationProjectReference,
   createWeworkCollaborationApi,
 } from './weworkCollaborationApi'
@@ -101,6 +102,10 @@ function cloudApi(): CollaborationApi {
     addAttachment: vi.fn(),
     deleteAttachment: vi.fn(),
     listMembers: vi.fn(),
+    searchUsers: vi.fn(),
+    addMember: vi.fn(),
+    updateMember: vi.fn(),
+    removeMember: vi.fn(),
     listFiles: vi.fn(),
     createFolder: vi.fn(),
     uploadFile: vi.fn(),
@@ -176,5 +181,38 @@ describe('createWeworkCollaborationApi', () => {
       version: 1,
       status: 'in_progress',
     })
+  })
+
+  test('adapts local project comments to the shared comment contract', async () => {
+    const workbenchServices = services(cloudApi())
+    const unsubscribe = vi.fn()
+    workbenchServices.localProjectChatClient = {
+      subscribe: vi.fn().mockResolvedValue({
+        snapshot: {
+          messages: [
+            {
+              messageId: 'comment-1',
+              content: 'Local progress',
+              sender: { type: 'user', id: '1', name: 'Ada' },
+              createdAt: '2026-09-10T00:00:00Z',
+              updatedAt: '2026-09-10T00:00:00Z',
+            },
+          ],
+        },
+        unsubscribe,
+      }),
+      send: vi.fn(),
+    } as unknown as NonNullable<WorkbenchServices['localProjectChatClient']>
+    const api = createWeworkCollaborationApi(workbenchServices)
+    const issueId = collaborationIssueId({ location: 'local', projectId: 'local-1' }, 'issue-1')
+
+    await expect(api.listComments(issueId)).resolves.toEqual([
+      expect.objectContaining({
+        id: 'comment-1',
+        body: 'Local progress',
+        author: 'Ada',
+      }),
+    ])
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 })

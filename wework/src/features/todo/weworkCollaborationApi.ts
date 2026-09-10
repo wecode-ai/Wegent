@@ -6,6 +6,7 @@ import type {
   CollaborationApi,
   CollaborationAttachment,
   CollaborationBoardSnapshot,
+  CollaborationComment,
   CollaborationExecution,
   CollaborationFile,
   CollaborationIssue,
@@ -141,6 +142,23 @@ function mapExecution(
   }
 }
 
+function mapChatMessage(message: {
+  messageId: string
+  content: string
+  sender: { name: string }
+  createdAt: string
+  updatedAt: string
+}): CollaborationComment {
+  return {
+    id: message.messageId,
+    body: message.content,
+    author: message.sender.name,
+    web_url: null,
+    created_at: message.createdAt,
+    updated_at: message.updatedAt,
+  }
+}
+
 function deliveryApiFor(services: WorkbenchServices, location: ProjectSpaceLocation): DeliveryApi {
   const api = services.projectSpaceApis?.[location]
   if (!api) throw new Error(`The ${location} project-space API is unavailable`)
@@ -256,15 +274,20 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const rawItemIds = data.item_ids.map(
         itemId => collaborationResourceReference(itemId).resourceId
       )
+      const parentId = data.parent_id
+        ? collaborationResourceReference(data.parent_id).resourceId
+        : null
       const items =
         reference.location === 'cloud'
           ? await cloudApi.reorderIssues(reference.projectId, {
               ...data,
+              parent_id: parentId,
               item_ids: rawItemIds,
             })
           : (
               await deliveryApiFor(services, 'local').reorderLoopItems(reference.projectId, {
                 ...data,
+                parent_id: parentId,
                 item_ids: rawItemIds,
               })
             ).items
@@ -273,14 +296,32 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async listComments(issueId) {
       const reference = collaborationResourceReference(issueId)
       if (reference.location === 'local') {
-        throw new Error('Local project comments are managed by the desktop workspace')
+        const client = services.localProjectChatClient
+        if (!client) throw new Error('The local project comment API is unavailable')
+        const subscription = await client.subscribe(
+          reference.projectId,
+          reference.resourceId,
+          0,
+          () => undefined
+        )
+        subscription.unsubscribe()
+        return subscription.snapshot.messages.map(mapChatMessage)
       }
       return cloudApi.listComments(reference.resourceId)
     },
     async addComment(issueId, body) {
       const reference = collaborationResourceReference(issueId)
       if (reference.location === 'local') {
-        throw new Error('Local project comments are managed by the desktop workspace')
+        const client = services.localProjectChatClient
+        if (!client) throw new Error('The local project comment API is unavailable')
+        return mapChatMessage(
+          await client.send({
+            projectId: reference.projectId,
+            taskId: reference.resourceId,
+            clientMessageId: crypto.randomUUID(),
+            text: body,
+          })
+        )
       }
       return cloudApi.addComment(reference.resourceId, body)
     },
@@ -316,6 +357,42 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       return reference.location === 'cloud'
         ? cloudApi.listMembers(reference.projectId)
         : deliveryApiFor(services, 'local').listCloudProjectMembers(reference.projectId)
+    },
+    async searchUsers(query) {
+      return cloudApi.searchUsers(query)
+    },
+    async addMember(projectId, userId, role) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return cloudApi.addMember(reference.projectId, userId, role)
+      }
+      return deliveryApiFor(services, reference.location).addCloudProjectMember(
+        reference.projectId,
+        userId,
+        role
+      )
+    },
+    async updateMember(projectId, userId, data) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return cloudApi.updateMember(reference.projectId, userId, data)
+      }
+      return deliveryApiFor(services, reference.location).updateCloudProjectMember(
+        reference.projectId,
+        userId,
+        data
+      )
+    },
+    async removeMember(projectId, userId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        await cloudApi.removeMember(reference.projectId, userId)
+        return
+      }
+      await deliveryApiFor(services, reference.location).removeCloudProjectMember(
+        reference.projectId,
+        userId
+      )
     },
     async listFiles(projectId) {
       const reference = collaborationProjectReference(projectId)

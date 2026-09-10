@@ -87,6 +87,12 @@ export interface CollaborationMember {
   capability_description?: string
 }
 
+export interface CollaborationUser {
+  id: number
+  user_name: string
+  email: string | null
+}
+
 export interface CollaborationAgent {
   id: string
   name: string
