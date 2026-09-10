@@ -1629,11 +1629,13 @@ class TaskRequestBuilder:
                     skill_namespace = getattr(avail_skill, "namespace", "default")
                     is_public = getattr(avail_skill, "is_public", False)
                     skill_id = getattr(avail_skill, "skill_id", None)
+                    mcp_active = bool(getattr(avail_skill, "mcp_active", False))
                 else:
                     skill_name = avail_skill.get("name")
                     skill_namespace = avail_skill.get("namespace", "default")
                     is_public = avail_skill.get("is_public", False)
                     skill_id = avail_skill.get("skill_id")
+                    mcp_active = bool(avail_skill.get("mcp_active", False))
 
                 # Skip if already in skills list
                 if skill_name in existing_skill_names:
@@ -1654,12 +1656,17 @@ class TaskRequestBuilder:
                 )
                 if skill:
                     skill_data = self._build_skill_data(skill, user=user)
+                    # Available-only Skills are not activated for this request,
+                    # so their MCP servers are not attached to the runtime.
+                    if not mcp_active:
+                        skill_data["mcp_deferred"] = True
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
                     skill_refs[skill_name] = build_skill_ref_meta(skill)
                     logger.info(
-                        "[_get_bot_skills] Added available skill '%s' (not preloaded)",
+                        "[_get_bot_skills] Added available skill '%s' (not preloaded, mcp_deferred=%s)",
                         skill_name,
+                        not mcp_active,
                     )
                 else:
                     logger.warning(
@@ -2344,6 +2351,9 @@ Response template:
         made available (but NOT preloaded) in all non-subscription tasks so the
         model can load it on demand via load_skill tool.
 
+        It is flagged with ``mcp_active`` because the runtime has no other way to
+        reach those MCP tools once the Skill is loaded on demand.
+
         Args:
             is_subscription: Whether this is a subscription task (if True, skip injection)
 
@@ -2366,6 +2376,7 @@ Response template:
                 "name": subscription_skill_name,
                 "namespace": "default",
                 "is_public": True,
+                "mcp_active": True,
             }
         ]
 
@@ -2433,7 +2444,9 @@ Response template:
         """Prepare MCP servers for Claude Code executor.
 
         For ClaudeCode shell type, this method:
-        1. Extracts skill MCP servers and merges into bot mcp_servers
+        1. Extracts MCP servers of activated skills and merges them into bot
+           mcp_servers. Skills that are only available for on-demand loading
+           keep their MCP servers detached to bound the tool schema size.
         2. Normalizes types (streamable-http -> http) for Claude Code SDK
         3. Filters out unreachable servers to prevent SDK initialization timeout
 
@@ -2443,6 +2456,18 @@ Response template:
             bot_config: Single bot configuration dict (modified in-place)
             skill_configs: List of resolved skill config dicts
         """
+        deferred_skill_names = [
+            skill.get("name")
+            for skill in skill_configs
+            if isinstance(skill, dict) and skill.get("mcp_deferred")
+        ]
+        if deferred_skill_names:
+            logger.info(
+                "[MCP-CLAUDE] Detached MCP servers of %d available skill(s): %s",
+                len(deferred_skill_names),
+                deferred_skill_names,
+            )
+
         # Step 1: Extract skill MCP servers and merge
         skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
         if skill_mcp:
