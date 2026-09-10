@@ -118,6 +118,34 @@ describe('resolveConversationSummaryIsGitRepository', () => {
     ).toBe(true)
   })
 
+  test('uses a non-Git active Runtime workspace instead of parent project metadata', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        activeWorkspacePath: '/workspace/chat',
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: false,
+          workspacePath: '/workspace/chat',
+        },
+        project: {
+          id: 8,
+          name: 'Repository',
+          tasks: [],
+          config: {
+            workspace: { source: 'git', repoUrl: 'https://example.com/repository.git' },
+          },
+        },
+        projectWorkspace: {
+          repoRootFingerprint: 'sha256:repository',
+          repoUrl: 'https://example.com/repository.git',
+          workspacePath: '/workspace/repository',
+        },
+      })
+    ).toBe(false)
+  })
+
   test('ignores environment inspection for a different Runtime worktree', () => {
     expect(
       resolveConversationSummaryIsGitRepository({

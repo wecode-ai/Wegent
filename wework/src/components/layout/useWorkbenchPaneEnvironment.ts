@@ -70,6 +70,20 @@ export function resolveConversationSummaryIsGitRepository({
     'repoRootFingerprint' | 'repoUrl' | 'workspacePath'
   > | null
 }): boolean | undefined {
+  const rawEnvironmentWorkspacePath = environmentInfo.workspacePath
+  const environmentWorkspacePath = rawEnvironmentWorkspacePath
+    ? normalizeRuntimeWorkspacePath(rawEnvironmentWorkspacePath)
+    : ''
+  const normalizedActiveWorkspacePath = activeWorkspacePath
+    ? normalizeRuntimeWorkspacePath(activeWorkspacePath)
+    : ''
+  if (
+    environmentInfo.isGitRepository !== undefined &&
+    environmentWorkspacePath &&
+    environmentWorkspacePath === normalizedActiveWorkspacePath
+  ) {
+    return environmentInfo.isGitRepository
+  }
   if (project?.config?.workspace?.source === 'git') return true
   if (
     Boolean(environmentInfo.branchName?.trim()) ||
@@ -77,12 +91,7 @@ export function resolveConversationSummaryIsGitRepository({
   ) {
     return true
   }
-  const rawEnvironmentWorkspacePath = environmentInfo.workspacePath
-  const environmentWorkspacePath = rawEnvironmentWorkspacePath
-    ? normalizeRuntimeWorkspacePath(rawEnvironmentWorkspacePath)
-    : ''
   const projectWorkspacePaths = [
-    activeWorkspacePath,
     project?.config?.workspace?.localPath,
     projectWorkspace?.workspacePath,
   ].flatMap(path => (path ? [normalizeRuntimeWorkspacePath(path)] : []))
