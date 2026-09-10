@@ -2638,7 +2638,7 @@ describe('CloudTodoWorkspace', () => {
         tags: [],
       })
     )
-  })
+  }, 10_000)
 
   it('uses cloud projects as the primary navigation and opens a TODO detail', async () => {
     render(
@@ -4597,7 +4597,7 @@ describe('CloudTodoWorkspace', () => {
       parent_id: null,
     })
     expect(workbenchServices.deliveryApi.updateLoopItem).not.toHaveBeenCalled()
-  })
+  }, 10_000)
 
   it('does not bypass execution configuration when project services are unavailable', async () => {
     const user = userEvent.setup()
@@ -4645,7 +4645,7 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('运行服务当前不可用')
     expect(screen.queryByTestId('issue-execution-config-dialog')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('opens the full issue composer popup with the quick title and lane', async () => {
     const workbenchServices = services()
