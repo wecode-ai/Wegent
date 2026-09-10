@@ -170,6 +170,21 @@ So:
 - returning refs from `/tasks/{id}/skills` does not change skill prompting behavior
 - it fixes precise deployment for sandbox and local-device startup
 
+### Skill MCP Activation
+
+A Skill's MCP servers are attached to the runtime only when the Skill is activated for the current request:
+
+| Skill source | MCP servers attached |
+| --- | --- |
+| Skills declared on the Ghost / Bot | Yes |
+| Skills explicitly selected or preloaded by the user | Yes |
+| Skills injected by backend for a feature (interactive form, subscription manager) | Yes |
+| Skills that are only available through the user's default bindings | No |
+
+Available-only Skills are still deployed to the runtime and stay visible in `skill_names`, so the model can load them on demand; their MCP tools simply do not join the session. Every MCP server contributes tool schemas to the model prompt, so as soon as a user binds many Skills the tool descriptions consume the whole context window and the model fails with `Prompt is too long`.
+
+Backend marks this at request-build time: `mcp_deferred` means the Skill is available but keeps its MCP servers detached, while injected Skills that need their MCP tools (for example the subscription manager) declare `mcp_active`.
+
 ## Compatibility
 
 The current implementation keeps these compatibility guarantees:

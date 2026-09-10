@@ -17,9 +17,18 @@ def resolve_skill_mcp_name(skill_name: str, server_name: str) -> str:
 def extract_skill_mcp_servers(
     skill_configs: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Convert Skill MCP mappings to the runtime list representation."""
+    """Convert Skill MCP mappings to the runtime list representation.
+
+    Skills flagged with ``mcp_deferred`` stay deployed so the model can load
+    them on demand, but they do not attach their MCP servers to the runtime.
+    Attaching the MCP surface of every available Skill inflates the tool
+    schemas sent to the model and can push the prompt over the model context
+    window.
+    """
     result: list[dict[str, Any]] = []
     for skill_config in skill_configs:
+        if skill_config.get("mcp_deferred"):
+            continue
         skill_name = skill_config.get("name", "unknown")
         mcp_servers = skill_config.get("mcpServers")
         if not isinstance(mcp_servers, dict):
