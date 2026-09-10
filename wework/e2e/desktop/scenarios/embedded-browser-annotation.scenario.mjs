@@ -1186,7 +1186,9 @@ async function verifyDesign(
   )
   await captureScreenshot(control, 'browser-annotation-05b-design-applied.png')
   let runtimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.command('pointerDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+  await control.command('nativeKeyDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+    key: 'Space',
+  })
   await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
     attribute: 'aria-pressed',
     value: 'true',
@@ -1211,7 +1213,9 @@ async function verifyDesign(
     'Original View did not restore the target color'
   )
   await captureScreenshot(control, 'browser-annotation-06-original-view.png')
-  await control.command('pointerUp', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+  await control.command('nativeKeyUp', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+    key: 'Space',
+  })
   await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
     attribute: 'aria-pressed',
     value: 'false',

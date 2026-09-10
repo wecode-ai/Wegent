@@ -126,10 +126,8 @@ export class BrowserAnnotationController {
     session.originalView = false
     session.requestedOriginalView = false
     session.originalViewRequestId += 1
-    session.appliedOriginalViewRequestId = session.originalViewRequestId
-    session.runtimeRevision += 1
     if (this.draft?.label === label) this.closeDraft(false)
-    this.sync(label)
+    this.sync(label, null, session.originalViewRequestId)
     this.publish(label)
   }
 
