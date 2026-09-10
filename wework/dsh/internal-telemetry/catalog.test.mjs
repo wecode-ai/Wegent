@@ -86,7 +86,7 @@ test('rejects malformed catalog definitions', () => {
           },
         ],
       }),
-    /unknown property type/
+    /property type must be enum/
   )
   assert.throws(
     () =>
@@ -104,6 +104,35 @@ test('rejects malformed catalog definitions', () => {
     /enum values must not be empty/
   )
 })
+
+test('rejects a non-string property type with a stable message', () => {
+  const error = captureError(() =>
+    createEventCatalog({
+      catalogVersion: 1,
+      events: [
+        {
+          ...validEvent(),
+          properties: {
+            domain: { type: Symbol('x'), values: ['smart_app'] },
+          },
+        },
+      ],
+    })
+  )
+
+  assert.equal(error.constructor, Error)
+  assert.equal(error.message, 'property type must be enum')
+})
+
+function captureError(action) {
+  try {
+    action()
+  } catch (error) {
+    return error
+  }
+
+  assert.fail('expected an error')
+}
 
 function validEvent() {
   return {

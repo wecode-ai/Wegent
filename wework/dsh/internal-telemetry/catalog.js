@@ -64,7 +64,7 @@ function createProperties(definition) {
     if (!ALLOWED_PROPERTY_NAMES.has(name)) throw new Error(`unknown property name: ${name}`)
     assertObject(property, `${name} property`)
     if (property.type !== ENUM_PROPERTY_TYPE) {
-      throw new Error(`unknown property type: ${property.type}`)
+      throw new Error('property type must be enum')
     }
     if (!Array.isArray(property.values) || property.values.length === 0) {
       throw new Error('enum values must not be empty')
