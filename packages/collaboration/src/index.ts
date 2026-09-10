@@ -5,6 +5,7 @@
 export * from './api'
 export * from './board'
 export * from './CollaborationApp'
+export * from './CollaborationAutomation'
 export * from './CollaborationBoard'
 export * from './CollaborationProjectSummary'
 export * from './CollaborationSettings'

@@ -27,6 +27,11 @@ import type {
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
 
+export type WeworkCollaborationServices = Pick<
+  WorkbenchServices,
+  'collaborationApi' | 'localProjectChatClient' | 'projectSpaceApis' | 'projectSpaceDetailServices'
+>
+
 interface ProjectReference {
   location: ProjectSpaceLocation
   projectId: string
@@ -172,15 +177,20 @@ async function localProject(services: WorkbenchServices, projectId: string): Pro
   return project
 }
 
-export function createWeworkCollaborationApi(services: WorkbenchServices): CollaborationApi {
+export function createWeworkCollaborationApi(
+  services: WeworkCollaborationServices
+): CollaborationApi {
   const cloudApi = services.collaborationApi
-  if (!cloudApi) throw new Error('The cloud collaboration API is unavailable')
+  const requireCloudApi = () => {
+    if (!cloudApi) throw new Error('The cloud collaboration API is unavailable')
+    return cloudApi
+  }
 
   return {
     async listProjects() {
       const localApi = services.projectSpaceApis?.local
       const [cloudProjects, localProjects] = await Promise.all([
-        cloudApi.listProjects(),
+        cloudApi?.listProjects() ?? Promise.resolve([]),
         localApi?.listCloudProjects().then(response => response.items) ?? Promise.resolve([]),
       ])
       return [
@@ -195,7 +205,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async getProject(projectId) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        return mapProject(await cloudApi.getProject(reference.projectId), 'cloud')
+        return mapProject(await requireCloudApi().getProject(reference.projectId), 'cloud')
       }
       return mapProject(await localProject(services, reference.projectId), 'local')
     },
@@ -210,7 +220,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
         return mapProject(created, 'local')
       }
       return mapProject(
-        await cloudApi.createProject({
+        await requireCloudApi().createProject({
           name: data.name,
           description: data.description,
           visibility: data.visibility,
@@ -221,7 +231,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async updateProject(projectId, data) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        return mapProject(await cloudApi.updateProject(reference.projectId, data), 'cloud')
+        return mapProject(await requireCloudApi().updateProject(reference.projectId, data), 'cloud')
       }
       const updated = await deliveryApiFor(services, 'local').updateCloudProject(
         reference.projectId,
@@ -232,7 +242,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async archiveProject(projectId, version) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        await cloudApi.archiveProject(reference.projectId, version)
+        await requireCloudApi().archiveProject(reference.projectId, version)
       } else {
         await deliveryApiFor(services, 'local').archiveCloudProject(reference.projectId, version)
       }
@@ -240,7 +250,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async getBoardSnapshot(projectId) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        const snapshot = await cloudApi.getBoardSnapshot(reference.projectId)
+        const snapshot = await requireCloudApi().getBoardSnapshot(reference.projectId)
         return {
           ...snapshot,
           items: snapshot.items.map(issue => mapIssue(issue, reference)),
@@ -257,7 +267,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const reference = collaborationResourceReference(issueId)
       const issue =
         reference.location === 'cloud'
-          ? await cloudApi.getIssue(reference.resourceId)
+          ? await requireCloudApi().getIssue(reference.resourceId)
           : await deliveryApiFor(services, 'local').getLoopItem(reference.resourceId)
       return mapIssue(issue, reference)
     },
@@ -265,7 +275,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const reference = collaborationProjectReference(projectId)
       const issue =
         reference.location === 'cloud'
-          ? await cloudApi.createIssue(reference.projectId, data)
+          ? await requireCloudApi().createIssue(reference.projectId, data)
           : await deliveryApiFor(services, 'local').createLoopItem(reference.projectId, data)
       return mapIssue(issue, reference)
     },
@@ -273,7 +283,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const reference = collaborationResourceReference(issueId)
       const issue =
         reference.location === 'cloud'
-          ? await cloudApi.updateIssue(reference.resourceId, data)
+          ? await requireCloudApi().updateIssue(reference.resourceId, data)
           : await deliveryApiFor(services, 'local').updateLoopItem(reference.resourceId, data)
       return mapIssue(issue, reference)
     },
@@ -287,7 +297,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
         : null
       const items =
         reference.location === 'cloud'
-          ? await cloudApi.reorderIssues(reference.projectId, {
+          ? await requireCloudApi().reorderIssues(reference.projectId, {
               ...data,
               parent_id: parentId,
               item_ids: rawItemIds,
@@ -315,7 +325,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
         subscription.unsubscribe()
         return subscription.snapshot.messages.map(mapChatMessage)
       }
-      return cloudApi.listComments(reference.resourceId)
+      return requireCloudApi().listComments(reference.resourceId)
     },
     async addComment(issueId, body) {
       const reference = collaborationResourceReference(issueId)
@@ -331,13 +341,13 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
           })
         )
       }
-      return cloudApi.addComment(reference.resourceId, body)
+      return requireCloudApi().addComment(reference.resourceId, body)
     },
     async listAttachments(issueId) {
       const reference = collaborationResourceReference(issueId)
       const attachments =
         reference.location === 'cloud'
-          ? await cloudApi.listAttachments(reference.resourceId)
+          ? await requireCloudApi().listAttachments(reference.resourceId)
           : await deliveryApiFor(services, 'local').listLoopItemAttachments(reference.resourceId)
       return attachments.map(attachment => mapAttachment(attachment, reference))
     },
@@ -345,7 +355,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const reference = collaborationResourceReference(issueId)
       const attachment =
         reference.location === 'cloud'
-          ? await cloudApi.addAttachment(reference.resourceId, file)
+          ? await requireCloudApi().addAttachment(reference.resourceId, file)
           : await deliveryApiFor(services, 'local').addLoopItemAttachment(
               reference.resourceId,
               file
@@ -355,7 +365,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async deleteAttachment(attachmentId) {
       const reference = collaborationResourceReference(attachmentId)
       if (reference.location === 'cloud') {
-        await cloudApi.deleteAttachment(reference.resourceId)
+        await requireCloudApi().deleteAttachment(reference.resourceId)
       } else {
         await deliveryApiFor(services, 'local').deleteLoopItemAttachment(reference.resourceId)
       }
@@ -363,16 +373,16 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async listMembers(projectId) {
       const reference = collaborationProjectReference(projectId)
       return reference.location === 'cloud'
-        ? cloudApi.listMembers(reference.projectId)
+        ? requireCloudApi().listMembers(reference.projectId)
         : deliveryApiFor(services, 'local').listCloudProjectMembers(reference.projectId)
     },
     async searchUsers(query) {
-      return cloudApi.searchUsers(query)
+      return requireCloudApi().searchUsers(query)
     },
     async addMember(projectId, userId, role) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        return cloudApi.addMember(reference.projectId, userId, role)
+        return requireCloudApi().addMember(reference.projectId, userId, role)
       }
       return deliveryApiFor(services, reference.location).addCloudProjectMember(
         reference.projectId,
@@ -383,7 +393,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async updateMember(projectId, userId, data) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        return cloudApi.updateMember(reference.projectId, userId, data)
+        return requireCloudApi().updateMember(reference.projectId, userId, data)
       }
       return deliveryApiFor(services, reference.location).updateCloudProjectMember(
         reference.projectId,
@@ -394,7 +404,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async removeMember(projectId, userId) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        await cloudApi.removeMember(reference.projectId, userId)
+        await requireCloudApi().removeMember(reference.projectId, userId)
         return
       }
       await deliveryApiFor(services, reference.location).removeCloudProjectMember(
@@ -402,11 +412,38 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
         userId
       )
     },
+    async listAgents(projectId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().listAgents(reference.projectId)
+      }
+      const api = services.projectSpaceDetailServices?.local?.projectChatAgentApi
+      if (!api) throw new Error('The local project robot API is unavailable')
+      return api.list(reference.projectId)
+    },
+    async createAgent(projectId, data) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().createAgent(reference.projectId, data)
+      }
+      const api = services.projectSpaceDetailServices?.local?.projectChatAgentApi
+      if (!api) throw new Error('The local project robot API is unavailable')
+      return api.create(reference.projectId, data)
+    },
+    async updateAgent(projectId, agentId, data) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().updateAgent(reference.projectId, agentId, data)
+      }
+      const api = services.projectSpaceDetailServices?.local?.projectChatAgentApi
+      if (!api) throw new Error('The local project robot API is unavailable')
+      return api.update(reference.projectId, agentId, data)
+    },
     async listFiles(projectId) {
       const reference = collaborationProjectReference(projectId)
       const files =
         reference.location === 'cloud'
-          ? await cloudApi.listFiles(reference.projectId)
+          ? await requireCloudApi().listFiles(reference.projectId)
           : (await deliveryApiFor(services, 'local').listCloudFiles(reference.projectId)).items
       return files.map(file => mapFile(file, reference))
     },
@@ -414,7 +451,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const reference = collaborationProjectReference(projectId)
       const file =
         reference.location === 'cloud'
-          ? await cloudApi.createFolder(reference.projectId, path)
+          ? await requireCloudApi().createFolder(reference.projectId, path)
           : await deliveryApiFor(services, 'local').createCloudFolder(reference.projectId, path)
       return mapFile(file, reference)
     },
@@ -422,14 +459,14 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const reference = collaborationProjectReference(projectId)
       const uploaded =
         reference.location === 'cloud'
-          ? await cloudApi.uploadFile(reference.projectId, file, path)
+          ? await requireCloudApi().uploadFile(reference.projectId, file, path)
           : await deliveryApiFor(services, 'local').uploadCloudFile(reference.projectId, file, path)
       return mapFile(uploaded, reference)
     },
     async deleteFile(fileId, recursive) {
       const reference = collaborationResourceReference(fileId)
       if (reference.location === 'cloud') {
-        await cloudApi.deleteFile(reference.resourceId, recursive)
+        await requireCloudApi().deleteFile(reference.resourceId, recursive)
       } else {
         await deliveryApiFor(services, 'local').deleteCloudFile(reference.resourceId, recursive)
       }
@@ -438,7 +475,7 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
       const reference = collaborationProjectReference(projectId)
       const executions =
         reference.location === 'cloud'
-          ? await cloudApi.listExecutions(reference.projectId)
+          ? await requireCloudApi().listExecutions(reference.projectId)
           : (await deliveryApiFor(services, 'local').listLoopItemExecutions(reference.projectId))
               .items
       return executions.map(execution => mapExecution(execution, reference))
@@ -446,10 +483,111 @@ export function createWeworkCollaborationApi(services: WorkbenchServices): Colla
     async stopExecution(projectId, executionId) {
       const reference = collaborationProjectReference(projectId)
       if (reference.location === 'cloud') {
-        await cloudApi.stopExecution(reference.projectId, executionId)
+        await requireCloudApi().stopExecution(reference.projectId, executionId)
       } else {
         await deliveryApiFor(services, 'local').stopExecution(reference.projectId, executionId)
       }
+    },
+    async listIncomingHooks(projectId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'local') {
+        throw new Error('Local projects do not support incoming hooks')
+      }
+      return requireCloudApi().listIncomingHooks(reference.projectId)
+    },
+    async createIncomingHook(projectId, data) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'local') {
+        throw new Error('Local projects do not support incoming hooks')
+      }
+      return requireCloudApi().createIncomingHook(reference.projectId, data)
+    },
+    async updateIncomingHook(projectId, hookId, data) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'local') {
+        throw new Error('Local projects do not support incoming hooks')
+      }
+      return requireCloudApi().updateIncomingHook(reference.projectId, hookId, data)
+    },
+    async deleteIncomingHook(projectId, hookId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'local') {
+        throw new Error('Local projects do not support incoming hooks')
+      }
+      await requireCloudApi().deleteIncomingHook(reference.projectId, hookId)
+    },
+    async listAutomations(projectId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().listAutomations(reference.projectId)
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      return automationApi.list(reference.projectId)
+    },
+    async createAutomation(projectId, data) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().createAutomation(reference.projectId, data)
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      return automationApi.create(reference.projectId, data)
+    },
+    async updateAutomation(projectId, automationId, data) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().updateAutomation(reference.projectId, automationId, data)
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      return automationApi.update(reference.projectId, automationId, data)
+    },
+    async deleteAutomation(projectId, automationId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        await requireCloudApi().deleteAutomation(reference.projectId, automationId)
+        return
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      await automationApi.delete(reference.projectId, automationId)
+    },
+    async runAutomation(projectId, automationId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().runAutomation(reference.projectId, automationId)
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      return automationApi.runNow(reference.projectId, automationId)
+    },
+    async listAutomationRuns(projectId, automationId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().listAutomationRuns(reference.projectId, automationId)
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      return automationApi.listRuns(reference.projectId, automationId)
+    },
+    async cancelAutomationRun(projectId, runId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().cancelAutomationRun(reference.projectId, runId)
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      return automationApi.cancelRun(reference.projectId, runId)
+    },
+    async retryAutomationRun(projectId, runId) {
+      const reference = collaborationProjectReference(projectId)
+      if (reference.location === 'cloud') {
+        return requireCloudApi().retryAutomationRun(reference.projectId, runId)
+      }
+      const automationApi = services.projectSpaceDetailServices?.local?.projectAutomationApi
+      if (!automationApi) throw new Error('The local project automation API is unavailable')
+      return automationApi.retryRun(reference.projectId, runId)
     },
   }
 }

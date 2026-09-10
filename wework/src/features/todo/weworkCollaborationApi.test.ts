@@ -107,12 +107,27 @@ function cloudApi(): CollaborationApi {
     addMember: vi.fn(),
     updateMember: vi.fn(),
     removeMember: vi.fn(),
+    listAgents: vi.fn(),
+    createAgent: vi.fn(),
+    updateAgent: vi.fn(),
     listFiles: vi.fn(),
     createFolder: vi.fn(),
     uploadFile: vi.fn(),
     deleteFile: vi.fn(),
     listExecutions: vi.fn(),
     stopExecution: vi.fn(),
+    listIncomingHooks: vi.fn(),
+    createIncomingHook: vi.fn(),
+    updateIncomingHook: vi.fn(),
+    deleteIncomingHook: vi.fn(),
+    listAutomations: vi.fn(),
+    createAutomation: vi.fn(),
+    updateAutomation: vi.fn(),
+    deleteAutomation: vi.fn(),
+    runAutomation: vi.fn(),
+    listAutomationRuns: vi.fn(),
+    cancelAutomationRun: vi.fn(),
+    retryAutomationRun: vi.fn(),
   }
 }
 
@@ -215,5 +230,47 @@ describe('createWeworkCollaborationApi', () => {
       }),
     ])
     expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  test('keeps cloud robots, hooks, and automations on the shared backend contract', async () => {
+    const cloud = cloudApi()
+    vi.mocked(cloud.createAgent).mockResolvedValue({ id: 'agent-1', name: 'Shared bot' })
+    vi.mocked(cloud.createIncomingHook).mockResolvedValue({
+      id: 'hook-1',
+      projectId: 'cloud-1',
+      name: 'GitHub',
+      status: 'active',
+      sourceType: 'github',
+      collectionMode: 'webhook',
+      resource: { url: 'https://github.com/acme/app' },
+      webhookUrl: 'https://example.test/hook-1',
+      pollIntervalSeconds: null,
+      credentialRef: null,
+      health: {},
+      lastEventAt: null,
+      nextPollAt: null,
+      version: 1,
+      createdAt: '2026-09-10T00:00:00Z',
+      updatedAt: '2026-09-10T00:00:00Z',
+    })
+    const api = createWeworkCollaborationApi(services(cloud))
+    const [project] = await api.listProjects()
+
+    await api.createAgent(project.id, { name: 'Shared bot', runtime: 'codex' })
+    await api.createIncomingHook(project.id, {
+      name: 'GitHub',
+      sourceType: 'github',
+      collectionMode: 'webhook',
+      resource: { url: 'https://github.com/acme/app' },
+    })
+
+    expect(cloud.createAgent).toHaveBeenCalledWith('cloud-1', {
+      name: 'Shared bot',
+      runtime: 'codex',
+    })
+    expect(cloud.createIncomingHook).toHaveBeenCalledWith(
+      'cloud-1',
+      expect.objectContaining({ sourceType: 'github' })
+    )
   })
 })

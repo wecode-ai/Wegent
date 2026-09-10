@@ -3,12 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  CollaborationAgent,
+  CollaborationAgentInput,
   CollaborationAttachment,
+  CollaborationAutomationInput,
+  CollaborationAutomationRule,
+  CollaborationAutomationRun,
   CollaborationBoardSnapshot,
   CollaborationComment,
   CollaborationExecution,
   CollaborationFile,
   CollaborationIssue,
+  CollaborationIncomingHook,
+  CollaborationIncomingHookInput,
   CollaborationMember,
   CollaborationPriority,
   CollaborationProject,
@@ -104,12 +111,51 @@ export interface CollaborationApi {
     }
   ): Promise<CollaborationMember>
   removeMember(projectId: string, userId: number): Promise<void>
+  listAgents(projectId: string): Promise<CollaborationAgent[]>
+  createAgent(projectId: string, data: CollaborationAgentInput): Promise<CollaborationAgent>
+  updateAgent(
+    projectId: string,
+    agentId: string,
+    data: Partial<CollaborationAgentInput> & {
+      status?: 'active' | 'archived'
+      version: number
+    }
+  ): Promise<CollaborationAgent>
   listFiles(projectId: string): Promise<CollaborationFile[]>
   createFolder(projectId: string, path: string): Promise<CollaborationFile>
   uploadFile(projectId: string, file: File, path?: string): Promise<CollaborationFile>
   deleteFile(fileId: string, recursive?: boolean): Promise<void>
   listExecutions(projectId: string): Promise<CollaborationExecution[]>
   stopExecution(projectId: string, executionId: number): Promise<void>
+  listIncomingHooks(projectId: string): Promise<CollaborationIncomingHook[]>
+  createIncomingHook(
+    projectId: string,
+    data: CollaborationIncomingHookInput
+  ): Promise<CollaborationIncomingHook>
+  updateIncomingHook(
+    projectId: string,
+    hookId: string,
+    data: Partial<CollaborationIncomingHookInput> & {
+      status?: CollaborationIncomingHook['status']
+      version: number
+    }
+  ): Promise<CollaborationIncomingHook>
+  deleteIncomingHook(projectId: string, hookId: string): Promise<void>
+  listAutomations(projectId: string): Promise<CollaborationAutomationRule[]>
+  createAutomation(
+    projectId: string,
+    data: CollaborationAutomationInput
+  ): Promise<CollaborationAutomationRule>
+  updateAutomation(
+    projectId: string,
+    automationId: string,
+    data: Partial<CollaborationAutomationInput> & { version: number }
+  ): Promise<CollaborationAutomationRule>
+  deleteAutomation(projectId: string, automationId: string): Promise<void>
+  runAutomation(projectId: string, automationId: string): Promise<CollaborationAutomationRun>
+  listAutomationRuns(projectId: string, automationId: string): Promise<CollaborationAutomationRun[]>
+  cancelAutomationRun(projectId: string, runId: string): Promise<CollaborationAutomationRun>
+  retryAutomationRun(projectId: string, runId: string): Promise<CollaborationAutomationRun>
 }
 
 function formPost<T>(
@@ -199,6 +245,18 @@ export function createCollaborationApi(client: CollaborationHttpClient): Collabo
     removeMember(projectId, userId) {
       return client.delete(`/v1/cloud-projects/${encodeURIComponent(projectId)}/members/${userId}`)
     },
+    listAgents(projectId) {
+      return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/chat-agents`)
+    },
+    createAgent(projectId, data) {
+      return client.post(`/v1/cloud-projects/${encodeURIComponent(projectId)}/chat-agents`, data)
+    },
+    updateAgent(projectId, agentId, data) {
+      return client.patch(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/chat-agents/${encodeURIComponent(agentId)}`,
+        data
+      )
+    },
     async listFiles(projectId) {
       const response = await client.get<{ items: CollaborationFile[] }>(
         `/v1/cloud-projects/${encodeURIComponent(projectId)}/files`
@@ -240,6 +298,66 @@ export function createCollaborationApi(client: CollaborationHttpClient): Collabo
     async stopExecution(projectId, executionId) {
       await client.post(
         `/v1/cloud-projects/${encodeURIComponent(projectId)}/executions/${executionId}/stop`
+      )
+    },
+    listIncomingHooks(projectId) {
+      return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/incoming-hooks`)
+    },
+    createIncomingHook(projectId, data) {
+      return client.post(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/incoming-hooks`,
+        data
+      )
+    },
+    updateIncomingHook(projectId, hookId, data) {
+      return client.patch(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/incoming-hooks/${encodeURIComponent(hookId)}`,
+        data
+      )
+    },
+    async deleteIncomingHook(projectId, hookId) {
+      await client.delete(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/incoming-hooks/${encodeURIComponent(hookId)}`
+      )
+    },
+    listAutomations(projectId) {
+      return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/automations`)
+    },
+    createAutomation(projectId, data) {
+      return client.post(`/v1/cloud-projects/${encodeURIComponent(projectId)}/automations`, data)
+    },
+    updateAutomation(projectId, automationId, data) {
+      return client.patch(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/automations/${encodeURIComponent(automationId)}`,
+        data
+      )
+    },
+    async deleteAutomation(projectId, automationId) {
+      await client.delete(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/automations/${encodeURIComponent(automationId)}`
+      )
+    },
+    runAutomation(projectId, automationId) {
+      return client.post(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/automations/${encodeURIComponent(automationId)}/run`,
+        {}
+      )
+    },
+    listAutomationRuns(projectId, automationId) {
+      return client.get(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/automations/${encodeURIComponent(automationId)}/runs`
+      )
+    },
+    cancelAutomationRun(projectId, runId) {
+      return client.post(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/automation-runs/${encodeURIComponent(runId)}/cancel`,
+        {}
+      )
+    },
+    retryAutomationRun(projectId, runId) {
+      return client.post(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/automation-runs/${encodeURIComponent(runId)}/retry`,
+        {}
       )
     },
   }

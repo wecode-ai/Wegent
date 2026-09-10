@@ -95,5 +95,61 @@ test.describe('Collaboration module', () => {
     )
     await page.getByTestId(`collaboration-issue-${issueId}`).getByRole('button').first().click()
     await expect(page.getByTestId('collaboration-comments')).toContainText('Persistent E2E comment')
+
+    await page.getByTestId('collaboration-issue-close').click()
+    await page.getByTestId('collaboration-tab-members').click()
+    const agentName = `Shared bot ${suffix}`
+    await page.getByTestId('collaboration-agent-create').click()
+    await page.getByTestId('collaboration-agent-name').fill(agentName)
+    await page.getByTestId('collaboration-agent-capability').fill('Handle repository checks')
+    await page.getByTestId('collaboration-agent-prompt').fill('Investigate and report failures.')
+    await page.getByTestId('collaboration-agent-save').click()
+    await expect(page.getByTestId('collaboration-members')).toContainText(agentName)
+
+    await page.getByTestId('collaboration-tab-automation').click()
+    await expect(page.getByTestId('collaboration-automation')).toBeVisible()
+    await page.getByTestId('automation-create-rule').click()
+    await page.getByTestId('automation-editor-name-input').fill(`Checks failed ${suffix}`)
+    await page.getByTestId('automation-rule-description').fill('Create an Issue for failed checks.')
+    await page.getByTestId('automation-trigger-type').selectOption('event')
+    await page
+      .getByTestId('automation-external-event-type')
+      .selectOption('change_request.checks_failed')
+    await page.getByTestId('event-subscription-add').click()
+    await page.getByTestId('event-subscription-name').fill(`GitHub ${suffix}`)
+    await page
+      .getByTestId('event-subscription-resource-url')
+      .fill('https://github.com/acme/collaboration-e2e')
+    await page.getByTestId('event-subscription-save').click()
+    await page.getByTestId('automation-agent').selectOption({ label: agentName })
+    await page.getByTestId('automation-save').click()
+    await expect(page.getByTestId('collaboration-automation')).toContainText(
+      `Checks failed ${suffix}`
+    )
+
+    const automationSnapshot = await page.evaluate(async id => {
+      const [rulesResponse, hooksResponse] = await Promise.all([
+        fetch(`/api/v1/cloud-projects/${encodeURIComponent(id)}/automations`),
+        fetch(`/api/v1/cloud-projects/${encodeURIComponent(id)}/incoming-hooks`),
+      ])
+      return {
+        rules: await rulesResponse.json(),
+        hooks: await hooksResponse.json(),
+      }
+    }, projectId)
+    expect(automationSnapshot.hooks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: `GitHub ${suffix}` })])
+    )
+    expect(automationSnapshot.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: `Checks failed ${suffix}`,
+          eventType: 'change_request.checks_failed',
+          eventConfig: expect.objectContaining({
+            execution_target: 'create_issue',
+          }),
+        }),
+      ])
+    )
   })
 })

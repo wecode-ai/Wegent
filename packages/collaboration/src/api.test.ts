@@ -100,4 +100,80 @@ describe('createCollaborationApi', () => {
       },
     ])
   })
+
+  it('shares automation and incoming-hook endpoints across hosts', async () => {
+    const http = client()
+    vi.mocked(http.get)
+      .mockResolvedValueOnce([{ id: 'hook-1' }])
+      .mockResolvedValueOnce([{ id: 'rule-1' }])
+      .mockResolvedValueOnce([{ id: 'run-1' }])
+    vi.mocked(http.post)
+      .mockResolvedValueOnce({ id: 'agent-1' })
+      .mockResolvedValueOnce({ id: 'hook-1' })
+      .mockResolvedValueOnce({ id: 'rule-1' })
+      .mockResolvedValueOnce({ id: 'run-1' })
+
+    const api = createCollaborationApi(http)
+
+    await api.listIncomingHooks('17')
+    await api.createAgent('17', { name: 'Shared bot', runtime: 'codex' })
+    await api.createIncomingHook('17', {
+      name: 'GitHub',
+      sourceType: 'github',
+      collectionMode: 'webhook',
+      resource: { url: 'https://github.com/acme/app' },
+    })
+    await api.listAutomations('17')
+    await api.createAutomation('17', {
+      name: 'Checks failed',
+      prompt: 'Create an issue',
+      triggerType: 'event',
+      eventType: 'change_request.checks_failed',
+      eventConfig: {
+        source_type: 'github',
+        subscription_id: 'hook-1',
+        execution_target: 'create_issue',
+      },
+      cronExpression: null,
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      assignmentMode: 'manual',
+      managerType: null,
+      agentId: 'agent-1',
+      wegentTeamId: null,
+      model: null,
+      executionEnvironment: null,
+      executionDeviceId: null,
+      roleSource: 'agent',
+      runtimeSource: 'agent_default',
+    })
+    await api.listAutomationRuns('17', 'rule-1')
+    await api.runAutomation('17', 'rule-1')
+
+    expect(http.get).toHaveBeenNthCalledWith(1, '/v1/cloud-projects/17/incoming-hooks')
+    expect(http.post).toHaveBeenNthCalledWith(1, '/v1/cloud-projects/17/chat-agents', {
+      name: 'Shared bot',
+      runtime: 'codex',
+    })
+    expect(http.post).toHaveBeenNthCalledWith(
+      2,
+      '/v1/cloud-projects/17/incoming-hooks',
+      expect.objectContaining({ sourceType: 'github' })
+    )
+    expect(http.get).toHaveBeenNthCalledWith(2, '/v1/cloud-projects/17/automations')
+    expect(http.post).toHaveBeenNthCalledWith(
+      3,
+      '/v1/cloud-projects/17/automations',
+      expect.objectContaining({ triggerType: 'event' })
+    )
+    expect(http.get).toHaveBeenNthCalledWith(
+      3,
+      '/v1/cloud-projects/17/automations/rule-1/runs'
+    )
+    expect(http.post).toHaveBeenNthCalledWith(
+      4,
+      '/v1/cloud-projects/17/automations/rule-1/run',
+      {}
+    )
+  })
 })

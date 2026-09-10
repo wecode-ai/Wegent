@@ -81,6 +81,12 @@ const deliveryApiMock = vi.hoisted(() => ({
   findCloudContextForTask: vi.fn(),
   trackProjectTask: vi.fn(),
 }))
+const collaborationApiMock = {
+  listProjects: vi.fn(),
+  getProject: vi.fn(),
+  getBoardSnapshot: vi.fn(),
+  listAutomations: vi.fn(),
+}
 const embeddedBrowserMocks = vi.hoisted(() => ({
   closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
@@ -706,6 +712,23 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
     deliveryApiMock.findCloudContextForTask.mockRejectedValue(new Error('Context not found'))
     deliveryApiMock.trackProjectTask.mockImplementation(() => new Promise(() => {}))
+    collaborationApiMock.listProjects.mockImplementation(async () => {
+      return (await deliveryApiMock.listCloudProjects()).items
+    })
+    collaborationApiMock.getProject.mockImplementation(async (projectId: string) => {
+      const projects = (await deliveryApiMock.listCloudProjects()).items
+      const project = projects.find(
+        (candidate: { id: string | number }) => String(candidate.id) === projectId
+      )
+      if (!project) throw new Error('Project not found')
+      return project
+    })
+    collaborationApiMock.getBoardSnapshot.mockResolvedValue({
+      items: [],
+      members: [],
+      agents: [],
+    })
+    collaborationApiMock.listAutomations.mockResolvedValue([])
     cloudDesktopExtensionMock.available = false
     cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -1266,6 +1289,9 @@ describe('DesktopWorkbenchLayout', () => {
                 findCloudContextForTask: deliveryApiMock.findCloudContextForTask,
                 trackProjectTask: deliveryApiMock.trackProjectTask,
               },
+              collaborationApi: collaborationApiMock as unknown as NonNullable<
+                WorkbenchServices['collaborationApi']
+              >,
             }
           : {}),
         attachmentApi: {
@@ -1722,9 +1748,12 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(await screen.findByText(project.name)).toBeVisible()
+    await userEvent.click(screen.getByTestId('collaboration-tab-automation'))
+    expect(screen.getByTestId('collaboration-tab-automation')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -1732,8 +1761,11 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByText(project.name)).toBeVisible()
+    expect(screen.getByTestId('collaboration-tab-automation')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -1742,8 +1774,11 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByText(project.name)).toBeVisible()
+    expect(screen.getByTestId('collaboration-tab-automation')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -1764,14 +1799,14 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(await screen.findByTestId('settings-button'))
-    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    fireEvent.click(await screen.findByTestId('settings-button'))
+    fireEvent.click(screen.getByTestId('settings-menu-button'))
     expect(window.location.pathname).toBe('/settings')
 
-    await userEvent.click(screen.getByTestId('settings-back-button'))
+    fireEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-workspace')).toBeVisible()
   })
 
   test('returns to the exact previous workspace route after opening settings', async () => {
@@ -1792,15 +1827,15 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(await screen.findByTestId('settings-button'))
-    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    fireEvent.click(await screen.findByTestId('settings-button'))
+    fireEvent.click(screen.getByTestId('settings-menu-button'))
     expect(window.location.pathname).toBe('/settings')
 
-    await userEvent.click(screen.getByTestId('settings-back-button'))
+    fireEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
     expect(window.location.search).toContain('projectId=project-1')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-workspace')).toBeVisible()
   })
 
   test('returns to the previous page after opening settings through direct navigation', async () => {
@@ -1827,7 +1862,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-workspace')).toBeVisible()
   })
 
   test('keeps the active task return route when an inactive project space is retained', () => {
@@ -1916,14 +1951,14 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    await userEvent.click(await screen.findByTestId('settings-button'))
-    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    fireEvent.click(await screen.findByTestId('settings-button'))
+    fireEvent.click(screen.getByTestId('settings-menu-button'))
     expect(window.location.pathname).toBe('/settings')
 
-    await userEvent.click(screen.getByTestId('settings-back-button'))
+    fireEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-workspace')).toBeVisible()
   })
 
   test('keeps the settings return path when the layout remounts at the settings route', async () => {
@@ -1969,8 +2004,8 @@ describe('DesktopWorkbenchLayout', () => {
       )
 
     const first = renderLayout()
-    await userEvent.click(await screen.findByTestId('settings-button'))
-    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    fireEvent.click(await screen.findByTestId('settings-button'))
+    fireEvent.click(screen.getByTestId('settings-menu-button'))
     expect(window.location.pathname).toBe('/settings')
 
     // The workspace tab mutation remounts the layout at the settings route.
@@ -1979,10 +2014,10 @@ describe('DesktopWorkbenchLayout', () => {
     renderLayout()
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('settings-back-button'))
+    fireEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-workspace')).toBeVisible()
   })
 
   test('uses the independent board tab instead of a work-items sidebar destination', () => {

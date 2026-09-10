@@ -9,8 +9,10 @@ import { collaborationMessages } from './i18n'
 import { collaborationTestIds } from './testIds'
 import type {
   CollaborationAttachment,
+  CollaborationAgent,
   CollaborationComment,
   CollaborationIssue,
+  CollaborationMember,
   CollaborationPriority,
   CollaborationStatus,
 } from './types'
@@ -21,6 +23,8 @@ interface IssueDetailProps {
   api: CollaborationApi
   issue: CollaborationIssue
   statuses: CollaborationStatus[]
+  members: CollaborationMember[]
+  agents: CollaborationAgent[]
   attachments: CollaborationAttachment[]
   comments: CollaborationComment[]
   messages: Messages
@@ -41,6 +45,8 @@ export function IssueDetail({
   api,
   issue,
   statuses,
+  members,
+  agents,
   attachments,
   comments,
   messages,
@@ -66,6 +72,9 @@ export function IssueDetail({
           priority: draft.priority,
           due_at: draft.due_at,
           tags: draft.tags,
+          assignee_user_id: draft.assignee_user_id,
+          assignee_agent_id: draft.assignee_agent_id,
+          assignee_team_id: draft.assignee_team_id,
         })
       )
     } catch (error) {
@@ -161,6 +170,61 @@ export function IssueDetail({
             </select>
           </label>
         </div>
+        <label>
+          {messages.showAssignee}
+          <select
+            data-testid="collaboration-issue-detail-assignee"
+            value={
+              draft.assignee_agent_id
+                ? `agent:${draft.assignee_agent_id}`
+                : draft.assignee_user_id
+                  ? `user:${draft.assignee_user_id}`
+                  : ''
+            }
+            onChange={event => {
+              const [kind, id] = event.target.value.split(':')
+              if (kind === 'agent') {
+                const agent = agents.find(item => (item.agent_id ?? item.id) === id)
+                setDraft(current => ({
+                  ...current,
+                  assignee_user_id: null,
+                  assignee_agent_id: id,
+                  assignee_agent_name: agent?.name ?? null,
+                  assignee_team_id: null,
+                }))
+              } else if (kind === 'user') {
+                const userId = Number(id)
+                const member = members.find(item => item.user_id === userId)
+                setDraft(current => ({
+                  ...current,
+                  assignee_user_id: userId,
+                  assignee_name: member?.user_name ?? null,
+                  assignee_agent_id: null,
+                  assignee_team_id: null,
+                }))
+              } else {
+                setDraft(current => ({
+                  ...current,
+                  assignee_user_id: null,
+                  assignee_agent_id: null,
+                  assignee_team_id: null,
+                }))
+              }
+            }}
+          >
+            <option value="">{messages.unassigned}</option>
+            {members.map(member => (
+              <option value={`user:${member.user_id}`} key={`user:${member.user_id}`}>
+                {member.user_name}
+              </option>
+            ))}
+            {agents.map(agent => (
+              <option value={`agent:${agent.agent_id ?? agent.id}`} key={`agent:${agent.id}`}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           {messages.issueDueDate}
           <input
