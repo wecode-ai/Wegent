@@ -1,4 +1,5 @@
 import type { ConversationSummaryResource } from './conversationHostServices'
+import type { WeworkDshSlotEntry } from './dshUiSlots'
 
 export type ConversationSummaryContextValue = string | number | boolean | null | undefined
 
@@ -45,4 +46,16 @@ export function matchesConversationSummaryContext(
   if ('notEquals' in record) return !Object.is(value, record.notEquals)
   if (Array.isArray(record.in)) return record.in.some(candidate => Object.is(value, candidate))
   return Boolean(value)
+}
+
+export function hasMatchingConversationSummaryHostService(
+  entries: readonly WeworkDshSlotEntry[],
+  context: ConversationSummaryContext,
+  serviceId: string
+): boolean {
+  return entries.some(
+    entry =>
+      entry.requiredHostServices?.includes(serviceId) &&
+      matchesConversationSummaryContext(context, entry.when)
+  )
 }

@@ -318,6 +318,7 @@ window.__ModuleLoader__.load({
         descriptor: {
           id: 'dsh-extension-demo.environment-section',
           order: 0,
+          requiredHostServices: ['wework.environment'],
         },
         component: DemoConversationSummary,
       },

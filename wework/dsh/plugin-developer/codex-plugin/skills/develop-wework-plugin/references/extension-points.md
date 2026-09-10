@@ -33,6 +33,11 @@ ctx.slots.inject('wework.workspace.tab', function* () {
 descriptor fields. When `descriptor.module` names a browser module supplied by
 the plugin, only the descriptor registration is needed.
 
+Conversation summary descriptors declare each consumed host service in
+`requiredHostServices`. The host combines this metadata with the descriptor's
+`when` expression so expensive service loading and refresh work runs only while
+that contribution is eligible to render.
+
 The host declares three internal branches instead of placing every public slot
 directly under `root`:
 

@@ -79,7 +79,10 @@ generic `when` conditions, and the host renders only the first matching entry.
 The slot exposes only generic context, command execution, resource opening,
 and host-service lookup by ID. Domain data such as Git state and conversation
 outputs remains owned by independent host services and is not part of the
-extension-point contract.
+extension-point contract. Summary contributions should declare the host services
+they consume through `requiredHostServices`, allowing the host to start data
+loading and refresh only while the contribution matches the current `when`
+context.
 
 The installable example shipped by the **Wework Plugin Developer** Skill at
 [`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)

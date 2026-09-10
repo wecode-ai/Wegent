@@ -1,4 +1,7 @@
-import { classifyMarkdownLink } from '@/components/chat/assistantMarkdownLinks'
+import {
+  classifyMarkdownLink,
+  extractMarkdownLinks,
+} from '@/components/chat/assistantMarkdownLinks'
 import { basename, getAssistantReferences } from '@/components/chat/codexReferences'
 import type {
   ConversationOutput,
@@ -7,8 +10,6 @@ import type {
   ConversationSummaryResource,
 } from './conversationHostServices'
 import type { WorkbenchMessage } from '@/types/workbench'
-
-const MARKDOWN_LINK_PATTERN = /\[([^\]]+)]\((<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\)/g
 
 export function buildConversationOutputs(
   messages: readonly WorkbenchMessage[]
@@ -47,7 +48,7 @@ export function buildConversationOutputs(
       })
     }
 
-    for (const link of markdownLinks(message.content)) {
+    for (const link of extractMarkdownLinks(message.content)) {
       const target = classifyMarkdownLink(link.href)
       if (target.kind === 'file' && /\.html?$/i.test(target.path)) {
         const resource = { kind: 'file', path: target.path } as const
@@ -143,14 +144,6 @@ function webSearchUrl(input: Record<string, unknown> | undefined): string | null
     if (typeof value === 'string' && /^https?:\/\//i.test(value.trim())) return value.trim()
   }
   return null
-}
-
-function markdownLinks(content: string): Array<{ href: string; title: string }> {
-  return [...content.matchAll(MARKDOWN_LINK_PATTERN)].flatMap(match => {
-    const href = match[2]?.trim().replace(/^<|>$/g, '')
-    if (!href) return []
-    return [{ href, title: match[1]?.trim() ?? '' }]
-  })
 }
 
 function hostname(url: string): string {

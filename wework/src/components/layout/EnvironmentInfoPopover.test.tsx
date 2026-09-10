@@ -17,11 +17,13 @@ describe('EnvironmentInfoPopover', () => {
           {
             id: 'git-summary',
             module: 'plugins/wework-ui-git-environment-section.js',
+            requiredHostServices: ['wework.environment'],
             when: { key: 'workspace.isGitRepository', equals: true },
           },
           {
             id: 'outputs-summary',
             module: 'plugins/wework-ui-outputs-conversation-summary.js',
+            requiredHostServices: ['wework.conversation.outputs'],
             when: { key: 'workspace.isGitRepository', equals: false },
           },
         ],

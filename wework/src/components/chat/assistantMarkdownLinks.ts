@@ -15,6 +15,11 @@ export type MarkdownLinkTarget =
       isDirectory?: boolean
     }
 
+export interface ExtractedMarkdownLink {
+  href: string
+  title: string
+}
+
 const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
 // Protected Markdown links may be encoded again by intermediate URL normalizers.
 const MAX_MARKDOWN_FILE_PATH_DECODE_PASSES = 16
@@ -31,6 +36,29 @@ export function decodeMarkdownFilePath(path: string): string {
     }
   }
   return decodedPath
+}
+
+export function extractMarkdownLinks(content: string): ExtractedMarkdownLink[] {
+  const links: ExtractedMarkdownLink[] = []
+  let cursor = 0
+
+  while (cursor < content.length) {
+    const labelStart = content.indexOf('[', cursor)
+    if (labelStart < 0) break
+    const labelEnd = content.indexOf('](', labelStart + 1)
+    if (labelEnd < 0) break
+
+    const destination = parseMarkdownLinkDestination(content, labelEnd + 2)
+    if (destination) {
+      const title = content.slice(labelStart + 1, labelEnd).trim()
+      if (title) links.push({ href: destination.href, title })
+      cursor = destination.end
+      continue
+    }
+    cursor = labelStart + 1
+  }
+
+  return links
 }
 
 // Assistant responses frequently reference repository files with relative or
@@ -160,4 +188,63 @@ function isLocalImagePath(src: string): boolean {
   if (isWindowsDriveAbsolutePath(src)) return true
 
   return src.startsWith('/') && !isAuthenticatedAttachmentImageSrc(src)
+}
+
+function parseMarkdownLinkDestination(
+  content: string,
+  start: number
+): { href: string; end: number } | null {
+  if (content[start] === '<') {
+    const destinationEnd = content.indexOf('>', start + 1)
+    if (destinationEnd < 0) return null
+    const href = content.slice(start + 1, destinationEnd).trim()
+    const linkEnd = markdownLinkEnd(content, destinationEnd + 1)
+    return href && linkEnd !== null ? { href, end: linkEnd } : null
+  }
+
+  let cursor = start
+  let depth = 0
+  let escaped = false
+  while (cursor < content.length) {
+    const character = content[cursor]
+    if (escaped) {
+      escaped = false
+      cursor += 1
+      continue
+    }
+    if (character === '\\') {
+      escaped = true
+      cursor += 1
+      continue
+    }
+    if (character === '(') {
+      depth += 1
+    } else if (character === ')') {
+      if (depth === 0) break
+      depth -= 1
+    } else if (/\s/.test(character) && depth === 0) {
+      break
+    }
+    cursor += 1
+  }
+
+  const href = content.slice(start, cursor).trim()
+  const linkEnd = markdownLinkEnd(content, cursor)
+  return href && depth === 0 && linkEnd !== null ? { href, end: linkEnd } : null
+}
+
+function markdownLinkEnd(content: string, start: number): number | null {
+  let cursor = start
+  while (/\s/.test(content[cursor] ?? '')) cursor += 1
+
+  const quote = content[cursor]
+  if (quote === '"' || quote === "'") {
+    cursor += 1
+    while (cursor < content.length && content[cursor] !== quote) cursor += 1
+    if (content[cursor] !== quote) return null
+    cursor += 1
+    while (/\s/.test(content[cursor] ?? '')) cursor += 1
+  }
+
+  return content[cursor] === ')' ? cursor + 1 : null
 }

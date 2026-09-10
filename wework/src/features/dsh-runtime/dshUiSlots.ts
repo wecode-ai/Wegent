@@ -30,6 +30,7 @@ export interface WeworkDshSlotEntry {
   id: string
   label?: string
   order?: number
+  requiredHostServices?: readonly string[]
   when?: import('../../../dsh/app-wework/client').WeworkContextExpression
   [key: string]: unknown
 }

@@ -166,6 +166,9 @@ test('Git contributes UI only through generic positional extension points', asyn
     registrations.slice(7).map(entry => entry.options.id),
     ['git-hosting', 'worktrees']
   )
+  assert.deepEqual(JSON.parse(JSON.stringify(registrations[5].descriptor.requiredHostServices)), [
+    'wework.environment',
+  ])
 })
 
 test('outputs contributes the non-Git conversation summary', async () => {
@@ -177,6 +180,9 @@ test('outputs contributes the non-Git conversation summary', async () => {
     registrations[0].descriptor.module,
     'plugins/wework-ui-outputs-conversation-summary.js'
   )
+  assert.deepEqual(JSON.parse(JSON.stringify(registrations[0].descriptor.requiredHostServices)), [
+    'wework.conversation.outputs',
+  ])
   assert.deepEqual(JSON.parse(JSON.stringify(registrations[0].descriptor.when)), {
     key: 'workspace.isGitRepository',
     equals: false,

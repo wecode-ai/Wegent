@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
+import { WEWORK_HOST_SERVICES } from '@/features/dsh-runtime/conversationHostServices'
+import { hasMatchingConversationSummaryHostService } from '@/features/dsh-runtime/conversationSummarySurface'
+import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   getChangeRequestMonitor,
@@ -167,10 +169,9 @@ export function useWorkbenchPaneEnvironment({
   } = useWorkbenchPaneContext()
   const runtimeWorkApi = services?.runtimeWorkApi
   const { t } = useTranslation('common')
-  const environmentExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.conversationSummary)
-  const preferences = useAppPreferencesState()
-  const changeRequestStatusEnabled =
-    environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+  const conversationSummaryEntries = useDshSlotEntries<WeworkDshSlotEntry>(
+    WEWORK_DSH_SLOTS.conversationSummary
+  )
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '',
     deletions: '',
@@ -201,14 +202,6 @@ export function useWorkbenchPaneEnvironment({
     })
     return source ? runtimeTaskChangeRequestTarget(source.workspace, source.task) : null
   }, [currentRuntimeTask, state.runtimeWork])
-  const changeRequestMonitor = useMemo(
-    () => (services?.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
-    [services?.deviceApi]
-  )
-  const sharedChangeRequestSnapshot = useTaskChangeRequest(
-    changeRequestStatusEnabled ? changeRequestMonitor : null,
-    changeRequestStatusEnabled ? currentChangeRequestTarget : null
-  )
   const activeConversationProject = currentProject ?? runtimeWorkspaceContext?.project ?? null
   const selectedWorkspaceProject = resolveSelectedWorkspaceProject({
     currentProject: projectWork.currentProject,
@@ -233,6 +226,25 @@ export function useWorkbenchPaneEnvironment({
     project: selectedWorkspaceProject ?? activeConversationProject,
     projectWorkspace: selectedProjectDeviceWorkspace,
   })
+  const conversationSummaryContext = {
+    'workspace.isGitRepository': conversationSummaryIsGitRepository,
+  }
+  const environmentExtensionsAvailable = hasMatchingConversationSummaryHostService(
+    conversationSummaryEntries,
+    conversationSummaryContext,
+    WEWORK_HOST_SERVICES.environment
+  )
+  const preferences = useAppPreferencesState()
+  const changeRequestStatusEnabled =
+    environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+  const changeRequestMonitor = useMemo(
+    () => (services?.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
+    [services?.deviceApi]
+  )
+  const sharedChangeRequestSnapshot = useTaskChangeRequest(
+    changeRequestStatusEnabled ? changeRequestMonitor : null,
+    changeRequestStatusEnabled ? currentChangeRequestTarget : null
+  )
   const selectedWorktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectDeviceWorkspace)
   const selectedWorktreeDevice = findWorkbenchDevice(state.devices, selectedWorktreeDeviceId)
   const projectedWorktreeAvailability = useMemo(
@@ -265,6 +277,7 @@ export function useWorkbenchPaneEnvironment({
   useEffect(() => {
     if (
       !environmentExtensionsAvailable ||
+      conversationSummaryIsGitRepository !== true ||
       currentRuntimeTask ||
       !selectedWorkspaceProject ||
       !selectedProjectDeviceWorkspace ||
@@ -293,6 +306,7 @@ export function useWorkbenchPaneEnvironment({
       cancelled = true
     }
   }, [
+    conversationSummaryIsGitRepository,
     currentRuntimeTask,
     environmentExtensionsAvailable,
     projectWork.worktreeBranch,
@@ -651,21 +665,28 @@ export function useWorkbenchPaneEnvironment({
   }, [changeRequestMonitor, changeRequestStatusEnabled, loadCurrentEnvironmentInfo])
 
   useEffect(() => {
-    if (!activeConversationProjectKey && !currentRuntimeTaskKey) return
+    if (
+      !environmentExtensionsAvailable ||
+      (!activeConversationProjectKey && !currentRuntimeTaskKey)
+    ) {
+      return
+    }
     void loadCurrentEnvironmentInfo({ force: false, showLoading: true })
   }, [
     activeConversationProjectKey,
     activeWorkspaceTargetKey,
     currentRuntimeTaskKey,
+    environmentExtensionsAvailable,
     loadCurrentEnvironmentInfo,
     workspaceProjectKey,
   ])
 
   useEffect(() => {
     const wasRefreshActive = previousEnvironmentRefreshActive.current
-    previousEnvironmentRefreshActive.current = environmentRefreshActive
+    const shouldRefreshEnvironment = environmentExtensionsAvailable && environmentRefreshActive
+    previousEnvironmentRefreshActive.current = shouldRefreshEnvironment
 
-    if (!environmentRefreshActive) {
+    if (!shouldRefreshEnvironment) {
       if (wasRefreshActive) {
         void loadCurrentEnvironmentInfo({ force: true, showLoading: false })
       }
@@ -676,7 +697,7 @@ export function useWorkbenchPaneEnvironment({
       void loadCurrentEnvironmentInfo({ force: true, showLoading: false })
     }, 30_000)
     return () => window.clearInterval(intervalId)
-  }, [environmentRefreshActive, loadCurrentEnvironmentInfo])
+  }, [environmentExtensionsAvailable, environmentRefreshActive, loadCurrentEnvironmentInfo])
 
   const commitPaneEnvironmentChanges = useCallback(
     async (message: string) => {

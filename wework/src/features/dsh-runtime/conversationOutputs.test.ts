@@ -110,4 +110,25 @@ describe('buildConversationOutputs', () => {
       },
     ])
   })
+
+  test('preserves balanced parentheses in external Markdown destinations', () => {
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '[Versioned page](https://example.com/page_(v2))',
+        status: 'done',
+        createdAt: '2026-09-10T08:00:00Z',
+      },
+    ]
+
+    expect(buildConversationOutputs(messages).sources).toEqual([
+      {
+        id: 'website:https://example.com/page_(v2)',
+        kind: 'website',
+        resource: { kind: 'url', url: 'https://example.com/page_(v2)' },
+        title: 'Versioned page',
+      },
+    ])
+  })
 })

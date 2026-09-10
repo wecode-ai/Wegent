@@ -219,6 +219,7 @@ export interface WeworkContribution {
   readonly icon?: string
   readonly module?: string
   readonly order?: number
+  readonly requiredHostServices?: readonly string[]
   readonly when?: WeworkContextExpression
   readonly [key: string]: unknown
 }

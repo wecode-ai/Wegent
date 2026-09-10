@@ -38,6 +38,7 @@ export async function installGitUiTestContributions() {
           id: 'git-summary',
           module: 'plugins/wework-ui-git-environment-section.js',
           order: 50,
+          requiredHostServices: ['wework.environment'],
           when: { key: 'workspace.isGitRepository', notEquals: false },
         },
       ],
