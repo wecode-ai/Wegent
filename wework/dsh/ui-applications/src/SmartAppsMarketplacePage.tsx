@@ -45,7 +45,6 @@ import type {
   SmartAppMarketplaceTag,
   SmartAppsApi,
 } from '@/api/smartApps'
-import { ApiError } from '@/api/http'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
   harnessAppsApi,
@@ -73,11 +72,12 @@ import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAp
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getErrorMessage } from '@/lib/error-message'
 import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
+import { getSmartAppErrorMessage, localizeSmartAppIssue } from '@/lib/smart-app-error-message'
 import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
+import { track } from '@/telemetry/client'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
@@ -88,6 +88,7 @@ interface SmartAppsMarketplacePageProps {
 interface PendingInstall {
   item: SmartAppMarketplaceItem
   preview: HarnessAppPreview
+  intent: 'install' | 'update'
 }
 
 type OwnedFilter = 'all' | 'created' | 'installed'
@@ -103,6 +104,9 @@ interface OwnedSmartAppCard {
 // Keep successful local removals authoritative across route remounts. A new install
 // of the same package clears the marker below.
 const locallyRemovedInstallationIds = new Set<string>()
+const MAX_SMART_APP_PACKAGE_BYTES = 50 * 1024 * 1024
+const MAX_SMART_APP_ICON_BYTES = 512 * 1024
+const MAX_SMART_APP_SCREENSHOT_BYTES = 2 * 1024 * 1024
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`
@@ -123,13 +127,6 @@ function formatUpdatedAt(value: string, language: string): string {
     return formatter.format(Math.round(elapsed / (60 * 60 * 1000)), 'hour')
   }
   return formatter.format(Math.round(elapsed / (24 * 60 * 60 * 1000)), 'day')
-}
-
-function smartAppErrorMessage(error: unknown, fallback: string, storageUnavailable: string) {
-  if (error instanceof ApiError && error.errorCode === 'smart_app_storage_unavailable') {
-    return storageUnavailable
-  }
-  return getErrorMessage(error, fallback)
 }
 
 function SmartAppFilePicker({
@@ -195,13 +192,34 @@ function SmartAppFilePicker({
   )
 }
 
-function readDataUrl(file: File): Promise<string> {
+function readDataUrl(file: File, errorMessage: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result ?? ''))
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read image'))
+    reader.onerror = () => reject(new Error(errorMessage))
     reader.readAsDataURL(file)
   })
+}
+
+function validatePublishImage(
+  file: File,
+  kind: 'icon' | 'screenshot',
+  t: (key: string, fallback: string) => string
+): string | null {
+  const supportedTypes =
+    kind === 'icon'
+      ? new Set(['image/png', 'image/webp'])
+      : new Set(['image/png', 'image/webp', 'image/jpeg'])
+  if (!supportedTypes.has(file.type)) {
+    return kind === 'icon'
+      ? t('workbench.smart_apps_error_icon_format', '图标仅支持 PNG 或 WebP 格式。')
+      : t('workbench.smart_apps_error_screenshot_format', '截图仅支持 PNG、WebP 或 JPEG 格式。')
+  }
+  const limit = kind === 'icon' ? MAX_SMART_APP_ICON_BYTES : MAX_SMART_APP_SCREENSHOT_BYTES
+  if (file.size <= limit) return null
+  return kind === 'icon'
+    ? t('workbench.smart_apps_error_icon_too_large', '图标不能超过 512 KB。')
+    : t('workbench.smart_apps_error_screenshot_too_large', '单张截图不能超过 2 MB。')
 }
 
 async function readManifest(
@@ -233,13 +251,17 @@ export function SmartAppsMarketplacePage({
   const [removedInstallationIds, setRemovedInstallationIds] = useState<Set<string>>(() => new Set())
   const [tags, setTags] = useState<SmartAppMarketplaceTag[]>([])
   const [query, setQuery] = useState('')
-  const [source, setSource] = useState<'all' | 'official' | 'shared'>('all')
+  const [source, setSource] = useState<'all' | 'official' | 'public' | 'shared'>('all')
   const [tag, setTag] = useState('')
   const [marketplaceSort, setMarketplaceSort] = useState<MarketplaceSort>('recommended')
   const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
+  const [accessNotice, setAccessNotice] = useState<{
+    message: string
+    showMarketplace: boolean
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<SmartAppMarketplaceItem | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingInstall | null>(null)
@@ -263,6 +285,14 @@ export function SmartAppsMarketplacePage({
   useLayoutEffect(() => {
     activeModeRef.current = mode
   }, [mode])
+
+  const navigateFromSmartApps = useCallback(
+    (path: string) => {
+      setAccessNotice(null)
+      onNavigate(path)
+    },
+    [onNavigate]
+  )
 
   const refresh = useCallback(async () => {
     if (activeModeRef.current !== mode) return
@@ -299,10 +329,10 @@ export function SmartAppsMarketplacePage({
     } catch (loadError) {
       if (!isCurrentRequest()) return
       setError(
-        smartAppErrorMessage(
+        getSmartAppErrorMessage(
           loadError,
           t('workbench.smart_apps_marketplace_load_failed', '智能工作台市场加载失败'),
-          t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
+          t
         )
       )
     } finally {
@@ -333,8 +363,10 @@ export function SmartAppsMarketplacePage({
   const installModelKey = modelKey || modelOptions[0]?.key || ''
   const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
     return activeInstallations.map(installation => {
-      const ownedItem = items.find(
-        item => item.id === installation.smartAppId || item.name === installation.manifest.name
+      const ownedItem = items.find(item =>
+        installation.smartAppId != null
+          ? item.id === installation.smartAppId
+          : item.name === installation.manifest.name
       )
       const marketItem = installation.smartAppId
         ? marketItems.find(item => item.id === installation.smartAppId)
@@ -454,20 +486,25 @@ export function SmartAppsMarketplacePage({
 
   async function download(item: SmartAppMarketplaceItem) {
     if (!api) return
+    const intent = localState(item)?.update ? 'update' : 'install'
     setBusy(`download-${item.id}`)
     setError(null)
     try {
       const descriptor = await api.getDownload(item.id)
       const preview = await harnessAppsApi.download(descriptor)
-      setPendingInstall({ item, preview })
+      setPendingInstall({ item, preview, intent })
       setModelKey(localState(item)?.installation.modelKey ?? '')
       setSelected(null)
     } catch (downloadError) {
+      track('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_marketplace_download',
+      })
       setError(
-        smartAppErrorMessage(
+        getSmartAppErrorMessage(
           downloadError,
           t('workbench.smart_apps_download_failed', '智能工作台下载失败'),
-          t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
+          t
         )
       )
     } finally {
@@ -496,14 +533,30 @@ export function SmartAppsMarketplacePage({
         installationId: installation.id,
         installation,
       })
+      if (pendingInstall.intent === 'update') {
+        track('feature_action_completed', { domain: 'smart_app', action: 'update' })
+      } else {
+        track('smart_app_installed', {
+          domain: 'smart_app',
+          install_source: 'marketplace',
+        })
+      }
       setPendingInstall(null)
       setModelKey('')
       await refresh()
     } catch (installError) {
+      track('operation_failed', {
+        domain: 'smart_app',
+        operation:
+          pendingInstall.intent === 'update'
+            ? 'smart_app_marketplace_update'
+            : 'smart_app_marketplace_install',
+      })
       setError(
-        getErrorMessage(
+        getSmartAppErrorMessage(
           installError,
-          t('workbench.smart_apps_install_failed_keep_old', '智能工作台安装失败，原版本已保留')
+          t('workbench.smart_apps_install_failed_keep_old', '智能工作台安装失败，原版本已保留'),
+          t
         )
       )
     } finally {
@@ -596,7 +649,11 @@ export function SmartAppsMarketplacePage({
     if (!copyInstallation) return
     setCreating(true)
     try {
-      const installation = await harnessAppsApi.copyToDirectory(copyInstallation.id, input)
+      const installation = await harnessAppsApi.copyToDirectory(copyInstallation.id, {
+        parentPath: input.parentPath,
+        name: input.name,
+        displayName: input.displayName,
+      })
       notifyHarnessAppInstallationsChanged({
         type: 'installed',
         installationId: installation.id,
@@ -630,7 +687,13 @@ export function SmartAppsMarketplacePage({
       })
       await refresh()
     } catch (value) {
-      setError(getErrorMessage(value, t('workbench.smart_apps_link_failed', '关联工作台目录失败')))
+      setError(
+        getSmartAppErrorMessage(
+          value,
+          t('workbench.smart_apps_link_failed', '关联工作台目录失败'),
+          t
+        )
+      )
     } finally {
       setImporting(false)
     }
@@ -643,8 +706,15 @@ export function SmartAppsMarketplacePage({
       const preview = await harnessAppsApi.preview(path)
       if (!preview.valid || !preview.manifest) {
         throw new Error(
-          preview.issues.join('；') ||
-            t('workbench.smart_apps_invalid_package', '不是有效的智能工作台安装包')
+          preview.issues
+            .map(issue =>
+              localizeSmartAppIssue(
+                issue,
+                t('workbench.smart_apps_invalid_package', '不是有效的智能工作台发布包'),
+                t
+              )
+            )
+            .join('；') || t('workbench.smart_apps_invalid_package', '不是有效的智能工作台发布包')
         )
       }
       const installation = await harnessAppsApi.install(preview, null)
@@ -653,10 +723,22 @@ export function SmartAppsMarketplacePage({
         installationId: installation.id,
         installation,
       })
+      track('smart_app_installed', {
+        domain: 'smart_app',
+        install_source: 'zip_import',
+      })
       await refresh()
     } catch (importError) {
+      track('operation_failed', {
+        domain: 'smart_app',
+        operation: 'smart_app_zip_import',
+      })
       setError(
-        getErrorMessage(importError, t('workbench.smart_apps_import_failed', '智能工作台导入失败'))
+        getSmartAppErrorMessage(
+          importError,
+          t('workbench.smart_apps_import_failed', '智能工作台导入失败'),
+          t
+        )
       )
     } finally {
       setImporting(false)
@@ -669,7 +751,7 @@ export function SmartAppsMarketplacePage({
       {
         properties: ['openFile'],
         filters: [
-          { name: t('workbench.smart_apps_package', '智能工作台安装包'), extensions: ['zip'] },
+          { name: t('workbench.smart_apps_package', '智能工作台发布包'), extensions: ['zip'] },
         ],
       }
     )
@@ -716,10 +798,14 @@ export function SmartAppsMarketplacePage({
     setExportNotice(null)
     try {
       await harnessAppsApi.exportToDownloads(installation.id)
-      setExportNotice(t('workbench.smart_apps_exported', '安装包已导出到下载目录。'))
+      setExportNotice(t('workbench.smart_apps_exported', '发布包已导出到下载目录。'))
     } catch (exportError) {
       setError(
-        getErrorMessage(exportError, t('workbench.smart_apps_export_failed', '安装包导出失败。'))
+        getSmartAppErrorMessage(
+          exportError,
+          t('workbench.smart_apps_export_failed', '发布包导出失败。'),
+          t
+        )
       )
     } finally {
       setBusy(null)
@@ -771,9 +857,10 @@ export function SmartAppsMarketplacePage({
             onSelect: () => {
               void revealLocalFile(installation.packagePath).catch(openError => {
                 setError(
-                  getErrorMessage(
+                  getSmartAppErrorMessage(
                     openError,
-                    t('workbench.smart_apps_open_directory_failed', '打开工作台文件夹失败。')
+                    t('workbench.smart_apps_open_directory_failed', '打开工作台文件夹失败。'),
+                    t
                   )
                 )
               })
@@ -787,7 +874,7 @@ export function SmartAppsMarketplacePage({
         label: t('workbench.smart_apps_manage_in_my', '在我的工作台中管理'),
         icon: Boxes,
         testId: `smart-app-manage-local-${installation.id}`,
-        onSelect: () => onNavigate('/sites?app_type=smart_app&view=owned'),
+        onSelect: () => navigateFromSmartApps('/sites?app_type=smart_app&view=owned'),
       })
     } else if (item?.accessRole === 'owner') {
       actions.push({
@@ -799,7 +886,7 @@ export function SmartAppsMarketplacePage({
     }
     if (mode === 'owned' && (!installation.smartAppId || item?.accessRole === 'owner')) {
       actions.push({
-        label: t('workbench.smart_apps_export_package', '导出安装包'),
+        label: t('workbench.smart_apps_export_package', '导出发布包'),
         icon: PackageOpen,
         testId: `smart-app-export-package-${installation.id}`,
         disabled: busy === installation.id,
@@ -850,9 +937,10 @@ export function SmartAppsMarketplacePage({
         installation,
       })
       setError(
-        getErrorMessage(
+        getSmartAppErrorMessage(
           deleteError,
-          t('workbench.harness_apps_delete_failed', '卸载智能工作台失败。')
+          t('workbench.harness_apps_delete_failed', '卸载智能工作台失败。'),
+          t
         )
       )
     } finally {
@@ -903,7 +991,7 @@ export function SmartAppsMarketplacePage({
               )}
               {importing
                 ? t('workbench.smart_apps_importing', '导入中…')
-                : t('workbench.smart_apps_import_app', '导入工作台')}
+                : t('workbench.smart_apps_import_app', '导入发布包')}
             </Button>
           </div>
         </header>
@@ -913,7 +1001,7 @@ export function SmartAppsMarketplacePage({
         leading={
           <SmartAppsSectionNav
             active={mode === 'owned' ? 'owned' : 'marketplace'}
-            onNavigate={onNavigate}
+            onNavigate={navigateFromSmartApps}
           />
         }
         searchLabel={t('workbench.smart_apps_search', '搜索工作台')}
@@ -935,6 +1023,9 @@ export function SmartAppsMarketplacePage({
                 <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
                 <option value="official">
                   {t('workbench.smart_apps_source_official', '官方工作台')}
+                </option>
+                <option value="public">
+                  {t('workbench.smart_apps_source_public', '全员应用')}
                 </option>
                 <option value="shared">
                   {t('workbench.smart_apps_source_shared', '分享给我')}
@@ -1036,6 +1127,30 @@ export function SmartAppsMarketplacePage({
         </p>
       ) : null}
 
+      {mode === 'owned' && accessNotice ? (
+        <div
+          role="status"
+          data-testid="smart-app-access-success"
+          className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-success/10 p-3 text-sm text-success"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {accessNotice.message}
+          </span>
+          {accessNotice.showMarketplace ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0 border-success/30 bg-background text-text-primary shadow-sm hover:bg-success/10"
+              data-testid="smart-app-access-view-marketplace"
+              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app')}
+            >
+              {t('workbench.smart_apps_view_marketplace', '去市场查看')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
       {!api && mode === 'marketplace' ? (
         <EmptyState
           icon={<Box className="h-6 w-6" />}
@@ -1048,7 +1163,7 @@ export function SmartAppsMarketplacePage({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => onNavigate('/sites?app_type=smart_app&view=owned')}
+              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app&view=owned')}
             >
               <PackageCheck className="h-4 w-4" />
               {t('workbench.smart_apps_view_my', '查看我的工作台')}
@@ -1072,7 +1187,7 @@ export function SmartAppsMarketplacePage({
             mode === 'owned'
               ? t(
                   'workbench.smart_apps_my_empty_hint',
-                  '可以调整筛选条件、从市场安装，或导入一个本地 ZIP 工作台。'
+                  '可以调整筛选条件、从市场安装，或导入一个本地发布包。'
                 )
               : t(
                   'workbench.smart_apps_marketplace_empty_hint',
@@ -1135,16 +1250,11 @@ export function SmartAppsMarketplacePage({
                     description={description}
                     tags={item?.tags ?? []}
                     visibility={{
-                      kind:
-                        item?.accessRole === 'official'
-                          ? 'public'
-                          : item?.accessRole === 'owner'
-                            ? 'restricted'
-                            : 'private',
+                      kind: item?.visibility ?? 'private',
                       label:
-                        item?.accessRole === 'official'
-                          ? t('workbench.smart_apps_visibility_public', '公开')
-                          : item?.accessRole === 'owner'
+                        item?.visibility === 'public'
+                          ? t('workbench.smart_apps_visibility_public', '全员')
+                          : item?.visibility === 'restricted'
                             ? t('workbench.smart_apps_visibility_restricted', '指定成员')
                             : t('workbench.smart_apps_visibility_private', '仅自己'),
                       onClick: isOwner && item ? () => setShareItem(item) : undefined,
@@ -1296,15 +1406,19 @@ export function SmartAppsMarketplacePage({
                   sourceLabel={
                     item.sourceType === 'official'
                       ? t('workbench.smart_apps_official', '官方')
-                      : t('workbench.smart_apps_shared_with_me', '分享给我')
+                      : item.accessRole === 'owner'
+                        ? t('workbench.smart_apps_published_by_me', '我发布的')
+                        : item.accessRole === 'public'
+                          ? t('workbench.smart_apps_public_for_everyone', '全员应用')
+                          : t('workbench.smart_apps_shared_with_me', '分享给我')
                   }
                   description={item.summary}
                   tags={item.tags}
                   visibility={{
-                    kind: item.sourceType === 'official' ? 'public' : 'restricted',
+                    kind: item.visibility,
                     label:
-                      item.sourceType === 'official'
-                        ? t('workbench.smart_apps_visibility_public', '公开')
+                      item.visibility === 'public'
+                        ? t('workbench.smart_apps_visibility_public', '全员')
                         : t('workbench.smart_apps_visibility_restricted', '指定成员'),
                   }}
                   stateLabel={
@@ -1421,7 +1535,6 @@ export function SmartAppsMarketplacePage({
           modelOptions={modelOptions}
           preview={pendingInstall.preview}
           onCancel={() => setPendingInstall(null)}
-          onChooseAnother={() => setPendingInstall(null)}
           onInstall={() => void install()}
           onModelChange={setModelKey}
         />
@@ -1448,8 +1561,24 @@ export function SmartAppsMarketplacePage({
           api={api}
           item={shareItem}
           onClose={() => setShareItem(null)}
-          onSaved={() => {
+          onSaved={savedAccess => {
             setShareItem(null)
+            setExportNotice(null)
+            setAccessNotice({
+              message:
+                savedAccess.scope === 'public'
+                  ? savedAccess.isListed
+                    ? t(
+                        'workbench.smart_apps_listed_success',
+                        'v{{version}} 已上架到智能应用市场。'
+                      ).replace('{{version}}', savedAccess.version)
+                    : t(
+                        'workbench.smart_apps_public_unlisted_success',
+                        '已发布给全员，但当前已被管理员下架。'
+                      )
+                  : t('workbench.smart_apps_access_saved', '分享范围已保存。'),
+              showMarketplace: savedAccess.scope === 'public' && savedAccess.isListed,
+            })
             void refresh()
           }}
         />
@@ -1892,8 +2021,8 @@ function TargetPicker({
     }
     let active = true
     const timer = window.setTimeout(() => {
-      Promise.all([api.searchUsers(query), api.searchGroups(query)])
-        .then(([users, groups]) => {
+      Promise.all([api.searchUsers(query), api.searchDepartments(query)])
+        .then(([users, departments]) => {
           if (!active) return
           setResults([
             ...users.map(user => ({
@@ -1901,11 +2030,7 @@ function TargetPicker({
               entityId: String(user.id),
               displayName: user.user_name,
             })),
-            ...groups.map(group => ({
-              entityType: 'namespace' as const,
-              entityId: String(group.id),
-              displayName: group.display_name || group.name,
-            })),
+            ...departments,
           ])
         })
         .catch(() => setResults([]))
@@ -1933,6 +2058,7 @@ function TargetPicker({
             <button
               key={`${result.entityType}-${result.entityId}`}
               type="button"
+              data-testid={`smart-app-target-${result.entityType}-${result.entityId}`}
               className="flex w-full justify-between rounded-md px-3 py-2 text-sm hover:bg-surface"
               onClick={() => {
                 if (
@@ -1988,11 +2114,11 @@ function SmartAppShareDialog({
   api: SmartAppsApi
   item: SmartAppMarketplaceItem
   onClose: () => void
-  onSaved: () => void
+  onSaved: (access: SmartAppAccess) => void
 }) {
   const { t } = useTranslation('common')
   const [access, setAccess] = useState<SmartAppAccess | null>(null)
-  const [scope, setScope] = useState<'private' | 'restricted'>('restricted')
+  const [scope, setScope] = useState<'private' | 'restricted' | 'public'>('restricted')
   const [targets, setTargets] = useState<SmartAppAccessTarget[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2006,7 +2132,11 @@ function SmartAppShareDialog({
       })
       .catch(value =>
         setError(
-          getErrorMessage(value, t('workbench.smart_apps_access_load_failed', '分享范围加载失败'))
+          getSmartAppErrorMessage(
+            value,
+            t('workbench.smart_apps_access_load_failed', '分享范围加载失败'),
+            t
+          )
         )
       )
   }, [api, item.id, t])
@@ -2019,11 +2149,18 @@ function SmartAppShareDialog({
     }
     setSaving(true)
     try {
-      await api.updateAccess(item.id, { scope, targets: scope === 'restricted' ? targets : [] })
-      onSaved()
+      const savedAccess = await api.updateAccess(item.id, {
+        scope,
+        targets: scope === 'restricted' ? targets : [],
+      })
+      onSaved(savedAccess)
     } catch (value) {
       setError(
-        getErrorMessage(value, t('workbench.smart_apps_access_save_failed', '分享范围保存失败'))
+        getSmartAppErrorMessage(
+          value,
+          t('workbench.smart_apps_access_save_failed', '分享范围保存失败'),
+          t
+        )
       )
     } finally {
       setSaving(false)
@@ -2052,20 +2189,30 @@ function SmartAppShareDialog({
         </header>
         {access ? (
           <>
-            <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
+            <div className="mt-5 grid grid-cols-3 gap-2 rounded-xl bg-surface p-1">
               <button
                 type="button"
-                className={`h-10 rounded-lg ${scope === 'private' ? 'bg-background shadow-sm' : ''}`}
+                className={`h-11 rounded-lg ${scope === 'private' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('private')}
+                data-testid="smart-app-share-scope-private"
               >
                 {t('workbench.smart_apps_private', '仅自己')}
               </button>
               <button
                 type="button"
-                className={`h-10 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
+                className={`h-11 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('restricted')}
+                data-testid="smart-app-share-scope-restricted"
               >
                 {t('workbench.smart_apps_restricted', '指定成员/部门')}
+              </button>
+              <button
+                type="button"
+                className={`h-11 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
+                onClick={() => setScope('public')}
+                data-testid="smart-app-share-scope-public"
+              >
+                {t('workbench.smart_apps_public', '全员')}
               </button>
             </div>
             {scope === 'restricted' ? (
@@ -2074,10 +2221,15 @@ function SmartAppShareDialog({
               </div>
             ) : (
               <p className="mt-4 text-sm text-text-secondary">
-                {t(
-                  'workbench.smart_apps_revoke_hint',
-                  '取消分享后，接收者不能继续下载或更新；已安装到本地的副本仍可离线运行。'
-                )}
+                {scope === 'public'
+                  ? t(
+                      'workbench.smart_apps_share_public_hint',
+                      '将当前已发布版本 v{{version}} 上架到智能应用市场，所有成员均可查看和安装。本地后续修改不会自动同步，需发布新版本。'
+                    ).replace('{{version}}', item.version)
+                  : t(
+                      'workbench.smart_apps_revoke_hint',
+                      '取消分享后，接收者不能继续下载或更新；已安装到本地的副本仍可离线运行。'
+                    )}
               </p>
             )}
           </>
@@ -2092,10 +2244,14 @@ function SmartAppShareDialog({
           </p>
         ) : null}
         <footer className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} data-testid="smart-app-share-cancel">
             {t('common.cancel', '取消')}
           </Button>
-          <Button disabled={!access || saving} onClick={() => void save()}>
+          <Button
+            disabled={!access || saving}
+            onClick={() => void save()}
+            data-testid="smart-app-share-save"
+          >
             {saving ? t('workbench.smart_apps_saving', '保存中…') : t('common.save', '保存')}
           </Button>
         </footer>
@@ -2130,6 +2286,7 @@ function SmartAppPublishDialog({
   const [icon, setIcon] = useState<File | null>(null)
   const [screenshots, setScreenshots] = useState<File[]>([])
   const [notes, setNotes] = useState('')
+  const [scope, setScope] = useState<'restricted' | 'public'>('restricted')
   const [targets, setTargets] = useState<SmartAppAccessTarget[]>([])
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2139,12 +2296,20 @@ function SmartAppPublishDialog({
     setError(null)
     if (!next) return
     try {
+      if (next.size > MAX_SMART_APP_PACKAGE_BYTES) {
+        throw new Error(
+          t(
+            'workbench.smart_apps_error_package_too_large',
+            '发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。'
+          )
+        )
+      }
       const parsed = await readManifest(next, {
         missingManifest: t(
           'workbench.smart_apps_manifest_required',
-          '安装包必须包含一个 plugin-manifest.json'
+          '发布包必须包含且只能包含一个 plugin-manifest.json'
         ),
-        invalidPackage: t('workbench.smart_apps_invalid_package', '不是有效的智能工作台安装包'),
+        invalidPackage: t('workbench.smart_apps_invalid_package', '不是有效的智能工作台发布包'),
       })
       if (item && parsed.name !== item.name) {
         throw new Error(
@@ -2155,41 +2320,85 @@ function SmartAppPublishDialog({
       setSummary(value => value || parsed.description)
     } catch (value) {
       setError(
-        getErrorMessage(value, t('workbench.smart_apps_package_parse_failed', '安装包解析失败'))
+        getSmartAppErrorMessage(
+          value,
+          t('workbench.smart_apps_package_parse_failed', '发布包解析失败'),
+          t
+        )
       )
     }
   }
   async function publish() {
     if ((!file && !installation) || !manifest || !icon || !summary.trim() || !selectedTags.length) {
       setError(
-        t('workbench.smart_apps_publish_fields_required', '请完整填写安装包、简介、标签和图标')
+        t('workbench.smart_apps_publish_fields_required', '请完整填写发布包、简介、标签和图标')
       )
       return
     }
-    if (!item && !targets.length) {
+    if (!item && scope === 'restricted' && !targets.length) {
       setError(
         t('workbench.smart_apps_first_target_required', '首次发布必须选择至少一个成员或部门')
       )
       return
     }
+    const iconError = validatePublishImage(icon, 'icon', t)
+    if (iconError) {
+      setError(iconError)
+      return
+    }
+    const screenshotError = screenshots
+      .map(value => validatePublishImage(value, 'screenshot', t))
+      .find((value): value is string => Boolean(value))
+    if (screenshotError) {
+      setError(screenshotError)
+      return
+    }
     setPublishing(true)
     setError(null)
     try {
-      const metadata = {
-        smartAppId: item?.id,
+      const metadataBase = {
         name: manifest.name,
         displayName: manifest.displayName,
         version: manifest.version,
         summary: summary.trim(),
         descriptionMd: description,
         tags: selectedTags,
-        iconDataUrl: await readDataUrl(icon),
-        screenshotDataUrls: await Promise.all(screenshots.slice(0, 5).map(readDataUrl)),
+        iconDataUrl: await readDataUrl(
+          icon,
+          t('workbench.smart_apps_error_image_invalid', '图片无法读取，请重新选择有效的图片文件。')
+        ),
+        screenshotDataUrls: await Promise.all(
+          screenshots
+            .slice(0, 5)
+            .map(value =>
+              readDataUrl(
+                value,
+                t(
+                  'workbench.smart_apps_error_image_invalid',
+                  '图片无法读取，请重新选择有效的图片文件。'
+                )
+              )
+            )
+        ),
         releaseNotes: notes,
-        targets,
       }
+      const metadata = item
+        ? { ...metadataBase, smartAppId: item.id, targets: [] }
+        : {
+            ...metadataBase,
+            scope,
+            targets: scope === 'restricted' ? targets : [],
+          }
       if (installation) {
         const exported = await harnessAppsApi.export(installation.id)
+        if (exported.sizeBytes > MAX_SMART_APP_PACKAGE_BYTES) {
+          throw new Error(
+            t(
+              'workbench.smart_apps_error_package_too_large',
+              '发布包超过 50 MB，请使用项目打包命令生成发布产物，不要直接上传源码压缩包。'
+            )
+          )
+        }
         const initialized = await api.initSubmission(
           {
             filename: `${exported.manifest.name}-${exported.manifest.version}.zip`,
@@ -2211,10 +2420,10 @@ function SmartAppPublishDialog({
       onPublished()
     } catch (value) {
       setError(
-        smartAppErrorMessage(
+        getSmartAppErrorMessage(
           value,
           t('workbench.smart_apps_publish_failed', '智能工作台发布失败'),
-          t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
+          t
         )
       )
     } finally {
@@ -2251,16 +2460,30 @@ function SmartAppPublishDialog({
         <div className="mt-5 grid gap-4">
           {installation ? (
             <div className="rounded-xl border border-border/40 bg-surface p-3 text-sm">
-              <span className="font-medium">
-                {t('workbench.smart_apps_publish_installed', '发布已导入工作台')}
-              </span>
-              <span className="ml-2 text-text-muted">
-                {installation.manifest.displayName} · v{installation.manifest.version}
-              </span>
+              <div>
+                <span className="font-medium">
+                  {installation.source === 'linked'
+                    ? t('workbench.smart_apps_publish_linked', '发布关联工作台')
+                    : t('workbench.smart_apps_publish_installed', '发布已导入发布包')}
+                </span>
+                <span className="ml-2 text-text-muted">
+                  {installation.manifest.displayName} · v{installation.manifest.version}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-text-muted">
+                {t(
+                  installation.source === 'linked'
+                    ? 'workbench.smart_apps_publish_linked_hint'
+                    : 'workbench.smart_apps_publish_imported_hint',
+                  installation.source === 'linked'
+                    ? '发布前将校验当前源码目录并生成发布包。'
+                    : '将使用已导入的发布包；源码目录请通过“关联文件夹”进入开发流程。'
+                )}
+              </p>
             </div>
           ) : (
             <div className="text-sm font-medium">
-              <span>{t('workbench.smart_apps_zip', '智能工作台 ZIP')}</span>
+              <span>{t('workbench.smart_apps_zip', '智能工作台发布包（ZIP）')}</span>
               <SmartAppFilePicker
                 inputTestId="smart-app-publish-package"
                 label={t('workbench.smart_apps_zip', '智能工作台 ZIP')}
@@ -2268,6 +2491,12 @@ function SmartAppPublishDialog({
                 files={file ? [file] : []}
                 onChange={files => void choosePackage(files[0] ?? null)}
               />
+              <p className="mt-1 text-xs font-normal text-text-muted">
+                {t(
+                  'workbench.smart_apps_publish_artifact_hint',
+                  '发布时只接受项目打包命令生成的产物包，不要直接压缩源码目录。'
+                )}
+              </p>
             </div>
           )}
           {manifest ? (
@@ -2291,6 +2520,7 @@ function SmartAppPublishDialog({
             {t('workbench.smart_apps_description_md', '详细介绍（Markdown）')}
             <textarea
               value={description}
+              maxLength={8192}
               rows={5}
               className="mt-2 w-full rounded-lg border border-border p-3 font-normal"
               onChange={event => setDescription(event.target.value)}
@@ -2348,6 +2578,7 @@ function SmartAppPublishDialog({
             {t('workbench.smart_apps_release_notes', '版本说明')}
             <textarea
               value={notes}
+              maxLength={4096}
               rows={3}
               className="mt-2 w-full rounded-lg border border-border p-3 font-normal"
               onChange={event => setNotes(event.target.value)}
@@ -2363,11 +2594,38 @@ function SmartAppPublishDialog({
           ) : (
             <fieldset>
               <legend className="text-sm font-medium">
-                {t('workbench.smart_apps_targets_required', '分享对象（必选）')}
+                {t('workbench.smart_apps_publish_scope', '发布范围')}
               </legend>
-              <div className="mt-2">
-                <TargetPicker api={api} targets={targets} onChange={setTargets} />
+              <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
+                <button
+                  type="button"
+                  className={`h-11 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
+                  onClick={() => setScope('restricted')}
+                  data-testid="smart-app-publish-scope-restricted"
+                >
+                  {t('workbench.smart_apps_restricted', '指定成员/部门')}
+                </button>
+                <button
+                  type="button"
+                  className={`h-11 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
+                  onClick={() => setScope('public')}
+                  data-testid="smart-app-publish-scope-public"
+                >
+                  {t('workbench.smart_apps_public', '全员')}
+                </button>
               </div>
+              {scope === 'restricted' ? (
+                <div className="mt-3">
+                  <TargetPicker api={api} targets={targets} onChange={setTargets} />
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-text-secondary">
+                  {t(
+                    'workbench.smart_apps_public_hint',
+                    '发布成功后立即上架到智能应用市场，所有成员均可查看和安装。'
+                  )}
+                </p>
+              )}
             </fieldset>
           )}
         </div>

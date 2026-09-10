@@ -15,16 +15,16 @@ from .conversion_callback import router as conversion_callback_router
 from .knowledge import router as knowledge_router
 from .model_config import router as model_config_router
 from .object_storage import router as object_storage_router
+from .plugin_publications import router as plugin_publications_router
 from .rag_content import router as rag_content_router
 from .services import router as services_router
 from .skills import router as skills_router
-from .tables import router as tables_router
 from .workspace_archives import router as workspace_archives_router
 
 # RAG router is conditionally imported based on STANDALONE_MODE
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
 if not settings.STANDALONE_MODE:
-    from .rag import router as rag_router
+    from .rag import router as rag_router  # noqa: F401
 
 __all__ = [
     "api_keys_internal_router",
@@ -36,10 +36,10 @@ __all__ = [
     "knowledge_router",
     "model_config_router",
     "object_storage_router",
+    "plugin_publications_router",
     "rag_content_router",
     "services_router",
     "skills_router",
-    "tables_router",
     "workspace_archives_router",
 ]
 

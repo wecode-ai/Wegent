@@ -5,6 +5,7 @@ import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -20,6 +21,9 @@ import {
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 import { cn } from '@/lib/utils'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 interface ComposerToolbarProps {
   className?: string
@@ -61,6 +65,7 @@ interface ComposerToolbarProps {
   sendButtonTestId?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
+  workspaceTarget?: WorkspaceTarget | null
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -106,6 +111,7 @@ export function ComposerToolbar({
   sendButtonTestId = 'send-message-button',
   leadingContext,
   onListLocalApps,
+  workspaceTarget,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -153,6 +159,14 @@ export function ComposerToolbar({
           supervisorEnabled={showExecutionTools && supervisorEnabled}
           supervisorPending={showExecutionTools && supervisorPending}
         />
+        <DshMenuActions disabled={disabled} location="composer.toolbar" />
+        <div className="contents" data-testid="composer-extension-actions">
+          <DshContributionSlotSurface
+            attachedClassName="contents"
+            props={{ compact, disabled, workspaceTarget }}
+            slot={WEWORK_DSH_SLOTS.composerAction}
+          />
+        </div>
         {showExecutionTools ? (
           <>
             <QuickPhraseMenu
@@ -250,6 +264,7 @@ export function ComposerToolbar({
                 type="submit"
                 data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
+                onMouseDown={event => event.preventDefault()}
                 className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
                 aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
               >
@@ -315,6 +330,7 @@ export function ComposerToolbar({
               data-composer-primary-action="true"
               data-testid={sendButtonTestId}
               disabled={!canSend}
+              onMouseDown={event => event.preventDefault()}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background disabled:cursor-not-allowed disabled:bg-text-muted/45"
               aria-label={t('workbench.send_message', '发送消息')}
             >

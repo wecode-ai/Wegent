@@ -71,9 +71,7 @@ export function DocumentFormatIcon({
   const visual =
     sourceType === 'web'
       ? { icon: Globe, className: 'text-blue-600 dark:text-blue-400' }
-      : sourceType === 'table'
-        ? { icon: Table2, className: 'text-primary' }
-        : FORMAT_ICONS.find(category => category.extensions.includes(format))
+      : FORMAT_ICONS.find(category => category.extensions.includes(format))
   const Icon = visual?.icon ?? File
 
   return (

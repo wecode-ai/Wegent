@@ -15,7 +15,7 @@ This module has no I/O, no database, and no UI knowledge.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Literal
 
 from shared.knowledge.video_segments import DEFAULT_MAX_SEGMENTS
@@ -52,6 +52,8 @@ class BuiltVideoSource:
     coverage: VideoCoverage
     segments: tuple[VideoSourceSegment, ...]
     segments_truncated: bool = False
+    available_segments: tuple[VideoSourceSegment, ...] = ()
+    available_segments_truncated: bool = False
 
 
 def _normalize_segments(
@@ -134,8 +136,8 @@ def merge_video_source(
     """Merge two observations of the same video document by coverage rules.
 
     Coverage matrix (deterministic, order-independent):
-      - retrieved + complete  → complete (snapshot replaces partial hits)
-      - complete  + retrieved → complete (later partial hits are ignored)
+      - retrieved + complete  → retrieved + complete catalog
+      - complete  + retrieved → retrieved + complete catalog
       - retrieved + retrieved → retrieved (union, deduped and sorted)
       - complete  + complete  → complete (new snapshot replaces the old one)
     """
@@ -144,10 +146,20 @@ def merge_video_source(
         existing.identity.document_id,
     ) != (incoming.identity.knowledge_base_id, incoming.identity.document_id):
         return incoming
+    if incoming.coverage == "retrieved" and existing.coverage == "complete":
+        return _with_available_segments(
+            incoming,
+            available_segments=existing.segments,
+            available_segments_truncated=existing.segments_truncated,
+        )
+    if incoming.coverage == "complete" and existing.coverage == "retrieved":
+        return _with_available_segments(
+            existing,
+            available_segments=incoming.segments,
+            available_segments_truncated=incoming.segments_truncated,
+        )
     if incoming.coverage == "complete":
         return incoming
-    if existing.coverage == "complete":
-        return existing
     merged = build_video_source(
         identity=existing.identity,
         coverage="retrieved",
@@ -156,7 +168,50 @@ def merge_video_source(
         max_segments=max_segments,
     )
     # Both inputs were valid, so the union cannot be empty.
-    return merged if merged is not None else existing
+    if merged is None:
+        return existing
+    available_segments = incoming.available_segments or existing.available_segments
+    available_segments_truncated = (
+        incoming.available_segments_truncated
+        if incoming.available_segments
+        else existing.available_segments_truncated
+    )
+    return _with_available_segments(
+        merged,
+        available_segments=available_segments,
+        available_segments_truncated=available_segments_truncated,
+    )
+
+
+def _with_available_segments(
+    source: BuiltVideoSource,
+    *,
+    available_segments: tuple[VideoSourceSegment, ...],
+    available_segments_truncated: bool,
+) -> BuiltVideoSource:
+    """Attach a full chapter catalog without changing citation evidence."""
+    return replace(
+        source,
+        available_segments=available_segments,
+        available_segments_truncated=available_segments_truncated,
+    )
+
+
+def _segments_to_payload(
+    segments: tuple[VideoSourceSegment, ...],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": segment.segment_id
+            or f"segment_{segment.start_sec}_{segment.end_sec}",
+            "start_sec": segment.start_sec,
+            "end_sec": segment.end_sec,
+            **({"score": segment.score} if segment.score is not None else {}),
+            "title": segment.title,
+            "description": segment.description,
+        }
+        for segment in segments
+    ]
 
 
 def video_source_to_payload(source: BuiltVideoSource) -> dict[str, Any]:
@@ -169,19 +224,12 @@ def video_source_to_payload(source: BuiltVideoSource) -> dict[str, Any]:
         "title": source.identity.title.strip(),
         "kb_id": source.identity.knowledge_base_id,
         "document_id": source.identity.document_id,
-        "segments": [
-            {
-                "id": segment.segment_id
-                or f"segment_{segment.start_sec}_{segment.end_sec}",
-                "start_sec": segment.start_sec,
-                "end_sec": segment.end_sec,
-                **({"score": segment.score} if segment.score is not None else {}),
-                "title": segment.title,
-                "description": segment.description,
-            }
-            for segment in source.segments
-        ],
+        "segments": _segments_to_payload(source.segments),
     }
     if source.segments_truncated:
         payload["segments_truncated"] = True
+    if source.available_segments:
+        payload["available_segments"] = _segments_to_payload(source.available_segments)
+    if source.available_segments_truncated:
+        payload["available_segments_truncated"] = True
     return payload

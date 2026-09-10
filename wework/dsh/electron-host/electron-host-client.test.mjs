@@ -56,6 +56,32 @@ test('negotiates capabilities and invokes the Electron host', async () => {
   client.stop()
 })
 
+test('sends the workbench principal in its handshake', async () => {
+  const hostToDsh = new PassThrough()
+  const dshToHost = new PassThrough()
+  const client = new ElectronHostClient({
+    token: 'test-token',
+    input: hostToDsh,
+    output: dshToHost,
+    principal: '@wegent/dsh-workbench',
+  })
+  dshToHost.once('data', chunk => {
+    const message = JSON.parse(chunk.toString('utf8'))
+    assert.equal(message.principal, '@wegent/dsh-workbench')
+    hostToDsh.write(
+      `${JSON.stringify({
+        type: 'hello',
+        ok: true,
+        protocolVersion: ELECTRON_HOST_PROTOCOL_VERSION,
+        capabilities: [],
+      })}\n`
+    )
+  })
+
+  await client.start()
+  client.stop()
+})
+
 test('accepts host responses larger than the previous one MiB limit', async () => {
   const hostToDsh = new PassThrough()
   const dshToHost = new PassThrough()

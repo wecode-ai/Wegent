@@ -106,6 +106,23 @@ class TestTelegramKeyboardBuilder:
         first_button = keyboard.inline_keyboard[0][0]
         assert "⭐" in first_button.text
 
+    def test_build_devices_keyboard_marks_app_execution_target_current(self):
+        devices = [
+            {
+                "device_id": "local-device",
+                "execution_target_id": "app-record-1819",
+                "name": "Wework Device",
+                "status": "online",
+            }
+        ]
+
+        keyboard = TelegramKeyboardBuilder.build_devices_keyboard(
+            devices,
+            current_device_id="app-record-1819",
+        )
+
+        assert "⭐" in keyboard.inline_keyboard[0][0].text
+
     def test_build_devices_keyboard_marks_busy(self):
         """Test that busy devices are marked."""
         devices = [

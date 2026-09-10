@@ -5,6 +5,7 @@ const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/downlo
 
 export type MarkdownLinkTarget =
   | { kind: 'external' }
+  | { kind: 'internal'; path: string }
   | { kind: 'none' }
   | {
       kind: 'file'
@@ -43,6 +44,17 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
       ? trimmedHref.slice(1, -1).trim()
       : trimmedHref
   if (!value) return { kind: 'none' }
+  const environmentSettings = value.match(
+    /^\/projects\/([^/?#]+)\/settings\/environment-variables(?:[?#].*)?$/
+  )
+  if (environmentSettings) {
+    const params = new URLSearchParams({
+      app_type: 'web',
+      view: 'environment-variables',
+      project_id: decodeMarkdownFilePath(environmentSettings[1]),
+    })
+    return { kind: 'internal', path: `/sites?${params.toString()}` }
+  }
   if (/^(https?|mailto|tel):/i.test(value)) return { kind: 'external' }
   if (value.startsWith('#')) return { kind: 'none' }
   if (value.startsWith('folder://')) {

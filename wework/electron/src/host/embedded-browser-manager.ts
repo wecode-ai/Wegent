@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   Menu,
+  WebContentsView,
   session,
   shell,
   type ContextMenuParams,
@@ -18,7 +19,10 @@ import {
   type BrowserHistorySearch,
 } from './browser-history-store.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
-import { captureWebContentsDataUrl } from './web-contents-capture.js'
+import {
+  captureWebContentsDataUrl,
+  type WebContentsCaptureOptions,
+} from './web-contents-capture.js'
 
 export interface BrowserBounds {
   x: number
@@ -33,6 +37,8 @@ export interface BrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
   visible: boolean
   navigationError: {
     code: number
@@ -54,6 +60,14 @@ interface BrowserEntry {
   navigationError: BrowserPageState['navigationError']
   historyId: string | null
   historyGeneration: number
+}
+
+interface BrowserOpenInput {
+  label: string
+  url: string
+  bounds: BrowserBounds
+  visible: boolean
+  navigateExisting: boolean
 }
 
 export interface BrowserHostEvent {
@@ -105,7 +119,34 @@ interface BrowserDownload {
   path: string | null
 }
 
+export interface BrowserRequestHeaderRule {
+  id: string
+  origins: string[]
+  pathPrefixes: string[]
+  headers: Record<string, string>
+  expiresAt?: number | null
+  allowInsecure?: boolean
+}
+
+export interface BrowserBackgroundPageState {
+  id: string
+  title: string | null
+  url: string | null
+  userAgent: string
+  isLoading: boolean
+  httpResponseCode: number | null
+  httpStatusText: string | null
+  navigationError: {
+    code: number
+    message: string
+    url: string | null
+  } | null
+}
+
 const AGENT_CURSOR_IDLE_HIDE_MS = 4_000
+// Chromium's ERR_ABORTED: the load was superseded by a newer navigation, which
+// is a normal race, not a user-facing failure.
+const NAVIGATION_ABORTED_ERROR_CODE = -3
 export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
 export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
@@ -133,6 +174,16 @@ export class EmbeddedBrowserManager {
     Set<BrowserAgentCursorArrivalWaiter>
   >()
   private readonly agentCursorHideTimers = new Map<string, NodeJS.Timeout>()
+  private readonly backgroundPages = new Map<
+    string,
+    {
+      view: WebContentsView
+      httpResponseCode: number | null
+      httpStatusText: string | null
+      navigationError: BrowserBackgroundPageState['navigationError']
+    }
+  >()
+  private readonly requestHeaderRules = new Map<string, BrowserRequestHeaderRule>()
   private readonly history: BrowserHistoryStore
   private agentCursorSequence = 0
   private eventSequence = 0
@@ -143,14 +194,145 @@ export class EmbeddedBrowserManager {
     private readonly onEvent: (event: BrowserHostEvent) => void = () => {}
   ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
-    session
-      .fromPartition(EMBEDDED_BROWSER_PARTITION)
-      .on('will-download', (_event, item, webContents) => {
-        const entry = [...this.entries.values()].find(
-          candidate => candidate.contents.id === webContents.id
-        )
-        if (entry) this.trackDownload(entry, item)
-      })
+    const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+    browserSession.on('will-download', (_event, item, webContents) => {
+      const entry = [...this.entries.values()].find(
+        candidate => candidate.contents.id === webContents.id
+      )
+      if (entry) this.trackDownload(entry, item)
+    })
+    browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
+      callback({ requestHeaders: this.requestHeaders(details.url, details.requestHeaders) })
+    })
+  }
+
+  setRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
+    validateRequestHeaderRule(rule)
+    this.requestHeaderRules.set(rule.id, structuredClone(rule))
+  }
+
+  removeRequestHeaderRule(id: string): void {
+    this.requestHeaderRules.delete(id)
+  }
+
+  createBackgroundPage(id: string): BrowserBackgroundPageState {
+    const normalizedId = requiredBackgroundPageId(id)
+    if (this.backgroundPages.has(normalizedId)) {
+      throw new Error('Browser background page already exists')
+    }
+    const view = new WebContentsView({
+      webPreferences: {
+        session: session.fromPartition(EMBEDDED_BROWSER_PARTITION),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+      },
+    })
+    const entry = {
+      view,
+      httpResponseCode: null as number | null,
+      httpStatusText: null as string | null,
+      navigationError: null as BrowserBackgroundPageState['navigationError'],
+    }
+    this.backgroundPages.set(normalizedId, entry)
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      if (isBrowserUrl(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    view.webContents.on(
+      'did-fail-load',
+      (_event, code: number, message: string, url: string, isMainFrame: boolean) => {
+        if (!isMainFrame) return
+        entry.navigationError = { code, message, url: url || null }
+      }
+    )
+    view.webContents.on(
+      'did-navigate',
+      (_event, _url: string, httpResponseCode: number, httpStatusText: string) => {
+        entry.httpResponseCode = httpResponseCode >= 0 ? httpResponseCode : null
+        entry.httpStatusText = httpStatusText || null
+      }
+    )
+    view.webContents.once('destroyed', () => {
+      if (this.backgroundPages.get(normalizedId)?.view === view) {
+        this.backgroundPages.delete(normalizedId)
+      }
+    })
+    return this.backgroundPageState(normalizedId)
+  }
+
+  async navigateBackgroundPage(id: string, rawUrl: string): Promise<BrowserBackgroundPageState> {
+    const entry = this.requiredBackgroundPage(id)
+    entry.navigationError = null
+    entry.httpResponseCode = null
+    entry.httpStatusText = null
+    await entry.view.webContents.loadURL(validRemoteBrowserUrl(rawUrl))
+    return this.backgroundPageState(id)
+  }
+
+  setBackgroundPageUserAgent(id: string, userAgent: string): BrowserBackgroundPageState {
+    const entry = this.requiredBackgroundPage(id)
+    entry.view.webContents.setUserAgent(requiredUserAgent(userAgent))
+    return this.backgroundPageState(id)
+  }
+
+  backgroundPageState(id: string): BrowserBackgroundPageState {
+    const normalizedId = requiredBackgroundPageId(id)
+    const entry = this.requiredBackgroundPage(normalizedId)
+    const contents = entry.view.webContents
+    return {
+      id: normalizedId,
+      title: contents.getTitle() || null,
+      url: contents.getURL() || null,
+      userAgent: contents.getUserAgent(),
+      isLoading: contents.isLoading(),
+      httpResponseCode: entry.httpResponseCode,
+      httpStatusText: entry.httpStatusText,
+      navigationError: entry.navigationError,
+    }
+  }
+
+  closeBackgroundPage(id: string): void {
+    const normalizedId = requiredBackgroundPageId(id)
+    const entry = this.backgroundPages.get(normalizedId)
+    if (!entry) return
+    this.backgroundPages.delete(normalizedId)
+    if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close()
+  }
+
+  private requestHeaders(rawUrl: string, headers: Record<string, string>): Record<string, string> {
+    let url: URL
+    try {
+      url = new URL(rawUrl)
+    } catch {
+      return headers
+    }
+    const now = Date.now()
+    let next = headers
+    for (const [id, rule] of this.requestHeaderRules) {
+      if (rule.expiresAt != null && rule.expiresAt <= now) {
+        this.requestHeaderRules.delete(id)
+        continue
+      }
+      if (
+        rule.origins.includes(url.origin) &&
+        rule.pathPrefixes.some(prefix => url.pathname.startsWith(prefix))
+      ) {
+        next = { ...next, ...rule.headers }
+      }
+    }
+    return next
+  }
+
+  private requiredBackgroundPage(id: string) {
+    const normalizedId = requiredBackgroundPageId(id)
+    const entry = this.backgroundPages.get(normalizedId)
+    if (!entry || entry.view.webContents.isDestroyed()) {
+      throw new Error('Browser background page does not exist')
+    }
+    return entry
   }
 
   attach(label: string, contents: WebContents): void {
@@ -171,20 +353,20 @@ export class EmbeddedBrowserManager {
       this.setAgentControlPaused(entry.label, true)
     })
     contents.once('destroyed', () => {
-      if (this.attachedContents.get(normalizedLabel)?.id === contents.id) {
-        this.attachedContents.delete(normalizedLabel)
+      const removedLabels = new Set<string>()
+      for (const [attachedLabel, attached] of this.attachedContents) {
+        if (attached.id !== contents.id) continue
+        this.attachedContents.delete(attachedLabel)
+        removedLabels.add(attachedLabel)
       }
-      if (this.entries.get(normalizedLabel)?.contents.id === contents.id) {
-        this.entries.delete(normalizedLabel)
+      for (const [entryLabel, entry] of this.entries) {
+        if (entry.contents.id !== contents.id) continue
+        this.entries.delete(entryLabel)
+        removedLabels.add(entryLabel)
       }
+      for (const removedLabel of removedLabels) this.clearLabelScopedState(removedLabel)
     })
-    const waiters = this.attachmentWaiters.get(normalizedLabel)
-    if (!waiters) return
-    this.attachmentWaiters.delete(normalizedLabel)
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timeout)
-      waiter.resolve(contents)
-    }
+    this.resolveAttachmentWaiters(normalizedLabel, contents)
   }
 
   requestPopupTab(parentLabel: string, url: string): void {
@@ -207,26 +389,13 @@ export class EmbeddedBrowserManager {
     })
   }
 
-  async open(input: {
-    label: string
-    url: string
-    bounds: BrowserBounds
-    visible: boolean
-    navigateExisting: boolean
-  }): Promise<BrowserPageState> {
+  async open(input: BrowserOpenInput): Promise<BrowserPageState> {
     const label = requiredLabel(input.label)
     const existing = this.entries.get(label)
-    if (existing) {
-      existing.bounds = validBounds(input.bounds)
-      existing.visible = input.visible
-      if (input.navigateExisting && existing.contents.getURL() !== input.url) {
-        const url = validBrowserUrl(input.url)
-        existing.requestedUrl = url
-        await this.load(existing, url)
-      }
-      return this.state(label)
-    }
+    if (existing) return this.openExisting(existing, input)
     const contents = await this.waitForAttachedContents(label)
+    const migrated = this.entries.get(label)
+    if (migrated) return this.openExisting(migrated, input)
     const entry: BrowserEntry = {
       label,
       nativeLabel: `electron-browser-${randomUUID()}`,
@@ -286,6 +455,9 @@ export class EmbeddedBrowserManager {
       if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
     })
     contents.on('did-navigate', (_event, url) => {
+      // A committed main-frame navigation means a page is on screen again, so
+      // any failure recorded by a superseded load is now stale.
+      entry.navigationError = null
       if (url !== entry.previewDisplayUrl) {
         entry.requestedUrl = url
         entry.previewDisplayUrl = null
@@ -302,7 +474,7 @@ export class EmbeddedBrowserManager {
       emitPageState()
     })
     contents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
-      if (!isMainFrame || code === -3) return
+      if (!isMainFrame || code === NAVIGATION_ABORTED_ERROR_CODE) return
       this.recordNavigationFailure(entry, code, message, validatedURL || entry.requestedUrl)
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
@@ -320,6 +492,20 @@ export class EmbeddedBrowserManager {
     // The requested URL is already authoritative in state() while Chromium finishes loading.
     await this.load(entry, entry.requestedUrl as string)
     return this.state(label)
+  }
+
+  private async openExisting(
+    entry: BrowserEntry,
+    input: BrowserOpenInput
+  ): Promise<BrowserPageState> {
+    entry.bounds = validBounds(input.bounds)
+    entry.visible = input.visible
+    if (input.navigateExisting && entry.contents.getURL() !== input.url) {
+      const url = validBrowserUrl(input.url)
+      entry.requestedUrl = url
+      await this.load(entry, url)
+    }
+    return this.state(entry.label)
   }
 
   setBounds(label: string, bounds: BrowserBounds, visible: boolean): void {
@@ -440,6 +626,8 @@ export class EmbeddedBrowserManager {
       title: contents.getTitle() || null,
       url: pendingUrl || visibleCurrentUrl || entry.requestedUrl,
       isLoading: contents.isLoading(),
+      canGoBack: contents.navigationHistory.canGoBack(),
+      canGoForward: contents.navigationHistory.canGoForward(),
       visible: entry.visible,
       navigationError: entry.navigationError,
     }
@@ -449,6 +637,28 @@ export class EmbeddedBrowserManager {
     const entry = this.required(fromLabel)
     const target = requiredLabel(toLabel)
     if (this.entries.has(target)) throw new Error(`Browser label already exists: ${target}`)
+    const attached = this.attachedContents.get(entry.label)
+    const targetAttached = this.attachedContents.get(target)
+    if (
+      attached &&
+      targetAttached &&
+      attached.id !== targetAttached.id &&
+      !targetAttached.isDestroyed()
+    ) {
+      targetAttached.close()
+    }
+    this.attachedContents.delete(entry.label)
+    if (attached && !attached.isDestroyed()) this.attachedContents.set(target, attached)
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (activeLabel === entry.label) this.activeTabs.set(baseLabel, target)
+    }
+    if (this.agentControlPaused.delete(entry.label)) this.agentControlPaused.add(target)
+    for (const approval of this.agentApprovals.values()) {
+      if (approval.label === entry.label) approval.label = target
+    }
+    for (const download of this.downloads.values()) {
+      if (download.label === entry.label) download.label = target
+    }
     this.entries.delete(entry.label)
     entry.label = target
     this.entries.set(target, entry)
@@ -466,6 +676,7 @@ export class EmbeddedBrowserManager {
     this.clearAgentCursorHide(fromLabel)
     if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
     if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
+    if (attached && !attached.isDestroyed()) this.resolveAttachmentWaiters(target, attached)
   }
 
   setActiveTab(baseLabel: string, activeLabel: string): void {
@@ -708,6 +919,11 @@ export class EmbeddedBrowserManager {
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
+    this.clearLabelScopedState(label)
+    if (!entry.contents.isDestroyed()) entry.contents.close()
+  }
+
+  private clearLabelScopedState(label: string): void {
     this.agentControlPaused.delete(label)
     this.agentActive.delete(label)
     this.clearAgentCursorHide(label)
@@ -718,7 +934,10 @@ export class EmbeddedBrowserManager {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
     this.attachedContents.delete(label)
-    if (!entry.contents.isDestroyed()) entry.contents.close()
+    this.rejectAttachmentWaiters(
+      label,
+      new Error(`Embedded browser webview was closed before attachment: ${label}`)
+    )
   }
 
   closeMany(labels: string[]): void {
@@ -785,9 +1004,13 @@ export class EmbeddedBrowserManager {
     return this.history.remove(ids)
   }
 
-  async capture(label: string, rect?: BrowserBounds): Promise<string> {
+  async capture(
+    label: string,
+    rect?: BrowserBounds,
+    options: Omit<WebContentsCaptureOptions, 'rect'> = {}
+  ): Promise<string> {
     const entry = this.required(label)
-    return captureWebContentsDataUrl(entry.contents, { rect })
+    return captureWebContentsDataUrl(entry.contents, { ...options, rect })
   }
 
   labelForContentsId(contentsId: number): string | null {
@@ -893,6 +1116,8 @@ export class EmbeddedBrowserManager {
       if (download.item.getState() === 'progressing') download.item.cancel()
     }
     this.downloads.clear()
+    for (const id of [...this.backgroundPages.keys()]) this.closeBackgroundPage(id)
+    this.requestHeaderRules.clear()
     this.closeMany([...this.entries.keys()])
     for (const [label, waiters] of this.attachmentWaiters) {
       for (const waiter of waiters) {
@@ -978,6 +1203,10 @@ export class EmbeddedBrowserManager {
       if (!entry.navigationError) {
         const message = error instanceof Error ? error.message : String(error)
         const code = Number(message.match(/\((-?\d+)\)/)?.[1] ?? -2)
+        // loadURL rejects with ERR_ABORTED when a newer navigation supersedes
+        // this one. The winning navigation reports its own outcome, so an
+        // aborted load must not leave a sticky failure on the entry.
+        if (code === NAVIGATION_ABORTED_ERROR_CODE) return
         this.recordNavigationFailure(entry, code, message, url)
       }
     }
@@ -1091,6 +1320,67 @@ export class EmbeddedBrowserManager {
       this.attachmentWaiters.set(label, waiters)
     })
   }
+
+  private resolveAttachmentWaiters(label: string, contents: WebContents): void {
+    const waiters = this.attachmentWaiters.get(label)
+    if (!waiters) return
+    this.attachmentWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.resolve(contents)
+    }
+  }
+
+  private rejectAttachmentWaiters(label: string, error: Error): void {
+    const waiters = this.attachmentWaiters.get(label)
+    if (!waiters) return
+    this.attachmentWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.reject(error)
+    }
+  }
+}
+
+function validateRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
+  if (!/^[a-zA-Z0-9._:-]{1,160}$/.test(rule.id)) {
+    throw new Error('Browser request header rule id is invalid')
+  }
+  if (rule.origins.length === 0 || rule.pathPrefixes.length === 0) {
+    throw new Error('Browser request header rule must include origins and path prefixes')
+  }
+  for (const origin of rule.origins) {
+    const parsed = new URL(origin)
+    if (
+      parsed.origin !== origin ||
+      !['http:', 'https:'].includes(parsed.protocol) ||
+      (parsed.protocol === 'http:' && rule.allowInsecure !== true)
+    ) {
+      throw new Error(
+        'Browser request header rule origin must be HTTPS unless insecure HTTP is explicitly allowed'
+      )
+    }
+  }
+  if (rule.pathPrefixes.some(prefix => !prefix.startsWith('/'))) {
+    throw new Error('Browser request header rule path prefix is invalid')
+  }
+  const forbidden = new Set([
+    'connection',
+    'content-length',
+    'cookie',
+    'host',
+    'proxy-authorization',
+  ])
+  for (const [name, value] of Object.entries(rule.headers)) {
+    if (
+      !/^[a-zA-Z0-9-]+$/.test(name) ||
+      forbidden.has(name.toLowerCase()) ||
+      value.includes('\r') ||
+      value.includes('\n')
+    ) {
+      throw new Error('Browser request header rule contains an invalid header')
+    }
+  }
 }
 
 function browserFrame(bounds: BrowserBounds): number[] {
@@ -1172,10 +1462,34 @@ function requiredLabel(label: string): string {
   return value
 }
 
+function requiredBackgroundPageId(id: string): string {
+  const value = id?.trim()
+  if (!value || !/^[a-zA-Z0-9._:-]{1,160}$/.test(value)) {
+    throw new Error('Browser background page id is invalid')
+  }
+  return value
+}
+
+function requiredUserAgent(userAgent: string): string {
+  const value = userAgent?.trim()
+  if (!value || value.length > 4096 || /[\r\n]/.test(value)) {
+    throw new Error('Browser user agent is invalid')
+  }
+  return value
+}
+
 function validBrowserUrl(value: string): string {
   const url = new URL(value)
   if (!isBrowserUrl(url.toString())) {
     throw new Error(`Embedded browser URL protocol is not allowed: ${url.protocol}`)
+  }
+  return url.toString()
+}
+
+function validRemoteBrowserUrl(value: string): string {
+  const url = new URL(value)
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(`Browser background page URL protocol is not allowed: ${url.protocol}`)
   }
   return url.toString()
 }

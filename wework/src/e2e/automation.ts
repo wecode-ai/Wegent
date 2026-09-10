@@ -49,7 +49,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
-import { downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -80,7 +80,26 @@ interface ScrollStabilitySample {
   stop: () => void
 }
 
+interface ElementMetricsSamplePoint {
+  connected: boolean
+  height: number
+  label: string | null
+  left: number
+  testIds: string[]
+  time: number
+  top: number
+  visibility: string
+  width: number
+}
+
+interface ElementMetricsSample {
+  done: boolean
+  frames: ElementMetricsSamplePoint[]
+  stop: () => void
+}
+
 let activeScrollStabilitySample: ScrollStabilitySample | null = null
+let activeElementMetricsSample: ElementMetricsSample | null = null
 
 export interface WeworkAutomationBridge {
   version: 1
@@ -109,6 +128,7 @@ declare global {
 }
 
 export function isWeworkAutomationEnabled(): boolean {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return false
   return (
     import.meta.env.MODE === 'e2e' ||
     import.meta.env.VITE_WEWORK_E2E === 'true' ||
@@ -124,6 +144,7 @@ export function shouldUseNativeProjectDirectoryPicker(): boolean {
 }
 
 function desktopControlUrl(): string | null {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return null
   const value =
     getDesktopE2ERuntimeConfig().controlUrl ??
     import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
@@ -131,6 +152,7 @@ function desktopControlUrl(): string | null {
 }
 
 function desktopControlHeaders(): HeadersInit | undefined {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return undefined
   const token =
     getDesktopE2ERuntimeConfig().controlToken ??
     import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
@@ -813,6 +835,36 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   return element.textContent?.trim() ?? ''
 }
 
+async function pressNativeDesktopControlKey(selector: string, key: string): Promise<string> {
+  const windowLabel = getDesktopWindowLabel()
+  await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
+    windowLabel,
+  })
+  await waitForDesktopControlTick()
+  const element = findDesktopControlElements(selector)[0]
+  if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
+  element.scrollIntoView({ block: 'center', inline: 'nearest' })
+  element.focus()
+  if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
+  const received: KeyboardEvent[] = []
+  const recordKey = (event: KeyboardEvent) => received.push(event)
+  document.addEventListener('keydown', recordKey, true)
+  try {
+    await invokeDesktopHost('e2e.pressKey', { windowLabel, key })
+    await waitForDesktopControlTick()
+    if (!received.some(event => event.isTrusted && event.target === element)) {
+      throw new Error(
+        `Native key did not reach its target: windowFocused=${document.hasFocus()}, ` +
+          `active=${document.activeElement?.getAttribute('data-testid') ?? ''}, ` +
+          `received=${received.map(event => event.key).join(',')}`
+      )
+    }
+  } finally {
+    document.removeEventListener('keydown', recordKey, true)
+  }
+  return document.activeElement?.getAttribute('data-testid') ?? ''
+}
+
 let activeDesktopControlPointer: {
   element: HTMLElement
   options: MouseEventInit & PointerEventInit
@@ -1211,6 +1263,7 @@ function selectDesktopControlText(selector: string, value: string): string {
 
 type XtermAutomationTarget = HTMLElement & {
   __weworkInputForE2E?: (value: string) => void
+  __weworkTextForE2E?: () => string
   __weworkSelectTextForE2E?: (value: string) => string
 }
 
@@ -1220,9 +1273,20 @@ function findXtermAutomationTarget(root: HTMLElement | null): XtermAutomationTar
   return (
     candidates.find(candidate => {
       const target = candidate as XtermAutomationTarget
-      return Boolean(target.__weworkInputForE2E || target.__weworkSelectTextForE2E)
+      return Boolean(
+        target.__weworkInputForE2E || target.__weworkTextForE2E || target.__weworkSelectTextForE2E
+      )
     }) ?? null
   )
+}
+
+function getDesktopControlTerminalText(selector: string): string {
+  const terminalRoot = findDesktopControlElements(selector)[0]
+  const target = findXtermAutomationTarget(terminalRoot ?? null)
+  if (!target?.__weworkTextForE2E) {
+    throw new Error(`Unable to locate the xterm text bridge inside "${selector}"`)
+  }
+  return target.__weworkTextForE2E()
 }
 
 function selectDesktopControlTerminalText(selector: string, value: string): string {
@@ -1494,6 +1558,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'dispatchLocalModelSettingsChangedThenMacrotask':
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      await waitForDesktopControlTick()
+      return ''
     case 'dispatchRuntimeLifecycleEvent':
       window.dispatchEvent(
         new CustomEvent('wework:e2e:runtime-task-lifecycle', {
@@ -1512,6 +1580,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'openWeworkScheme':
+      await invokeDesktopHost('shell.openExternal', { url: command.value ?? '' })
+      return ''
     case 'getSystemNotifications':
       return JSON.stringify(
         (
@@ -1726,6 +1797,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector, command.visible)
+    case 'getTerminalText':
+      return getDesktopControlTerminalText(command.selector)
     case 'getElementCount':
       return String(
         command.visible
@@ -1749,6 +1822,67 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'startElementMetricsSampling': {
+      const durationMs = Number(command.value)
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('startElementMetricsSampling requires a finite positive durationMs')
+      }
+      const initialElements = findDesktopControlElements(command.selector)
+      const initialElement = command.visible
+        ? initialElements.find(desktopControlElementVisible)
+        : initialElements[0]
+      if (!initialElement) throw new Error(`Unable to find selector "${command.selector}"`)
+      activeElementMetricsSample?.stop()
+      const startedAt = performance.now()
+      let animationFrame = 0
+      const sample: ElementMetricsSample = {
+        done: false,
+        frames: [],
+        stop: () => {},
+      }
+      const finish = () => {
+        if (sample.done) return
+        sample.done = true
+        if (animationFrame) window.cancelAnimationFrame(animationFrame)
+      }
+      const captureFrame = (time: number) => {
+        const element = initialElement
+        const rect = element?.getBoundingClientRect()
+        const testIds = element
+          ? [element, ...element.querySelectorAll<HTMLElement>('[data-testid]')]
+              .map(candidate => candidate.dataset.testid)
+              .filter((testId): testId is string => Boolean(testId))
+          : []
+        sample.frames.push({
+          connected: element?.isConnected ?? false,
+          height: rect?.height ?? 0,
+          label: element?.dataset.weworkBrowserWebview ?? null,
+          left: rect?.left ?? 0,
+          testIds,
+          time: time - startedAt,
+          top: rect?.top ?? 0,
+          visibility: element ? window.getComputedStyle(element).visibility : '',
+          width: rect?.width ?? 0,
+        })
+        if (time - startedAt >= durationMs) {
+          finish()
+          return
+        }
+        animationFrame = window.requestAnimationFrame(captureFrame)
+      }
+      sample.stop = finish
+      activeElementMetricsSample = sample
+      animationFrame = window.requestAnimationFrame(captureFrame)
+      return ''
+    }
+    case 'getElementMetricsSample': {
+      const sample = activeElementMetricsSample
+      if (!sample) throw new Error('Element metrics sampling has not started')
+      return JSON.stringify({
+        done: sample.done,
+        frames: sample.frames,
+      })
+    }
     case 'startScrollStabilitySampling': {
       const options = JSON.parse(command.value ?? '{}') as {
         anchorText?: string
@@ -1895,6 +2029,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return desktopControlSnapshot(command.selector)
     case 'getClipboardText':
       return invokeDesktopHost<string>('e2e.getClipboardText')
+    case 'checkForAppUpdate':
+      return JSON.stringify(await checkForWeworkUpdate('stable'))
+    case 'getAppUpdateProgress':
+      return JSON.stringify(await invokeDesktopHost('appUpdate.downloadProgress'))
     case 'downloadPendingAppUpdate':
       await downloadPendingWeworkUpdate()
       return 'downloaded'
@@ -2133,6 +2271,28 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       throw new Error(lastFailure)
     }
+    case 'clickElementWithText': {
+      const text = command.text ?? ''
+      if (!text) throw new Error('clickElementWithText requires text')
+      const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+      const startedAt = Date.now()
+      while (Date.now() - startedAt < timeoutMs) {
+        const elements = findDesktopControlElements(command.selector).filter(
+          candidate =>
+            (!command.visible || desktopControlElementRendered(candidate)) &&
+            desktopControlElementEnabled(candidate) &&
+            (candidate.textContent ?? '').includes(text)
+        )
+        for (const element of elements) {
+          element.scrollIntoView({ block: 'center', inline: 'nearest' })
+          if (command.visible && !desktopControlElementVisible(element)) continue
+          element.click()
+          return element.textContent?.trim() ?? ''
+        }
+        await waitForDesktopControlTick()
+      }
+      throw new Error(`Unable to click selector "${command.selector}" containing "${text}"`)
+    }
     case 'markElementWithText': {
       const text = command.text ?? ''
       const value = command.value?.trim()
@@ -2283,6 +2443,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'press': {
       return pressDesktopControlKey(command.selector, command.key ?? '')
     }
+    case 'nativePress': {
+      return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+    }
     case 'select': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!(element instanceof HTMLSelectElement)) {
@@ -2346,6 +2509,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
+      cache: 'no-store',
       headers: desktopControlHeaders(),
     })
   let commandRequest = pollForCommand()
@@ -2402,10 +2566,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 function installDesktopControlClient() {
   if (!isDesktopRuntime()) return
   const url = desktopControlUrl()
-  const windowLabel = getDesktopWindowLabel()
+  const windowLabel = getDesktopE2ERuntimeConfig().windowLabel ?? getDesktopWindowLabel()
   if (
     !url ||
-    (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||
+    (windowLabel !== 'main' &&
+      !windowLabel.startsWith('workspace-') &&
+      !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')
   ) {
     return

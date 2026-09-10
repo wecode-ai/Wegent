@@ -1,5 +1,6 @@
 import { Loader2, Square } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import {
   getComputerUseStatus,
   stopComputerUseCurrentAction,
@@ -61,7 +62,7 @@ export function ComputerUseActivityIndicator() {
       data-testid="computer-use-activity-indicator"
       className="fixed left-1/2 top-12 z-system-popover flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-2xl border border-border bg-popover/95 px-4 py-2.5 text-sm text-text-primary shadow-xl backdrop-blur-md"
     >
-      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+      <CompositedSpinner icon={Loader2} className="h-4 w-4 text-primary" />
       <span className="min-w-0 truncate">
         {t('workbench.computer_use_current_action', { action: status.currentTool })}
       </span>

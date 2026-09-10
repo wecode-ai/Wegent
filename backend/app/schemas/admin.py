@@ -76,12 +76,22 @@ class AdminUserListResponse(BaseModel):
 
 
 # Public Model Management Schemas
+def _validate_public_model_json(value: Optional[dict]) -> Optional[dict]:
+    """Require an object-valued spec when a public model JSON defines one."""
+    if value is not None and "spec" in value and not isinstance(value["spec"], dict):
+        raise ValueError("Public model JSON spec must be an object")
+    return value
+
+
 class PublicModelCreate(BaseModel):
     """Public model creation model"""
 
     name: str = Field(..., min_length=1, max_length=100)
     namespace: str = Field(default="default", max_length=100)
     model_json: dict = Field(..., alias="json")
+    is_visible: bool = True
+
+    _validate_model_json = field_validator("model_json")(_validate_public_model_json)
 
     class Config:
         populate_by_name = True
@@ -94,7 +104,10 @@ class PublicModelUpdate(BaseModel):
     namespace: Optional[str] = Field(None, max_length=100)
     model_json: Optional[dict] = Field(None, alias="json")
     is_active: Optional[bool] = None
+    is_visible: Optional[bool] = None
     is_advanced: Optional[bool] = None
+
+    _validate_model_json = field_validator("model_json")(_validate_public_model_json)
 
     class Config:
         populate_by_name = True
@@ -109,6 +122,7 @@ class PublicModelResponse(BaseModel):
     display_name: Optional[str] = None
     model_json: dict = Field(..., alias="json", serialization_alias="json")
     is_active: bool
+    is_visible: bool = True
     is_advanced: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -155,6 +169,33 @@ class SystemConfigResponse(BaseModel):
 
     version: int
     teams: List[int]
+
+
+class CodeWikiGenerationStrategyPolicyItem(BaseModel):
+    """One selectable Code Wiki strategy as an administrator configures it."""
+
+    id: str = Field(..., min_length=1, max_length=64)
+    enabled: bool
+    team_name: str = Field(..., min_length=1, max_length=100)
+    team_namespace: str = Field("default", min_length=1, max_length=100)
+    display_name: str = ""
+    description: str = ""
+
+
+class CodeWikiGenerationPolicyConfigResponse(BaseModel):
+    """Administrator-visible policy and the version used for audit/debugging."""
+
+    version: int
+    configured: bool
+    default_strategy: str
+    strategies: List[CodeWikiGenerationStrategyPolicyItem]
+
+
+class CodeWikiGenerationPolicyConfigUpdate(BaseModel):
+    """Replace the selectable portion of the Code Wiki generation policy."""
+
+    default_strategy: str = Field(..., min_length=1, max_length=64)
+    strategies: List[CodeWikiGenerationStrategyPolicyItem] = Field(..., min_length=1)
 
     class Config:
         from_attributes = True

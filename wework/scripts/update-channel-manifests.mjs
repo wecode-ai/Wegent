@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 
@@ -39,6 +39,15 @@ export function isNewerWeworkVersion(candidate, current) {
   return compareWeworkVersions(candidate, current) > 0
 }
 
+export function parseElectronManifestVersion(manifest) {
+  const match = /(?:^|\n)version:\s*['"]?([^'"\s]+)['"]?\s*(?:\n|$)/.exec(manifest)
+  if (!match) {
+    throw new Error('Electron update manifest does not contain a version.')
+  }
+  parseWeworkVersion(match[1])
+  return match[1]
+}
+
 export function expectedChannelAssetNames(channel) {
   if (channel !== 'stable' && channel !== 'beta') {
     throw new Error(`Unsupported Wework update channel: ${channel}`)
@@ -48,9 +57,6 @@ export function expectedChannelAssetNames(channel) {
   return [
     `${electronChannel}.yml`,
     `${electronChannel}-mac.yml`,
-    `${channel}-darwin-aarch64.json`,
-    `${channel}-darwin-x86_64.json`,
-    `${channel}-windows-x86_64.json`,
     `components-${channel}-macos-arm64.json`,
     `components-${channel}-macos-x64.json`,
     `components-${channel}-windows-x64.json`,
@@ -63,37 +69,8 @@ export function hasCompleteChannelAssets(assetNames, channel) {
   return expectedChannelAssetNames(channel).every(name => availableAssets.has(name))
 }
 
-export async function generateChannelManifests({ sourcePath, outputDirectory, channel }) {
-  if (channel !== 'stable' && channel !== 'beta') {
-    throw new Error(`Unsupported Wework update channel: ${channel}`)
-  }
-
-  const source = JSON.parse(await readFile(sourcePath, 'utf8'))
-  const platforms = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64']
-  await mkdir(outputDirectory, { recursive: true })
-
-  for (const platform of platforms) {
-    const [operatingSystem, ...architectureParts] = platform.split('-')
-    const architecture = architectureParts.join('-')
-    const target = `${channel}-${operatingSystem}`
-    const entry = source.platforms?.[platform]
-    if (!entry) {
-      throw new Error(`Missing platform '${platform}' in ${sourcePath}`)
-    }
-    const data = {
-      version: source.version,
-      notes: source.notes,
-      pub_date: source.pub_date,
-      platforms: {
-        [target]: entry,
-      },
-    }
-    await writeFile(
-      resolve(outputDirectory, `${target}-${architecture}.json`),
-      `${JSON.stringify(data, null, 2)}\n`,
-      'utf8'
-    )
-  }
+export function supportsComponentizedHostUpdate(manifest) {
+  return manifest?.capabilities?.componentizedHostUpdate === 1
 }
 
 async function main() {
@@ -124,18 +101,42 @@ async function main() {
     return
   }
 
-  if (command === 'generate') {
-    const [sourcePath, outputDirectory, channel] = args
-    if (!sourcePath || !outputDirectory || !channel) {
+  if (command === 'supports-componentized-host-update') {
+    const [manifestPath] = args
+    if (!manifestPath) {
       throw new Error(
-        'Usage: update-channel-manifests.mjs generate <source> <output-directory> <channel>'
+        'Usage: update-channel-manifests.mjs supports-componentized-host-update <manifest-json|->'
       )
     }
-    await generateChannelManifests({ sourcePath, outputDirectory, channel })
+    try {
+      const source = await readText(manifestPath)
+      process.exitCode = supportsComponentizedHostUpdate(JSON.parse(source)) ? 0 : 1
+    } catch {
+      process.exitCode = 1
+    }
     return
   }
 
-  throw new Error('Expected command: is-newer, has-complete-channel-assets, or generate')
+  if (command === 'read-electron-version') {
+    const [manifestPath] = args
+    if (!manifestPath) {
+      throw new Error('Usage: update-channel-manifests.mjs read-electron-version <manifest-yml>')
+    }
+    process.stdout.write(`${parseElectronManifestVersion(await readFile(manifestPath, 'utf8'))}\n`)
+    return
+  }
+
+  throw new Error(
+    'Expected command: is-newer, has-complete-channel-assets, supports-componentized-host-update, or read-electron-version'
+  )
+}
+
+async function readText(path) {
+  if (path !== '-') return readFile(path, 'utf8')
+  process.stdin.setEncoding('utf8')
+  let source = ''
+  for await (const chunk of process.stdin) source += chunk
+  return source
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

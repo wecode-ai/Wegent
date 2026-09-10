@@ -23,7 +23,7 @@ const CLAUDE_BINARY = localHarnessCliPath(
   'claude'
 )
 const MODEL_LABEL = 'Desktop E2E DeepSeek Pro Vision Main'
-const REMOTE_MODEL_LABEL = 'desktop-e2e-cloud-responses-upstream'
+const REMOTE_MODEL_LABEL = 'gpt-6-astra'
 const LOCAL_INITIAL_PROMPT =
   'WEWORK_CLAUDE_LOCAL_INITIAL: create the requested local verification file.'
 const LOCAL_INITIAL_COMPLETION = 'WEWORK_CLAUDE_LOCAL_INITIAL_COMPLETE'

@@ -18,6 +18,7 @@ from minio.commonconfig import CopySource
 from minio.error import S3Error
 from minio_release_assets import (
     load_component_assets,
+    load_release_artifacts,
     publish_component_assets,
     publish_component_manifest,
     publish_immutable_file,
@@ -79,7 +80,11 @@ def publish_latest_installer(
     version: str,
     artifacts: list[Path],
 ) -> None:
-    installers = [artifact for artifact in artifacts if artifact.suffix == ".exe"]
+    installers = [
+        artifact
+        for artifact in artifacts
+        if artifact.name.startswith(f"WeWork_{version}_") and artifact.suffix == ".exe"
+    ]
     if len(installers) != 1:
         raise SystemExit(
             f"Expected exactly one Windows installer for version {version}, "
@@ -237,8 +242,8 @@ def publish_channel(
     ):
         return False
     publish_components()
-    upload_electron_manifest(client, bucket, prefix, electron_manifest)
     upload_channel_manifest(client, bucket, prefix, channel_manifest)
+    upload_electron_manifest(client, bucket, prefix, electron_manifest)
     return True
 
 
@@ -324,7 +329,7 @@ def main() -> None:
             upload_component_channel("beta", True, True)
         return
 
-    artifacts = sorted(output_dir.glob(f"WeWork_{version}_*"))
+    artifacts = load_release_artifacts(output_dir, version)
     if not artifacts:
         raise SystemExit(f"No Windows release artifacts found for version {version}")
     for artifact in artifacts:

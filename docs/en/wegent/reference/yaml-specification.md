@@ -68,6 +68,31 @@ spec:
 | `spec.mcpServers`    | object | No       | MCP server configuration defining agent's tool capabilities                      |
 | `spec.skills`        | array  | No       | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
 
+### Business MCP Server Identity
+
+When `spec.mcpServers` points to a remote MCP server hosted by a business
+partner, the server can authenticate the calling Wegent user with the task
+token Wegent injects into outbound requests. Configure the server's static
+headers with the `${{task_token}}` placeholder; Wegent replaces it with a
+signed task token when building the request:
+
+```yaml
+spec:
+  mcpServers:
+    business:
+      type: streamable-http
+      url: https://mcp.business.example.com/mcp
+      headers:
+        Authorization: "Bearer ${{task_token}}"
+```
+
+The task token is scoped to the current task (24 hours by default). The
+business side can resolve the current user by calling
+`GET /api/external/mcp-identity/userinfo` with the same
+`Authorization: Bearer <token>` header; the response contains only the user's
+basic information (`id`, `user_name`, `email`) and never exposes git
+credentials.
+
 ---
 
 ## ✨ Skill
@@ -162,6 +187,7 @@ metadata:
   name: ClaudeSonnet4
   namespace: default
 spec:
+  isVisible: true
   modelGroup: "Primary"
   modelSubGroup: "Fast"
   modelCapabilities:
@@ -181,6 +207,7 @@ spec:
 | ---------------------- | ------ | -------- | -------------------------------------------------- |
 | `metadata.name`        | string | Yes      | Unique identifier for the Model                    |
 | `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
+| `spec.isVisible`       | boolean | No      | Whether a public model appears in regular users' model selectors. Defaults to `true`; `false` preserves existing references and runtime resolution. |
 | `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
 | `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
 | `spec.modelCapabilities` | object | No | Multimodal understanding capabilities declared by an LLM chat model |

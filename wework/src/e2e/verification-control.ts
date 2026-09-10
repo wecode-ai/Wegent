@@ -4,6 +4,13 @@ import type {
 } from '@/extensions/desktop-control-contract'
 import { getLocalTerminalSnapshot } from '@/lib/local-terminal'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
+import {
+  localConnectorAuthHealth,
+  localConnectorAuthLogout,
+  localConnectorAuthStart,
+  localConnectorAuthPoll,
+  type LocalConnectorAuthTarget,
+} from '@/api/local/localConnectorAuth'
 
 interface VerificationControlDependencies {
   elementEnabled: (element: HTMLElement) => boolean
@@ -75,11 +82,34 @@ function reloadApp(): string {
   return ''
 }
 
+async function localConnectorAuth(command: DesktopControlCommand): Promise<string> {
+  const input = JSON.parse(command.value ?? '{}') as LocalConnectorAuthTarget & {
+    action: string
+    sessionId?: string
+  }
+  if (!input.pluginKey || !input.connectorSlug) throw new Error('A connector target is required')
+  const { action, sessionId, ...target } = input
+  switch (action) {
+    case 'health':
+      return JSON.stringify(await localConnectorAuthHealth(target, { bypassCache: true }))
+    case 'logout':
+      return JSON.stringify(await localConnectorAuthLogout(target))
+    case 'start':
+      return JSON.stringify(await localConnectorAuthStart(target))
+    case 'poll':
+      return JSON.stringify(await localConnectorAuthPoll(target, sessionId))
+    default:
+      throw new Error('Unsupported local connector verification action')
+  }
+}
+
 export async function executeVerificationControlCommand(
   command: DesktopControlCommand,
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'localConnectorAuth':
+      return { handled: true, value: await localConnectorAuth(command) }
     case 'clickAt':
       return { handled: true, value: clickAt(command, dependencies) }
     case 'seedLocalProject':

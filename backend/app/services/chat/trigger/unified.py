@@ -33,10 +33,6 @@ from app.services.chat.external_knowledge_refs import (
     validate_external_knowledge_refs,
 )
 from app.services.context import context_service
-from app.services.execution.skill_generation import (
-    enrich_skill_generation_context,
-    has_skill_generation_context_enrichers,
-)
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
     CODEX_RUNTIME_MODEL_NAME,
@@ -130,11 +126,14 @@ def _apply_generation_params(
     model_config: Dict[str, Any],
     generate_params: Any,
 ) -> None:
-    """Validate generation options against the selected model type and apply them."""
+    """Apply generation options when the execution model directly generates media."""
     if generate_params is None:
         return
 
     model_type = str(model_config.get("modelType") or "").strip().lower()
+    if model_type not in {"image", "video"}:
+        return
+
     if model_type == "image":
         unsupported = [
             name
@@ -150,10 +149,6 @@ def _apply_generation_params(
         if _generation_param(generate_params, "size") is not None:
             raise ValueError("Video generation does not support option: size")
         apply_video_generation_params(model_config, generate_params)
-    else:
-        raise ValueError(
-            "Generation options are only supported for image or video models"
-        )
 
     logger.info(
         "[build_execution_request] Generation params applied: "
@@ -486,7 +481,6 @@ def _build_cloud_gateway_model_config(
     *,
     model_name: str,
     creator: Any,
-    upstream_api_format: Optional[str] = None,
     model_type: Optional[str] = None,
     namespace: Optional[str] = None,
     resource_user_id: Optional[int] = None,
@@ -506,6 +500,8 @@ def _build_cloud_gateway_model_config(
 
     from app.core.config import settings
     from app.core.security import create_access_token
+    from app.services.chat.config.model_resolver import extract_and_process_model_config
+    from app.services.llm_proxy_service import resolve_llm_proxy_protocol
 
     exact_identity = any(
         value is not None for value in (model_type, namespace, resource_user_id)
@@ -565,13 +561,19 @@ def _build_cloud_gateway_model_config(
         expires_delta=30,
     )
     model_spec = kind.json.get("spec") if isinstance(kind.json, dict) else None
+    provider_config = extract_and_process_model_config(
+        model_spec=model_spec or {},
+        user_id=creator.id,
+        user_name=creator.user_name or "",
+    )
+    upstream_api_format = resolve_llm_proxy_protocol(model_name, provider_config)
     catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
     config = {
         "model": "openai",
         "model_id": model_name,
         "api_format": "responses",
         "protocol": "openai-responses",
-        "upstream_api_format": upstream_api_format or "openai-responses",
+        "upstream_api_format": upstream_api_format,
         "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
         "api_key": token,
         "default_headers": {
@@ -606,7 +608,6 @@ def build_wework_runtime_model_config(
         db,
         model_name=model_name,
         creator=creator,
-        upstream_api_format=resolved.get("upstream_api_format"),
     )
     if gateway_config is None:
         return resolved
@@ -873,6 +874,10 @@ async def build_execution_request(
         ExecutionRequest ready for dispatch
     """
     from app.services.execution import TaskRequestBuilder
+    from app.services.execution.skill_generation import (
+        enrich_skill_generation_context,
+        has_skill_generation_context_enrichers,
+    )
     from shared.models import ExecutionRequest
     from shared.telemetry.context import get_request_id
 
@@ -1280,7 +1285,6 @@ async def _process_contexts(
         if prepare_provider_native_knowledge
         else ctx.kb.enhanced_system_prompt
     )
-    request.table_contexts = ctx.table_contexts
     request.kb_meta_prompt = (
         "" if prepare_provider_native_knowledge else ctx.kb.kb_meta_prompt
     )
@@ -1312,11 +1316,10 @@ async def _process_contexts(
             request.document_ids = ctx.kb.document_ids
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
-        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, "
+        "user_subtask_id=%d, knowledge_base_ids=%s, "
         "attachments=%d, inline_attachment_content=%s",
         user_subtask_id,
         request.knowledge_base_ids,
-        len(ctx.table_contexts),
         len(request.attachments),
         inline_attachment_content,
     )

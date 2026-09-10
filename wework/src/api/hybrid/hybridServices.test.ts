@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/api/http'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
@@ -6,6 +7,7 @@ import { createHybridWorkbenchServices } from './hybridServices'
 const mocks = vi.hoisted(() => {
   const localCreateRuntimeTask = vi.fn()
   const cloudCreateRuntimeTask = vi.fn()
+  const cloudMaterializeRuntimeTask = vi.fn()
   const localListDevices = vi.fn()
   const cloudListDevices = vi.fn()
   const localListRuntimeWork = vi.fn()
@@ -45,8 +47,10 @@ const mocks = vi.hoisted(() => {
     runAutomationNow: vi.fn(),
     listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
   }
+  const captureLocalAppOptions = vi.fn()
   const captureRuntimeIpcOptions = vi.fn()
   const captureAutomationIpcOptions = vi.fn()
+  const captureRuntimeChatStreamDeps = vi.fn()
   const localListArchivedConversations = vi.fn()
   const cloudListArchivedConversations = vi.fn()
   const localArchiveAllConversations = vi.fn()
@@ -84,6 +88,7 @@ const mocks = vi.hoisted(() => {
       readWorkspaceTextFile: vi.fn(),
     },
     runtimeWorkApi: {
+      materializeRuntimeTask: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
@@ -130,6 +135,7 @@ const mocks = vi.hoisted(() => {
     taskApi: { getTurnFileChangesDiff: vi.fn() },
     deviceApi: cloudDeviceApi,
     runtimeWorkApi: {
+      materializeRuntimeTask: cloudMaterializeRuntimeTask,
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
@@ -175,6 +181,7 @@ const mocks = vi.hoisted(() => {
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
+    cloudMaterializeRuntimeTask,
     localSearchRuntimeWork,
     localGetWorktreeCapabilities,
     localPreflightWorktree,
@@ -193,8 +200,10 @@ const mocks = vi.hoisted(() => {
     localDeleteAttachment,
     cloudUploadAttachment,
     localAutomationApi,
+    captureLocalAppOptions,
     captureRuntimeIpcOptions,
     captureAutomationIpcOptions,
+    captureRuntimeChatStreamDeps,
     localListArchivedConversations,
     cloudListArchivedConversations,
     localArchiveAllConversations,
@@ -208,7 +217,10 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/api/local/localServices', () => ({
-  createLocalAppServices: () => mocks.localServices,
+  createLocalAppServices: (options: unknown) => {
+    mocks.captureLocalAppOptions(options)
+    return mocks.localServices
+  },
   createAutomationApiFromIpc: (
     request: (
       method: string,
@@ -327,9 +339,12 @@ vi.mock('@/api/backend/runtimeIpc', () => ({
 }))
 
 vi.mock('@/api/runtime/runtimeChatStream', () => ({
-  createRuntimeChatStream: () => ({
-    subscribe: mocks.cloudRuntimeChatStreamSubscribe,
-  }),
+  createRuntimeChatStream: (deps: unknown) => {
+    mocks.captureRuntimeChatStreamDeps(deps)
+    return {
+      subscribe: mocks.cloudRuntimeChatStreamSubscribe,
+    }
+  },
 }))
 
 const codexModel = {
@@ -769,6 +784,33 @@ describe('createHybridWorkbenchServices', () => {
       preload_skills: [],
     })
     expect(mocks.cloudListTeams).toHaveBeenCalledTimes(1)
+  })
+
+  it('delegates local Team materialization to the canonical Backend compiler', async () => {
+    const response = {
+      payload: {
+        schemaVersion: 2,
+        runtime: 'codex',
+        message: 'continue',
+        title: 'continue',
+        executionRequest: { team_id: 108 },
+      },
+      runtimeHandle: { wegentTeam: { id: 108 } },
+    }
+    mocks.cloudMaterializeRuntimeTask.mockResolvedValue(response)
+    createServices()
+    const options = mocks.captureLocalAppOptions.mock.calls.at(-1)?.[0] as {
+      materializeRuntimeTask: (request: {
+        wegentTeamId: number
+        runtime: 'codex'
+        message: string
+      }) => Promise<typeof response>
+    }
+    const request = { wegentTeamId: 108, runtime: 'codex' as const, message: 'continue' }
+
+    await expect(options.materializeRuntimeTask(request)).resolves.toEqual(response)
+    expect(mocks.cloudMaterializeRuntimeTask).toHaveBeenCalledWith(request)
+    expect(mocks.cloudListTeams).not.toHaveBeenCalled()
   })
 
   it('returns local devices from the primary device list', async () => {
@@ -1351,28 +1393,37 @@ describe('createHybridWorkbenchServices', () => {
       taskId: 'cloud-task',
       workspacePath: '/tmp/cloud',
     })
+    mocks.cloudCreateRuntimeTask.mockResolvedValueOnce({
+      accepted: true,
+      deviceId: 'cloud-device',
+      taskId: 'cloud-task',
+      workspacePath: '/tmp/cloud',
+    })
 
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'local-device',
       workspacePath: '/tmp/local',
-      teamId: 1,
+      wegentTeamId: 1,
       runtime: 'codex',
       message: 'local',
     })
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'cloud-device',
       workspacePath: '/tmp/cloud',
-      teamId: 1,
+      wegentTeamId: 1,
       runtime: 'codex',
       message: 'cloud',
     })
 
     expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(1)
-    expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
-    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
-      'runtime.tasks.create',
-      expect.objectContaining({ deviceId: 'cloud-device', message: 'cloud' }),
-      'cloud-device'
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    expect(mocks.cloudCreateRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schemaVersion: 3,
+        deviceId: 'cloud-device',
+        message: 'cloud',
+        wegentTeamId: 1,
+      })
     )
   })
 
@@ -1390,24 +1441,54 @@ describe('createHybridWorkbenchServices', () => {
       },
     ])
     const services = createServices()
+    mocks.cloudCreateRuntimeTask.mockResolvedValueOnce({
+      accepted: true,
+      deviceId: 'remote-device',
+      taskId: 'remote-task',
+      workspacePath: '/workspace/remote',
+    })
 
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'remote-device',
       workspacePath: '/workspace/remote',
-      teamId: 1,
+      wegentTeamId: 1,
       runtime: 'codex',
       message: 'remote',
     })
 
     expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
-    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
-      'runtime.tasks.create',
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    expect(mocks.cloudCreateRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
+        schemaVersion: 3,
         deviceId: 'remote-device',
         workspacePath: '/workspace/remote',
-      }),
-      'remote-device'
+        wegentTeamId: 1,
+      })
     )
+  })
+
+  it('reports an old Backend that rejects the Team create protocol', async () => {
+    const services = createServices()
+    mocks.cloudCreateRuntimeTask.mockRejectedValueOnce(
+      new ApiError('Input should be 1 or 2', 422, undefined, [
+        {
+          type: 'literal_error',
+          loc: ['body', 'schemaVersion'],
+          msg: 'Input should be 1 or 2',
+        },
+      ])
+    )
+
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/cloud',
+        wegentTeamId: 1,
+        runtime: 'codex',
+        message: 'remote',
+      })
+    ).rejects.toThrow('REMOTE_TEAM_BACKEND_UNSUPPORTED')
   })
 
   it('rejects unknown and offline task targets without creating a local task', async () => {
@@ -1541,6 +1622,50 @@ describe('createHybridWorkbenchServices', () => {
       expect.objectContaining({ deviceId: 'cloud-device' }),
       'cloud-device'
     )
+  })
+
+  it('projects cloud runtime stream socket ids to the logical device id', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        socket_device_id: 'socket-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+    const streamDeps = mocks.captureRuntimeChatStreamDeps.mock.calls.at(-1)?.[0] as {
+      subscribe: (
+        handler: (event: { event: string; payload: Record<string, unknown> }) => void
+      ) => Promise<() => void>
+    }
+    const handler = vi.fn()
+
+    await streamDeps.subscribe(handler)
+    const relayHandler = mocks.cloudRuntimeIpcSubscribe.mock.calls.at(-1)?.[0]
+    relayHandler({
+      event: 'response.output_text.delta',
+      payload: {
+        deviceId: 'socket-device',
+        taskId: 'runtime-task',
+        data: { delta: 'hello' },
+      },
+    })
+
+    expect(handler).toHaveBeenCalledWith({
+      event: 'response.output_text.delta',
+      payload: {
+        deviceId: 'cloud-device',
+        device_id: 'cloud-device',
+        taskId: 'runtime-task',
+        data: { delta: 'hello' },
+      },
+    })
   })
 
   it('returns local archives without waiting for cloud and merges cloud archives later', async () => {

@@ -6,7 +6,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-import { sharedDesktopComponentIds } from './lib/desktop-component-ids.mjs'
+import { componentReleaseScope } from './desktop-component-release.mjs'
 
 const [
   assetsDirectory,
@@ -52,7 +52,7 @@ const sharedComponentBaseUrl = (
   process.env.WEWORK_COMPONENT_BASE_URL?.trim() ||
   `https://github.com/${repository}/releases/download/wework-updater`
 ).replace(/\/+$/, '')
-const sharedComponentIds = new Set(sharedDesktopComponentIds)
+const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
 const requestedTargets = new Set(
   (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
     .split(',')
@@ -75,11 +75,11 @@ await mkdir(output, { recursive: true })
 const macAssets = []
 for (const [target, platform] of macosReleasePlatforms) {
   if (requestedTargets.has(target)) {
-    macAssets.push(await asset(`WeWork_${version}_${platform}.zip`))
+    macAssets.push(await updateAsset(`${platform}.zip`))
   }
 }
 const windows = requestedTargets.has('windows-x64')
-  ? await asset(`WeWork_${version}_windows-x64-setup.exe`)
+  ? await updateAsset(`windows-x64-setup.exe`)
   : null
 await Promise.all(
   [...macAssets, ...(windows ? [windows] : [])].map(file => requireAsset(`${file.name}.blockmap`))
@@ -103,43 +103,7 @@ for (const targetChannel of electronChannels) {
   }
 }
 
-const tauriPlatforms = {}
-for (const [target, platform] of macosReleasePlatforms) {
-  if (requestedTargets.has(target)) {
-    tauriPlatforms[platform] = await tauriEntry(`WeWork_${version}_${platform}.app.tar.gz`)
-  }
-}
-if (requestedTargets.has('windows-x64')) {
-  tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows-x64-setup.exe`)
-}
-const tauriSource = {
-  version,
-  notes,
-  pub_date: releaseDate,
-  platforms: tauriPlatforms,
-}
-await writeFile(resolve(output, 'latest.json'), `${JSON.stringify(tauriSource, null, 2)}\n`, 'utf8')
-const tauriChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
-for (const targetChannel of tauriChannels) {
-  for (const [platform, entry] of Object.entries(tauriSource.platforms)) {
-    const [operatingSystem, ...architecture] = platform.split('-')
-    const target = `${targetChannel}-${operatingSystem}`
-    await writeFile(
-      resolve(output, `${target}-${architecture.join('-')}.json`),
-      `${JSON.stringify(
-        {
-          version,
-          notes,
-          pub_date: releaseDate,
-          platforms: { [target]: entry },
-        },
-        null,
-        2
-      )}\n`,
-      'utf8'
-    )
-  }
-}
+const updateChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
 
 const componentTargets = [
   ...(requestedTargets.has('macos-arm64') ? [['macos', 'arm64']] : []),
@@ -166,24 +130,23 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
   }
   const components = {}
   for (const [id, component] of Object.entries(source.components ?? {})) {
-    const archivePath = resolve(assets, component.assetName)
-    const archive = await localAsset(component.assetName)
-    const archiveSha256 = await sha256(archivePath)
-    if (archiveSha256 !== component.archiveSha256) {
+    const releaseScope = componentReleaseScope(id)
+    if (component.releaseScope !== releaseScope) {
       throw new Error(
-        `Component archive checksum mismatch for ${id}: expected ${component.archiveSha256}, received ${archiveSha256}`
+        `Component release scope mismatch for ${id}: expected ${releaseScope}, received ${component.releaseScope}`
       )
     }
+    const resolvedArchive = await resolveComponentArchive(component, id, releaseScope)
     components[id] = {
       version: component.version,
       contentSha256: component.contentSha256,
-      archiveSha256,
-      archiveBytes: archive.size,
-      downloadUrl: `${sharedComponentIds.has(id) ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
+      archiveSha256: resolvedArchive.archiveSha256,
+      archiveBytes: resolvedArchive.archiveBytes,
+      downloadUrl: resolvedArchive.downloadUrl,
       entryPath: component.entryPath,
     }
   }
-  for (const targetChannel of tauriChannels) {
+  for (const targetChannel of updateChannels) {
     await writeFile(
       resolve(output, `components-${targetChannel}-${platform}-${architecture}.json`),
       `${JSON.stringify(
@@ -195,6 +158,9 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
           platform,
           arch: architecture,
           releaseDate,
+          capabilities: {
+            componentizedHostUpdate: 1,
+          },
           components,
         },
         null,
@@ -205,12 +171,44 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
   }
 }
 
+async function resolveComponentArchive(component, id, releaseScope) {
+  if (component.reused === true) {
+    if (
+      !/^[0-9a-f]{64}$/.test(component.archiveSha256) ||
+      !Number.isSafeInteger(component.archiveBytes) ||
+      component.archiveBytes <= 0 ||
+      typeof component.downloadUrl !== 'string'
+    ) {
+      throw new Error(`Reused component archive metadata is invalid: ${id}`)
+    }
+    return component
+  }
+  const archivePath = resolve(assets, component.assetName)
+  const archive = await localAsset(component.assetName)
+  const archiveSha256 = await sha256(archivePath)
+  if (archiveSha256 !== component.archiveSha256) {
+    throw new Error(
+      `Component archive checksum mismatch for ${id}: expected ${component.archiveSha256}, received ${archiveSha256}`
+    )
+  }
+  return {
+    archiveSha256,
+    archiveBytes: archive.size,
+    downloadUrl: `${releaseScope === 'shared' ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
+  }
+}
+
 async function asset(name) {
   const local = await localAsset(name)
   return {
     ...local,
     url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
   }
+}
+
+async function updateAsset(suffix) {
+  const prefix = useComponentizedHostUpdate ? 'WeWorkHostUpdate' : 'WeWork'
+  return asset(`${prefix}_${version}_${suffix}`)
 }
 
 async function localAsset(name) {
@@ -228,14 +226,6 @@ async function requireAsset(name) {
   const path = resolve(assets, name)
   const file = await stat(path).catch(() => null)
   if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
-}
-
-async function tauriEntry(name) {
-  const signaturePath = resolve(assets, `${name}.sig`)
-  return {
-    signature: (await readFile(signaturePath, 'utf8')).trim(),
-    url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
-  }
 }
 
 function electronManifest(releaseVersion, date, releaseNotes, files) {

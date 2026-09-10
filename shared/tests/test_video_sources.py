@@ -107,17 +107,29 @@ class TestMergeVideoSource:
         incoming = self.retrieved((0, 5))
         assert merge_video_source(None, incoming) == incoming
 
-    def test_complete_replaces_retrieved(self) -> None:
+    def test_retrieved_is_preferred_over_complete(self) -> None:
         existing = self.retrieved((10, 30), (25, 50), truncated=True)
         incoming = self.complete((0, 60))
         merged = merge_video_source(existing, incoming)
-        assert merged is incoming
-        assert merged.segments_truncated is False
+        assert merged.coverage == "retrieved"
+        assert [(s.start_sec, s.end_sec) for s in merged.segments] == [
+            (10, 30),
+            (25, 50),
+        ]
+        assert [(s.start_sec, s.end_sec) for s in merged.available_segments] == [
+            (0, 60)
+        ]
+        assert merged.segments_truncated is True
 
-    def test_retrieved_does_not_extend_complete(self) -> None:
+    def test_later_retrieved_replaces_complete(self) -> None:
         existing = self.complete((0, 60))
-        merged = merge_video_source(existing, self.retrieved((10, 30)))
-        assert merged is existing
+        incoming = self.retrieved((10, 30))
+        merged = merge_video_source(existing, incoming)
+        assert merged.coverage == "retrieved"
+        assert [(s.start_sec, s.end_sec) for s in merged.segments] == [(10, 30)]
+        assert [(s.start_sec, s.end_sec) for s in merged.available_segments] == [
+            (0, 60)
+        ]
 
     def test_retrieved_merges_with_retrieved(self) -> None:
         existing = self.retrieved((10, 30))
@@ -125,6 +137,22 @@ class TestMergeVideoSource:
         merged = merge_video_source(existing, incoming)
         assert merged.coverage == "retrieved"
         assert [(s.start_sec, s.end_sec) for s in merged.segments] == [(0, 5), (10, 30)]
+
+    def test_retrieved_merges_preserve_complete_catalog(self) -> None:
+        existing = merge_video_source(
+            self.retrieved((10, 30)),
+            self.complete((0, 60), (60, 120)),
+        )
+        merged = merge_video_source(existing, self.retrieved((90, 110)))
+
+        assert [(s.start_sec, s.end_sec) for s in merged.segments] == [
+            (10, 30),
+            (90, 110),
+        ]
+        assert [(s.start_sec, s.end_sec) for s in merged.available_segments] == [
+            (0, 60),
+            (60, 120),
+        ]
 
     def test_complete_replaces_complete(self) -> None:
         existing = self.complete((0, 60))
@@ -178,6 +206,30 @@ class TestVideoSourceToPayload:
             ],
             "segments_truncated": True,
         }
+
+    def test_serializes_available_video_chapters(self) -> None:
+        retrieved = build_video_source(
+            identity=IDENTITY,
+            coverage="retrieved",
+            segments=[seg(10, 30)],
+        )
+        complete = build_video_source(
+            identity=IDENTITY,
+            coverage="complete",
+            segments=[seg(0, 60), seg(60, 120)],
+        )
+        assert retrieved is not None and complete is not None
+
+        payload = video_source_to_payload(merge_video_source(retrieved, complete))
+
+        assert [
+            (segment["start_sec"], segment["end_sec"])
+            for segment in payload["segments"]
+        ] == [(10, 30)]
+        assert [
+            (segment["start_sec"], segment["end_sec"])
+            for segment in payload["available_segments"]
+        ] == [(0, 60), (60, 120)]
 
 
 class TestBuildVideoSourceArgumentValidation:

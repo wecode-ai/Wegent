@@ -51,6 +51,7 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.type == EventType.THINKING
         assert result.content == "Reasoning chunk."
+        assert result.data == {"thinking_kind": "reasoning_summary"}
 
     def test_response_completed_preserves_streamed_reasoning_content(self):
         parser = ResponsesAPIEventParser()
@@ -142,6 +143,48 @@ class TestResponsesAPIEventParserToolIds:
                 "output": [{"type": "text", "text": json.dumps(payload)}],
             },
         )
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "mcp_call",
+                    "id": "mcp_read_video",
+                    "name": "wegent_kb_read_document_content",
+                    "server_label": "wegent-knowledge",
+                }
+            },
+        )
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            data={
+                "item_id": "mcp_read_video",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "document_id": 825,
+                                "knowledge_base_id": 212,
+                                "name": "825.video.md",
+                                "content": (
+                                    "### Chapter 1 ([00:00:00 - 00:00:48])\n"
+                                    "### Chapter 2 ([00:00:48 - 00:01:49])"
+                                ),
+                                "offset": 0,
+                                "has_more": False,
+                                "source_media_type": "video",
+                            }
+                        ),
+                    }
+                ],
+            },
+        )
 
         result = parser.parse(
             task_id=1,
@@ -168,6 +211,22 @@ class TestResponsesAPIEventParserToolIds:
                         "title": "Core features",
                         "description": "Three editing modes",
                     }
+                ],
+                "available_segments": [
+                    {
+                        "id": "segment_0_48",
+                        "start_sec": 0,
+                        "end_sec": 48,
+                        "title": "Chapter 1",
+                        "description": None,
+                    },
+                    {
+                        "id": "segment_48_109",
+                        "start_sec": 48,
+                        "end_sec": 109,
+                        "title": "Chapter 2",
+                        "description": None,
+                    },
                 ],
             }
         ]
@@ -785,6 +844,7 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.type == EventType.THINKING.value
         assert result.content == "Reasoning chunk."
+        assert result.data == {"thinking_kind": "reasoning_summary"}
 
     def test_inprocess_bridge_completed_result_preserves_streamed_reasoning(self):
         transport = EmitterBridgeTransport(
@@ -990,6 +1050,41 @@ class TestResponsesAPIEventParserToolIds:
             },
             message_id=3,
         )
+        transport._convert_event(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            {
+                "item": {
+                    "type": "mcp_call",
+                    "id": "mcp_read_video",
+                    "name": "wegent_kb_read_document_content",
+                    "server_label": "wegent-knowledge",
+                }
+            },
+            message_id=3,
+        )
+        transport._convert_event(
+            ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            {
+                "item_id": "mcp_read_video",
+                "output": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "document_id": 825,
+                                "knowledge_base_id": 212,
+                                "name": "825.video.md",
+                                "content": "### Chapter 1 ([00:00:00 - 00:00:48])",
+                                "offset": 0,
+                                "has_more": False,
+                                "source_media_type": "video",
+                            }
+                        ),
+                    }
+                ],
+            },
+            message_id=3,
+        )
 
         result = transport._convert_event(
             ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
@@ -1000,6 +1095,7 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.result["sources"][0]["document_id"] == 825
         assert result.result["sources"][0]["segments"][0]["start_sec"] == 109
+        assert result.result["sources"][0]["available_segments"][0]["start_sec"] == 0
 
     def test_inprocess_bridge_shell_call_lifecycle(self):
         transport = EmitterBridgeTransport(

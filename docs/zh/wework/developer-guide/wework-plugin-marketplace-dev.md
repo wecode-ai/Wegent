@@ -6,14 +6,16 @@ sidebar_position: 21
 
 面向需要开发、迁移或发布 Wework 插件的同学。架构细节见 [插件市场 V2](./plugin-marketplace-v2.md)；本机 Codex 运行时细节见 [Codex 插件运行时](./wework-codex-plugins.md)；亮色/暗色图标见 [插件图标指南](./wework-plugin-icons.md)。
 
+> 实现状态（2026-08-29）：当前功能分支已实现第 4 章的 Wework 双范围交互、Request/Revision 历史、Web 审核、MR 物化和受限 Release API，新企业申请不再使用人员白名单。旧 Submission 只保留个人定向分享上传和历史记录清退用途。**生产尚未启用**；上线前仍需在外部完成旧 Token 吊销/轮换、HTTPS、protected master/environment、Code Owner 审批、project-locked 原生 Windows/macOS Runner 和新 Release 凭据的 P0 验证。
+
 ## 1. 先建立正确心智模型
 
 Wework 同时存在两层相关但不相同的能力：
 
-| 层 | 职责 | 事实源 |
-| --- | --- | --- |
-| 本机 Codex 运行面 | 真正安装、启停、在对话中使用 skill / MCP / command | 本机 Executor + Codex App Server |
-| Wegent 云端市场 V2 | 目录、版本、可见性、审核、设备期望状态 | MySQL 元数据 + 私有 S3 不可变 ZIP |
+| 层                 | 职责                                               | 事实源                            |
+| ------------------ | -------------------------------------------------- | --------------------------------- |
+| 本机 Codex 运行面  | 真正安装、启停、在对话中使用 skill / MCP / command | 本机 Executor + Codex App Server  |
+| Wegent 云端市场 V2 | 目录、版本、可见性、审核、设备期望状态             | MySQL 元数据 + 私有 S3 不可变 ZIP |
 
 开发插件时记住三件事：
 
@@ -25,13 +27,34 @@ Wework 同时存在两层相关但不相同的能力：
 flowchart LR
   source[插件源码目录] --> local[本机创建或 dry-run]
   local --> test[本机对话试用]
-  test --> publish[投稿或官方发布]
-  publish --> mysql[(MySQL Plugin/Release)]
-  publish --> s3[(S3 不可变 ZIP)]
+  test --> share[指定成员或部门]
+  share --> scan[自动扫描]
+  scan --> acl[个人插件访问授权]
+  test --> apply[申请全员可见]
+  apply --> snapshot[个人版本不可变快照]
+  snapshot --> admin[Web 管理员审核]
+  admin --> mr[GitLab MR]
+  mr --> pipeline[代码审核与 Pipeline]
+  pipeline --> release[受限 Release API]
+  release --> mysql[(MySQL Plugin/Release)]
+  release --> s3[(S3 不可变 ZIP)]
   mysql --> install[市场安装]
   s3 --> install
   install --> codex[Codex App Server]
 ```
+
+### 两种分享意图与两类产物
+
+个人创建或导入的插件在详情页只有一个 **分享** 入口，入口内只有两种意图：
+
+| 意图           | 用户选择                             | 生效规则                                                         | 产物归属                                   |
+| -------------- | ------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------ |
+| 指定成员或部门 | 成员、部门；组织作为通讯录根部门选择 | 包扫描通过后立即授权，不经人工审核                               | 仍是「个人创建」中的个人插件               |
+| 全员可见       | 当前企业全员                         | 提交不可变版本快照，依次经过自动检查、管理员审核、代码审核和发布 | 发布成功后生成「企业内部」中的独立企业版本 |
+
+组织不是第三种分享范围。普通用户界面也不暴露 `public`；本期“全员可见”在服务端映射为
+`visibility=workspace`。个人原件与企业版本必须使用不同的目录身份：审核和发布不能原地提升
+个人插件的可见性，也不能清除原有的成员/部门授权。
 
 ## 2. 插件包目录规范
 
@@ -105,34 +128,31 @@ description: Review a merge request and summarize risks
 
 1. 打开桌面 **插件** 页。
 2. 使用创建入口，按 Codex plugin creator 流程生成插件到 `wework-personal`。
-3. 安装后，在插件详情或市场行点击试用；对话输入框会插入 `plugin://...` mention。
+3. 安装后，在插件详情页点击 **立即对话** 或使用“试试这些任务”；对话输入框会插入 `plugin://...` mention。
 4. 修改本地目录后刷新市场/管理页，再在对话中验证。
 
-本地创建**不会**自动上传到云端。只有显式“发布到市场”才会进入扫描和审核。
+本地创建**不会**自动上传到云端。只有显式点击 **分享** 才会提交当前版本：指定成员或部门只做扫描和授权；全员可见才进入发布申请。
 
-### 方式 B：在独立仓库开发官方插件
+### 方式 B：在企业插件仓库开发
 
-WeWork 自研官方插件维护在
-[github.com/wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins)，
-并以 `--visibility public` 发布到「Wework官方」Tab。
+企业内全员可见插件的事实源是内部 `wework-plugins` GitLab 仓库。目录为
+`<checkout>/plugins/<slug>/`，并在 `.agents/plugins/marketplace.json` 登记。源码仓只服务
+开发、评审和 CI；Backend / Wework **不会**在启动时扫描它。
 
-布局对齐 openai/plugins：检出后目录为 `<checkout>/plugins/<slug>/`，并在
-`.agents/plugins/marketplace.json` 登记。源码仓只服务开发、评审、CI；
-Backend / Wework **不会**在启动时扫描它。建议与 Wegent 同级检出（例如
-`wework-plugins-public`）。
-
-若需要把已评审的本地源码树发布到组织目录，可使用
-`--visibility workspace`。共享文档中不要写入私有主机名或内网仓库路径。
+开发人员直接创建分支并提交 Merge Request。非技术用户在 Wework 申请全员可见后，管理员在
+Web 审核台接受申请，系统会把该不可变快照落到受控分支并创建 MR。两种入口从 MR 开始
+共用完全相同的代码审核、兼容性检查和发布 Pipeline。
 
 本地只构建扫描：
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins-public/plugins/<plugin-slug> --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 ```
 
-成功时输出 `name`、`version`、`sha256`。失败时先修扫描错误，再进入发布。
+成功时输出 `name`、`version`、`sha256`。`--dry-run` 只证明本机打包与静态扫描通过，不代表
+Windows、macOS 兼容检查、远端 Pipeline 或线上发布成功。
 
 ### 本机联调云端市场
 
@@ -153,72 +173,94 @@ WEGENT_DISABLE_SCCACHE=1 \
 pnpm --filter wework dev:mac -- --executor-isolation
 ```
 
-## 4. 如何发布到市场
+## 4. 分享与企业全员发布
 
-### 社区投稿
+### 4.1 指定成员或部门
 
-适合个人或团队自研插件。
+个人插件所有者在详情页点击 **分享 → 指定成员或部门**，从通讯录选择成员或部门。组织本身
+显示为通讯录根部门，不单独提供“组织可见”。客户端打包当前版本、计算 SHA256 并上传扫描；
+扫描通过后立即更新个人插件的访问授权，不进入 Web 人工审核，也不写入企业插件仓库。
 
-1. 在 Wework 完成本地验证。
-2. 确认账号具备发布能力：`PLUGIN_PUBLISH_ENABLED`、白名单或管理员。
-3. 在 UI 执行“发布到市场”。客户端会打包、计算 SHA256，走：
-   - `POST /plugins/submissions/init`
-   - 预签名 PUT 到 `plugins/staging/...`
-   - `POST /plugins/submissions/{id}/complete`
-   - 上传或完成失败时，`POST /plugins/submissions/{id}/cancel`
-4. 扫描通过后进入待审；管理员审核通过后才可被搜索安装。
+新增、移除成员或部门只变更授权，不创建新的企业 Release。个人插件继续位于「个人创建」，
+所有者仍可继续编辑、对话、试用、卸载和删除。
 
-取消、扫描拒绝或超过上传/扫描超时的投稿不会永久占用版本号。客户端可以用相同 `version` 重新调用 `init`；仍在有效上传或扫描中的版本会返回 `409`，避免并发投稿互相覆盖。
+### 4.2 非技术用户申请全员可见
 
-云端 Plugin Creator 不在创建阶段上传 ZIP，也不创建独立草稿记录。源码位于 `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`，创建完成后由 `plugin-workspace describe` 把结果标记写回当前 Task 对话。用户从结果卡选择分享或发布时，Wework 向原 Task 发送后续指令，Executor 执行 `plugin-workspace publish`，对当前源码重新校验和打包后调用上述投稿接口。Task 工作区恢复与归档沿用现有 Task 生命周期；未发布内容不会出现在插件中心。
+任意已登录的个人插件所有者都可以提出申请，不再使用发布白名单。Wework 使用右侧三步抽屉：
 
-### WeWork 官方插件
+1. **确认版本**：展示插件、SemVer、更新时间和将要提交的不可变版本；
+2. **权限与风险**：声明外网访问、命令/脚本、本地文件、凭据等权限与测试结果；
+3. **确认提交**：复核范围为企业全员、风险声明和版本 SHA256 后提交。
 
-适合公司维护的内置能力。统一字段：
+提交会冻结该次申请的版本、清单、ZIP 和 SHA256，不会冻结个人源码。审核期间，所有者仍可
+继续编辑个人插件并形成更高版本，也可以继续向指定成员或部门分享；后续修改不会悄悄替换已
+提交快照。
 
-- `source_type=native`
-- `source_provider=wework`
-- `owner_user_id=NULL`
+用户看到的五阶段进度固定为：
 
-从公开官方源码仓发布：
+1. **提交申请**：创建申请并保存不可变快照；
+2. **自动检查**：包结构、安全扫描和声明一致性校验；
+3. **管理员审核**：管理员只在 Web 审核台查看风险、退回或接受；
+4. **代码审核**：接受后系统创建 GitLab MR，执行人工代码评审、风险检查以及 Windows / macOS 兼容检测；
+5. **发布**：MR 合入受保护的 `master` 后，由 Pipeline 调用受限 Release API 发布企业版本。
 
-```bash
-cd backend
+管理员接受申请**只创建 MR，不直接发布**。退回必须记录原因和风险项；提交者在 Wework
+查看状态、修改个人源码后，以新的 revision 重新提交。
 
-# 空库/重建：一次性初始化 Wework官方 Tab（公开仓插件）
-uv run python scripts/seed_wework_public_plugins.py
+### 4.3 开发人员直接提交 GitLab MR
 
-# Wework官方 Tab（公开仓，单个插件）
-uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins-public/plugins/<plugin-slug> \
-  --visibility public \
-  --commit-sha "$CI_COMMIT_SHA" \
-  --build-url "$CI_JOB_URL" \
-  --publisher release-bot
+开发人员可以直接在内部 `wework-plugins` 仓库新增或修改 `plugins/<slug>/`，同步更新市场注册表
+并发起 MR。非技术投稿生成的 MR 与开发人员 MR 从这里开始走同一套检查；不得维护一条
+可以绕过 GitLab 的“管理员直接发布”旁路。
+
+一个 MR 只包含一个插件的一个版本。MR Pipeline 至少包含：
+
+- 清单、目录和注册表一致性校验；
+- 统一包扫描、敏感文件和高风险能力检查；
+- 插件自身测试；
+- Windows 和 macOS 兼容检测。需要原生环境的检查必须使用对应 Runner；Runner 不可用时阻塞，不能伪装成通过；
+- 构建结果、commit SHA、package SHA256 和审计链接的 provenance 记录。
+
+### 4.4 合并、发布与认证
+
+`master` 是受保护分支。只有合并后的 protected master Pipeline 可以发布企业版本；普通分支、
+MR Job、Wework 客户端和 Web 管理后台都不能取得发布凭据。发布 Job 重新构建并核对已审核的
+commit，然后调用内部 Release API：
+
+```http
+Authorization: Bearer <release-token>
 ```
 
-`--visibility public` 进入「Wework官方」Tab。仅在需要把已评审的本地源码树发布到组织目录时，再使用 `--visibility workspace`。
+这是服务到服务的机器凭据，不是用户登录体系或通用管理员 Token。实现复用现有 API Key 生命周期，
+并使用专用 `key_type=plugin_release`。目标固定为企业目录，GitLab project 与受保护 `master` ref 由服务端配置和 GitLab 实时证明校验；
+凭据必须具有过期、轮换、撤销和审计能力，并作为 GitLab masked + protected variable 保存。GitLab Webhook 使用
+独立签名或 Token，只同步 MR、Pipeline 和发布状态，不能代替 Release Token 发版。
 
-规则：
+Release API 与 `OfficialPluginPublisher` 都复用
+`PluginMarketplaceService.publish_catalog_release` 的市场入库事务。前者验证受保护 master 产出的 artifact，后者负责本地目录的确定性打包。`publish_official_plugin.py` 保留为本机 dry-run、应急操作和排障适配器，HTTP 接口不启动该 CLI 子进程，也不复制另一套发布逻辑。
 
-- 同 `slug + version + SHA256` 幂等成功。
-- 同版本不同内容直接拒绝，禁止覆盖。
-- 回滚只能发更高 SemVer，或调整目录指针；绝不改已发布 ZIP。
+发布规则：
 
-### 精选 Codex / 开源上游镜像
+- 同 `catalog + slug + version + SHA256` 幂等成功；
+- 同版本不同内容返回冲突，已发布 ZIP 永不覆盖；
+- Release 必须记录 submission/revision（如有）、GitLab project、MR、commit、Pipeline、发布主体和构建链接；
+- 发布成功后创建独立的 `workspace` 企业插件/Release，个人原件及其定向授权保持不变。
 
-适合已经是官方或合规开源、只需企业内分发的插件。管理员录入：
+### 4.5 撤回、删除与回滚
 
-- `marketplace_name`
-- `remote_plugin_id`
-- `upstream_url`（HTTPS）
-- `license_info`
-- `sync_policy`（默认 `auto_after_scan`，可选 `review_required`）
+- 在 MR 合入前，提交者可以从 Wework 撤回全员发布申请；已经创建 MR 时，系统同时关闭或标记取消该 MR。
+- 删除仍有未合并申请的个人插件时，必须先撤回申请，再卸载并删除个人源码，不能留下无来源的待发布 MR。
+- MR 已合并或已经进入发布后，个人用户不能撤回企业版本。删除个人原件只影响个人插件，不删除已发布企业版；企业版下架或回滚由管理员执行。
+- Pipeline 或发布失败时不推进企业目录的 `latest_release_id`，现有可用版本继续服务。
+- 已发布 ZIP 永不修改。回滚使用经过审计的目录指针回退到先前 Release，或修复后发布更高 SemVer；不得用相同版本覆盖内容。
 
-系统定时同步：下载 → 扫描 → 透传官方包 → 写入 S3。`auto_after_scan` 会在扫描
-通过后单调提升 `latest_release_id`；`review_required` 只生成待审核 Release，
-管理员批准后才提升 latest。开源镜像默认使用 `auto_after_scan`，高风险上游可
-显式切换为 `review_required`。上游回退版本不会拉低 latest。
+### 4.6 云端 Plugin Creator
+
+云端 Plugin Creator 不在创建阶段上传 ZIP，也不创建独立草稿记录。源码位于
+`$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`，创建完成后由 `plugin-workspace describe` 把结果
+标记写回当前 Task 对话。用户点击结果卡或详情页的 **分享** 时，Wework 向原 Task 发送后续指令，
+Executor 执行 `plugin-workspace publish`，对当前源码重新校验和打包，再进入指定成员/部门分享或
+全员发布申请。Task 工作区恢复与归档沿用现有 Task 生命周期；未分享内容不会出现在云端目录。
 
 ## 5. 迁移开源插件 checklist
 
@@ -245,13 +287,13 @@ uv run python scripts/publish_official_plugin.py \
 
 ### 5.3 能力核对
 
-| 原能力 | Wework 落点 | 注意 |
-| --- | --- | --- |
-| Skill | `skills/*/SKILL.md` | frontmatter 需要 `name` / `description` |
-| Slash command | `commands/` | Markdown 命令文件 |
-| MCP | 插件内 MCP 声明 | 密钥走本地安全存储，不写死在包内 |
-| Hook / bin | `hooks/` / `bins/` | 可执行文件会被扫描报告，需人工确认 |
-| App / Connector | Codex app 机制 | 远端 Apps 开关与本机授权独立 |
+| 原能力          | Wework 落点         | 注意                                    |
+| --------------- | ------------------- | --------------------------------------- |
+| Skill           | `skills/*/SKILL.md` | frontmatter 需要 `name` / `description` |
+| Slash command   | `commands/`         | Markdown 命令文件                       |
+| MCP             | 插件内 MCP 声明     | 密钥走本地安全存储，不写死在包内        |
+| Hook / bin      | `hooks/` / `bins/`  | 可执行文件会被扫描报告，需人工确认      |
+| App / Connector | Codex app 机制      | 远端 Apps 开关与本机授权独立            |
 
 ### 5.4 验证与上架
 
@@ -263,9 +305,9 @@ uv run python scripts/publish_official_plugin.py /path/to/plugin --dry-run
 # 在 Wework 插件页安装后，打开新对话并发送试用模板
 
 # 3. 选择发布路径
-# - 官方维护：publish_official_plugin.py
-# - 社区维护：Wework 发布到市场
-# - 持续跟随上游：admin upstreams + sync
+# - 非技术维护者：在 Wework 申请全员可见
+# - 开发维护者：在内部 wework-plugins 仓库提交 MR
+# 两者从 MR 起共用代码审核、兼容性检测和 protected master Pipeline
 ```
 
 验收标准：
@@ -273,15 +315,20 @@ uv run python scripts/publish_official_plugin.py /path/to/plugin --dry-run
 - 扫描通过：无路径穿越、重复路径、符号链接、加密成员、敏感文件、超大展开体积。
 - 安装后设备状态为 `installed`，且 `actual_release_id` 等于期望 Release。
 - 对话 mention 能正确触发能力；失败路径有明确错误，不静默回退。
+- 企业目录中的版本可追溯到 MR、commit、Pipeline 和不可变 SHA256。
 
-## 6. GitHub 插件（OpenAI 官方）
+## 6. GitHub 官方插件边界
 
-GitHub 插件直接使用 OpenAI 官方市场中的 `github` 条目（`openai/plugins` /
-Codex 官方 Tab），**不再**维护 Wework 国内公开镜像，也不再通过
-`configure_openai_github_mirror.py` 发布适配包，也不再提供 Wegent 云端
-GitHub OAuth「第三方应用」设置入口。
+本期只落地**企业内部全员可见**链路。GitHub 上由 Wework 维护、计划向所有企业公开的官方插件，
+其代码来源、签名、同步、跨企业 `public` 发布和应急下架方案仍是独立待定项，不能复用本期
+`workspace` 申请冒充完成，也不能阻塞企业内部流程开发。
 
-用户从「OpenAI官方」筛选安装即可；授权走 OpenAI / Codex 官方连接器链路。
+OpenAI / Codex 官方市场已有的 GitHub Connector 继续按其现有来源和授权链路安装，与上述
+Wework 官方公开插件方案不是同一条发布流程。
+
+现有管理员精选的 Codex / 合规开源上游镜像也保持独立：管理员登记上游地址、许可证和同步
+策略，系统下载、扫描并写入不可变 Release。它不经过个人插件的全员发布申请，也不能据此推导
+Wework 官方公开插件的最终方案。
 
 ## 7. 安全红线
 
@@ -298,7 +345,10 @@ GitHub OAuth「第三方应用」设置入口。
 发布侧：
 
 - final S3 key 不可覆盖；staging 需生命周期清理。
-- 社区投稿必须审核；官方发布必须保留 provenance 审计。
+- 指定成员或部门分享必须通过包扫描；全员可见必须完成管理员审核、GitLab 代码审核和受保护分支 Pipeline。
+- 管理员后台只能退回或创建 MR，不能直接构造企业 Release。
+- 发布凭据只对 protected master Job 可见；日志、Webhook 和构建产物中不得包含 Token。
+- 所有企业发布必须保留 provenance 审计。
 - 真正离线必备能力应做进 Executor / 内置 hook，不要伪装成市场插件强塞进安装包。
 
 ## 8. 常见问题
@@ -310,22 +360,39 @@ GitHub OAuth「第三方应用」设置入口。
 对用户来说 Skill 更轻；对系统来说安装单位仍是 Plugin。单 Skill 插件用 `listing_type=skill` 展示。
 
 **开源插件能否直接把 GitHub URL 配给普通用户？**  
-不能。普通用户只能看到云端市场目录。开源内容需官方发布、社区投稿审核，或管理员配置精选 upstream。
+不能。普通用户只能看到云端目录。企业内部使用时需要进入 `wework-plugins` MR 与 Pipeline；Wework 官方公开 GitHub 插件另行设计。
+
+**为什么管理员接受后还不能全员安装？**
+
+接受只代表产品和风险初审通过，并会创建 MR。还要完成代码审核、Windows / macOS 兼容检测、合入 protected master 和发布 Pipeline。
+
+**审核期间能否继续修改和分享个人插件？**
+
+可以。申请绑定的是不可变快照；个人原件仍可编辑、对话和向成员/部门分享。修改后如需进入本次企业发布，必须提交新的 revision。
+
+**个人插件删除后，企业版也会删除吗？**
+
+不会。MR 合入前会先撤回申请；企业版发布后，个人原件与企业版相互独立，企业版只能由管理员下架或回滚。
 
 **更新失败会怎样？**  
 账号期望版本可更新，但设备安装失败时保留旧实际版本，并在设备状态里记录错误；不会静默升级。
 
 **旧 `/plugins/upload` 还能用吗？**  
-默认 `410`。新链路走投稿或官方发布 CLI。
+默认 `410`。新链路走分享申请或 GitLab MR；生产发布只允许 protected master Pipeline 调用 Release API。
 
-## 8. 相关文档与代码入口
+**旧 `/plugins/submissions` 还会发布企业版吗？**
 
-| 用途 | 位置 |
-| --- | --- |
-| 市场架构与运维 Runbook | [plugin-marketplace-v2.md](./plugin-marketplace-v2.md) |
-| 本机 Codex 插件运行时 | [wework-codex-plugins.md](./wework-codex-plugins.md) |
-| 用户侧插件说明 | [../plugins-and-skills.md](../plugins-and-skills.md) |
-| 官方发布 CLI | `backend/scripts/publish_official_plugin.py` |
-| 统一扫描 | `backend/app/services/plugin_package_scanner.py` |
-| 市场控制面 | `backend/app/services/plugin_marketplace_service.py` |
-| Wework 市场 UI | `wework/src/components/plugins/` |
+不会。它只接受 `restricted_share + personal` 个人定向分享，服务端拒绝 `workspace/public`。历史审核接口和脚本只能用于清退已有记录，新 Web 审核不得调用。
+
+## 9. 相关文档与代码入口
+
+| 用途                    | 位置                                                   |
+| ----------------------- | ------------------------------------------------------ |
+| 市场架构与运维 Runbook  | [plugin-marketplace-v2.md](./plugin-marketplace-v2.md) |
+| 本机 Codex 插件运行时   | [wework-codex-plugins.md](./wework-codex-plugins.md)   |
+| 用户侧插件说明          | [../plugins-and-skills.md](../plugins-and-skills.md)   |
+| 本机 dry-run / 应急 CLI | `backend/scripts/publish_official_plugin.py`           |
+| Release 服务抽象        | `backend/app/services/official_plugin_publisher.py`    |
+| 统一扫描                | `backend/app/services/plugin_package_scanner.py`       |
+| 市场控制面              | `backend/app/services/plugin_marketplace_service.py`   |
+| Wework 市场 UI          | `wework/src/components/plugins/`                       |

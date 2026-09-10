@@ -183,6 +183,9 @@ export interface WorkspaceBrowserPanelProps {
   active: boolean
   hideToolbar?: boolean
   label?: string
+  transferFromLabel?: string
+  transferredNativeLabel?: string | null
+  transferredUrl?: string | null
   browserTabId?: string
   openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
@@ -200,6 +203,7 @@ export interface WorkspaceBrowserPanelProps {
   onLoadingChange?: (isLoading: boolean) => void
   onTitleChange?: (title: string | null) => void
   onAgentActiveChange?: (agentActive: boolean) => void
+  onUrlChange?: (url: string | null) => void
 }
 
 export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
@@ -341,6 +345,9 @@ export function WorkspaceBrowserTabPanel({
   active,
   hideToolbar = false,
   label = 'workspace-browser',
+  transferFromLabel,
+  transferredNativeLabel,
+  transferredUrl,
   browserTabId = label,
   openRequest,
   codeCommentCount = 0,
@@ -355,23 +362,29 @@ export function WorkspaceBrowserTabPanel({
   onLoadingChange,
   onTitleChange,
   onAgentActiveChange,
+  onUrlChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
   const electronRuntime = isElectronRuntime()
   const browserPanelRef = useRef<HTMLDivElement | null>(null)
   const browserHostRef = useRef<HTMLDivElement | null>(null)
-  const nativeBrowserOpenRef = useRef(false)
+  const initialTransferredUrl = transferFromLabel ? (transferredUrl ?? null) : null
+  const nativeBrowserOpenRef = useRef(Boolean(initialTransferredUrl))
   const nativeBrowserOpeningRef = useRef(false)
-  const currentUrlRef = useRef<string | null>(null)
+  const currentUrlRef = useRef<string | null>(initialTransferredUrl)
   const pendingNavigationUrlRef = useRef<string | null>(null)
-  const activePageUrlRef = useRef<string | null>(null)
+  const activePageUrlRef = useRef<string | null>(initialTransferredUrl)
   const addressInputRef = useRef<HTMLInputElement | null>(null)
   const addressEditingRef = useRef(false)
   const annotationModeRef = useRef(false)
   const currentLabelRef = useRef(label)
   const activeRef = useRef(active)
-  const nativeLabelRef = useRef<string | null>(null)
-  const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
+  const nativeLabelRef = useRef<string | null>(
+    initialTransferredUrl ? (transferredNativeLabel ?? null) : null
+  )
+  const adoptedDownloadOwnerLabelRef = useRef<string | null>(
+    initialTransferredUrl && transferredNativeLabel ? label : null
+  )
   const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
   const activeDownloadIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
@@ -397,11 +410,13 @@ export function WorkspaceBrowserTabPanel({
   const occlusionSnapshotReadyRef = useRef(true)
   const occlusionSnapshotFallbackTimerRef = useRef<number | null>(null)
   const embeddedBrowserOccludedRef = useRef(false)
-  const [address, setAddress] = useState('')
-  const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [address, setAddress] = useState(initialTransferredUrl ?? '')
+  const [currentUrl, setCurrentUrl] = useState<string | null>(initialTransferredUrl)
   const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
-  const [pageUrl, setPageUrl] = useState<string | null>(null)
-  const [status, setStatus] = useState<BrowserStatus>('idle')
+  const [pageUrl, setPageUrl] = useState<string | null>(initialTransferredUrl)
+  const [status, setStatus] = useState<BrowserStatus>(initialTransferredUrl ? 'ready' : 'idle')
+  const [canGoBack, setCanGoBack] = useState(false)
+  const [canGoForward, setCanGoForward] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [navigationError, setNavigationError] = useState<EmbeddedBrowserNavigationError | null>(
     null
@@ -488,11 +503,15 @@ export function WorkspaceBrowserTabPanel({
   const applyNativePageStatus = useCallback(
     (pageState: {
       isLoading: boolean
+      canGoBack?: boolean
+      canGoForward?: boolean
       navigationError?: EmbeddedBrowserNavigationError | null
     }) => {
       const nextNavigationError = pageState.navigationError ?? null
       setNavigationError(nextNavigationError)
       setStatus(nextNavigationError ? 'error' : pageState.isLoading ? 'loading' : 'ready')
+      setCanGoBack(Boolean(pageState.canGoBack))
+      setCanGoForward(Boolean(pageState.canGoForward))
     },
     []
   )
@@ -733,6 +752,7 @@ export function WorkspaceBrowserTabPanel({
       setCurrentUrl(null)
       setPageUrl(null)
       setAddress('')
+      onUrlChange?.(null)
       setStatus('ready')
       setError(null)
       setInvalidTlsCertificate(null)
@@ -767,7 +787,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange])
+  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange, onUrlChange])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return
@@ -780,6 +800,7 @@ export function WorkspaceBrowserTabPanel({
       if (pendingNavigationUrl && url && url !== pendingNavigationUrl) return
       activePageUrlRef.current = url
       setPageUrl(url)
+      onUrlChange?.(url)
       if (url) {
         if (!addressEditingRef.current && document.activeElement !== addressInputRef.current) {
           setAddress(url)
@@ -792,7 +813,7 @@ export function WorkspaceBrowserTabPanel({
       onTitleChange?.(null)
       onFaviconChange?.(null)
     },
-    [onFaviconChange, onTitleChange]
+    [onFaviconChange, onTitleChange, onUrlChange]
   )
 
   useEffect(() => {
@@ -2414,7 +2435,9 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-back-button"
             label={t('workbench.browser_back')}
-            disabled={!currentUrl || !embeddedBrowserAvailable}
+            disabled={
+              !currentUrl || !embeddedBrowserAvailable || !canGoBack || status === 'loading'
+            }
             onClick={() => void runBrowserCommand(() => goBackEmbeddedBrowser(label))}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -2422,7 +2445,9 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-forward-button"
             label={t('workbench.browser_forward')}
-            disabled={!currentUrl || !embeddedBrowserAvailable}
+            disabled={
+              !currentUrl || !embeddedBrowserAvailable || !canGoForward || status === 'loading'
+            }
             onClick={() => void runBrowserCommand(() => goForwardEmbeddedBrowser(label))}
           >
             <ArrowRight className="h-4 w-4" />
@@ -2430,7 +2455,7 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-reload-button"
             label={t('workbench.browser_reload')}
-            disabled={!activePageUrl}
+            disabled={!activePageUrl || status === 'loading'}
             onClick={handleReload}
           >
             <RotateCw className="h-4 w-4" />
@@ -2933,6 +2958,7 @@ export function WorkspaceBrowserTabPanel({
                 }
                 interactionBlocked={embeddedBrowserOccluded || Boolean(navigationError)}
                 label={label}
+                transferFromLabel={transferFromLabel}
                 visualRect={deviceVisualRect}
               />
             ) : active &&

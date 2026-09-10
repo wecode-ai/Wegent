@@ -15,6 +15,8 @@ const TEST_PREFIX = `e2e-runtime-${Date.now()}-${Math.random().toString(36).slic
 const TEST_MODEL_NAME = `${TEST_PREFIX}-model`
 const TEST_BOT_NAME = `${TEST_PREFIX}-bot`
 const TEST_TEAM_NAME = `${TEST_PREFIX}-team`
+const INTERRUPTED_ASSISTANT_CONTEXT_NOTE =
+  '[Previous assistant response was interrupted by the user.]'
 
 type RuntimeCheckResponse = {
   task_id: number
@@ -34,6 +36,19 @@ type RuntimeCheckTracker = {
 type SocketDropOptions = {
   chatEvents?: string[]
   terminalTaskStatuses?: string[]
+}
+
+type CapturedModelMessage = {
+  role?: string
+  content?: unknown
+  tool_calls?: unknown
+}
+
+type CapturedModelRequest = {
+  url: string
+  body?: {
+    messages?: CapturedModelMessage[]
+  } | null
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -432,6 +447,60 @@ test.describe('Task runtime consistency', () => {
     await expectNoQueuedMessages(page)
   })
 
+  test('continues the same conversation after cancelling a partial response', async ({
+    page,
+    request,
+  }) => {
+    const messageText = `${TEST_PREFIX} cancel partial response request`
+    const responseMarker = `${TEST_PREFIX}-cancel-partial-response`
+    const followUpMessage = `${TEST_PREFIX} send a follow-up after the interrupted response`
+    const followUpMarker = `${TEST_PREFIX}-cancel-follow-up-response`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: `${responseMarker} keeps streaming until the browser cancels this response`,
+      chunkDelayMs: 250,
+      doneDelayMs: 20000,
+    })
+    await configureStreamRule(request, followUpMessage, {
+      responseContent: `${followUpMarker} is non-empty after cancellation`,
+      chunkDelayMs: 40,
+    })
+
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
+      timeout: 15000,
+    })
+
+    await stopActiveStream(page)
+    await waitForBackendStatus(request, taskId, ['CANCELLED'])
+
+    await sendChatMessage(page, followUpMessage)
+    expect(new URL(page.url()).searchParams.get('taskId')).toBe(String(taskId))
+    await expect(page.getByTestId('messages-container')).toContainText(followUpMarker, {
+      timeout: 30000,
+    })
+    await waitForBackendTerminal(request, taskId)
+
+    const followUpRequest = await waitForCapturedModelRequest(request, followUpMessage)
+    const requestText = extractText(followUpRequest.body)
+    expect(requestText).toContain(responseMarker)
+    expect(requestText).toContain(INTERRUPTED_ASSISTANT_CONTEXT_NOTE)
+
+    const assistantMessages = followUpRequest.body?.messages?.filter(
+      message => message.role === 'assistant'
+    )
+    expect(assistantMessages?.length).toBeGreaterThan(0)
+    expect(
+      assistantMessages?.every(
+        message => Boolean(message.tool_calls) || extractText(message.content).trim().length > 0
+      )
+    ).toBe(true)
+    await expectNoQueuedMessages(page)
+  })
+
   async function createTestResources(request: APIRequestContext): Promise<void> {
     const modelResponse = await request.post(`${API_BASE_URL}/api/v1/namespaces/default/models`, {
       headers: authHeaders(),
@@ -632,6 +701,54 @@ test.describe('Task runtime consistency', () => {
         return text ? text.split(marker).length - 1 : 0
       })
       .toBe(1)
+  }
+
+  async function waitForCapturedModelRequest(
+    request: APIRequestContext,
+    messageText: string
+  ): Promise<CapturedModelRequest> {
+    let matchedRequest: CapturedModelRequest | undefined
+
+    await expect
+      .poll(
+        async () => {
+          const response = await request.get(`${MOCK_MODEL_SERVER_URL}/captured-requests`)
+          if (response.status() !== 200) {
+            return `HTTP_${response.status()}`
+          }
+
+          const captures = (await response.json()) as CapturedModelRequest[]
+          matchedRequest = captures.find(
+            capture =>
+              capture.url.includes('/chat/completions') &&
+              extractText(capture.body).includes(messageText)
+          )
+          return matchedRequest ? 'FOUND' : 'MISSING'
+        },
+        {
+          message: `Mock model should receive a request containing: ${messageText}`,
+          timeout: 30000,
+        }
+      )
+      .toBe('FOUND')
+
+    return matchedRequest!
+  }
+
+  function extractText(value: unknown): string {
+    if (typeof value === 'string') {
+      return value
+    }
+    if (Array.isArray(value)) {
+      return value.map(item => extractText(item)).join(' ')
+    }
+    if (value && typeof value === 'object') {
+      const objectValue = value as Record<string, unknown>
+      return ['messages', 'system', 'input', 'content', 'text', 'prompt']
+        .map(key => extractText(objectValue[key]))
+        .join(' ')
+    }
+    return ''
   }
 
   async function waitForTaskId(page: Page): Promise<number> {

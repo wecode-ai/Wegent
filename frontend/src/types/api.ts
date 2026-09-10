@@ -686,7 +686,6 @@ export type ContextType =
   | 'attachment'
   | 'external_web_content'
   | 'knowledge_base'
-  | 'table'
   | 'external_knowledge'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
@@ -707,11 +706,6 @@ export interface SubtaskContextBrief {
   folder_names?: string[] | null
   include_subfolders?: boolean | null
   scope_restricted?: boolean | null
-  // Table fields (from type_data)
-  document_id?: number | null
-  source_config?: {
-    url?: string
-  } | null
   // External knowledge fields
   external_provider?: string | null
   external_mode?: string | null

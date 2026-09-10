@@ -9,6 +9,7 @@ export type WorkspacePanelMenuTool = WorkspaceTool | 'desktop'
 export interface WorkspacePanelMenuAction {
   visible: boolean
   disabled: boolean
+  title?: string
   run: () => Promise<void>
 }
 

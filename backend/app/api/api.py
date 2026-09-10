@@ -38,12 +38,15 @@ from app.api.endpoints import (
     knowledge_video_upload,
     local_executor,
     loop_item_executions,
+    mcp_identity,
     mcp_providers,
     oauth_clients,
     oauth_provider,
     oidc,
     openapi_responses,
     pet,
+    plugin_connections,
+    plugin_publications,
     project_automations,
     project_incoming_hooks,
     projects,
@@ -61,16 +64,19 @@ from app.api.endpoints import (
     smart_apps,
     subtasks,
     system_skills,
-    tables,
     token_issuers,
     users,
     utils,
     web_content,
     web_scraper,
+    wework_api,
     wework_auth,
+    wework_notifications,
+    wework_transcripts,
     wiki,
     wizard,
     work_queue,
+    xiaoxin_knowledge_sync,
 )
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
 from app.core.config import settings
@@ -114,13 +120,13 @@ from app.api.endpoints.internal import (
 )
 from app.api.endpoints.internal import (
     object_storage_router,
+    plugin_publications_router,
     rag_content_router,
 )
 from app.api.endpoints.internal import robot_queue as internal_robot_queue
 from app.api.endpoints.internal import (
     services_router,
     skills_router,
-    tables_router,
     workspace_archives_router,
 )
 
@@ -150,6 +156,9 @@ api_router.include_router(
 )
 api_router.include_router(
     connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
+)
+api_router.include_router(
+    plugin_connections.router, prefix="/plugin-connections", tags=["plugin-connections"]
 )
 api_router.include_router(
     connector_app_projection.router, prefix="/apps", tags=["apps"]
@@ -271,6 +280,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(wework_api.router, tags=["openapi-discovery"])
 api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
@@ -328,7 +338,6 @@ api_router.include_router(
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
-api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(
     dingtalk_docs.router, prefix="/dingtalk-docs", tags=["dingtalk-docs"]
 )
@@ -336,6 +345,11 @@ api_router.include_router(
     dingtalk_wikispace_router,
     prefix="/dingtalk-wikispace",
     tags=["dingtalk-wikispace"],
+)
+api_router.include_router(
+    xiaoxin_knowledge_sync.router,
+    prefix="/integrations/xiaoxin",
+    tags=["xiaoxin-knowledge-sync"],
 )
 
 # Work queue endpoints (message forwarding and inbox)
@@ -362,12 +376,18 @@ api_router.include_router(
 )
 api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
+api_router.include_router(plugin_publications.router, prefix="/plugins")
 api_router.include_router(smart_apps.router, prefix="/smart-apps", tags=["smart-apps"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
 )
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
+)
+api_router.include_router(
+    wework_transcripts.router,
+    prefix="/wework-transcripts",
+    tags=["wework-transcripts"],
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
@@ -385,6 +405,7 @@ api_router.include_router(
     system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
+api_router.include_router(mcp_identity.router, tags=["mcp-identity"])
 api_router.include_router(
     prompt_optimization.router,
     prefix="/prompt-optimization",
@@ -408,7 +429,6 @@ api_router.include_router(
     knowledge_router, prefix="/internal", tags=["internal-knowledge"]
 )
 api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
-api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
 )
@@ -419,6 +439,11 @@ api_router.include_router(
     object_storage_router,
     prefix="/internal",
     tags=["internal-object-storage"],
+)
+api_router.include_router(
+    plugin_publications_router,
+    prefix="/internal",
+    tags=["internal-plugin-publications"],
 )
 api_router.include_router(
     workspace_archives_router,
@@ -450,6 +475,12 @@ api_router.include_router(
     api_keys_internal_router,
     prefix="/internal",
     tags=["internal-api-keys"],
+)
+
+api_router.include_router(
+    wework_notifications.router,
+    prefix="/v1/wework-notifications",
+    tags=["wework-notifications"],
 )
 
 # Finalize wecode patches after all routers are registered

@@ -1,4 +1,5 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { ApiError } from '@/api/http'
 import {
   createCloudRuntimeIpcClient,
   RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS,
@@ -10,6 +11,7 @@ import {
   createRuntimeWorkApiFromIpc,
 } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -24,6 +26,8 @@ import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import {
   EMPTY_RUNTIME_WORK,
   mergeDeviceLists,
@@ -312,6 +316,27 @@ function cloudDeviceIdFromData(data?: Record<string, unknown> | null): string | 
   return stringField(address, 'deviceId') ?? stringField(address, 'device_id')
 }
 
+function projectCloudRuntimeEventDeviceId(
+  event: LocalExecutorEvent,
+  devices: DeviceInfo[]
+): LocalExecutorEvent {
+  const eventDeviceId = cloudDeviceIdFromData(event.payload)
+  if (!eventDeviceId) return event
+
+  const device = devices.find(candidate => getWorkbenchDeviceIds(candidate).includes(eventDeviceId))
+  const logicalDeviceId = device?.device_id.trim()
+  if (!logicalDeviceId || logicalDeviceId === eventDeviceId) return event
+
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      deviceId: logicalDeviceId,
+      device_id: logicalDeviceId,
+    },
+  }
+}
+
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
@@ -328,7 +353,20 @@ export function createHybridWorkbenchServices(
     apiKey: options.token,
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
-  const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })
+  const localServices = createLocalAppServices({
+    cloudModelGateway,
+    user: options.user,
+    materializeRuntimeTask: async request => {
+      try {
+        return await cloudServices.runtimeWorkApi!.materializeRuntimeTask(request)
+      } catch (error) {
+        if (isUnsupportedRuntimeMaterialization(error)) {
+          throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, { cause: error })
+        }
+        throw error
+      }
+    },
+  })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
@@ -421,7 +459,7 @@ export function createHybridWorkbenchServices(
       route,
       discoveryRequired,
     })
-    return api
+    return { api, route }
   }
   const invalidateCloudArchiveCache = () => {
     rememberedCloudArchives.clear()
@@ -795,6 +833,9 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    materializeRuntimeTask(data) {
+      return cloudServices.runtimeWorkApi!.materializeRuntimeTask(data)
+    },
     prepareRuntimeModel(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.prepareRuntimeModel(data))
     },
@@ -1094,13 +1135,28 @@ export function createHybridWorkbenchServices(
         runtime: data.runtime,
       })
       try {
-        const api = await runtimeApiForCreate(data.deviceId, data.taskId)
+        const { api, route } = await runtimeApiForCreate(data.deviceId, data.taskId)
         logRuntimeTaskCreateStage('hybrid-create-forwarded', {
           taskId: data.taskId ?? null,
           deviceId: data.deviceId ?? null,
           elapsedMs: Date.now() - startedAt,
         })
-        const response = await api.createRuntimeTask(data)
+        const request =
+          data.wegentTeamId && route === 'cloud' ? { ...data, schemaVersion: 3 as const } : data
+        let response
+        try {
+          response =
+            data.wegentTeamId && route === 'cloud'
+              ? await cloudServices.runtimeWorkApi!.createRuntimeTask(request)
+              : await api.createRuntimeTask(request)
+        } catch (error) {
+          if (data.wegentTeamId && route === 'cloud' && rejectsRuntimeTaskCreateV3(error)) {
+            throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, {
+              cause: error,
+            })
+          }
+          throw error
+        }
         logRuntimeTaskCreateStage('hybrid-create-resolved', {
           taskId: response.taskId || data.taskId || null,
           deviceId: response.deviceId || data.deviceId || null,
@@ -1252,7 +1308,10 @@ export function createHybridWorkbenchServices(
       const deviceId = cloudDeviceIdFromData(params)
       return cloudRuntimeIpc.request(method, params, deviceId)
     },
-    subscribe: cloudRuntimeIpc.subscribe,
+    subscribe: handler =>
+      cloudRuntimeIpc.subscribe(event => {
+        handler(projectCloudRuntimeEventDeviceId(event, rememberedCloudDevices))
+      }),
   })
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {
@@ -1406,6 +1465,7 @@ function filterRuntimeChatStreamHandlers(
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),
     onRuntimeTaskTitleUpdated: route(handlers.onRuntimeTaskTitleUpdated),
+    onRuntimeWorkChanged: route(handlers.onRuntimeWorkChanged),
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
     onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),
@@ -1416,6 +1476,25 @@ function filterRuntimeChatStreamHandlers(
     onRuntimeTransportReplaced: includeTransportReplacement
       ? handlers.onRuntimeTransportReplaced
       : undefined,
+    onWeworkNotification: acceptsDevice(undefined) ? handlers.onWeworkNotification : undefined,
     onProjectTaskAssigned: acceptsDevice(undefined) ? handlers.onProjectTaskAssigned : undefined,
   }
+}
+
+function rejectsRuntimeTaskCreateV3(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 422 || !Array.isArray(error.detail)) {
+    return false
+  }
+  return error.detail.some(item => {
+    if (!item || typeof item !== 'object' || !('loc' in item)) return false
+    const location = (item as { loc?: unknown }).loc
+    return Array.isArray(location) && location.includes('schemaVersion')
+  })
+}
+
+function isUnsupportedRuntimeMaterialization(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 404 || error.status === 405 || rejectsRuntimeTaskCreateV3(error))
+  )
 }

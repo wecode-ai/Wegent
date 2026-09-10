@@ -13,7 +13,7 @@ afterEach(async () => {
   )
 })
 
-test('generates Electron and legacy Tauri rolling manifests from one release', async () => {
+test('generates Electron and component rolling manifests from one release', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'wework-release-manifests-'))
   temporaryDirectories.push(root)
   const assets = resolve(root, 'assets')
@@ -28,8 +28,6 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     `WeWork_${version}_darwin-aarch64.zip.blockmap`,
     `WeWork_${version}_darwin-x86_64.zip.blockmap`,
     `WeWork_${version}_windows-x64-setup.exe.blockmap`,
-    `WeWork_${version}_darwin-aarch64.app.tar.gz`,
-    `WeWork_${version}_darwin-x86_64.app.tar.gz`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
@@ -53,6 +51,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
         contentSha256: 'a'.repeat(64),
         archiveSha256,
         assetName,
+        releaseScope: id === 'coreDsh' ? 'shared' : 'version',
         entryPath: '.',
       }
     }
@@ -66,13 +65,6 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
         components,
       })
     )
-  }
-  for (const name of [
-    `WeWork_${version}_darwin-aarch64.app.tar.gz.sig`,
-    `WeWork_${version}_darwin-x86_64.app.tar.gz.sig`,
-    `WeWork_${version}_windows-x64-setup.exe.sig`,
-  ]) {
-    await writeFile(resolve(assets, name), `signature-${name}`)
   }
   await writeFile(notes, '## Changes\n\n- Smooth migration')
 
@@ -94,15 +86,11 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWork_${version}_windows-x64-setup.exe`
   )
-  const legacy = JSON.parse(await readFile(resolve(output, 'stable-darwin-aarch64.json'), 'utf8'))
-  expect(legacy.platforms['stable-darwin']).toEqual({
-    signature: `signature-WeWork_${version}_darwin-aarch64.app.tar.gz.sig`,
-    url: `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeWork_${version}_darwin-aarch64.app.tar.gz`,
-  })
   const components = JSON.parse(
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
   )
   expect(components.sourceSha).toBe('a'.repeat(40))
+  expect(components.capabilities).toEqual({ componentizedHostUpdate: 1 })
   expect(components.components.coreDsh).toMatchObject({
     version: '0.1.1-rc.2',
     contentSha256: 'a'.repeat(64),
@@ -112,6 +100,59 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   expect(components.components.coreDsh.archiveSha256).toMatch(/^[0-9a-f]{64}$/)
   expect(components.components.executor.downloadUrl).toBe(
     `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeworkComponent_executor_${createHash('sha256').update('macos-arm64-executor').digest('hex')}_macos_arm64.tar.gz`
+  )
+})
+
+test('prefers slim Host update artifacts while retaining version release URLs', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-host-update-manifests-'))
+  temporaryDirectories.push(root)
+  const assets = resolve(root, 'assets')
+  const output = resolve(root, 'output')
+  const notes = resolve(root, 'notes.md')
+  await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
+  const version = '1.2.3'
+  for (const name of [
+    `WeWorkHostUpdate_${version}_darwin-aarch64.zip`,
+    `WeWorkHostUpdate_${version}_darwin-x86_64.zip`,
+    `WeWorkHostUpdate_${version}_windows-x64-setup.exe`,
+    `WeWorkHostUpdate_${version}_darwin-aarch64.zip.blockmap`,
+    `WeWorkHostUpdate_${version}_darwin-x86_64.zip.blockmap`,
+    `WeWorkHostUpdate_${version}_windows-x64-setup.exe.blockmap`,
+  ]) {
+    await writeFile(resolve(assets, name), name)
+  }
+  for (const [platform, arch] of [
+    ['macos', 'arm64'],
+    ['macos', 'x64'],
+    ['windows', 'x64'],
+  ]) {
+    await writeFile(
+      resolve(assets, `components-${platform}-${arch}.json`),
+      JSON.stringify({ components: {} })
+    )
+  }
+  await writeFile(notes, '## Changes\n')
+
+  await run(
+    [
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      assets,
+      output,
+      version,
+      'beta',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'a'.repeat(40),
+    ],
+    { WEWORK_USE_COMPONENTIZED_HOST_UPDATE: 'true' }
+  )
+
+  expect(await readFile(resolve(output, 'beta-mac.yml'), 'utf8')).toContain(
+    `WeWorkHostUpdate_${version}_darwin-aarch64.zip`
+  )
+  expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
+    `WeWorkHostUpdate_${version}_windows-x64-setup.exe`
   )
 })
 
@@ -181,26 +222,28 @@ test('generates a MinIO macOS architecture release without requiring other targe
   for (const name of [
     `WeWork_${version}_darwin-aarch64.zip`,
     `WeWork_${version}_darwin-aarch64.zip.blockmap`,
-    `WeWork_${version}_darwin-aarch64.app.tar.gz`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
-  await writeFile(
-    resolve(assets, `WeWork_${version}_darwin-aarch64.app.tar.gz.sig`),
-    'migration-signature'
-  )
   const components = {}
   for (const id of ['coreDsh', 'executor']) {
     const content = `minio-${id}`
     const archiveSha256 = createHash('sha256').update(content).digest('hex')
     const assetName = `WeworkComponent_${id}_${archiveSha256}_macos_arm64.tar.gz`
-    await writeFile(resolve(assets, assetName), content)
     components[id] = {
+      releaseScope: id === 'coreDsh' ? 'shared' : 'version',
       version: 'fixture',
       contentSha256: 'c'.repeat(64),
       archiveSha256,
       assetName,
       entryPath: '.',
+    }
+    if (id === 'coreDsh') {
+      components[id].archiveBytes = Buffer.byteLength(content)
+      components[id].downloadUrl = `https://minio.example/releases/wework/components/` + assetName
+      components[id].reused = true
+    } else {
+      await writeFile(resolve(assets, assetName), content)
     }
   }
   await writeFile(
@@ -238,20 +281,12 @@ test('generates a MinIO macOS architecture release without requiring other targe
   expect(electron).toContain(
     `https://minio.example/releases/wework/macos/WeWork_${version}_darwin-aarch64.zip`
   )
-  const bridge = JSON.parse(await readFile(resolve(output, 'latest.json'), 'utf8'))
-  expect(bridge.platforms).toEqual({
-    'darwin-aarch64': {
-      signature: 'migration-signature',
-      url: `https://minio.example/releases/wework/macos/WeWork_${version}_darwin-aarch64.app.tar.gz`,
-    },
-  })
+  await expect(readFile(resolve(output, 'latest.json'), 'utf8')).rejects.toThrow()
   const componentManifest = JSON.parse(
     await readFile(resolve(output, 'components-beta-macos-arm64.json'), 'utf8')
   )
   expect(componentManifest.sourceSha).toBe('b'.repeat(40))
-  expect(componentManifest.components.coreDsh.downloadUrl).toContain(
-    'https://minio.example/releases/wework/components/'
-  )
+  expect(componentManifest.components.coreDsh.downloadUrl).toBe(components.coreDsh.downloadUrl)
   expect(componentManifest.components.executor.downloadUrl).toContain(
     'https://minio.example/releases/wework/macos/'
   )

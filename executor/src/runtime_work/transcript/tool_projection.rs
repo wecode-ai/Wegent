@@ -125,8 +125,9 @@ fn enrich_tool_block(
     let Some(object) = block.as_object_mut() else {
         return;
     };
-    insert_tool_output_fields(object, item, options);
-    insert_image_generation_render_payload(object, item);
+    if item_type(item) != "imagegeneration" {
+        insert_tool_output_fields(object, item, options);
+    }
     if include_interaction {
         insert_request_user_input_render_payload(object, item);
     }
@@ -161,32 +162,6 @@ fn is_meaningful_tool_output(output: &Value) -> bool {
         Value::String(value) => !value.is_empty(),
         _ => true,
     }
-}
-
-pub(super) fn insert_image_generation_render_payload(
-    object: &mut Map<String, Value>,
-    item: &Value,
-) {
-    if item_type(item) != "imagegeneration" {
-        return;
-    }
-    let mut payload = Map::from_iter([(
-        "kind".to_owned(),
-        Value::String("image_generation".to_owned()),
-    )]);
-    if let Some(result) = raw_string_field(item, "result").filter(|result| !result.is_empty()) {
-        payload.insert("imageBase64".to_owned(), Value::String(result));
-    }
-    if let Some(prompt) =
-        string_field(item, "revisedPrompt").or_else(|| string_field(item, "revised_prompt"))
-    {
-        payload.insert("revisedPrompt".to_owned(), Value::String(prompt));
-    }
-    if let Some(path) = string_field(item, "savedPath").or_else(|| string_field(item, "saved_path"))
-    {
-        payload.insert("savedPath".to_owned(), Value::String(path));
-    }
-    object.insert("render_payload".to_owned(), Value::Object(payload));
 }
 
 fn insert_request_user_input_render_payload(object: &mut Map<String, Value>, item: &Value) {

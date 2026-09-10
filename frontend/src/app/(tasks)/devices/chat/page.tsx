@@ -29,7 +29,15 @@ import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/para
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
 import { useDeviceVncState } from '@wecode/hooks'
-import { getAccountDefaultDeviceId } from '@/features/devices/utils/execution-target'
+import {
+  getAccountDefaultDeviceId,
+  resolveDeviceSelectionId,
+} from '@/features/devices/utils/execution-target'
+import {
+  filterDevicesByAdvancedMode,
+  resolveOrdinaryDeviceChatTarget,
+} from '@/features/devices/utils/device-visibility'
+import { useAdvancedDeviceMode } from '@/features/devices/hooks/useAdvancedDeviceMode'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
 import { useUser } from '@/features/common/UserContext'
 
@@ -53,7 +61,8 @@ export default function DeviceChatPage() {
 
   // Check if deviceId is specified in URL
   const searchParams = useSearchParams()
-  const hasDeviceIdParam = !!(searchParams.get('deviceId') || searchParams.get('device_id'))
+  const routeDeviceId = searchParams.get('deviceId') || searchParams.get('device_id')
+  const hasDeviceIdParam = Boolean(routeDeviceId)
   const routeTaskId =
     searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
   const isExistingTask = Boolean(routeTaskId)
@@ -68,6 +77,30 @@ export default function DeviceChatPage() {
     return projects.find(p => p.id === projectId) ?? null
   }, [projectId, projects])
   const isProjectContext = !!activeProject
+  const { showAdvancedDevices, isAdvancedDeviceModeReady } = useAdvancedDeviceMode()
+
+  const persistedTaskDeviceId =
+    selectedTaskMatchesRoute && selectedTaskDetail?.task_type === 'task'
+      ? selectedTaskDetail.device_id || null
+      : null
+  const visibleDevices = useMemo(
+    () => filterDevicesByAdvancedMode(devices, showAdvancedDevices),
+    [devices, showAdvancedDevices]
+  )
+  const conversationDevices = useMemo(() => {
+    const pinnedDeviceId = resolveDeviceSelectionId(
+      devices,
+      isExistingTask ? persistedTaskDeviceId : routeDeviceId
+    )
+    const pinnedDevice = pinnedDeviceId
+      ? devices.find(device => device.device_id === pinnedDeviceId)
+      : undefined
+
+    if (!pinnedDevice || visibleDevices.some(device => device.device_id === pinnedDeviceId)) {
+      return visibleDevices
+    }
+    return [...visibleDevices, pinnedDevice]
+  }, [devices, isExistingTask, persistedTaskDeviceId, routeDeviceId, visibleDevices])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -90,13 +123,25 @@ export default function DeviceChatPage() {
     saveLastTab('devices')
   }, [])
 
-  // Initialize a new task from the account default without substituting a
-  // different available device. Existing tasks use their persisted target.
+  // Ordinary device conversations prefer Executor devices. Explicit device
+  // links and existing tasks keep their exact persisted target.
   useEffect(() => {
-    if (hasDeviceIdParam || isExistingTask || selectedDeviceId) return
-    const defaultDeviceId = getAccountDefaultDeviceId(user?.preferences?.default_execution_target)
-    if (defaultDeviceId) setSelectedDeviceId(defaultDeviceId)
-  }, [hasDeviceIdParam, isExistingTask, selectedDeviceId, setSelectedDeviceId, user])
+    if (hasDeviceIdParam || isExistingTask || !isAdvancedDeviceModeReady) return
+    const defaultDeviceId = resolveDeviceSelectionId(
+      devices,
+      getAccountDefaultDeviceId(user?.preferences?.default_execution_target)
+    )
+    const nextDeviceId = resolveOrdinaryDeviceChatTarget(devices, selectedDeviceId, defaultDeviceId)
+    if (selectedDeviceId !== nextDeviceId) setSelectedDeviceId(nextDeviceId)
+  }, [
+    devices,
+    hasDeviceIdParam,
+    isAdvancedDeviceModeReady,
+    isExistingTask,
+    selectedDeviceId,
+    setSelectedDeviceId,
+    user,
+  ])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
@@ -138,16 +183,19 @@ export default function DeviceChatPage() {
     // Close VNC panel and reset fullscreen when switching devices
     setIsVncOpen(false)
     setIsVncFullscreen(false)
+    const nextParams = new URLSearchParams(searchParams.toString())
+    nextParams.set('deviceId', deviceId)
+    nextParams.delete('device_id')
+    router.replace(`/devices/chat?${nextParams.toString()}`)
   }
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskMatchesRoute ? selectedTaskDetail?.title : undefined
 
-  const persistedTaskDeviceId =
-    selectedTaskMatchesRoute && selectedTaskDetail?.task_type === 'task'
-      ? selectedTaskDetail.device_id || null
-      : null
-  const activeDeviceId = isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  const activeDeviceId = resolveDeviceSelectionId(
+    devices,
+    isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  )
   const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
 
   // VNC state follows the persisted device for existing tasks and the selected
@@ -202,6 +250,7 @@ export default function DeviceChatPage() {
           <div className="flex items-center gap-2 mr-2">
             <Monitor className="w-4 h-4 text-text-muted" />
             <select
+              data-testid="device-chat-target-select"
               value={activeDeviceId || ''}
               onChange={e => handleDeviceSelect(e.target.value)}
               disabled={isProjectContext || isExistingTask}
@@ -210,8 +259,13 @@ export default function DeviceChatPage() {
               <option value="" disabled>
                 {t('select_device')}
               </option>
-              {devices.map(device => (
-                <option key={device.device_id} value={device.device_id}>
+              {conversationDevices.map(device => (
+                <option
+                  key={device.device_id}
+                  value={device.device_id}
+                  data-testid={`device-chat-option-${device.device_id}`}
+                >
+                  {device.device_type === 'app' ? t('wework_device_prefix') : ''}
                   {device.name} (
                   {device.status === 'online'
                     ? t('status_online')
@@ -274,7 +328,7 @@ export default function DeviceChatPage() {
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">
             <div className="text-center max-w-md px-6">
-              {devices.length === 0 ? (
+              {conversationDevices.length === 0 ? (
                 <>
                   <WifiOff className="w-16 h-16 text-text-muted mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-text-primary mb-2">

@@ -986,6 +986,20 @@ class SqlAlchemySubtaskStore:
             .all()
         )
 
+    def has_active_by_executor_names(
+        self, db: Session, *, user_id: int, executor_names: list[str]
+    ) -> bool:
+        return (
+            db.query(Subtask.id)
+            .filter(
+                Subtask.user_id == user_id,
+                Subtask.executor_name.in_(executor_names),
+                Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
+            )
+            .first()
+            is not None
+        )
+
     def list_by_executor_ref(
         self, db: Session, *, executor_namespace: str, executor_name: str
     ) -> list[Subtask]:

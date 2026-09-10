@@ -9,7 +9,6 @@ import {
   useState,
 } from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
-import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { ComposerLinkChip } from './ComposerLinkChip'
@@ -35,6 +34,7 @@ import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { navigateTo } from '@/lib/navigation'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -254,7 +254,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 
   return (
     <div
-      className={`${variant === 'process' ? 'thinking-markdown text-text-secondary' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
+      className={`${variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
     >
       {contentParts.map((part, index) =>
         part.kind === 'visualization' ? (
@@ -375,7 +375,9 @@ function estimateMarkdownChunkHeight(content: string): number {
 }
 
 type MarkdownCodeProps = {
-  node?: HastElement
+  node?: {
+    properties?: unknown
+  }
   compact?: boolean
 } & HTMLAttributes<HTMLElement>
 
@@ -383,9 +385,14 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
   const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
+  const nodeDataBlock =
+    typeof node?.properties === 'object' &&
+    node.properties !== null &&
+    'dataBlock' in node.properties &&
+    node.properties.dataBlock === 'true'
   const isBlock =
     ('data-block' in props && Boolean(props['data-block'])) ||
-    node?.properties?.dataBlock === 'true' ||
+    nodeDataBlock ||
     Boolean(match) ||
     text.includes('\n')
   if (isBlock) {
@@ -709,6 +716,20 @@ function AssistantMarkdownLink({
           ) : null}
         </button>
       </Tooltip>
+    )
+  }
+
+  if (target.kind === 'internal') {
+    return (
+      <button
+        type="button"
+        className={ASSISTANT_MARKDOWN_LINK_CLASS}
+        data-testid="assistant-markdown-link"
+        onClick={() => navigateTo(target.path)}
+      >
+        {icon}
+        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
+      </button>
     )
   }
 

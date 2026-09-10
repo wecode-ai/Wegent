@@ -1,5 +1,9 @@
 import type { HttpClient } from './http'
 import type { LocalLoopItemExecution } from './local/localDelivery'
+
+type ProjectAutomationExecution = LocalLoopItemExecution & {
+  automation_run_id: string
+}
 import type { ProjectWorkflowDefinition } from './deliveries'
 
 export type ProjectAutomationRunStatus =
@@ -13,16 +17,23 @@ export type ProjectAutomationRunStatus =
   | 'skipped'
   | 'cancelled'
 
+export type ProjectAutomationEventType =
+  | 'task.created'
+  | 'task.status_changed'
+  | 'change_request.checks_failed'
+  | 'change_request.merge_conflict'
+  | 'change_request.review_submitted'
+  | 'change_request.comment_created'
+  | 'document.changed'
+
 interface ProjectAutomationRuleBase {
   id: string
   projectId: string
   name: string
   prompt: string
   triggerType: 'schedule' | 'event' | 'workflow'
-  eventType: 'task.created' | 'task.status_changed' | null
+  eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
-  webhookEventId: string | null
-  webhookSecret: string | null
   cronExpression: string | null
   timezone: string
   agentName: string
@@ -73,7 +84,7 @@ interface ProjectAutomationInputBase {
   name: string
   prompt: string
   triggerType: 'schedule' | 'event' | 'workflow'
-  eventType: 'task.created' | 'task.status_changed' | null
+  eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
   timezone: string
@@ -105,8 +116,65 @@ export interface ProjectAutomationDeleteResult {
   workflowAutomationId: string | null
 }
 
+function cloudExecution(row: Record<string, unknown>): ProjectAutomationExecution {
+  const payload = (row.runtimePayload as Record<string, unknown> | null) ?? null
+  const bots = Array.isArray(payload?.bot) ? payload.bot : []
+  const bot = (bots[0] as Record<string, unknown> | undefined) ?? {}
+  return {
+    id: Number(row.id),
+    loop_item_id: String(row.loopItemId ?? ''),
+    cloud_project_id: String(row.cloudProjectId ?? ''),
+    task_title: String(row.taskTitle ?? ''),
+    task_status: row.taskStatus == null ? null : String(row.taskStatus),
+    task_priority: row.taskPriority == null ? null : String(row.taskPriority),
+    agent_id: String(row.agentId ?? ''),
+    automation_run_id: String(row.automationRunId ?? ''),
+    assigner_user_id: Number(row.assignerUserId ?? 0),
+    execution_environment: String(row.executionEnvironment ?? ''),
+    execution_device_id: row.executionDeviceId == null ? null : String(row.executionDeviceId),
+    runtime_instance_id: row.runtimeInstanceId == null ? null : String(row.runtimeInstanceId),
+    status: String(row.status ?? ''),
+    display_state: String(row.displayState ?? 'unknown'),
+    observed_state: String(row.observedState ?? 'unconfirmed'),
+    sync_state: String(row.syncState ?? 'pending'),
+    priority_weight: Number(row.priorityWeight ?? 0),
+    queued_at: row.queuedAt == null ? null : String(row.queuedAt),
+    started_at: row.startedAt == null ? null : String(row.startedAt),
+    completed_at: row.completedAt == null ? null : String(row.completedAt),
+    lease_expires_at: row.leaseExpiresAt == null ? null : String(row.leaseExpiresAt),
+    heartbeat_at: row.heartbeatAt == null ? null : String(row.heartbeatAt),
+    claimed_at: row.claimedAt == null ? null : String(row.claimedAt),
+    start_requested_at: row.startRequestedAt == null ? null : String(row.startRequestedAt),
+    observed_at: row.observedAt == null ? null : String(row.observedAt),
+    cancel_requested_at: row.cancelRequestedAt == null ? null : String(row.cancelRequestedAt),
+    attempt_no: Number(row.attemptNo ?? 1),
+    previous_execution_id: row.previousExecutionId == null ? null : Number(row.previousExecutionId),
+    execution_scope: String(row.executionScope ?? ''),
+    last_event_seq: Number(row.lastEventSeq ?? 0),
+    termination_reason: String(row.terminationReason ?? ''),
+    retry_attempt: Number(row.retryAttempt ?? 0),
+    error_message: String(row.errorMessage ?? ''),
+    execution_note: String(row.executionNote ?? ''),
+    runtime_device_id: row.runtimeDeviceId == null ? null : String(row.runtimeDeviceId),
+    runtime_task_id: row.runtimeTaskId == null ? null : String(row.runtimeTaskId),
+    version: Number(row.version ?? 1),
+    created_at: String(row.createdAt ?? ''),
+    updated_at: String(row.updatedAt ?? ''),
+    agent_name: String(bot.name ?? 'AI'),
+    agent_system_prompt: String(bot.system_prompt ?? bot.systemPrompt ?? ''),
+    agent_model: payload?.modelId == null ? null : String(payload.modelId),
+    agent_max_concurrent_executions: Number(row.agentMaxConcurrentExecutions ?? 1),
+    runtime_payload: payload,
+  }
+}
+
 export function createProjectAutomationApi(client: HttpClient) {
   return {
+    claimNext(claim: { execution_device_id: string; lease_seconds: number }) {
+      return client
+        .post<Record<string, unknown> | null>('/v1/loop-item-executions/claim-my-next', claim)
+        .then(row => (row ? cloudExecution(row) : null))
+    },
     heartbeat(
       execution: Pick<LocalLoopItemExecution, 'id' | 'cloud_project_id'>,
       runtimeDeviceId: string | null,
@@ -211,12 +279,6 @@ export function createProjectAutomationApi(client: HttpClient) {
     delete(projectId: string, automationId: string) {
       return client.delete<ProjectAutomationDeleteResult>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}`
-      )
-    },
-    rotateWebhookSecret(projectId: string, automationId: string) {
-      return client.post<ProjectAutomationRule>(
-        `/v1/cloud-projects/${projectId}/automations/${automationId}/rotate-webhook-secret`,
-        {}
       )
     },
     runNow(projectId: string, automationId: string) {

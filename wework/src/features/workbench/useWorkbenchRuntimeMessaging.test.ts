@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { Attachment, DeviceInfo } from '@/types/api'
+import i18n from '@/i18n'
 import {
   buildRuntimeTaskCreateHandle,
   friendlyTitleForTask,
@@ -7,10 +8,19 @@ import {
   prepareRuntimeAttachmentsForDevice,
   resolveRuntimeTaskCreateWorkspacePath,
   runtimeExecutablePathForTarget,
+  runtimeSendError,
   resolveTemporaryChatSource,
   runtimeThreadId,
   titleModelForGeneration,
 } from './useWorkbenchRuntimeMessaging'
+
+describe('runtimeSendError', () => {
+  test('localizes an unsupported remote Team backend', () => {
+    expect(runtimeSendError(new Error('REMOTE_TEAM_BACKEND_UNSUPPORTED'), 'fallback')).toBe(
+      i18n.t('workbench.remote_team_backend_unsupported')
+    )
+  })
+})
 
 describe('buildRuntimeTaskCreateHandle', () => {
   test('keeps board ownership in the optimistic runtime address', () => {
@@ -41,36 +51,36 @@ describe('resolveRuntimeTaskCreateWorkspacePath', () => {
     expect(
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
-        requestedWorktree: false,
+        requestedManagedWorkspace: false,
       })
     ).toBe('/workspace/project')
   })
 
-  test('requires the Executor planned path for a Worktree task', () => {
+  test('requires the Executor planned path for a managed workspace task', () => {
     expect(() =>
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toThrow('did not return a planned workspace path')
   })
 
-  test('rejects a Worktree response that falls back to the base workspace', () => {
+  test('rejects a managed workspace response that falls back to the base workspace', () => {
     expect(() =>
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project/',
         responsePath: '/workspace/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toThrow('returned the base workspace path')
   })
 
-  test('accepts a distinct planned Worktree path', () => {
+  test('accepts a distinct planned managed workspace path', () => {
     expect(
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
         responsePath: '/executor/worktrees/task-1/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toBe('/executor/worktrees/task-1/project')
   })

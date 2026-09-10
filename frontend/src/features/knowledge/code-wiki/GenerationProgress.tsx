@@ -6,19 +6,26 @@
 
 import { useEffect, useState } from 'react'
 import { Check, ChevronDown, ChevronUp, Circle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeWikiRunProgress, CodeWikiRunStatus } from '@/types/code-wiki'
 
 interface GenerationProgressProps {
   status: CodeWikiRunStatus | null
+  onCancel?: () => void
+  cancelling?: boolean
 }
 
 const PLAN_ONLY_STEPS = ['plan', 'writing', 'publish'] as const
 const PLAN_AND_QA_STEPS = ['plan', 'writing', 'qa', 'publish'] as const
 type ProgressStep = (typeof PLAN_AND_QA_STEPS)[number]
 
-export function GenerationProgress({ status }: GenerationProgressProps) {
+export function GenerationProgress({
+  status,
+  onCancel,
+  cancelling = false,
+}: GenerationProgressProps) {
   const { t } = useTranslation('knowledge')
   const progress = visibleProgress(status)
   const [expanded, setExpanded] = useState(true)
@@ -28,11 +35,14 @@ export function GenerationProgress({ status }: GenerationProgressProps) {
   if (!progress) return null
   const hasSteps = progress.total_steps > 0
   const steps = progress.total_steps === 3 ? PLAN_ONLY_STEPS : PLAN_AND_QA_STEPS
+  const planLabel = progress.review_required
+    ? 'codeWiki.progress.stepLabel.planPassed'
+    : 'codeWiki.progress.stepLabel.planCompleted'
 
   const stepLabel = (step: ProgressStep, number: number) => {
     if (number < progress.current_step) {
       if (step === 'plan') {
-        return t('codeWiki.progress.stepLabel.planPassed', { count: progress.pages_total })
+        return t(planLabel, { count: progress.pages_total })
       }
       return t(`codeWiki.progress.stepLabel.${step}Completed`, {
         count: progress.pages_total,
@@ -52,46 +62,63 @@ export function GenerationProgress({ status }: GenerationProgressProps) {
 
   return (
     <div className="px-4 pt-4" data-testid="code-wiki-generation-progress">
-      <section className="mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
-        <button
-          type="button"
-          className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
-          onClick={() => hasSteps && setExpanded(value => !value)}
-          disabled={!hasSteps}
-          aria-expanded={hasSteps ? expanded : undefined}
-          data-testid="code-wiki-progress-toggle"
-        >
-          <Spinner size="sm" className="shrink-0 text-primary" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-text-primary">
-              {t('codeWiki.progress.title')}
-            </p>
-            <p
-              className="truncate text-xs text-text-tertiary"
-              data-testid="code-wiki-progress-stage"
-            >
-              {t(`codeWiki.progress.stage.${progress.stage}`)}
-            </p>
-          </div>
-          {hasSteps && (
-            <>
-              <span
-                className="shrink-0 text-xs text-text-tertiary"
-                data-testid="code-wiki-progress-step"
+      <section className="mx-auto w-full max-w-5xl overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+        <div className="flex items-center">
+          <button
+            type="button"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
+            onClick={() => hasSteps && setExpanded(value => !value)}
+            disabled={!hasSteps}
+            aria-expanded={hasSteps ? expanded : undefined}
+            data-testid="code-wiki-progress-toggle"
+          >
+            <Spinner size="sm" className="shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-text-primary">
+                {t('codeWiki.progress.title')}
+              </p>
+              <p
+                className="truncate text-xs text-text-tertiary"
+                data-testid="code-wiki-progress-stage"
               >
-                {t('codeWiki.progress.step', {
-                  current: progress.current_step,
-                  total: progress.total_steps,
-                })}
-              </span>
-              {expanded ? (
-                <ChevronUp className="h-4 w-4 shrink-0 text-text-tertiary" />
-              ) : (
-                <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary" />
-              )}
-            </>
+                {t(`codeWiki.progress.stage.${progress.stage}`)}
+              </p>
+            </div>
+            {hasSteps && (
+              <>
+                <span
+                  className="shrink-0 text-xs text-text-tertiary"
+                  data-testid="code-wiki-progress-step"
+                >
+                  {t('codeWiki.progress.step', {
+                    current: progress.current_step,
+                    total: progress.total_steps,
+                  })}
+                </span>
+                {expanded ? (
+                  <ChevronUp className="h-4 w-4 shrink-0 text-text-tertiary" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary" />
+                )}
+              </>
+            )}
+          </button>
+
+          {onCancel && (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={onCancel}
+              disabled={cancelling}
+              className="mr-3 h-11 shrink-0 sm:h-9"
+              data-testid="code-wiki-progress-cancel"
+            >
+              {cancelling ? <Spinner size="sm" /> : null}
+              {t(cancelling ? 'codeWiki.progress.cancelling' : 'codeWiki.progress.cancel')}
+            </Button>
           )}
-        </button>
+        </div>
 
         {hasSteps && expanded && (
           <ol

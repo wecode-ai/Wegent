@@ -30,6 +30,7 @@ Before changing a Wework flow, identify the affected product area and trace its 
 - Custom Markdown renderers must preserve semantic attributes supplied by the parser, such as an ordered list's `start` value.
 - Preserve platform text-navigation semantics in the ProseMirror chat composer. Register only composer-specific key bindings instead of the document-level `baseKeymap`, and scope mention caret workarounds to unmodified arrow keys.
 - Focus popup composers through their exact editor target; a mixed `querySelector` returns the first matching element in DOM order, not the first selector in the list. In WKWebView, keep a completely empty contenteditable position native instead of replacing it with a decoration widget so programmatic focus can start the platform text input session.
+- Keep model selector controls mounted while refreshing an already-loaded model catalog. Reserve loading placeholders for the initial catalog load so background refreshes do not create blank composer actions.
 
 ## i18n
 

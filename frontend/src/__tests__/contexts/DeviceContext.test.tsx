@@ -15,6 +15,7 @@ jest.mock('@/apis/devices', () => {
     deviceApis: {
       ...actual.deviceApis,
       getAllDevices: jest.fn(),
+      deleteDevice: jest.fn(),
     },
   }
 })
@@ -43,21 +44,57 @@ function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
 }
 
 function DeviceProbe() {
-  const { devices, selectedDeviceId, setSelectedDeviceId, isLoading } = useDevices()
+  const { devices, selectedDeviceId, setSelectedDeviceId, deleteDevice, isLoading } = useDevices()
 
   return (
     <div>
       <span data-testid="device-list">{devices.map(device => device.name).join(',')}</span>
+      <span data-testid="device-ids">{devices.map(device => device.device_id).join(',')}</span>
       <span data-testid="selected-device">{selectedDeviceId ?? 'cloud'}</span>
       <span data-testid="loading-state">{String(isLoading)}</span>
       <button type="button" onClick={() => setSelectedDeviceId('app-device')}>
         Select app device
+      </button>
+      <button type="button" onClick={() => void deleteDevice(2)}>
+        Delete second record
       </button>
     </div>
   )
 }
 
 describe('DeviceContext', () => {
+  it('routes duplicate logical names by record and removes only the selected record', async () => {
+    ;(deviceApis.getAllDevices as jest.Mock).mockResolvedValue({
+      items: [
+        createDevice({
+          id: 1,
+          device_type: 'app',
+          device_id: 'local-device',
+          execution_target_id: 'app-record-1',
+        }),
+        createDevice({
+          id: 2,
+          device_type: 'app',
+          device_id: 'local-device',
+          execution_target_id: 'app-record-2',
+        }),
+      ],
+    })
+    ;(deviceApis.deleteDevice as jest.Mock).mockResolvedValue({})
+    render(
+      <DeviceProvider>
+        <DeviceProbe />
+      </DeviceProvider>
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('device-ids')).toHaveTextContent('app-record-1,app-record-2')
+    )
+    fireEvent.click(screen.getByText('Delete second record'))
+    await waitFor(() =>
+      expect(screen.getByTestId('device-ids')).toHaveTextContent(/^app-record-1$/)
+    )
+    expect(deviceApis.deleteDevice).toHaveBeenCalledWith(2)
+  })
   beforeEach(() => {
     jest.clearAllMocks()
     ;(deviceApis.getAllDevices as jest.Mock).mockResolvedValue({
@@ -80,7 +117,7 @@ describe('DeviceContext', () => {
     })
   })
 
-  it('excludes app-only registrations from Wegent device consumers', async () => {
+  it('includes Wework app registrations in Wegent device consumers', async () => {
     render(
       <DeviceProvider>
         <DeviceProbe />
@@ -89,11 +126,12 @@ describe('DeviceContext', () => {
 
     await waitFor(() => expect(screen.getByTestId('loading-state')).toHaveTextContent('false'))
 
-    expect(screen.getByTestId('device-list')).toHaveTextContent('Local Device,Remote Device')
-    expect(screen.getByTestId('device-list')).not.toHaveTextContent('App Device')
+    expect(screen.getByTestId('device-list')).toHaveTextContent(
+      'Local Device,App Device,Remote Device'
+    )
   })
 
-  it('clears a selection that is not exposed to Wegent web', async () => {
+  it('keeps a selected Wework app device available for chat', async () => {
     render(
       <DeviceProvider>
         <DeviceProbe />
@@ -104,6 +142,6 @@ describe('DeviceContext', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Select app device' }))
 
-    await waitFor(() => expect(screen.getByTestId('selected-device')).toHaveTextContent('cloud'))
+    expect(screen.getByTestId('selected-device')).toHaveTextContent('app-device')
   })
 })

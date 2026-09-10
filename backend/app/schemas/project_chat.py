@@ -168,6 +168,9 @@ class ProjectChatAgentView(ProjectChatSchema):
 class LoopItemAssign(ProjectChatSchema):
     """Assign a loop item to a project member or board robot."""
 
+    notify_assignee: bool = True
+    notify_self: bool = False
+
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent"]
     assignee_id: str = Field(min_length=1, max_length=128)
@@ -192,6 +195,17 @@ class LoopItemExecutionClaim(ProjectChatSchema):
     execution_environment: Literal["local", "cloud"] = "local"
     lease_seconds: int = Field(default=300, ge=60, le=3600)
     assigner_user_id: int | None = Field(default=None)
+
+
+class LoopItemExecutionDeviceClaim(ProjectChatSchema):
+    """Claim the next queued local run for any robot bound to a device."""
+
+    model_config = ConfigDict(
+        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
+    )
+
+    execution_device_id: str = Field(min_length=1, max_length=100)
+    lease_seconds: int = Field(default=300, ge=60, le=3600)
 
 
 class LoopItemExecutionHeartbeat(ProjectChatSchema):

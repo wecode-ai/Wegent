@@ -16,8 +16,10 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from minio_release_assets import (  # noqa: E402
+    COMPONENT_RELEASE_SCOPES,
     MANAGED_COMPONENT_IDS,
     load_component_assets,
+    load_release_artifacts,
     publish_component_assets,
     publish_component_manifest,
     publish_immutable_file,
@@ -95,108 +97,23 @@ class FakeResponse:
         pass
 
 
-def test_mac_legacy_manifest_uses_platform_defaults_only(monkeypatch) -> None:
-    module = load_script("upload-mac-release-to-s3.py")
-    client = FakeClient()
-    arm_entry = {"signature": "arm-signature", "url": "https://example.com/arm"}
-    x64_entry = {"signature": "x64-signature", "url": "https://example.com/x64"}
-    arm_manifest = {
-        "version": "1.2.3",
-        "platforms": {"darwin-aarch64": arm_entry},
-    }
-    x64_manifest = {
-        "version": "1.2.3",
-        "platforms": {"darwin-x86_64": x64_entry},
-    }
-    client.objects["wework/macos-arm/latest.json"] = json.dumps(arm_manifest).encode()
-    client.objects["wework/macos-x64/latest.json"] = json.dumps(x64_manifest).encode()
-    client.objects["wework/macos/stable-darwin-aarch64.json"] = json.dumps(
-        {"version": "1.2.3", "platforms": {"stable-darwin": arm_entry}}
-    ).encode()
-    client.objects["wework/macos/stable-darwin-x86_64.json"] = json.dumps(
-        {"version": "1.2.3", "platforms": {"stable-darwin": x64_entry}}
-    ).encode()
-    monkeypatch.setenv("WEWORK_MAC_ARM64_RELEASE_S3_PREFIX", "wework/macos-arm")
-    monkeypatch.setenv("WEWORK_MAC_X64_RELEASE_S3_PREFIX", "wework/macos-x64")
-    monkeypatch.setenv("WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX", "wework/macos")
-
-    module.publish_legacy_manifest(client, "releases", "1.2.3", "wework/macos")
-    published = json.loads(client.objects["wework/macos/latest.json"])
-    assert published["platforms"] == {
-        "darwin-aarch64": arm_entry,
-        "darwin-x86_64": x64_entry,
-    }
-
-
-def test_mac_legacy_manifest_requires_both_stable_channel_manifests(
-    monkeypatch,
-) -> None:
-    module = load_script("upload-mac-release-to-s3.py")
-    client = FakeClient()
-    entry = {"signature": "signature", "url": "https://example.com/release"}
-    manifest = {"version": "1.2.3", "platforms": {"darwin-aarch64": entry}}
-    client.objects["wework/macos-arm/latest.json"] = json.dumps(manifest).encode()
-    client.objects["wework/macos-x64/latest.json"] = json.dumps(
-        {
-            "version": "1.2.3",
-            "platforms": {"darwin-x86_64": entry},
-        }
-    ).encode()
-    client.objects["wework/macos/stable-darwin-aarch64.json"] = json.dumps(
-        {"version": "1.2.3", "platforms": {"stable-darwin": entry}}
-    ).encode()
-    client.objects["wework/macos/stable-darwin-x86_64.json"] = json.dumps(
-        {"version": "1.2.3", "platforms": {}}
-    ).encode()
-    monkeypatch.setenv("WEWORK_MAC_ARM64_RELEASE_S3_PREFIX", "wework/macos-arm")
-    monkeypatch.setenv("WEWORK_MAC_X64_RELEASE_S3_PREFIX", "wework/macos-x64")
-
-    with pytest.raises(SystemExit, match="stable channel manifest"):
-        module.publish_legacy_manifest(client, "releases", "1.2.3", "wework/macos")
-
-
-def test_windows_stable_manifest_bootstraps_channel_targets(tmp_path: Path) -> None:
-    module = load_script("upload-windows-release-to-s3.py")
-    client = FakeClient()
-    entry = {"signature": "windows-signature", "url": "https://example.com/windows"}
-    manifest_path = tmp_path / "latest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "version": "1.2.3",
-                "platforms": {"windows-x86_64": entry},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    module.publish_stable_bootstrap_manifest(
-        client,
-        "releases",
-        "wework/windows",
-        manifest_path,
-    )
-
-    published = json.loads(client.objects["wework/windows/latest.json"])
-    assert published["platforms"]["windows-x86_64"] == entry
-    assert published["platforms"]["stable-windows"] == entry
-    assert published["platforms"]["beta-windows"] == entry
-
-
 def test_windows_latest_installer_uses_canonical_release_name(tmp_path: Path) -> None:
     module = load_script("upload-windows-release-to-s3.py")
     client = FakeClient()
     version = "1.2.3"
     installer = tmp_path / f"WeWork_{version}_windows-x64-setup.exe"
+    host_update = tmp_path / f"WeWorkHostUpdate_{version}_windows-x64-setup.exe"
     installer.write_bytes(b"installer")
+    host_update.write_bytes(b"host-update")
     client.objects[f"wework/windows/{installer.name}"] = installer.read_bytes()
+    client.objects[f"wework/windows/{host_update.name}"] = host_update.read_bytes()
 
     module.publish_latest_installer(
         client,
         "releases",
         "wework/windows",
         version,
-        [installer],
+        [host_update, installer],
     )
 
     assert client.objects["wework/windows/WeWork_latest_windows-x64-setup.exe"] == (
@@ -217,19 +134,23 @@ def test_stable_versions_sort_after_beta_versions() -> None:
 
 
 @pytest.mark.parametrize(
-    "script_name",
-    ["upload-mac-release-to-s3.py", "upload-windows-release-to-s3.py"],
+    ("script_name", "version_key"),
+    [
+        ("upload-mac-release-to-s3.py", "appVersion"),
+        ("upload-windows-release-to-s3.py", "version"),
+    ],
 )
 def test_rolling_channels_never_move_backwards(
     script_name: str,
+    version_key: str,
     tmp_path: Path,
 ) -> None:
     module = load_script(script_name)
     client = FakeClient()
     path = tmp_path / "stable-platform.json"
-    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    path.write_text(json.dumps({version_key: "1.2.3"}), encoding="utf-8")
     client.objects["wework/stable-platform.json"] = json.dumps(
-        {"version": "1.2.4"}
+        {version_key: "1.2.4"}
     ).encode()
 
     assert not module.release_advances_channel(
@@ -241,23 +162,24 @@ def test_rolling_channels_never_move_backwards(
 
 
 @pytest.mark.parametrize(
-    ("script_name", "electron_manifest"),
+    ("script_name", "electron_manifest", "version_key"),
     [
-        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
-        ("upload-windows-release-to-s3.py", "latest.yml"),
+        ("upload-mac-release-to-s3.py", "latest-mac.yml", "appVersion"),
+        ("upload-windows-release-to-s3.py", "latest.yml", "version"),
     ],
 )
 def test_same_version_repairs_incomplete_rolling_channels(
     script_name: str,
     electron_manifest: str,
+    version_key: str,
     tmp_path: Path,
 ) -> None:
     module = load_script(script_name)
     client = FakeClient()
     path = tmp_path / "stable-platform.json"
-    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    path.write_text(json.dumps({version_key: "1.2.3"}), encoding="utf-8")
     client.objects["wework/stable-platform.json"] = json.dumps(
-        {"version": "1.2.3"}
+        {version_key: "1.2.3"}
     ).encode()
 
     assert module.release_advances_channel(
@@ -270,23 +192,24 @@ def test_same_version_repairs_incomplete_rolling_channels(
 
 
 @pytest.mark.parametrize(
-    ("script_name", "electron_manifest"),
+    ("script_name", "electron_manifest", "version_key"),
     [
-        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
-        ("upload-windows-release-to-s3.py", "latest.yml"),
+        ("upload-mac-release-to-s3.py", "latest-mac.yml", "appVersion"),
+        ("upload-windows-release-to-s3.py", "latest.yml", "version"),
     ],
 )
 def test_older_release_rejects_incomplete_newer_rolling_channels(
     script_name: str,
     electron_manifest: str,
+    version_key: str,
     tmp_path: Path,
 ) -> None:
     module = load_script(script_name)
     client = FakeClient()
     path = tmp_path / "stable-platform.json"
-    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    path.write_text(json.dumps({version_key: "1.2.3"}), encoding="utf-8")
     client.objects["wework/stable-platform.json"] = json.dumps(
-        {"version": "1.2.4"}
+        {version_key: "1.2.4"}
     ).encode()
 
     with pytest.raises(SystemExit, match="Newer release channel 1.2.4 is incomplete"):
@@ -300,23 +223,24 @@ def test_older_release_rejects_incomplete_newer_rolling_channels(
 
 
 @pytest.mark.parametrize(
-    ("script_name", "electron_manifest"),
+    ("script_name", "electron_manifest", "version_key"),
     [
-        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
-        ("upload-windows-release-to-s3.py", "latest.yml"),
+        ("upload-mac-release-to-s3.py", "latest-mac.yml", "appVersion"),
+        ("upload-windows-release-to-s3.py", "latest.yml", "version"),
     ],
 )
 def test_complete_same_version_rolling_channels_are_reused(
     script_name: str,
     electron_manifest: str,
+    version_key: str,
     tmp_path: Path,
 ) -> None:
     module = load_script(script_name)
     client = FakeClient()
     path = tmp_path / "stable-platform.json"
-    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    path.write_text(json.dumps({version_key: "1.2.3"}), encoding="utf-8")
     client.objects["wework/stable-platform.json"] = json.dumps(
-        {"version": "1.2.3"}
+        {version_key: "1.2.3"}
     ).encode()
     client.objects[f"wework/{electron_manifest}"] = b"version: 1.2.3\n"
 
@@ -358,29 +282,30 @@ def test_channel_repair_publishes_rolling_pointer_last(
     module = load_script(script_name)
     client = FakeClient()
     channel_manifest = tmp_path / "stable-windows-x86_64.json"
+    version_key = "version"
     if script_name == "upload-mac-release-to-s3.py":
-        channel_manifest = tmp_path / "stable-darwin-aarch64.json"
-    channel_manifest.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+        channel_manifest = tmp_path / component_manifest
+        version_key = "appVersion"
+    channel_manifest.write_text(json.dumps({version_key: "1.2.3"}), encoding="utf-8")
     (tmp_path / electron_manifest).write_text("version: 1.2.3\n", encoding="utf-8")
     remote_channel = f"wework/{channel_manifest.name}"
-    client.objects[remote_channel] = json.dumps({"version": "1.2.3"}).encode()
+    client.objects[remote_channel] = json.dumps({version_key: "1.2.3"}).encode()
     uploaded = []
     monkeypatch.setattr(
         module,
         "upload_electron_manifest",
         lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
     )
-    monkeypatch.setattr(
-        module,
-        "upload_channel_manifest",
-        lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
-    )
-
+    if script_name == "upload-windows-release-to-s3.py":
+        monkeypatch.setattr(
+            module,
+            "upload_channel_manifest",
+            lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
+        )
     if script_name == "upload-mac-release-to-s3.py":
         repaired = module.publish_channel(
             client,
             "releases",
-            "wework",
             "wework",
             tmp_path,
             "stable",
@@ -398,11 +323,10 @@ def test_channel_repair_publishes_rolling_pointer_last(
         )
 
     assert repaired
-    assert uploaded == [
-        component_manifest,
-        electron_manifest,
-        channel_manifest.name,
-    ]
+    expected = [component_manifest, electron_manifest]
+    if script_name == "upload-windows-release-to-s3.py":
+        expected.insert(1, channel_manifest.name)
+    assert uploaded == expected
 
 
 def write_component_release(
@@ -417,8 +341,7 @@ def write_component_release(
         content = component_id.encode()
         archive_sha256 = sha256(content).hexdigest()
         asset_name = (
-            f"WeworkComponent_{component_id}_{archive_sha256}_"
-            f"{platform}_{arch}.tar.gz"
+            f"WeworkComponent_{component_id}_{archive_sha256}_{platform}_{arch}.tar.gz"
         )
         (tmp_path / asset_name).write_bytes(content)
         components[component_id] = {
@@ -427,6 +350,7 @@ def write_component_release(
             "archiveSha256": archive_sha256,
             "archiveBytes": len(content),
             "assetName": asset_name,
+            "releaseScope": COMPONENT_RELEASE_SCOPES[component_id],
             "entryPath": ".",
         }
     (tmp_path / f"components-{platform}-{arch}.json").write_text(
@@ -451,6 +375,7 @@ def write_component_release(
                     "channel": channel,
                     "platform": platform,
                     "arch": arch,
+                    "capabilities": {"componentizedHostUpdate": 1},
                     "components": components,
                 }
             ),
@@ -479,9 +404,27 @@ def test_component_assets_split_shared_and_release_specific_storage(
         "wework/macos",
         "wework/macos",
         "wework/macos",
+        "wework/macos",
         "wework/components",
         "wework/components",
     ]
+
+
+def test_reused_component_assets_do_not_require_local_archives(tmp_path: Path) -> None:
+    write_component_release(tmp_path)
+    descriptor_path = tmp_path / "components-macos-arm64.json"
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    reused = descriptor["components"]["codex"]
+    (tmp_path / reused["assetName"]).unlink()
+    reused["reused"] = True
+    reused["downloadUrl"] = f"https://minio.example/{reused['assetName']}"
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+
+    assets = load_component_assets(tmp_path, "macos", "arm64", "1.2.3")
+
+    assert {asset.component_id for asset in assets} == set(MANAGED_COMPONENT_IDS) - {
+        "codex"
+    }
 
 
 def test_component_only_manifest_requires_the_same_installed_app_version(
@@ -587,7 +530,24 @@ def test_versioned_release_assets_are_immutable(tmp_path: Path) -> None:
         )
 
 
-def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
+def test_release_artifacts_include_full_and_componentized_host_packages(
+    tmp_path: Path,
+) -> None:
+    version = "1.2.3"
+    expected = [
+        tmp_path / f"WeWork_{version}_darwin-aarch64.zip",
+        tmp_path / f"WeWork_{version}_darwin-aarch64.zip.blockmap",
+        tmp_path / f"WeWorkHostUpdate_{version}_darwin-aarch64.zip",
+        tmp_path / f"WeWorkHostUpdate_{version}_darwin-aarch64.zip.blockmap",
+    ]
+    for path in expected:
+        path.write_bytes(path.name.encode())
+    (tmp_path / f"Other_{version}.zip").write_bytes(b"ignored")
+
+    assert load_release_artifacts(tmp_path, version) == sorted(expected)
+
+
+def test_minio_macos_build_uses_electron_only_release_assets() -> None:
     script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
     preparer = (SCRIPT_DIR / "prepare-desktop-release-assets.mjs").read_text(
         encoding="utf-8"
@@ -607,11 +567,25 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
     assert "WeWork_${VERSION}_$(release_platform).dmg" in script
     assert "WeWork_${VERSION}_$(release_platform).zip" in script
+    assert "WeWorkHostUpdate_${VERSION}_$(release_platform).zip" in script
+    assert "WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS" in script
+    assert "WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app" in script
+    assert 'WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"' in script
+    assert "components-$CHANNEL-macos-$arch.json" in script
     assert "const releaseBaseName = `WeWork_${version}_${releasePlatform}`" in preparer
     assert "cp(dmg, join(output, basename(dmg)))" not in preparer
     assert "cp(zip, join(output, basename(zip)))" not in preparer
     assert "WEWORK_NOTARYTOOL_S3_ACCELERATION" in script
     assert "WEWORK_CUSTOM_MACOS_NOTARIZATION" in script
+    assert (
+        'component_signing_identity="${APPLE_SIGNING_IDENTITY:-${CSC_NAME:-}}"'
+        in script
+    )
+    assert 'export APPLE_SIGNING_IDENTITY="$component_signing_identity"' in script
+    assert (
+        "APPLE_SIGNING_IDENTITY or CSC_NAME is required to sign bundled components."
+        in script
+    )
     assert "--resume-signed-app" in script
     assert "--signed-app-only" in script
     assert "--upload-existing" in script
@@ -619,7 +593,8 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert "WEWORK_SKIP_MACOS_NOTARIZATION" in script
     assert "package-prebuilt-macos-release.mjs" in script
     assert 'pnpm --dir "$WEWORK_DIR/electron" install --frozen-lockfile' in script
-    assert "wework_configure_internal_updater_key" in script
+    assert "WEWORK_PREVIOUS_COMPONENT_MANIFEST" in script
+    assert "wework_configure_internal_updater_key" not in script
     assert "sync-desktop-release-version.mjs" not in script
     assert "VERSION_BACKUP_DIR" not in script
     assert "package.json" not in script
@@ -627,7 +602,7 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert "pnpm exec tauri build" not in script
 
 
-def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> None:
+def test_minio_windows_build_uses_native_electron_release() -> None:
     script = (SCRIPT_DIR / "build-minio-windows-release.sh").read_text(encoding="utf-8")
     preparer = (SCRIPT_DIR / "prepare-desktop-release-assets.mjs").read_text(
         encoding="utf-8"
@@ -638,6 +613,7 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert "generate-desktop-update-manifests.mjs" in script
     assert "WEWORK_RELEASE_TARGETS=windows-x64" in script
     assert "WeWork_${VERSION}_windows-x64-setup.exe" in script
+    assert "WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe" in script
     assert "WeWork_${VERSION}_windows-x64.md" in script
     assert "windows_" + "x64" not in script
     assert "windows-${arch}-setup" in preparer
@@ -650,12 +626,15 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert 'WEWORK_BRAND_CONFIG="$BRAND_CONFIG"' in script
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
+    assert "WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS" in script
+    assert 'WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"' in script
+    assert "components-$CHANNEL-windows-x64.json" in script
     assert '--unsigned) UNSIGNED="true"' in script
     assert 'if [ "$UNSIGNED" = "true" ]' in script
     assert "export CSC_IDENTITY_AUTO_DISCOVERY=false" in script
     assert "unset WIN_CSC_LINK" in script
-    assert "wework_configure_internal_updater_key" in script
-    assert "Legacy Tauri updater bridge signing is preserved." in script
+    assert "wework_configure_internal_updater_key" not in script
+    assert "Tauri updater bridge" not in script
     assert "node -p process.platform" in script
     assert "sync-desktop-release-version.mjs" not in script
     assert "VERSION_BACKUP_DIR" not in script
@@ -678,6 +657,7 @@ def test_windows_jenkins_pipeline_builds_unsigned_with_the_tauri_bridge() -> Non
     assert "WEWORK_UPDATER_KEY_PATH" in pipeline
     assert "Required legacy updater key file is missing or empty" in pipeline
     assert "WeWork_${version}_windows-x64-setup.exe" in pipeline
+    assert "WeWorkHostUpdate_${version}_windows-x64-setup.exe" in pipeline
     assert "windows_" + "x64" not in pipeline
     assert "windows-x86_64" in pipeline
     assert "latest.json" in pipeline
@@ -700,6 +680,7 @@ def test_minio_uploads_component_assets_without_legacy_runtime_sidecars(
     assert "upload_electron_manifest" in script
     assert "publish_component_assets" in script
     assert "publish_component_manifest" in script
+    assert "load_release_artifacts" in script
     assert "publish_runtime_asset_pairs" not in script
 
 
@@ -717,7 +698,9 @@ def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
     script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
 
     assert "WEWORK_RUNTIME_TARGET" in script
-    assert "dsh-runtime-tar-gzip-v9" in script
+    assert "dsh-runtime-tar-gzip-v10" in script
+    assert ".update(runtimePlatform())" in script
+    assert "current.runtimePlatform === runtimePlatform()" in script
     assert "supportedArchitectures" in script
     assert "--config.node-linker=hoisted" in script
     assert "from 'tar'" in script

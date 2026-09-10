@@ -13,6 +13,7 @@ import type {
   ChunkResponse,
   KnowledgeBaseRetrievalProfile,
   DocumentDetailResponse,
+  DocumentProtection,
   DocumentContentReadResponse,
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -28,7 +29,6 @@ import type {
   KnowledgeFolderUpdate,
   KnowledgeContentOrigin,
   KnowledgeResourceScope,
-  TableUrlValidationResponse,
   WebScrapeResponse,
 } from '@/types/knowledge'
 
@@ -53,6 +53,11 @@ export async function listKnowledgeBases(
  */
 export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
   return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`)
+}
+
+/** Return the effective reader capability used only for knowledge UI state. */
+export async function getDocumentProtection(id: number): Promise<DocumentProtection> {
+  return apiClient.get<DocumentProtection>(`/knowledge-bases/${id}/document-protection`)
 }
 
 /**
@@ -377,17 +382,6 @@ export async function getAccessibleKnowledge(): Promise<AccessibleKnowledgeRespo
   return apiClient.get<AccessibleKnowledgeResponse>('/knowledge-bases/accessible')
 }
 
-// ============== Table URL Validation APIs ==============
-
-/**
- * Validate a table URL and extract metadata
- * @param url The table URL to validate
- * @returns Validation result with provider and extracted metadata
- */
-export async function validateTableUrl(url: string): Promise<TableUrlValidationResponse> {
-  return apiClient.post<TableUrlValidationResponse>('/tables/validate-url', { url })
-}
-
 // ============== Web Scraper APIs ==============
 
 /**
@@ -498,6 +492,7 @@ export async function resetKnowledgeBaseSummary(
  */
 export interface KnowledgeConfig {
   chunk_storage_enabled: boolean
+  external_batch_import_max: number
 }
 
 /**

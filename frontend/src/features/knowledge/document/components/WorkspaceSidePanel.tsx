@@ -23,6 +23,7 @@ interface WorkspaceSidePanelProps {
   defaultWidth: number
   minWidth: number
   maxWidth: number
+  defaultCollapsed?: boolean
   collapsedWidth?: number
   mobileVisible: boolean
   expandLabel: string
@@ -43,12 +44,13 @@ function readStoredWidth(storageKey: string, fallback: number, min: number, max:
   }
 }
 
-function readStoredCollapsed(storageKey: string) {
-  if (typeof window === 'undefined') return false
+function readStoredCollapsed(storageKey: string, fallback: boolean) {
+  if (typeof window === 'undefined') return fallback
   try {
-    return localStorage.getItem(`${storageKey}-collapsed`) === 'true'
+    const saved = localStorage.getItem(`${storageKey}-collapsed`)
+    return saved === null ? fallback : saved === 'true'
   } catch {
-    return false
+    return fallback
   }
 }
 
@@ -66,6 +68,7 @@ export function WorkspaceSidePanel({
   defaultWidth,
   minWidth,
   maxWidth,
+  defaultCollapsed = false,
   collapsedWidth = 0,
   mobileVisible,
   expandLabel,
@@ -78,7 +81,9 @@ export function WorkspaceSidePanel({
   const [width, setWidth] = useState(() =>
     readStoredWidth(storageKey, defaultWidth, minWidth, maxWidth)
   )
-  const [isCollapsed, setIsCollapsed] = useState(() => readStoredCollapsed(storageKey))
+  const [isCollapsed, setIsCollapsed] = useState(() =>
+    readStoredCollapsed(storageKey, defaultCollapsed)
+  )
   const [isResizing, setIsResizing] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const widthRef = useRef(width)

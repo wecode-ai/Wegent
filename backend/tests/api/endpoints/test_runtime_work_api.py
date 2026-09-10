@@ -187,6 +187,120 @@ def test_create_runtime_task_preserves_delivery_context(
     assert request.delivery_id == "12345678-1234-1234-1234-123456789abc"
 
 
+def test_create_runtime_task_v3_accepts_team_on_canonical_endpoint(
+    test_client,
+    test_token,
+    monkeypatch,
+) -> None:
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "cloud-device-1",
+            "taskId": "task-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "create_runtime_task",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/create",
+        headers=_auth_headers(test_token),
+        json={
+            "schemaVersion": 3,
+            "wegentTeamId": 42,
+            "deviceId": "cloud-device-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+            "message": "Run through the selected Team",
+        },
+    )
+
+    assert response.status_code == 200
+    assert service_mock.await_args.kwargs["request"].wegent_team_id == 42
+    assert "team_id" not in service_mock.await_args.kwargs
+
+
+def test_create_runtime_task_rejects_team_on_old_request_version(
+    test_client,
+    test_token,
+) -> None:
+    response = test_client.post(
+        "/api/runtime-work/create",
+        headers=_auth_headers(test_token),
+        json={
+            "schemaVersion": 2,
+            "wegentTeamId": 42,
+            "deviceId": "cloud-device-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+            "message": "Old request protocol",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_materialize_runtime_task_returns_v2_executor_payload(
+    test_client,
+    test_token,
+    monkeypatch,
+) -> None:
+    from app.api.endpoints import runtime_work
+
+    service_mock = MagicMock(
+        return_value=MagicMock(
+            team_id=42,
+            payload={
+                "schemaVersion": 2,
+                "runtime": "codex",
+                "message": "Continue with the Team",
+                "title": "Continue",
+                "workspacePath": "/repo",
+                "taskId": "task-1",
+                "executionRequest": {
+                    "task_id": "task-1",
+                    "team_id": 42,
+                    "new_session": False,
+                },
+            },
+        )
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "materialize_runtime_task_create",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/materialize",
+        headers=_auth_headers(test_token),
+        json={
+            "schemaVersion": 3,
+            "wegentTeamId": 42,
+            "newSession": False,
+            "deviceId": "local-device-1",
+            "workspacePath": "/repo",
+            "taskId": "task-1",
+            "runtime": "codex",
+            "message": "Continue with the Team",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["payload"]["schemaVersion"] == 2
+    assert response.json()["runtimeHandle"] == {"wegentTeam": {"id": 42}}
+    request = service_mock.call_args.kwargs["request"]
+    assert request.wegent_team_id == 42
+    assert request.new_session is False
+
+
 def test_upsert_device_workspace_endpoint_returns_mapping(
     test_client,
     test_token,
@@ -1076,10 +1190,12 @@ def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
     assert address.local_task_id == "codex-1"
 
 
+@pytest.mark.parametrize("endpoint", ["responses", "chat/completions", "messages"])
 def test_llm_responses_proxy_endpoint_streams_from_provider(
     test_client,
     test_token,
     monkeypatch,
+    endpoint,
 ):
     from app.services import llm_proxy_service
 
@@ -1096,7 +1212,7 @@ def test_llm_responses_proxy_endpoint_streams_from_provider(
     )
 
     response = test_client.post(
-        "/api/runtime-work/llm-responses-proxy/responses",
+        f"/api/runtime-work/llm-responses-proxy/{endpoint}",
         headers={
             "content-type": "application/json",
             "accept": "text/event-stream",
@@ -1106,15 +1222,19 @@ def test_llm_responses_proxy_endpoint_streams_from_provider(
     )
 
     assert response.status_code == 200
+    assert response.content == b"data: ok\n\n"
     proxy_mock.assert_awaited_once()
     call_args = proxy_mock.await_args
     assert call_args.args[0].headers["authorization"] == f"Bearer {test_token}"
     assert call_args.args[2].id > 0
 
 
-def test_llm_responses_proxy_endpoint_rejects_missing_authorization(test_client):
+@pytest.mark.parametrize("endpoint", ["responses", "chat/completions", "messages"])
+def test_llm_responses_proxy_endpoint_rejects_missing_authorization(
+    test_client, endpoint
+):
     response = test_client.post(
-        "/api/runtime-work/llm-responses-proxy/responses",
+        f"/api/runtime-work/llm-responses-proxy/{endpoint}",
         headers={"content-type": "application/json", "accept": "text/event-stream"},
         json={"model": "gpt-4-turbo", "input": "hello"},
     )

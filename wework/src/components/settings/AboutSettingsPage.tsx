@@ -1,3 +1,4 @@
+import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
@@ -211,12 +212,7 @@ export function AboutSettingsPage() {
               />
             </div>
             <span className="block text-xs leading-5 text-text-secondary">
-              {downloadPercent === null
-                ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
-                : t('workbench.app_update_downloading_progress', {
-                    defaultValue: '正在下载更新 {{progress}}%',
-                    progress: downloadPercent,
-                  })}
+              {formatAppUpdateProgress(downloadProgress, t)}
             </span>
           </div>
         ) : null}

@@ -1,5 +1,6 @@
 import { Bot, CheckCircle2, ChevronDown, CircleAlert, Loader2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { RuntimeSubagentStatus } from '@/types/workbench'
@@ -109,7 +110,7 @@ function SubagentStatusIcon({ status }: { status: RuntimeSubagentStatus['status'
   if (status === 'interrupted') {
     return <CircleAlert className="h-4 w-4 shrink-0 text-amber-600" />
   }
-  return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+  return <CompositedSpinner icon={Loader2} className="h-4 w-4 text-primary" />
 }
 
 function shortSubagentId(agentId: string): string {

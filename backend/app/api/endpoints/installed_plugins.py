@@ -13,18 +13,21 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
 from app.core.config import settings
 from app.db.session import get_db_session
+from app.models.kind import Kind
 from app.models.plugin_marketplace import Plugin, PluginDeviceInstallation
 from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
@@ -45,7 +48,6 @@ from app.schemas.installed_plugin import (
     PluginDeviceReportRequest,
     PluginDeviceReportResponse,
     PluginDeviceSyncResponse,
-    PluginMarketplaceCapabilities,
     PluginMarketplaceInstallResponse,
     PluginMarketplaceItem,
     PluginMarketplaceListResponse,
@@ -62,13 +64,23 @@ from app.services.device.capability_sync_service import (
     device_capability_sync_service,
 )
 from app.services.installed_plugin_service import installed_plugin_service
+from app.services.marketplace_submission_upload import (
+    InvalidMarketplaceSubmissionUploadToken,
+    verify_marketplace_submission_upload_token,
+)
+from app.services.plugin_device_identity import plugin_device_id, plugin_device_rows
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
+)
+from app.services.plugin_marketplace_identity import (
+    ENTERPRISE_CATALOG_NAMESPACE,
+    OFFICIAL_CATALOG_NAMESPACE,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
 from app.stores.tasks import subtask_store, task_store
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
@@ -292,16 +304,6 @@ def report_installed_plugins_on_device(
     )
 
 
-@router.get("/capabilities", response_model=PluginMarketplaceCapabilities)
-def get_plugin_marketplace_capabilities(
-    current_user: User = Depends(security.get_current_user),
-) -> PluginMarketplaceCapabilities:
-    return PluginMarketplaceCapabilities(
-        canPublish=_can_publish(current_user),
-        canSharePersonalPlugins=True,
-    )
-
-
 @router.post(
     "/upload",
     response_model=InstalledPlugin,
@@ -317,7 +319,10 @@ async def upload_plugin(
     if current_user.role != "admin" or not settings.PLUGIN_LEGACY_UPLOAD_ENABLED:
         raise HTTPException(
             status_code=410,
-            detail="Direct cloud upload is retired; create locally or publish a submission",
+            detail=(
+                "Direct cloud upload is retired; create locally or publish a "
+                "submission"
+            ),
         )
     logger.info(
         "Plugin upload requested: user_id=%s filename=%s enabled=%s",
@@ -609,7 +614,16 @@ async def ensure_builtin_plugin_installed(
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Install a bundled plugin from the v2 marketplace catalog."""
-    item = db.query(Plugin).filter(Plugin.slug == plugin_key).first()
+    item = (
+        db.query(Plugin)
+        .filter(
+            Plugin.catalog_namespace.in_(
+                [ENTERPRISE_CATALOG_NAMESPACE, OFFICIAL_CATALOG_NAMESPACE]
+            ),
+            Plugin.slug == plugin_key,
+        )
+        .first()
+    )
     if not item:
         return await _ensure_legacy_builtin_plugin_installed(
             plugin_key=plugin_key,
@@ -836,6 +850,9 @@ async def uninstall_installed_plugin(
     )
 
 
+@trace_async(
+    span_name="plugins.ensure_device_installation", tracer_name="backend.plugins"
+)
 async def _ensure_installed_plugin_on_device(
     db: Session,
     *,
@@ -848,15 +865,15 @@ async def _ensure_installed_plugin_on_device(
     """Retry a single-plugin merge when the global replace left the device short."""
     if not device_id:
         return previous
-    device_row = (
-        db.query(PluginDeviceInstallation)
-        .filter(
-            PluginDeviceInstallation.installed_kind_id == installed_id,
-            PluginDeviceInstallation.device_id == device_id,
-        )
-        .first()
-    )
-    if device_row and device_row.state == "installed":
+    device_row = plugin_device_rows(db, user_id, device_id).get(installed_id)
+    installed = db.get(Kind, installed_id)
+    release_id = installed.json.get("spec", {}).get("releaseId") if installed else None
+    if (
+        device_row
+        and device_row.state == "installed"
+        and device_row.actual_release_id == release_id
+        and device_row.desired_release_id == release_id
+    ):
         return previous
     if (
         not manual_retry
@@ -895,6 +912,7 @@ async def _ensure_installed_plugin_on_device(
     return merge_sync
 
 
+@trace_async(span_name="plugins.sync_after_change", tracer_name="backend.plugins")
 async def _sync_global_capabilities(
     db: Session,
     user_id: int,
@@ -919,7 +937,13 @@ async def _sync_global_capabilities(
         db, user_id=user_id, response=result
     )
     required_result = next(
-        (item for item in result.results if item.device_id == required_device_id),
+        (
+            item
+            for item in result.results
+            if required_device_id
+            and plugin_device_id(db, user_id, item.device_id)
+            == plugin_device_id(db, user_id, required_device_id)
+        ),
         None,
     )
     required_device_failed = bool(
@@ -927,16 +951,18 @@ async def _sync_global_capabilities(
     )
     required_materialization_failed = False
     if required_device_id and required_installed_kind_id is not None:
-        device_row = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id
-                == required_installed_kind_id,
-                PluginDeviceInstallation.device_id == required_device_id,
-            )
-            .first()
+        device_row = plugin_device_rows(db, user_id, required_device_id).get(
+            required_installed_kind_id
         )
-        materialized = bool(device_row and device_row.state == "installed")
+        installed = db.get(Kind, required_installed_kind_id)
+        release_id = (
+            installed.json.get("spec", {}).get("releaseId") if installed else None
+        )
+        materialized = bool(
+            device_row
+            and device_row.state == "installed"
+            and device_row.actual_release_id == release_id
+        )
         required_materialization_failed = materialized != expect_installed
     if require_device_success and (
         required_device_failed or required_materialization_failed
@@ -953,25 +979,12 @@ async def _sync_global_capabilities(
         required_device_failed or required_materialization_failed
     ):
         logger.warning(
-            "Device sync incomplete after plugin uninstall: user_id=%s device_id=%s installed_kind_id=%s",
+            "Device sync incomplete after plugin change: user_id=%s device_id=%s installed_kind_id=%s",
             user_id,
             required_device_id,
             required_installed_kind_id,
         )
     return result
-
-
-def _can_publish(current_user: User) -> bool:
-    return bool(
-        current_user.role == "admin"
-        or settings.PLUGIN_PUBLISH_ENABLED
-        or current_user.id in settings.PLUGIN_PUBLISH_USER_IDS
-    )
-
-
-def _ensure_publish_allowed(current_user: User) -> None:
-    if not _can_publish(current_user):
-        raise HTTPException(status_code=403, detail="Plugin publishing is not enabled")
 
 
 @router.post(
@@ -988,8 +1001,14 @@ def init_plugin_submission(
     visibility = request.visibility or (
         "personal" if request.purpose == "restricted_share" else "workspace"
     )
-    if visibility in {"workspace", "public"}:
-        _ensure_publish_allowed(current_user)
+    if request.purpose != "restricted_share" or visibility != "personal":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Legacy submissions only support restricted personal sharing; "
+                "use /plugins/publication-requests for enterprise publication"
+            ),
+        )
     try:
         return plugin_marketplace_service.init_submission(
             db,
@@ -1007,6 +1026,47 @@ def init_plugin_submission(
         ) from exc
 
 
+@router.put("/submissions/{submission_id}/artifact", status_code=204)
+@trace_async("upload_plugin_submission_artifact", "marketplace.api")
+async def upload_plugin_submission_artifact(
+    submission_id: int,
+    request: Request,
+    token: str = Query(..., description="Short-lived plugin upload token"),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Upload a ticketed plugin package through the Backend origin."""
+    try:
+        claims = verify_marketplace_submission_upload_token(
+            token, expected_kind="plugin"
+        )
+    except InvalidMarketplaceSubmissionUploadToken as exc:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired plugin upload link"
+        ) from exc
+    if claims.submission_id != submission_id:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired plugin upload link"
+        )
+
+    package = await read_marketplace_package(
+        request,
+        max_bytes=MAX_PLUGIN_PACKAGE_SIZE_BYTES,
+        resource_name="Plugin",
+    )
+    try:
+        plugin_marketplace_service.upload_submission_package(
+            db,
+            user_id=claims.user_id,
+            submission_id=submission_id,
+            package=package,
+        )
+    except PluginPackageStorageError as exc:
+        raise HTTPException(
+            status_code=503, detail="Plugin package storage unavailable"
+        ) from exc
+    return Response(status_code=204)
+
+
 @router.post(
     "/submissions/{submission_id}/complete",
     response_model=PluginSubmissionCompleteResponse,
@@ -1018,13 +1078,6 @@ def complete_plugin_submission(
 ) -> PluginSubmissionCompleteResponse:
     current_user = auth.user
     _ensure_submission_matches_task_token(db, auth=auth, submission_id=submission_id)
-    existing = plugin_marketplace_service.get_submission(
-        db,
-        user_id=current_user.id,
-        submission_id=submission_id,
-    )
-    if existing.purpose == "marketplace_publish":
-        _ensure_publish_allowed(current_user)
     try:
         item = plugin_marketplace_service.complete_submission(
             db, user_id=current_user.id, submission_id=submission_id

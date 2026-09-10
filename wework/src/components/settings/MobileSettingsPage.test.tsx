@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import './../../../src/i18n'
 import { MobileSettingsPage } from './MobileSettingsPage'
 import { AppearanceProvider } from '@/features/appearance'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
 
 vi.mock('@/features/model-settings/localCodexSettings', () => ({
   DEFAULT_CODEX_PERSONALITY: 'pragmatic',
@@ -28,7 +30,36 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
 }))
 
 describe('MobileSettingsPage', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.settingsPage]: [
+          {
+            id: 'git-hosting',
+            path: '/settings/git-hosting',
+            icon: 'git-pull-request',
+            labelKey: 'settings_nav_git_hosting',
+            label: '代码托管',
+            category: 'coding',
+            categoryLabel: '编码',
+            module: 'plugins/wework-ui-git-settings.js',
+          },
+          {
+            id: 'worktrees',
+            path: '/settings/worktrees',
+            icon: 'git-branch',
+            labelKey: 'settings_nav_worktrees',
+            label: '工作树',
+            category: 'coding',
+            categoryLabel: '编码',
+            module: 'plugins/wework-ui-git-settings.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-settings.js': () => import('../../../dsh/ui-git/src/settings-page'),
+      }
+    )
     experimentalFeatures.enabled = true
     settingsDeviceApi.getAllDevices.mockReset()
     settingsDeviceApi.getGitAccountSyncSummary.mockReset()

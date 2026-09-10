@@ -460,12 +460,68 @@ async function startHarness({
   }
 }
 
+async function verifyMacKeybindings(control, timeoutMs) {
+  if (process.platform !== 'darwin') return
+
+  const terminalSelector =
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"] ` +
+    '[data-testid="embedded-local-terminal"]'
+  const terminalTextareaSelector = `${terminalSelector} .xterm-helper-textarea`
+  const terminalLineSelector = `${terminalSelector} .xterm-accessibility-tree [role="listitem"]`
+
+  await control.command('waitFor', terminalLineSelector, { timeoutMs })
+  await control.command('terminalInput', terminalSelector, { value: 'bindkey -e\r' })
+
+  await control.command('terminalInput', terminalSelector, { value: 'echo option-left omega' })
+  await control.command('press', terminalTextareaSelector, { key: 'Alt+ArrowLeft' })
+  await control.command('terminalInput', terminalSelector, { value: 'X\r' })
+  await control.command('waitFor', terminalLineSelector, {
+    text: 'option-left Xomega',
+    timeoutMs,
+  })
+
+  await control.command('terminalInput', terminalSelector, { value: 'echo option-right omega' })
+  await control.command('terminalInput', terminalSelector, { value: '\x01' })
+  await control.command('press', terminalTextareaSelector, { key: 'Alt+ArrowRight' })
+  await control.command('terminalInput', terminalSelector, { value: 'X\r' })
+  await control.command('waitFor', terminalLineSelector, {
+    text: 'Xoption-right omega',
+    timeoutMs,
+  })
+
+  await control.command('terminalInput', terminalSelector, { value: 'X=WRONG\r' })
+  await control.command('terminalInput', terminalSelector, { value: 'echo noop' })
+  await control.command('press', terminalTextareaSelector, { key: 'Meta+ArrowLeft' })
+  await control.command('terminalInput', terminalSelector, { value: 'X=RIGHT;\r' })
+  await control.command('terminalInput', terminalSelector, {
+    value: 'echo "<command-left:$X>"\r',
+  })
+  await control.command('waitFor', terminalLineSelector, {
+    text: '<command-left:RIGHT>',
+    timeoutMs,
+  })
+
+  await control.command('terminalInput', terminalSelector, { value: 'X=WRONG\r' })
+  await control.command('terminalInput', terminalSelector, { value: 'echo' })
+  await control.command('terminalInput', terminalSelector, { value: '\x01' })
+  await control.command('press', terminalTextareaSelector, { key: 'Meta+ArrowRight' })
+  await control.command('terminalInput', terminalSelector, { value: ';X=RIGHT\r' })
+  await control.command('terminalInput', terminalSelector, {
+    value: 'echo "<command-right:$X>"\r',
+  })
+  await control.command('waitFor', terminalLineSelector, {
+    text: '<command-right:RIGHT>',
+    timeoutMs,
+  })
+}
+
 async function verifyHarnessWorkbenchChrome({
   control,
   title,
   timeoutMs,
   captureWorkbench,
   screenshot,
+  verifyMacKeybindings: shouldVerifyMacKeybindings = false,
 }) {
   const titleSelector = '[data-testid="workbench-pane-task-title"]'
   const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
@@ -539,6 +595,9 @@ async function verifyHarnessWorkbenchChrome({
     bottomPanelMetrics.scrollHeight > 0,
     `${title} opened a bottom workspace panel without content`
   )
+  if (shouldVerifyMacKeybindings) {
+    await verifyMacKeybindings(control, timeoutMs)
+  }
   await captureWorkbench(control, screenshot)
 
   await control.command('click', bottomPanelToggleSelector)
@@ -660,6 +719,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
         captureWorkbench: capturePage,
         screenshot: 'local-harness-08-opencode-workbench-panels.png',
+        verifyMacKeybindings: true,
       })
       await waitForRequests(
         harnessModelRequests,

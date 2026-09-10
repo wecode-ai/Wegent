@@ -38,7 +38,11 @@ describe('ComputerUseActivityIndicator', () => {
   test('shows the active tool and stops it from the button', async () => {
     render(<ComputerUseActivityIndicator />)
 
-    expect(await screen.findByTestId('computer-use-activity-indicator')).toBeInTheDocument()
+    const indicator = await screen.findByTestId('computer-use-activity-indicator')
+    const spinner = indicator.querySelector('.animate-spin')
+    expect(spinner).toBeInstanceOf(HTMLSpanElement)
+    expect(spinner).toHaveClass('will-change-transform')
+    expect(spinner?.querySelector('svg')).not.toHaveClass('animate-spin')
     await userEvent.click(screen.getByTestId('computer-use-stop-button'))
 
     await waitFor(() => expect(mocks.stop).toHaveBeenCalledOnce())

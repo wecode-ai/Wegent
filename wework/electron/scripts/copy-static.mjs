@@ -20,3 +20,5 @@ await cp(
   resolve(root, 'src/host/browser-runtime/embedded_browser_wait.js'),
   resolve(root, 'dist/host/browser-runtime/embedded_browser_wait.js')
 )
+await mkdir(resolve(root, 'dist/cli'), { recursive: true })
+await cp(resolve(root, 'src/cli/wework-cli.mjs'), resolve(root, 'dist/cli/wework-cli.mjs'))

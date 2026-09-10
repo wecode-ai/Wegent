@@ -396,7 +396,10 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
 
     async def _handle_device_callback(self, user: User, value: str) -> Optional[str]:
         """Handle device selection callback."""
-        from app.services.channels.device_selection import device_selection_manager
+        from app.services.channels.device_selection import (
+            device_selection_manager,
+            get_device_execution_target_id,
+        )
         from app.services.device_service import device_service
 
         db = SessionLocal()
@@ -419,7 +422,7 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
 
             await device_selection_manager.set_local_device(
                 user.id,
-                selected["device_id"],
+                get_device_execution_target_id(selected),
                 selected["name"],
             )
 
@@ -431,6 +434,10 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
     async def _handle_mode_callback(self, user: User, value: str) -> Optional[str]:
         """Handle execution mode selection callback."""
         from app.services.channels.device_selection import device_selection_manager
+        from app.services.device.runtime_route import (
+            RuntimeRouteError,
+            runtime_route_resolver,
+        )
 
         if value == "chat":
             await device_selection_manager.set_chat_mode(user.id)
@@ -444,9 +451,17 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
             # Check if user has a device selected
             selection = await device_selection_manager.get_selection(user.id)
             if selection.device_id:
-                # Actually switch to device mode by setting the device
+                try:
+                    route = await runtime_route_resolver.resolve(
+                        user_id=user.id,
+                        submitted_device_id=selection.device_id,
+                    )
+                except RuntimeRouteError:
+                    return "❌ 上次选择的设备已离线,请使用 `/devices` 选择其他设备"
                 await device_selection_manager.set_local_device(
-                    user.id, selection.device_id, selection.device_name
+                    user.id,
+                    route.runtime_device_id,
+                    selection.device_name or route.logical_device_id,
                 )
                 return "✅ 已切换到**设备模式**"
             else:

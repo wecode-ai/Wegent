@@ -466,6 +466,48 @@ async def test_build_new_task_params_uses_default_execution_target_when_im_devic
     assert params.device_id == "device-from-preferences"
 
 
+@pytest.mark.asyncio
+async def test_build_new_task_params_can_skip_wework_model_selection(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_user.preferences = json.dumps(
+        {
+            "wework_new_chat_model_selection": {
+                "modelName": "openai-gpt-5.6-sol",
+                "modelType": "public",
+                "options": {"reasoning": "high"},
+            }
+        }
+    )
+
+    async def fake_get_selection(user_id: int) -> DeviceSelection:
+        return DeviceSelection(
+            device_type=DeviceType.LOCAL,
+            device_id="device-default",
+            device_name="MacBook",
+        )
+
+    monkeypatch.setattr(
+        "app.services.channels.device_selection.device_selection_manager.get_selection",
+        fake_get_selection,
+    )
+
+    params = await build_new_task_params(
+        test_db,
+        user=test_user,
+        message="创建一个新任务",
+        inherit_wework_model_selection=False,
+    )
+
+    assert params.model_id is None
+    assert params.force_override_bot_model is False
+    assert params.force_override_bot_model_type is None
+    assert params.model_options is None
+    assert params.device_id == "device-default"
+
+
 async def test_build_im_message_source_includes_session_identity_and_extra_metadata(
     test_db: Session,
     test_user: User,

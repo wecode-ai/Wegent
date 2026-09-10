@@ -1,70 +1,35 @@
-# SPDX-FileCopyrightText: 2026 Weibo, Inc.
-#
-# SPDX-License-Identifier: Apache-2.0
+"""Create an inbox entry in the assignment transaction."""
 
-"""Best-effort Wework notification for human project task assignments."""
+from sqlalchemy.orm import Session
 
-import asyncio
-import logging
-
-from app.services.loop_item_executions.wake import get_socketio_loop
-
-logger = logging.getLogger(__name__)
-
-PROJECT_TASK_ASSIGNED_EVENT = "project.task.assigned"
+from app.services.wework_notifications import create_notification
 
 
 def notify_project_task_assignee(
+    db: Session,
     *,
     user_id: int,
+    actor_user_id: int,
     project_id: str,
     project_name: str,
     item_id: str,
     item_title: str,
     assigner_name: str,
 ) -> None:
-    """Push an assignment event without blocking the committed assignment."""
-
-    loop = get_socketio_loop()
-    if loop is None or loop.is_closed():
-        return
-
-    async def _emit() -> None:
-        try:
-            from app.api.ws.wework_runtime_namespace import (
-                WEWORK_RUNTIME_EVENT,
-                WEWORK_RUNTIME_NAMESPACE,
-                wework_runtime_user_room,
-            )
-            from app.core.socketio import get_sio
-
-            await get_sio().emit(
-                WEWORK_RUNTIME_EVENT,
-                {
-                    "event": PROJECT_TASK_ASSIGNED_EVENT,
-                    "payload": {
-                        "projectId": project_id,
-                        "projectName": project_name,
-                        "itemId": item_id,
-                        "itemTitle": item_title,
-                        "assignerName": assigner_name,
-                    },
-                },
-                room=wework_runtime_user_room(user_id),
-                namespace=WEWORK_RUNTIME_NAMESPACE,
-            )
-        except Exception:
-            logger.debug(
-                "[ProjectTaskAssignment] Notification push failed user=%s item=%s",
-                user_id,
-                item_id,
-                exc_info=True,
-            )
-
-    try:
-        asyncio.run_coroutine_threadsafe(_emit(), loop)
-    except Exception:
-        logger.debug(
-            "[ProjectTaskAssignment] Notification scheduling failed",
-            exc_info=True,
-        )
+    create_notification(
+        db,
+        user_id=user_id,
+        actor_user_id=actor_user_id,
+        kind="assignment",
+        title="看板任务分配",
+        body=f"{assigner_name} 将「{project_name}」看板的「{item_title}」分配给了你",
+        project_id=project_id,
+        item_id=item_id,
+        payload={
+            "projectId": project_id,
+            "projectName": project_name,
+            "itemId": item_id,
+            "itemTitle": item_title,
+            "assignerName": assigner_name,
+        },
+    )

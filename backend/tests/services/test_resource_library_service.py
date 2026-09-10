@@ -507,7 +507,6 @@ def test_featured_discovery_uses_admin_selection(test_db, test_user):
             "spec": {
                 "members": [],
                 "collaborationModel": "solo",
-                "capability": {"marketplace": {"recommendationScore": 0}},
             },
         },
         is_active=True,

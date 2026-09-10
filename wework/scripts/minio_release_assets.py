@@ -6,15 +6,16 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
-MANAGED_COMPONENT_IDS = (
-    "coreDsh",
-    "weworkCorePlugins",
-    "bundledPlugins",
-    "executor",
-    "codex",
-    "dws",
-)
-SHARED_COMPONENT_IDS = frozenset({"coreDsh", "codex", "dws"})
+COMPONENT_RELEASE_SCOPES = {
+    "coreDsh": "shared",
+    "weworkCorePlugins": "version",
+    "weworkAppStatic": "version",
+    "bundledPlugins": "version",
+    "executor": "version",
+    "codex": "shared",
+    "dws": "shared",
+}
+MANAGED_COMPONENT_IDS = tuple(COMPONENT_RELEASE_SCOPES)
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class ComponentAsset:
     archive: Path
     archive_bytes: int
     archive_sha256: str
+    release_scope: str
 
 
 def load_component_assets(
@@ -56,16 +58,21 @@ def load_component_assets(
             raise SystemExit(f"Invalid component descriptor entry: {descriptor_path}")
         asset_name = component.get("assetName")
         archive_sha256 = component.get("archiveSha256")
+        release_scope = component.get("releaseScope")
+        reused = component.get("reused") is True
         if (
             not isinstance(asset_name, str)
             or Path(asset_name).name != asset_name
             or not asset_name.endswith(".tar.gz")
             or not _is_sha256(archive_sha256)
+            or release_scope != COMPONENT_RELEASE_SCOPES[component_id]
         ):
             raise SystemExit(
                 f"Invalid component asset metadata for {component_id}: {descriptor_path}"
             )
         archive = output_dir / asset_name
+        if reused:
+            continue
         archive_bytes = archive.stat().st_size if archive.is_file() else 0
         if archive_bytes <= 0 or _file_sha256(archive) != archive_sha256:
             raise SystemExit(
@@ -77,6 +84,7 @@ def load_component_assets(
                 archive=archive,
                 archive_bytes=archive_bytes,
                 archive_sha256=archive_sha256,
+                release_scope=release_scope,
             )
         )
     return assets
@@ -91,11 +99,7 @@ def publish_component_assets(
     upload: Callable[[Path, str], None],
 ) -> None:
     for asset in assets:
-        prefix = (
-            shared_prefix
-            if asset.component_id in SHARED_COMPONENT_IDS
-            else release_prefix
-        )
+        prefix = shared_prefix if asset.release_scope == "shared" else release_prefix
         object_name = _storage_key(prefix, asset.archive.name)
         if _object_exists(client, bucket, object_name):
             if not _remote_file_matches(
@@ -139,6 +143,15 @@ def publish_immutable_file(
     print(f"Reusing immutable asset: {path.name}")
 
 
+def load_release_artifacts(output_dir: Path, version: str) -> list[Path]:
+    return sorted(
+        {
+            *output_dir.glob(f"WeWork_{version}_*"),
+            *output_dir.glob(f"WeWorkHostUpdate_{version}_*"),
+        }
+    )
+
+
 def publish_component_manifest(
     client: object,
     bucket: str,
@@ -162,6 +175,7 @@ def publish_component_manifest(
         or manifest.get("channel") != channel
         or manifest.get("platform") != platform
         or manifest.get("arch") != arch
+        or manifest.get("capabilities", {}).get("componentizedHostUpdate") != 1
         or not isinstance(manifest.get("components"), dict)
         or set(manifest["components"]) != set(MANAGED_COMPONENT_IDS)
     ):

@@ -63,12 +63,18 @@ export async function createZipFixture(archivePath, files) {
   }
 }
 
+export async function extractZipFixture(archivePath, targetPath) {
+  await rm(targetPath, { recursive: true, force: true })
+  await mkdir(targetPath, { recursive: true })
+  await runPython(EXTRACT_ZIP_SCRIPT, [archivePath, targetPath])
+}
+
 export async function extractSingleRootZipFixture(archivePath, targetPath) {
   const extractionRoot = await mkdtemp(
     join(dirname(targetPath), `.${basename(targetPath)}-extract-`)
   )
   try {
-    await runPython(EXTRACT_ZIP_SCRIPT, [archivePath, extractionRoot])
+    await extractZipFixture(archivePath, extractionRoot)
     const entries = await readdir(extractionRoot, { withFileTypes: true })
     assert.equal(entries.length, 1, 'ZIP fixture must contain exactly one root entry')
     assert.equal(entries[0].isDirectory(), true, 'ZIP fixture root entry must be a directory')

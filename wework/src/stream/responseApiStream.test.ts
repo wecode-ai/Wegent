@@ -79,6 +79,26 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps runtime work changes', () => {
+    const onRuntimeWorkChanged = vi.fn()
+
+    emitResponseApiEvent(
+      { onRuntimeWorkChanged },
+      'runtime.work.changed',
+      {
+        taskId: 'task-1',
+        deviceId: 'device-1',
+        data: { taskId: 'task-1' },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimeWorkChanged).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      deviceId: 'device-1',
+    })
+  })
+
   test('maps task supervisor state updates', () => {
     const onRuntimeSupervisorUpdated = vi.fn()
     const supervisor = {

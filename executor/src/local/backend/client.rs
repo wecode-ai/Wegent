@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    fmt,
     future::Future,
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -25,6 +26,30 @@ const REGISTER_EVENT: &str = "device:register";
 const HEARTBEAT_EVENT: &str = "device:heartbeat";
 const RUNTIME_TASK_PULL_EVENT: &str = "runtime.tasks.pull";
 const RUNTIME_TASK_ACCEPT_EVENT: &str = "runtime.tasks.accept";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum RawEventCallError {
+    Transport(String),
+    Rejected {
+        code: Option<String>,
+        message: String,
+        retryable: bool,
+        terminal_end_dispatched: bool,
+    },
+}
+
+impl fmt::Display for RawEventCallError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transport(message) => formatter.write_str(message),
+            Self::Rejected { code, message, .. } => match code {
+                Some(code) => write!(formatter, "{message} ({code})"),
+                None => formatter.write_str(message),
+            },
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LocalBackendClient<T>
 where
@@ -94,6 +119,11 @@ where
     }
 
     pub async fn register_device(&self, timeout: Duration) -> Result<bool, String> {
+        if self.config.device_id.is_empty() || self.config.runtime_instance_id.is_empty() {
+            return Err(
+                "persistent device and Runtime identities are required for registration".to_owned(),
+            );
+        }
         let response = self
             .transport
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
@@ -190,6 +220,46 @@ where
         self.transport.emit(event, payload).await
     }
 
+    pub(super) async fn call_raw_event(
+        &self,
+        event: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> Result<(), RawEventCallError> {
+        let response = self
+            .transport
+            .call(event, payload, timeout)
+            .await
+            .map_err(RawEventCallError::Transport)?;
+        if ack_success(&response) {
+            return Ok(());
+        }
+        let payload = ack_payload(&response);
+        let message = payload
+            .and_then(|value| value.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("Backend rejected executor event")
+            .to_owned();
+        let code = payload
+            .and_then(|value| value.get("code"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let retryable = payload
+            .and_then(|value| value.get("retryable"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let terminal_end_dispatched = payload
+            .and_then(|value| value.get("terminal_end_dispatched"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Err(RawEventCallError::Rejected {
+            code,
+            message,
+            retryable,
+            terminal_end_dispatched,
+        })
+    }
+
     pub fn set_running_task_ids<I>(&self, task_ids: I)
     where
         I: IntoIterator<Item = String>,
@@ -234,7 +304,9 @@ where
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
             "runtime_features": runtime_features(),
-            "runtime_auth_files": build_runtime_auth_file_report(&self.config.runtime_auth_home),
+            "runtime_auth_files": build_runtime_auth_file_report(
+                &crate::agents::wework_codex_home()
+            ),
             "runtime_transfer_host": self.config.runtime_transfer_host,
         })
     }
@@ -269,11 +341,7 @@ where
     }
 }
 
-pub fn build_runtime_auth_file_report(home: &Path) -> Value {
-    let codex_home = std::env::var_os("CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".codex"));
+pub fn build_runtime_auth_file_report(codex_home: &Path) -> Value {
     let target_path = codex_home.join("auth.json");
     json!({
         "codex": {

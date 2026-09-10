@@ -32,7 +32,6 @@ describe('VideoSettingsPopover', () => {
 
     fireEvent.click(screen.getByTestId('video-settings-trigger'))
     expect(screen.queryByTestId('video-duration-option-5')).not.toBeInTheDocument()
-
     expect(screen.getByTestId('video-ratio-option-9:16')).not.toBeVisible()
 
     fireEvent.click(screen.getByTestId('video-resolution-option-1080p'))
@@ -60,6 +59,56 @@ describe('VideoSettingsPopover', () => {
     expect(trigger).not.toHaveTextContent('16:9')
     expect(trigger.getAttribute('aria-label')).toContain('16:9')
     expect(trigger).toHaveClass('h-9', 'w-9', 'justify-center')
+  })
+
+  it('labels the mobile menu item before showing its current values', () => {
+    render(
+      <VideoSettingsPopover
+        selectedRatio="16:9"
+        onRatioChange={jest.fn()}
+        availableRatios={['16:9']}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        availableDurations={[5]}
+        selectedResolution="720p"
+        onResolutionChange={jest.fn()}
+        availableResolutions={['720p']}
+        triggerVariant="menu-item"
+      />
+    )
+
+    const trigger = screen.getByTestId('video-settings-trigger')
+
+    expect(trigger).toHaveTextContent('video.settings_title')
+    expect(trigger).toHaveTextContent('16:9 · 5S · 720P')
+    expect(trigger).toHaveClass('min-h-14', 'w-full')
+  })
+
+  it('renders settings inline without a nested trigger', () => {
+    const onRatioChange = jest.fn()
+
+    render(
+      <VideoSettingsPopover
+        selectedRatio="16:9"
+        onRatioChange={onRatioChange}
+        availableRatios={['16:9', '9:16']}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        availableDurations={[5, 10]}
+        selectedResolution="720p"
+        onResolutionChange={jest.fn()}
+        availableResolutions={['720p', '1080p']}
+        inline
+      />
+    )
+
+    expect(screen.getByTestId('video-settings-inline')).toBeInTheDocument()
+    expect(screen.queryByTestId('video-settings-trigger')).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-duration-option-5')).toHaveClass('min-h-11')
+    expect(screen.getByTestId('video-resolution-option-720p')).toHaveClass('min-h-11')
+
+    fireEvent.click(screen.getByTestId('video-ratio-option-9:16'))
+    expect(onRatioChange).toHaveBeenCalledWith('9:16')
   })
 
   it('hides the settings trigger when every video parameter is hidden', () => {

@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
+import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -51,7 +52,8 @@ import {
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
-  verifyLocalRemoteControlFlow,
+  verifyDisabledRemoteSessionCapabilities,
+  verifyWeworkAppDeviceRegistrationFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
@@ -63,6 +65,12 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 import { DesktopE2EServer } from './desktop-server.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+
+import {
+  clearDesktopE2EResultActive,
+  compactDesktopE2EResult,
+  markDesktopE2EResultActive,
+} from '../result-retention.mjs'
 
 import {
   verifyActiveGoalIdleUnreadLifecycle,
@@ -276,6 +284,7 @@ import {
 
 import {
   captureVerificationScreenshot,
+  enrichTrackedDefaultIssueTitle,
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
@@ -308,6 +317,37 @@ const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
 const REMEMBERED_TASK_REASONING = 'high'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
+const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
+  'WEWORK_DESKTOP_E2E_DEFAULT_ISSUE_CONTEXT: preserve this acceptance criterion.'
+
+function assertDefaultIssueContextAbsent(request) {
+  const serializedRequest = JSON.stringify(request.body)
+  assert.ok(
+    !serializedRequest.includes('cloud://projects/default-work-items'),
+    'The first task request included the empty default Issue reference'
+  )
+  assert.ok(
+    !serializedRequest.includes('Current cloud project: 我的任务'),
+    'The first task request included the empty default Issue project context'
+  )
+  assert.ok(
+    !serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The first task request unexpectedly included later Issue content'
+  )
+}
+
+function assertDefaultIssueContextInjected(request) {
+  const serializedRequest = JSON.stringify(request.body)
+  assert.ok(
+    serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The follow-up request did not include the enriched default Issue title'
+  )
+  assert.match(
+    serializedRequest,
+    /cloud:\/\/projects\/default-work-items\/todos\/WORK-\d+/,
+    'The follow-up request did not include the bound default Issue reference'
+  )
+}
 
 async function openProjectAiSettings(control, projectId) {
   await control.command('hover', `[data-testid="project-row-${projectId}"]`)
@@ -489,8 +529,45 @@ async function verifyProjectAiSettings({
     'A new local project did not initially follow the global model'
   )
   await captureVerificationScreenshot(control, 'project-ai-settings-01-defaults.png')
+  await saveProjectAiSettings(control)
+
+  setPhase('project-ai-settings-follow-global-model-memory')
+  control.setScenario('checkpoint_task')
+  await selectRememberedTaskModel(control)
+  const inheritedConversationRequest = await sendProjectAiCheckpointPrompt(
+    control,
+    composerSelector,
+    { createsConversation: true }
+  )
+  assert.equal(
+    inheritedConversationRequest.body.model,
+    REMEMBERED_TASK_MODEL_ID,
+    'The follow-global project did not use the selected global model'
+  )
+  assert.equal(
+    inheritedConversationRequest.body.reasoning?.effort,
+    REMEMBERED_TASK_REASONING,
+    'The follow-global project did not use the selected global reasoning effort'
+  )
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await control.command('click', '[data-testid="model-selector-button"]')
+  assert.match(
+    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    /High|高/,
+    'The follow-global project did not remember the selected model and reasoning effort'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await captureVerificationScreenshot(
+    control,
+    'project-ai-settings-01-follow-global-model-remembered.png'
+  )
 
   setPhase('project-ai-settings-configure')
+  await openProjectAiSettings(control, projectId)
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
@@ -706,21 +783,21 @@ async function verifyProjectAiSettings({
     'The task-specific model override dropped the project instructions'
   )
 
-  setPhase('project-ai-settings-next-task-remembers-model')
+  setPhase('project-ai-settings-next-task-restores-project-default')
   await control.command('clickWhenEnabled', newConversationSelector)
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
     await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
     /High|高/,
-    'The next task did not remember the selected model and reasoning effort'
+    'The next task did not restore the project model and reasoning effort'
   )
   await captureVerificationScreenshot(
     control,
-    'project-ai-settings-11-next-task-model-remembered.png'
+    'project-ai-settings-11-next-task-project-default.png'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -734,6 +811,32 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  setPhase('model-catalog-refresh')
+  const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+  await control.command('waitFor', modelSelector, {
+    enabled: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const selectedModelLabel = await control.command('getText', modelSelector)
+  assert.ok(
+    selectedModelLabel,
+    'The model selector did not expose its selected model before refresh'
+  )
+  await control.command('dispatchLocalModelSettingsChangedThenMacrotask', 'body')
+  const refreshSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.ok(
+    refreshSnapshot.testIds.includes('model-selector-button'),
+    'The model selector disappeared while refreshing an already loaded model catalog'
+  )
+  assert.ok(
+    !refreshSnapshot.testIds.includes('model-selector-loading'),
+    'The model selector was replaced by a blank loading placeholder during catalog refresh'
+  )
+  await control.command('waitFor', modelSelector, {
+    text: selectedModelLabel,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
     setPhase(`local-model-switch-${switchCase.id}`)
@@ -882,6 +985,7 @@ async function main() {
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
+  await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'secondary-project-root')
@@ -891,6 +995,7 @@ async function main() {
   const codexHome = join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
+  const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
@@ -937,6 +1042,11 @@ async function main() {
       await createCoreDshPluginFixture(resultDir)
     }
     await mkdir(nativeCodexHome, { recursive: true })
+    await mkdir(join(staleBundledMarketplacePath, '.agents', 'plugins'), { recursive: true })
+    await writeFile(
+      join(staleBundledMarketplacePath, '.agents', 'plugins', 'marketplace.json'),
+      `${JSON.stringify({ name: 'wework-personal', plugins: [] }, null, 2)}\n`
+    )
     await writeFile(
       join(nativeCodexHome, 'config.toml'),
       '# desktop-e2e-native-home-marker\nmodel = "native-model-that-must-not-migrate"\n'
@@ -965,6 +1075,7 @@ async function main() {
     {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
+      codexSqliteHome,
       executorHome,
       electronUserDataDirectory,
       homePath,
@@ -989,6 +1100,7 @@ async function main() {
   let cloudEnvironment
   let phase = 'startup'
   let desktopScenarioVerified = false
+  let testFailed = false
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -1012,6 +1124,7 @@ async function main() {
       cloudEnvironment = new RealCloudEnvironment({
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
+        managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
         scenarioConfigToml:
           SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
@@ -1022,6 +1135,7 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
+        databasePath: cloudEnvironment.databasePath,
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
       })
     } else {
@@ -1051,7 +1165,10 @@ async function main() {
           DESKTOP_SEGMENT === 'permission-modes'
             ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
             : ''
-        }`
+        }`,
+        'openai-responses',
+        desktopScenario?.modelProviderConfigToml,
+        desktopScenario?.modelProviderAuthToml
       )
       await writeFile(
         join(codexHome, 'auth.json'),
@@ -1093,7 +1210,6 @@ async function main() {
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-      DEVICE_ID: `wework-e2e-device-${process.pid}`,
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
@@ -1137,6 +1253,7 @@ async function main() {
         : {}),
     }
     for (const key of [
+      'DEVICE_ID',
       'ELECTRON_RUN_AS_NODE',
       'WEGENT_APP_IPC_DEVICE_ID',
       'WEGENT_APP_IPC_ENDPOINT',
@@ -1165,12 +1282,17 @@ async function main() {
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments()
+    let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
         cwd: weworkDir,
-        env: appEnvironment,
+        env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
+      })
+      await markDesktopE2EResultActive(resultDir, {
+        applicationProcessId: child.pid,
+        ownerProcessId: process.pid,
       })
       await Promise.all([
         appendProcessOutput(child.stdout, appLogPath),
@@ -1181,7 +1303,8 @@ async function main() {
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
-      const desktopDeviceIdPath = join(resultDir, 'electron-user-data', 'desktop-device-id')
+      const previousUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const desktopDeviceIdPath = join(previousUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdBeforeRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
       assert.match(
         desktopDeviceIdBeforeRestart,
@@ -1191,18 +1314,49 @@ async function main() {
       const readyCountBeforeRestart = control.readyCount
       await stopDesktopAppProcess(app)
       await beforeStart?.()
+      if (typeof options === 'object' && options?.appEnvironmentOverrides) {
+        activeAppEnvironment = {
+          ...activeAppEnvironment,
+          ...options.appEnvironmentOverrides,
+        }
+      }
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
-      const desktopDeviceIdAfterRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
-      assert.equal(
+      const nextUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const nextDeviceIdPath = join(nextUserDataDirectory, 'desktop-device-id')
+      const desktopDeviceIdAfterRestart = (await readFile(nextDeviceIdPath, 'utf8')).trim()
+      assert.match(
         desktopDeviceIdAfterRestart,
-        desktopDeviceIdBeforeRestart,
-        'Restarting Wework changed the persisted Electron device identity'
+        /^electron-/,
+        'Wework did not persist a valid Electron device identity after restart'
       )
+      if (options?.expectNewDeviceIdentity === true) {
+        assert.notEqual(
+          nextUserDataDirectory,
+          previousUserDataDirectory,
+          'Simulated device switch reused the previous Electron user data directory'
+        )
+        assert.notEqual(
+          desktopDeviceIdAfterRestart,
+          desktopDeviceIdBeforeRestart,
+          'Simulated device switch reused the previous Electron device identity'
+        )
+      } else {
+        assert.equal(
+          nextUserDataDirectory,
+          previousUserDataDirectory,
+          'Restarting Wework unexpectedly changed the Electron user data directory'
+        )
+        assert.equal(
+          desktopDeviceIdAfterRestart,
+          desktopDeviceIdBeforeRestart,
+          'Restarting Wework changed the persisted Electron device identity'
+        )
+      }
       return app
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
@@ -1263,7 +1417,11 @@ plugins = true
 [marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
 source_type = "git"
 source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
-last_updated = "2026-07-30T00:00:00Z"`
+last_updated = "2026-07-30T00:00:00Z"
+
+[marketplaces.wework-personal]
+source_type = "local"
+source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
@@ -1271,7 +1429,10 @@ last_updated = "2026-07-30T00:00:00Z"`
         control,
         restartDesktopApp,
       })
-      await waitForBundledMarketplaceRegistration(codexHome)
+      await waitForBundledMarketplaceRegistration(
+        codexHome,
+        join(executorHome, 'capabilities', 'bundled-marketplaces', 'wework-personal')
+      )
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -1342,10 +1503,40 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'project-event-sources') {
+      phase = 'project-event-sources-scenario'
+      assert.ok(
+        desktopScenario,
+        'The project-event-sources checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop project-event-sources checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'dsh-owner-capture') {
+      phase = 'dsh-owner-capture-scenario'
+      assert.ok(
+        desktopScenario,
+        'The dsh-owner-capture checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      console.log(`Wework desktop dsh-owner-capture checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
-      await verifyLocalRemoteControlFlow(control, cloudEnvironment)
-      await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+      await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
+      const generatedDevice = await verifyRemoteDockerCommandFlow(control, cloudEnvironment, {
+        interactiveSessions: { codeServer: false, terminal: false },
+      })
+      await verifyDisabledRemoteSessionCapabilities(control, cloudEnvironment, generatedDevice)
       console.log(
         `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`
       )
@@ -1641,7 +1832,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-      await verifyShortConversationLayout({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      await verifyShortConversationLayout({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        restartDesktopApp,
+      })
       console.log(`Wework desktop short-conversation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -1728,7 +1923,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldRunPluginSegment('sites-plugin-auto-install')) {
         phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control)
+        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'
@@ -2248,7 +2443,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       shouldRunDesktopCheckpoint('task-board-association')
     ) {
       phase = 'project-space-default-association-setup'
-      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
+      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control)
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {
@@ -2332,7 +2527,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       phase = 'initial-task'
       await sendPrompt(control, composerSelector, TASK_PROMPT)
-      await withTimeout(
+      const initialTaskRequest = await withTimeout(
         control.awaitScenarioRequest('initial'),
         DEFAULT_STEP_TIMEOUT_MS,
         'The model service did not receive the initial task request'
@@ -2394,11 +2589,22 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldRunDesktopCheckpoint('task-board-association')) {
         phase = 'project-space-task-board-association'
+        assertDefaultIssueContextAbsent(initialTaskRequest)
         control.releaseInitialToolExecution()
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await verifyLocalBoardUnread(control, associatedTaskTabTestId)
+        phase = 'project-space-default-issue-context-enriched'
+        await enrichTrackedDefaultIssueTitle(
+          control,
+          associatedTaskTabTestId,
+          `WEWORK_DESKTOP_E2E_TASK ${DEFAULT_ISSUE_ADDITIONAL_CONTEXT}`
+        )
+        control.setScenario('checkpoint_task')
+        const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
+        assertDefaultIssueContextInjected(enrichedIssueRequest)
         await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
           captureScreenshots: false,
         })
@@ -3158,6 +3364,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       const secondTaskRowTestId = await verifyShortConversationLayout({
         composerSelector,
         control,
+        restartDesktopApp,
       })
 
       phase = 'edit-last-user-message'
@@ -3979,6 +4186,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
+    testFailed = true
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4010,6 +4218,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           ),
           httpRequests: control.httpRequests,
           commandHistory: control.commandHistory,
+          controlTransportHistory: control.controlTransportHistory,
         },
         null,
         2
@@ -4044,19 +4253,65 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     throw error
   } finally {
-    await cloudEnvironment?.stop()
-    await blockingNetworkProxy?.stop()
-    await stopDesktopAppProcess(app)
-    await control.close()
-    await desktopScenario?.cleanup?.()
-    await rm(codexSqliteHome, {
-      recursive: true,
-      force: true,
-      maxRetries: process.platform === 'win32' ? 20 : 0,
-      retryDelay: 100,
+    const teardownFailures = []
+    const runTeardownStep = async (label, action) => {
+      try {
+        await action()
+      } catch (error) {
+        teardownFailures.push({ error, label })
+      }
+    }
+    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
+    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
+    await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('Codex SQLite home', async () =>
+      rm(codexSqliteHome, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 20 : 0,
+        retryDelay: 100,
+      })
+    )
+    await runTeardownStep('macOS Launch Services registration', async () => {
+      if (appBundlePath && process.platform === 'darwin') {
+        spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+      }
     })
-    if (appBundlePath && process.platform === 'darwin') {
-      spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+    let cleanupError
+    if (teardownFailures.length === 0) {
+      try {
+        const removed = await compactDesktopE2EResult(resultDir)
+        if (removed > 0) {
+          console.log(`[desktop-e2e] removed ${removed} transient runtime artifacts`)
+        }
+      } catch (error) {
+        cleanupError = error
+      }
+      try {
+        await clearDesktopE2EResultActive(resultDir)
+      } catch (error) {
+        cleanupError ??= error
+      }
+    }
+    if (testFailed) {
+      for (const failure of teardownFailures) {
+        console.error(`[desktop-e2e] ${failure.label} teardown failed: ${String(failure.error)}`)
+      }
+      if (cleanupError) {
+        console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
+      }
+    } else {
+      if (teardownFailures.length > 0) {
+        throw new AggregateError(
+          teardownFailures.map(failure => failure.error),
+          `Desktop E2E teardown failed: ${teardownFailures
+            .map(failure => failure.label)
+            .join(', ')}`
+        )
+      }
+      if (cleanupError) throw cleanupError
     }
   }
 }

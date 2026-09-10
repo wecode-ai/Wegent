@@ -4,7 +4,10 @@ import { ExecutorSessionProjector, executorSessionId } from './session-projector
 
 test('projects executor text, reasoning, usage, and completion into standard session events', () => {
   const sessions = new SessionStoreFixture()
-  const projector = new ExecutorSessionProjector(sessions)
+  const completed = []
+  const projector = new ExecutorSessionProjector(sessions, {
+    onTurnCompleted: turn => completed.push(turn),
+  })
 
   projector.handle(
     executorEvent(1, 'response.created', {
@@ -66,6 +69,41 @@ test('projects executor text, reasoning, usage, and completion into standard ses
     reasoningTokens: 5,
   })
   assert.equal(session.events.at(-1).data.reason.kind, 'completed')
+  assert.equal(completed.length, 1)
+  assert.match(completed[0].turnId, /^[A-Za-z0-9_-]{43}$/u)
+  assert.deepEqual(
+    { ...completed[0], turnId: '<stable-sync-turn-id>' },
+    {
+      transcriptId: 'task-1',
+      taskId: 'task-1',
+      title: '',
+      sequence: 1,
+      turnId: '<stable-sync-turn-id>',
+      sessionId: executorSessionId('device-1', 'task-1'),
+      executorTurnId: 'task-1-turn-1',
+    }
+  )
+})
+
+test('uses device-scoped stable turn identities for cross-device transcript sequencing', () => {
+  const completed = []
+  for (const deviceId of ['device-a', 'device-b']) {
+    const projector = new ExecutorSessionProjector(new SessionStoreFixture(), {
+      onTurnCompleted: turn => completed.push(turn),
+    })
+    projector.handle({
+      ...executorEvent(1, 'response.completed', {}),
+      payload: {
+        ...executorEvent(1, 'response.completed', {}).payload,
+        deviceId,
+        transcriptId: 'shared-transcript',
+      },
+    })
+  }
+
+  assert.equal(completed[0].transcriptId, 'shared-transcript')
+  assert.equal(completed[1].transcriptId, 'shared-transcript')
+  assert.notEqual(completed[0].turnId, completed[1].turnId)
 })
 
 test('projects streamed Executor text blocks into standard assistant deltas', () => {
@@ -333,6 +371,21 @@ test('marks failed executor responses as interrupted error turns', () => {
     kind: 'error',
     error: { message: 'Provider failed', code: 'MODEL_FAILED' },
   })
+})
+
+test('does not enqueue internal context compaction as a portable conversation turn', () => {
+  const completed = []
+  const projector = new ExecutorSessionProjector(new SessionStoreFixture(), {
+    onTurnCompleted: turn => completed.push(turn),
+  })
+
+  projector.handle(
+    executorEvent(1, 'response.completed', {}, 'task-1', 'runtime-task-1-context-compact')
+  )
+  projector.handle(executorEvent(2, 'response.completed', {}, 'task-1', 'user-turn-2'))
+
+  assert.equal(completed.length, 1)
+  assert.equal(completed[0].executorTurnId, 'user-turn-2')
 })
 
 class SessionStoreFixture {

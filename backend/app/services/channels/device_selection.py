@@ -21,7 +21,7 @@ preferences (set via PC/Web frontend).
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from app.core.cache import cache_manager
 
@@ -72,6 +72,12 @@ class DeviceSelection:
         return cls(device_type=DeviceType.CHAT)
 
 
+def get_device_execution_target_id(device: Mapping[str, Any]) -> str:
+    """Return the Runtime route used to execute work on a listed device."""
+    target = device.get("execution_target_id") or device.get("device_id")
+    return str(target or "").strip()
+
+
 class DeviceSelectionManager:
     """Manages user device selection for IM channels."""
 
@@ -120,36 +126,48 @@ class DeviceSelectionManager:
                 )
                 return DeviceSelection(device_type=DeviceType.CLOUD)
 
-            # Otherwise it is an exact local device target. Availability affects
-            # whether dispatch can start, never which target is selected.
+            # Normalize historical logical app IDs to their record-scoped Runtime
+            # route before checking availability or persisting the selection.
+            from app.services.device.runtime_route import (
+                resolve_runtime_route_identity,
+            )
             from app.services.device_service import device_service
 
+            identity = resolve_runtime_route_identity(
+                db,
+                user_id=user_id,
+                submitted_device_id=default_target,
+            )
+            execution_target = (
+                identity.runtime_device_id if identity is not None else default_target
+            )
+
             device_info = await device_service.get_device_online_info(
-                user_id, default_target
+                user_id, execution_target
             )
             if device_info:
                 logger.info(
                     "[DeviceSelection] Using user preference for user %d: "
                     "local device %s (%s)",
                     user_id,
-                    default_target,
+                    execution_target,
                     device_info.get("name", "Unknown"),
                 )
                 return DeviceSelection(
                     device_type=DeviceType.LOCAL,
-                    device_id=default_target,
+                    device_id=execution_target,
                     device_name=device_info.get("name"),
                 )
 
             logger.info(
                 "[DeviceSelection] Preserving unavailable preference device %s "
                 "for user %d",
-                default_target,
+                execution_target,
                 user_id,
             )
             return DeviceSelection(
                 device_type=DeviceType.LOCAL,
-                device_id=default_target,
+                device_id=execution_target,
             )
         except Exception as e:
             logger.warning(
@@ -276,7 +294,10 @@ class DeviceSelectionManager:
     @staticmethod
     async def set_chat_mode(user_id: int) -> bool:
         """
-        Set user to use chat mode (clear device selection).
+        Set user to use chat mode explicitly.
+
+        Chat mode must be persisted so it takes precedence over the account's
+        default_execution_target, just like explicit local and cloud choices.
 
         Args:
             user_id: Wegent user ID
@@ -284,7 +305,8 @@ class DeviceSelectionManager:
         Returns:
             True if set successfully
         """
-        return await DeviceSelectionManager.clear_selection(user_id)
+        selection = DeviceSelection(device_type=DeviceType.CHAT)
+        return await DeviceSelectionManager.set_selection(user_id, selection)
 
 
 # Singleton instance

@@ -2,8 +2,6 @@ import {
   Archive,
   ArrowLeft,
   ChevronRight,
-  FolderGit2,
-  GitPullRequest,
   Globe2,
   Info,
   MessageSquareText,
@@ -17,8 +15,13 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import type { WeworkDshSettingsPage } from '@/features/dsh-runtime/dshSettings'
+import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -27,11 +30,9 @@ import { ModelSettingsPage } from './ModelSettingsPage'
 import { PluginSettingsPage } from './PluginSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
-import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import { RuntimeSettingsPage } from './RuntimeSettingsPage'
 import { HarnessSettingsPage } from './HarnessSettingsPage'
-import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 import { ConnectionsDeviceSettingsPage } from './ConnectionsSettingsPage'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
@@ -46,6 +47,19 @@ interface MobileSettingsPageProps {
   onRefreshWorkLists?: RefreshWorkLists
 }
 
+const MOBILE_BUILTIN_SETTINGS = new Set([
+  'about',
+  'appearance',
+  'connections',
+  'context',
+  'general',
+  'harnesses',
+  'models',
+  'plugins',
+  'quick-phrases',
+  'runtimes',
+])
+
 export function MobileSettingsPage({
   onBack,
   onOpenPlugins,
@@ -55,24 +69,57 @@ export function MobileSettingsPage({
   onRefreshWorkLists,
 }: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
+  const settingsContributions = useDshSlotEntries<WeworkDshSettingsPage>(
+    WEWORK_DSH_SLOTS.settingsPage
+  )
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
-  const [activePage, setActivePage] = useState<
-    | 'menu'
-    | 'general'
-    | 'appearance'
-    | 'context'
-    | 'about'
-    | 'personal'
-    | 'model-settings'
-    | 'quick-phrases'
-    | 'runtimes'
-    | 'plugins'
-    | 'connections'
-    | 'git-hosting'
-    | 'harnesses'
-    | 'worktrees'
-    | 'archived-conversations'
-  >('menu')
+  const extensionSettingsPages = settingsContributions.filter(
+    page =>
+      !MOBILE_BUILTIN_SETTINGS.has(page.id) &&
+      (!page.experimental || experimentalFeaturesEnabled) &&
+      !page.desktopOnly
+  )
+  const [activePage, setActivePage] = useState('menu')
+  const activeExtensionPage = extensionSettingsPages.find(page => page.id === activePage)
+
+  if (activeExtensionPage) {
+    return (
+      <main
+        data-testid={`mobile-${activeExtensionPage.id}-settings-page`}
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid={`mobile-${activeExtensionPage.id}-settings-back-button`}
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">
+            {t(
+              `workbench.${activeExtensionPage.labelKey ?? activeExtensionPage.id}`,
+              activeExtensionPage.label
+            )}
+          </h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <DshSettingsSurface
+            page={activeExtensionPage}
+            services={services}
+            devices={devices}
+            onBack={() => setActivePage('menu')}
+            onOpenCloudSettings={() => setActivePage('connections')}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+          />
+        </div>
+      </main>
+    )
+  }
 
   if (activePage === 'connections') {
     return (
@@ -97,34 +144,6 @@ export function MobileSettingsPage({
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
           <ConnectionsDeviceSettingsPage showHeader={false} />
-        </div>
-      </main>
-    )
-  }
-
-  if (activePage === 'git-hosting') {
-    return (
-      <main
-        data-testid="mobile-git-hosting-settings-page"
-        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
-      >
-        <header className="flex shrink-0 items-center justify-between">
-          <button
-            type="button"
-            data-testid="mobile-git-hosting-settings-back-button"
-            onClick={() => setActivePage('menu')}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
-            aria-label={t('workbench.settings_back_to_app')}
-          >
-            <ArrowLeft className="h-6 w-6" />
-          </button>
-          <h1 className="text-lg font-semibold">
-            {t('workbench.settings_nav_git_hosting', '代码托管')}
-          </h1>
-          <div className="h-11 min-w-[44px]" />
-        </header>
-        <div className="mt-6 min-h-0 flex-1 overflow-auto">
-          <GitHostingSettingsPage />
         </div>
       </main>
     )
@@ -317,38 +336,6 @@ export function MobileSettingsPage({
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
           <ArchivedConversationsSettingsPage
             api={services?.runtimeWorkApi}
-            onOpenRuntimeTask={onOpenRuntimeTask}
-            onRefreshWorkLists={onRefreshWorkLists}
-            onLeaveSettings={onBack}
-          />
-        </div>
-      </main>
-    )
-  }
-
-  if (activePage === 'worktrees') {
-    return (
-      <main
-        data-testid="mobile-worktrees-settings-page"
-        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
-      >
-        <header className="flex shrink-0 items-center justify-between">
-          <button
-            type="button"
-            data-testid="mobile-worktrees-back-button"
-            onClick={() => setActivePage('menu')}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
-            aria-label={t('workbench.settings_back_to_app')}
-          >
-            <ArrowLeft className="h-6 w-6" />
-          </button>
-          <h1 className="text-lg font-semibold">{t('workbench.settings_nav_worktrees')}</h1>
-          <div className="h-11 min-w-[44px]" />
-        </header>
-        <div className="mt-6 min-h-0 flex-1 overflow-auto">
-          <WorktreesSettingsPage
-            api={services?.runtimeWorkApi}
-            devices={devices}
             onOpenRuntimeTask={onOpenRuntimeTask}
             onRefreshWorkLists={onRefreshWorkLists}
             onLeaveSettings={onBack}
@@ -621,28 +608,24 @@ export function MobileSettingsPage({
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
         ) : null}
-        <button
-          type="button"
-          data-testid="mobile-settings-git-hosting-button"
-          onClick={() => setActivePage('git-hosting')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <GitPullRequest className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">
-            {t('workbench.settings_nav_git_hosting', '代码托管')}
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
-        <button
-          type="button"
-          data-testid="mobile-settings-worktrees-button"
-          onClick={() => setActivePage('worktrees')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <FolderGit2 className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">{t('workbench.settings_nav_worktrees')}</span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
+        {extensionSettingsPages.map(page => {
+          const Icon = resolveDshSettingsIcon(page.icon)
+          return (
+            <button
+              key={page.id}
+              type="button"
+              data-testid={`mobile-settings-${page.id}-button`}
+              onClick={() => setActivePage(page.id)}
+              className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+            >
+              <Icon className="h-5 w-5 shrink-0 text-text-secondary" />
+              <span className="min-w-0 flex-1 truncate">
+                {t(`workbench.${page.labelKey ?? page.id}`, page.label)}
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+            </button>
+          )
+        })}
         <button
           type="button"
           data-testid="mobile-settings-archived-conversations-button"

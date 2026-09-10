@@ -239,6 +239,17 @@ export interface SourceReference {
   }>
   /** Whether the segment list was truncated (direct injection / kb_head). */
   segments_truncated?: boolean
+  /** Full video chapter catalog available after a complete document read. */
+  available_segments?: Array<{
+    id?: string
+    start_sec: number
+    end_sec: number
+    score?: number
+    title?: string
+    description?: string
+  }>
+  /** Whether the available chapter catalog was truncated. */
+  available_segments_truncated?: boolean
 }
 
 export interface RetrievalSummaryPayload {
@@ -525,7 +536,7 @@ export interface ChatMessageAttachment {
 
 export interface ChatMessageContext {
   id: number
-  context_type: 'attachment' | 'external_web_content' | 'knowledge_base' | 'table'
+  context_type: 'attachment' | 'external_web_content' | 'knowledge_base'
   name: string
   status: string
   file_extension?: string

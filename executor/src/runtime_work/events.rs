@@ -191,6 +191,30 @@ pub(crate) fn emit_response_event(
     }
 }
 
+pub(crate) fn emit_runtime_work_changed(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+) {
+    let Some(event_tx) = event_tx else {
+        return;
+    };
+    let _ = event_tx.send(json!({
+        "type": "event",
+        "event": "runtime.work.changed",
+        "payload": {
+            "event_type": "runtime.work.changed",
+            "taskId": local_task_id,
+            "data": {
+                "taskId": local_task_id,
+            },
+            "deviceId": device_id,
+            "runtime": "codex",
+            "eventSeq": next_runtime_event_sequence(),
+        },
+    }));
+}
+
 fn is_terminal_response_event(event: &str) -> bool {
     matches!(
         event,
@@ -749,6 +773,18 @@ impl CodexNotificationEventMapper {
                 emit_context.request.cwd().unwrap_or_default(),
                 Some("done"),
             );
+            if let Some(render_payload) = block
+                .as_ref()
+                .filter(|block| {
+                    block.get("tool_name").and_then(Value::as_str) == Some("image_generation")
+                })
+                .and_then(|block| block.get("render_payload"))
+                .cloned()
+            {
+                if let Some(object) = updates.as_object_mut() {
+                    object.insert("render_payload".to_owned(), render_payload);
+                }
+            }
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,

@@ -450,7 +450,14 @@ def get_external_document_provider(
     provider_id: str,
 ) -> ExternalDocumentProvider | None:
     """Return the registered adapter for a provider ID, or None."""
-    return _EXTERNAL_DOCUMENT_PROVIDERS.get((provider_id or "").strip().lower())
+    normalized_id = (provider_id or "").strip().lower()
+    provider = _EXTERNAL_DOCUMENT_PROVIDERS.get(normalized_id)
+    if provider is None and normalized_id == "xiaoxin":
+        from app.services.knowledge.xiaoxin import XiaoxinExternalDocumentProvider
+
+        provider = XiaoxinExternalDocumentProvider()
+        register_external_document_provider(provider)
+    return provider
 
 
 register_external_document_provider(DingTalkExternalDocumentProvider())

@@ -10,6 +10,7 @@ const TARGET_NATIVE_ARTIFACTS = {
 }
 
 const NON_RUNTIME_SUFFIXES = ['.d.cts', '.d.mts', '.d.ts', '.map']
+const NON_RUNTIME_FILES = new Set(['.modules.yaml', '.pnpm-workspace-state-v1.json'])
 
 export async function pruneHarnessRuntime(root, target) {
   const nativeArtifacts = TARGET_NATIVE_ARTIFACTS[target]
@@ -43,7 +44,8 @@ async function visit(directory, nativeArtifacts, removed) {
         await visit(child, nativeArtifacts, removed)
       } else if (
         entry.isFile() &&
-        NON_RUNTIME_SUFFIXES.some(suffix => entry.name.endsWith(suffix))
+        (NON_RUNTIME_FILES.has(entry.name) ||
+          NON_RUNTIME_SUFFIXES.some(suffix => entry.name.endsWith(suffix)))
       ) {
         await rm(child, { force: true })
         removed.files += 1

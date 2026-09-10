@@ -118,6 +118,59 @@ Electron 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表�
 
 Terminal 和内置浏览器属于有状态活动资源，不跟随普通 pane 淘汰。只要 pane 中仍有 Terminal 或浏览器标签，它就保持挂载，以保留终端进程和网页会话；关闭对应资源后，该 pane 才重新受普通缓存上限约束。修改这条边界时，必须同时覆盖普通 pane 的 LRU 淘汰、资源 pane 保活、消息行虚拟化和桌面内存 E2E。
 
+## 云端终端压测与验收
+
+协议边界和发布顺序见[云端终端兼容与发布](wework-cloud-connection.md#云端终端兼容与发布)。以下命令从仓库根目录串行执行；需要已安装项目依赖、`uv`、Cargo 和 `redis-server`。
+
+```bash
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh quick
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh baseline
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh capacity
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh over-capacity
+pnpm --filter wework e2e:desktop -- --cloud-only --segment core-task-flow
+```
+
+- 上述压测启动仅绑定 `127.0.0.1` 的临时 Redis，结束后销毁；不需要真实密码、用户 Token 或 API Key。`load-token` 只是 Executor 内存测试的占位值。
+- 只有显式保留 `TERMINAL_LOAD_REDIS_URL` 才连接指定 Redis；应使用专用测试实例。脚本只清理本轮已知的精确 session key，不扫描或清空 Redis；共享实例的 `INFO` 包含其他流量，不能归因于本轮测试。
+- `baseline` 覆盖 3 个 Backend / 1000 会话；`capacity` 和 `over-capacity` 覆盖单 Backend 的 8192 / 9000 会话，用于验证不均匀分布、缓存容量和淘汰。
+- Backend 脚本验证 session store/cache 与跨实例失效；Executor 脚本使用生产 `LocalSessionHandler` 和内存 PTY，验证序号、消费 ACK、consumer 接管、回放及背压。它们不包含完整 Socket.IO、真实网络或 xterm，吞吐不能当作端到端容量。
+- 真实 Electron E2E 覆盖 v1/v2 渲染、缺省/v1/v2 attach、关闭 v2 后协商、超过 512 KiB 的输出、resize、重连、协议固定和关闭；v1 不发送消费 ACK。Backend 重启后先等待本次进程的目标设备注册日志，再检查在线状态，避免 Redis 残留记录造成误判。证据位于 `wework/test-results/desktop-e2e/<run>/terminal-compatibility-*.json`。桌面构建共用资源目录，不能并行执行。
+
+### 上线验收门禁
+
+本地测试不能替代生产等价环境的长时间验证，也不能替代实际待发布/回滚二进制的混合版本验证。2026-09-07 本地单元/契约测试、两档压测和真实 Electron E2E 已通过；完整历史产物矩阵及以下长压仍待完成，不视为已经获准上线。完整 CI 分类器测试也仍需 Bash 4+ 环境执行。
+
+每组至少运行 30 分钟，使用真实 Backend、Redis、Executor PTY 和 Wework，覆盖多 Backend 及单副本倾斜：
+
+| 会话数 | 单会话输出 | ACK 延迟 | 目的                  |
+| ------ | ---------- | -------- | --------------------- |
+| 100    | 10 KiB/s   | 0ms      | 基线                  |
+| 500    | 10 KiB/s   | 50ms     | 常规并发              |
+| 1000   | 100 KiB/s  | 200ms    | 高吞吐                |
+| 3000   | 1 KiB/s    | 50ms     | 大量低频终端          |
+| 8192   | 10 KiB/s   | 200ms    | 单 Backend cache 容量 |
+| 9000   | 1 KiB/s    | 50ms     | 超容量淘汰            |
+| 1000   | 100 KiB/s  | 1000ms   | 强制背压              |
+
+每组覆盖随机断开 10% 客户端、断网 3 秒后恢复连接，并在连接恢复后 1 秒内重新 attach，验证 v2 开始补发；另覆盖 ACK 延迟/丢失、10 MiB 突发输出、五终端并行、主题切换和隐藏后激活。另测 Backend 重启、Redis 失效、旧 consumer 控制、错误握手及已有会话切版本被拒绝；确认会话身份和输出标记，不能只凭界面恢复判断无损。结束后清理测试会话和隔离资源。
+
+验收目标（不是本地脚本已测得的性能结论）：
+
+- v2 序号缺口、重复写入、静默丢失为 0；v1 验证基础输入输出和重连可用，不要求其不存在的无损回放能力。
+- Executor 回放不超过 512 KiB；384 KiB 暂停读取，降到 128 KiB 或以下恢复。30 分钟内存趋于稳定，不随总输出线性增长。
+- 同地域输入回显 P95 ≤ 50ms，扣除网络 RTT 后链路 P95 ≤ 20ms：每个样本先计算 `回显延迟 - 配对 RTT`，再将差值升序排列，取第 `ceil(0.95 × 样本数)` 项（与 Backend 压测脚本的 nearest-rank 算法一致），不能将两个 P95 相减；连续 `yes` 后 Ctrl-C 停止 P95 ≤ 200ms。
+- 断网 3 秒后，连接恢复 1 秒内重新 attach，v2 开始补发；10 MiB 突发后 Renderer 可交互，结束标记及后续命令正常显示。
+- 隔离 Redis 压测增量 `SCAN=0`、`KEYS=0`；共享 Redis 用代码与精确 key 操作计数核对，不用全局计数归因。
+
+### 压力与观测
+
+- 已鉴权的稳定数据转发不访问 SQL；session cache 命中不查 Redis 元数据，但 Socket.IO 多副本 Pub/Sub、ACK 转发仍有 Redis 流量。建连、鉴权及会话创建另计。
+- 每个 Backend 默认缓存 8192 条，活跃授权错峰每 4～5 秒精确重校验；超过容量观察 miss/eviction。每进程复用 Redis pool，Pub/Sub 独占池内连接，不设置终端专属连接上限。失效 listener 断线时拒绝使用缓存授权，重连清空缓存。
+- 同时采集 CPU、内存、网络吞吐、Socket 输出/ACK 事件、Redis 连接和拒绝数，区分有效输出与两跳转发开销。
+- Backend 指标：`terminal_ws_events_total`、`terminal_session_cache_requests_total`、`terminal_session_cache_evictions_total`、`terminal_session_store_operations_total`、`terminal_session_store_duration_seconds`。
+- Executor `/metrics`：`terminal_output_batches_total`、`terminal_output_bytes_total`、`terminal_replayed_batches_total`、`terminal_replay_bytes`、`terminal_ack_lag_bytes`、`terminal_backpressured_sessions`。
+- Wework 性能事件：`remote-terminal-write`、`remote-terminal-replay-request`。指标、trace 和诊断日志不记录终端原始内容或凭据；Redis 观测使用 `INFO commandstats`，禁止 `SCAN`、`KEYS`、`MONITOR`。
+
 ## 本地 Codex 流式日志
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。
@@ -151,6 +204,21 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 - GC 时间异常高：确认 DevTools 是否开启 **Heap Allocations**。该采集项会显著放大长时间录制中的 GC；只排查交互流畅度时应关闭它。
 
 流式文本缓冲的单元测试位于 `wework/src/components/chat/useBufferedStreamingText.test.ts`。修改缓冲水位或推进速率时，应同时验证 Unicode 字符边界、非追加更新和流结束立即对齐行为。
+
+## 常驻动画渲染
+
+状态旋转图标和文字扫光属于常驻动画：即使页面没有输入或流式消息，它们也可能持续驱动 Web Content 进程。实现这类效果时，应保持每帧只更新可合成的 `transform` 或 `opacity`，避免动画化 `background-position`、`mask-position` 等需要重新绘制的属性，也不要直接旋转带有复杂描边的 SVG。
+
+旋转图标应把静态 SVG 放在固定尺寸的 HTML 包装层中，由包装层执行 `transform` 动画并声明 `will-change: transform`。文字扫光应始终正常渲染基础文字，并使用固定宽度的裁剪窗口扫过单个高亮文字副本；窗口与副本通过方向相反、时间一致的 `transform` 保持文字位置不变。不得按字素拆分常驻动画，因为动画节点和 `animationiteration` 事件会随文字长度线性增长。用于柔化扫光边缘的渐变蒙版必须保持静态，不能动画化蒙版位置。两类实现都必须保留 `prefers-reduced-motion` 行为。
+
+不能仅凭 CSS 属性名称判断动画是否进入合成线程。`will-change` 只是提示，`clip-path` 等看似可合成的属性在实际 Electron 版本中仍可能每帧触发主线程工作。修改常驻动画后，应在同一 Electron 版本、相同元素数量和相同窗口状态下分别录制至少 10 秒的旧实现与新实现，并验证：
+
+- 暂停动画后 CPU 明显下降，以证明动画与占用存在因果关系。
+- 新实现不再随帧产生 `Paint` 或 `PaintImage`。
+- `UpdateLayoutTree` 和 `Layerize` 的事件数量与总耗时不再随动画帧持续增长。
+- 动画方向、周期、颜色、尺寸和可见状态与修改前一致。
+
+如果新实现仍持续产生绘制或图层化事件，应继续修改实现，而不是以视觉上流畅或平均 CPU 偶尔下降作为验收依据。
 
 ## 采集内容
 

@@ -14,6 +14,7 @@ impl RuntimeWorkRpcHandler {
                 limit: 1,
                 direction: CodexTranscriptDirection::Descending,
                 full_content: false,
+                prefer_rollout_history: false,
             },
         )
         .await
@@ -34,6 +35,7 @@ impl RuntimeWorkRpcHandler {
                 limit,
                 direction,
                 full_content: false,
+                prefer_rollout_history: false,
             },
         )
         .await
@@ -377,10 +379,24 @@ impl RuntimeWorkRpcHandler {
                     CodexTranscriptDirection::Descending
                 },
                 full_content: include_full_content,
+                prefer_rollout_history: local_link.as_ref().is_some_and(|link| {
+                    link.runtime_handle
+                        .get("cloudTranscript")
+                        .is_some_and(Value::is_object)
+                }),
             },
         )
         .await
         .map_err(|error| AppIpcError::new("codex_error", error))?;
+        if let Some(workspace_path) = local_link
+            .as_ref()
+            .map(|link| link.workspace_path.as_str())
+            .filter(|path| !path.is_empty())
+        {
+            if let Some(thread) = thread.as_object_mut() {
+                thread.insert("cwd".to_owned(), Value::String(workspace_path.to_owned()));
+            }
+        }
         let presentation_page_turn_ids = thread
             .get("turns")
             .and_then(Value::as_array)

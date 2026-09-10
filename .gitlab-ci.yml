@@ -39,10 +39,14 @@ wegent-runtime:
     - build_image
   rules:
     - if: '$CI_COMMIT_REF_NAME == "main" && $CI_PIPELINE_SOURCE == "push"'
+      changes:
+        - wecode/docker/base/**/*
       variables:
         ALIAS_IMAGE: pushregistry.api.weibo.com/ci/wegent-runtime:latest
       when: on_success
-    - when: manual
+    - changes:
+        - wecode/docker/base/**/*
+      when: manual
       allow_failure: true
 
 wgent-shell:
@@ -165,6 +169,8 @@ wegent-device:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
       changes:
         - docker/device/**/*
         - wecode/docker/device/**/*
@@ -177,6 +183,8 @@ wegent-device:
         - executor/**/*
         - shared/assets/**/*
         - .gitlab-ci.yml
+      when: manual
+      allow_failure: true
 
 trigger_update_executor:
     stage: production

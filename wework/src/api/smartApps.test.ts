@@ -45,14 +45,17 @@ describe('createSmartAppsApi', () => {
       .mockResolvedValueOnce({
         submissionId: 9,
         smartAppId: 3,
-        uploadUrl: 'https://uploads.example/app.zip',
+        uploadUrl: '/api/smart-apps/submissions/9/artifact?token=ticket',
         expiresAt: '2026-08-20T00:10:00Z',
       })
       .mockResolvedValueOnce({ submission: { id: 9 }, item: { id: 3 } })
     const upload = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(null, { status: 200 }))
-    const api = createSmartAppsApi({ post } as unknown as HttpClient)
+    const api = createSmartAppsApi(
+      { post } as unknown as HttpClient,
+      'https://api.example.test/api'
+    )
     const file = new File([new Uint8Array([1, 2, 3])], 'app.zip', {
       type: 'application/zip',
     })
@@ -69,6 +72,7 @@ describe('createSmartAppsApi', () => {
       releaseNotes: '',
       extensions: { 'io.wegent.test': { owner: 'api-test' } },
       releaseExtensions: { 'io.wegent.build': { pipeline: 'test' } },
+      scope: 'restricted',
       targets: [{ entityType: 'user', entityId: '2', displayName: 'Alice' }],
     })
 
@@ -81,10 +85,11 @@ describe('createSmartAppsApi', () => {
         sha256: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
         extensions: { 'io.wegent.test': { owner: 'api-test' } },
         releaseExtensions: { 'io.wegent.build': { pipeline: 'test' } },
+        scope: 'restricted',
       })
     )
     expect(upload).toHaveBeenCalledWith(
-      'https://uploads.example/app.zip',
+      'https://api.example.test/api/smart-apps/submissions/9/artifact?token=ticket',
       expect.objectContaining({ method: 'PUT', body: file })
     )
     expect(post).toHaveBeenNthCalledWith(2, '/smart-apps/submissions/9/complete')

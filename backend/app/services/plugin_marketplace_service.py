@@ -65,13 +65,34 @@ from app.schemas.installed_plugin import (
     PluginUpstreamItem,
     PluginUpstreamListResponse,
 )
-from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
+from app.services.marketplace_access_target_service import (
+    ORG_DEPARTMENT_ENTITY_TYPE,
+    get_org_department_resource_ids,
+    normalize_org_department_target,
+)
+from app.services.marketplace_submission_upload import (
+    build_marketplace_submission_upload_url,
+)
+from app.services.plugin_device_identity import (
+    coalesce_plugin_device_rows,
+    plugin_device_id,
+    plugin_device_rows,
+)
+from app.services.plugin_marketplace_identity import (
+    ENTERPRISE_CATALOG_NAMESPACE,
+    OFFICIAL_CATALOG_NAMESPACE,
+    catalog_namespace_for_visibility,
+    installed_plugin_kind_name,
+    marketplace_name_for_visibility,
+    personal_catalog_namespace,
+)
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
     PluginPackageScanError,
     scan_plugin_package,
 )
 from app.services.plugin_package_storage import (
+    PluginPackageStorage,
     PluginPackageStorageError,
     plugin_package_storage,
 )
@@ -108,11 +129,12 @@ class PublishedRelease:
 
 @dataclass(frozen=True)
 class _UserPluginAccessContext:
-    """Preloaded namespace membership used by marketplace list access checks."""
+    """Preloaded membership used by marketplace list access checks."""
 
     namespace_ids: set[str]
     namespace_names: list[str]
     namespace_names_by_id: dict[str, str]
+    org_department_plugin_ids: set[int]
 
 
 class PluginMarketplaceService:
@@ -244,13 +266,19 @@ class PluginMarketplaceService:
             if installed_by_id
             else []
         )
-        for row in device_rows:
+        coalesced_rows = coalesce_plugin_device_rows(db, device_rows)
+        for (_, canonical_id), row in coalesced_rows.items():
             item = installed_by_id.get(row.installed_kind_id)
             if not item:
                 continue
             item.status.devices.append(
                 PluginDeviceInstallationItem(
-                    deviceId=row.device_id,
+                    deviceId=(
+                        device_id
+                        if device_id
+                        and plugin_device_id(db, row.user_id, device_id) == canonical_id
+                        else canonical_id
+                    ),
                     desiredReleaseId=row.desired_release_id,
                     actualReleaseId=unset_id(row.actual_release_id),
                     state=row.state,
@@ -262,7 +290,10 @@ class PluginMarketplaceService:
                 )
             )
         rows_by_install = {
-            (row.installed_kind_id, row.device_id): row for row in device_rows
+            installed_id: row
+            for (installed_id, canonical_id), row in coalesced_rows.items()
+            if device_id
+            and plugin_device_id(db, row.user_id, device_id) == canonical_id
         }
         for item in response.items:
             plugin_id = item.spec.pluginId
@@ -270,7 +301,7 @@ class PluginMarketplaceService:
                 continue
             installed_id = self._installed_item_id(item)
             if device_id and installed_id:
-                device_row = rows_by_install.get((installed_id, device_id))
+                device_row = rows_by_install.get(installed_id)
                 if not self._device_has_materialized_release(device_row):
                     item.spec.installState = (
                         "failed"
@@ -304,7 +335,11 @@ class PluginMarketplaceService:
                 Plugin.latest_release_id != 0,
                 Plugin.visibility.in_(["personal", "workspace", "public"]),
             )
-            .order_by(Plugin.featured_rank == 0, Plugin.featured_rank, Plugin.id.desc())
+            .order_by(
+                Plugin.featured_rank == 0,
+                Plugin.featured_rank.desc(),
+                Plugin.id.desc(),
+            )
             .all()
         )
         normalized_query = (query or "").strip().lower()
@@ -348,16 +383,8 @@ class PluginMarketplaceService:
         )
         installed_kind_ids = [row.id for row in installed_by_plugin_id.values()]
         device_rows_by_kind_id: dict[int, PluginDeviceInstallation] = {}
-        if device_id and installed_kind_ids:
-            device_rows_by_kind_id = {
-                row.installed_kind_id: row
-                for row in db.query(PluginDeviceInstallation)
-                .filter(
-                    PluginDeviceInstallation.installed_kind_id.in_(installed_kind_ids),
-                    PluginDeviceInstallation.device_id == device_id,
-                )
-                .all()
-            }
+        if device_id and installed_kind_ids and user_id is not None:
+            device_rows_by_kind_id = plugin_device_rows(db, user_id, device_id)
 
         items: list[PluginMarketplaceItem] = []
         for plugin in rows:
@@ -473,7 +500,7 @@ class PluginMarketplaceService:
             installed = Kind(
                 user_id=user_id,
                 kind="InstalledPlugin",
-                name=self._kind_name(plugin.slug),
+                name=self._kind_name(plugin.catalog_namespace, plugin.slug),
                 namespace="default",
                 json=payload,
                 is_active=True,
@@ -695,18 +722,119 @@ class PluginMarketplaceService:
         provenance: dict[str, Any] | None = None,
     ) -> PublishedRelease:
         """Publish a WeWork-owned official release."""
+        return self.publish_catalog_release(
+            db,
+            catalog_namespace=catalog_namespace_for_visibility(visibility),
+            slug=slug,
+            package=package,
+            listing_type=listing_type,
+            visibility=visibility,
+            featured_rank=featured_rank,
+            created_by_user_id=created_by_user_id,
+            provenance={"kind": "official", **(provenance or {})},
+        )
+
+    def publish_personal_release(
+        self,
+        db: Session,
+        *,
+        plugin_id: int,
+        owner_user_id: int,
+        package: bytes,
+        storage: PluginPackageStorage | None = None,
+        created_by_user_id: int | None = None,
+        provenance: dict[str, Any] | None = None,
+        defer_commit: bool = False,
+    ) -> PublishedRelease:
+        """Publish an owner-controlled personal release through the shared core."""
+        plugin = (
+            db.query(Plugin).filter(Plugin.id == plugin_id).with_for_update().first()
+        )
+        if not plugin or plugin.owner_user_id != owner_user_id:
+            raise HTTPException(status_code=404, detail="Personal plugin not found")
+        if (
+            plugin.catalog_namespace != personal_catalog_namespace(owner_user_id)
+            or plugin.visibility != "personal"
+            or plugin.status == "deleted"
+        ):
+            raise HTTPException(
+                status_code=409, detail="Source plugin is not a personal plugin"
+            )
+        parsed, security_report = self._analyze_package(package)
+        if parsed.name != plugin.slug:
+            raise HTTPException(
+                status_code=422,
+                detail="Personal plugin slug must match the manifest name",
+            )
+        try:
+            result = self._publish_release(
+                db,
+                plugin=plugin,
+                package=package,
+                parsed=parsed,
+                security_report=security_report,
+                storage=storage,
+                created_by_user_id=created_by_user_id or owner_user_id,
+                provenance={"kind": "personal", **(provenance or {})},
+                defer_commit=defer_commit,
+            )
+        except Exception:
+            db.rollback()
+            raise
+        if not result.created and not defer_commit:
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            db.refresh(result.release)
+        if result.created and not defer_commit:
+            self._notify_release_available(db, result.release.id)
+        return result
+
+    def publish_catalog_release(
+        self,
+        db: Session,
+        *,
+        catalog_namespace: str,
+        slug: str,
+        package: bytes,
+        listing_type: str = "plugin",
+        visibility: str = "workspace",
+        featured_rank: int | None = None,
+        created_by_user_id: int | None = None,
+        origin_plugin_id: int = 0,
+        publication_revision_id: int = 0,
+        source_commit_sha: str = "",
+        provenance: dict[str, Any] | None = None,
+        defer_commit: bool = False,
+    ) -> PublishedRelease:
+        """Publish one system-owned catalog release through the shared core."""
         self._validate_slug(slug)
         if listing_type not in {"plugin", "skill"}:
             raise HTTPException(status_code=422, detail="Invalid plugin listing type")
         if visibility not in {"workspace", "public"}:
             raise HTTPException(status_code=422, detail="Invalid plugin visibility")
+        if catalog_namespace != catalog_namespace_for_visibility(visibility):
+            raise HTTPException(
+                status_code=422,
+                detail="Catalog namespace does not match plugin visibility",
+            )
         parsed, security_report = self._analyze_package(package)
         if parsed.name != slug:
             raise HTTPException(
                 status_code=422,
                 detail="Official plugin slug must match the manifest name",
             )
-        plugin = db.query(Plugin).filter(Plugin.slug == slug).with_for_update().first()
+        plugin = (
+            db.query(Plugin)
+            .filter(
+                Plugin.catalog_namespace == catalog_namespace,
+                Plugin.slug == slug,
+            )
+            .with_for_update()
+            .first()
+        )
         if plugin and (
             plugin.source_type != "native"
             or plugin.source_provider != "wework"
@@ -720,8 +848,13 @@ class PluginMarketplaceService:
             raise HTTPException(
                 status_code=409, detail="Plugin listing type cannot be changed"
             )
+        if plugin and catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE:
+            self._validate_enterprise_origin(
+                plugin, requested_origin_plugin_id=origin_plugin_id
+            )
         if not plugin:
             plugin = Plugin(
+                catalog_namespace=catalog_namespace,
                 slug=slug,
                 name=parsed.name,
                 display_name=parsed.displayName,
@@ -729,6 +862,7 @@ class PluginMarketplaceService:
                 source_type="native",
                 source_provider="wework",
                 owner_user_id=0,
+                origin_plugin_id=origin_plugin_id,
                 keywords_json=[],
                 interface_json={},
                 visibility=visibility,
@@ -758,24 +892,63 @@ class PluginMarketplaceService:
                 parsed=parsed,
                 security_report=security_report,
                 created_by_user_id=created_by_user_id or 0,
-                provenance={
-                    "kind": "official",
-                    **(provenance or {}),
-                },
+                publication_revision_id=publication_revision_id,
+                source_commit_sha=source_commit_sha,
+                provenance=provenance,
+                defer_commit=defer_commit,
             )
         except Exception:
             db.rollback()
             raise
-        if not result.created:
+        if not result.created and not defer_commit:
             try:
                 db.commit()
             except Exception:
                 db.rollback()
                 raise
             db.refresh(result.release)
-        if result.created:
+        if result.created and not defer_commit:
             self._notify_release_available(db, result.release.id)
         return result
+
+    def notify_catalog_release(self, db: Session, release_id: int) -> None:
+        """Notify installations after a deferred catalog transaction commits."""
+        self._notify_release_available(db, release_id)
+
+    def _validate_enterprise_origin(
+        self, plugin: Plugin, *, requested_origin_plugin_id: int
+    ) -> None:
+        """Prevent one enterprise slug from crossing personal-source lineages."""
+        current_origin = plugin.origin_plugin_id or 0
+        if requested_origin_plugin_id:
+            if not current_origin:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "ENTERPRISE_PLUGIN_ORIGIN_UNBOUND",
+                        "message": (
+                            "Legacy enterprise plugin has no personal origin; "
+                            "bind it explicitly before publication"
+                        ),
+                    },
+                )
+            if current_origin != requested_origin_plugin_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "ENTERPRISE_PLUGIN_ORIGIN_MISMATCH",
+                        "originPersonalPluginId": current_origin,
+                    },
+                )
+            return
+        if current_origin:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "ENTERPRISE_PLUGIN_REQUIRES_PUBLICATION_REQUEST",
+                    "originPersonalPluginId": current_origin,
+                },
+            )
 
     def init_submission(
         self,
@@ -789,12 +962,23 @@ class PluginMarketplaceService:
         self._validate_version(request.version)
         if not re.fullmatch(r"[0-9a-fA-F]{64}", request.sha256):
             raise HTTPException(status_code=422, detail="sha256 must be hexadecimal")
-        visibility = self._resolve_submission_visibility(request)
-        purpose = (
-            "restricted_share" if visibility == "personal" else "marketplace_publish"
+        if request.purpose != "restricted_share" or request.visibility not in {
+            None,
+            "personal",
+        }:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Legacy submissions only support restricted personal sharing; "
+                    "use publication requests for enterprise publication"
+                ),
+            )
+        visibility = "personal"
+        catalog_namespace = catalog_namespace_for_visibility(
+            visibility, owner_user_id=user_id
         )
         pending_access = None
-        if visibility == "personal" and (request.targets or request.allowCopy):
+        if request.targets or request.allowCopy:
             # Validate recipients up front so publish fails before package upload.
             validated_targets = self._validated_access_targets(
                 db,
@@ -807,7 +991,14 @@ class PluginMarketplaceService:
             }
         reclaimed_storage_key: str | None = None
         try:
-            plugin = db.query(Plugin).filter(Plugin.slug == request.slug).first()
+            plugin = (
+                db.query(Plugin)
+                .filter(
+                    Plugin.catalog_namespace == catalog_namespace,
+                    Plugin.slug == request.slug,
+                )
+                .first()
+            )
             if plugin and plugin.owner_user_id != user_id:
                 raise HTTPException(
                     status_code=409, detail="Plugin slug is already owned"
@@ -818,6 +1009,7 @@ class PluginMarketplaceService:
                 )
             if not plugin:
                 plugin = Plugin(
+                    catalog_namespace=catalog_namespace,
                     slug=request.slug,
                     name=request.slug,
                     display_name=request.displayName.strip() or request.slug,
@@ -832,10 +1024,15 @@ class PluginMarketplaceService:
                 )
                 db.add(plugin)
                 db.flush()
-            else:
-                self._apply_submission_visibility_upgrade(
-                    db, plugin=plugin, visibility=visibility
+            elif plugin.status == "published" and plugin.visibility != "personal":
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Published marketplace plugins cannot become personal shares"
+                    ),
                 )
+            else:
+                plugin.visibility = "personal"
             duplicate = (
                 db.query(PluginRelease)
                 .filter(
@@ -890,13 +1087,15 @@ class PluginMarketplaceService:
                 plugin_id=plugin.id,
                 release_id=release.id,
                 submitter_user_id=user_id,
-                purpose=purpose,
+                purpose="restricted_share",
                 status="uploading",
             )
             db.add(submission)
             db.flush()
-            upload_url, expires_at = plugin_package_storage.presign_upload(
-                release.storage_key
+            upload_url, expires_at = build_marketplace_submission_upload_url(
+                kind="plugin",
+                submission_id=submission.id,
+                user_id=user_id,
             )
             db.commit()
         except Exception:
@@ -1005,45 +1204,31 @@ class PluginMarketplaceService:
         }:
             raise HTTPException(status_code=404, detail="Submission not found")
 
-    def _resolve_submission_visibility(
-        self, request: PluginSubmissionInitRequest
-    ) -> str:
-        if request.visibility:
-            return request.visibility
-        return "personal" if request.purpose == "restricted_share" else "workspace"
-
-    def _apply_submission_visibility_upgrade(
-        self, db: Session, *, plugin: Plugin, visibility: str
+    def upload_submission_package(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        submission_id: int,
+        package: bytes,
     ) -> None:
-        """Validate visibility transitions; apply immediately only when safe.
-
-        Draft / pending_review plugins can take the requested visibility now because
-        they are not catalog-visible. Published personal -> marketplace upgrades
-        keep personal visibility until review approval.
-        """
-        del db
-        current = plugin.visibility
-        if visibility == "personal":
-            if plugin.status == "published" and current != "personal":
+        submission = self._owned_submission(db, user_id, submission_id, for_update=True)
+        try:
+            if submission.status != "uploading":
                 raise HTTPException(
-                    status_code=409,
-                    detail="Published marketplace plugins cannot become personal shares",
+                    status_code=409, detail="Submission is not uploading"
                 )
-            plugin.visibility = "personal"
-            return
-        if plugin.status == "published" and current == "personal":
-            # Keep personal until marketplace review approves the upgrade.
-            return
-        if current == "public" and visibility == "workspace":
-            raise HTTPException(
-                status_code=409,
-                detail="Public plugins cannot be downgraded to workspace",
-            )
-        if plugin.status != "published":
-            plugin.visibility = visibility
-            return
-        if visibility in {"workspace", "public"}:
-            plugin.visibility = visibility
+            release = db.get(PluginRelease, submission.release_id)
+            if not release:
+                raise HTTPException(
+                    status_code=404, detail="Submission release not found"
+                )
+            self._validate_uploaded_package(release, package)
+            plugin_package_storage.put(release.storage_key, package)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     def _requested_visibility_for_release(
         self, release: PluginRelease, *, fallback: str
@@ -1286,10 +1471,17 @@ class PluginMarketplaceService:
         package: bytes,
         parsed: PluginUploadInfo,
         security_report: dict[str, Any],
+        storage: PluginPackageStorage | None = None,
         created_by_user_id: int | None = None,
+        publication_revision_id: int = 0,
+        source_commit_sha: str = "",
         provenance: dict[str, Any] | None = None,
+        defer_commit: bool = False,
     ) -> PublishedRelease:
         """Persist one ready release and clean up its object on transaction failure."""
+        from app.services.plugin_publication_artifact import release_source_tree
+
+        release_source_tree(package)
         if not parsed.version:
             raise HTTPException(status_code=422, detail="Plugin version is required")
         self._validate_version(parsed.version)
@@ -1334,26 +1526,33 @@ class PluginMarketplaceService:
                 provenance=provenance,
             ),
             created_by_user_id=created_by_user_id or 0,
+            publication_revision_id=publication_revision_id,
+            source_commit_sha=source_commit_sha,
         )
         db.add(release)
         db.flush()
+        package_storage = storage or plugin_package_storage
         object_key = self._storage_key(plugin.id, release.id, digest)
         release.storage_key = object_key
         object_created = False
         try:
-            object_created = plugin_package_storage.put_immutable(object_key, package)
+            object_created = package_storage.put_immutable(object_key, package)
             plugin.category = str(interface.get("category") or plugin.category or "")
             self._finalize_release(db, plugin=plugin, release=release)
-            db.commit()
+            if defer_commit:
+                db.flush()
+            else:
+                db.commit()
         except Exception:
             db.rollback()
             if object_created:
                 try:
-                    plugin_package_storage.delete(object_key)
+                    package_storage.delete(object_key)
                 except Exception:
                     pass
             raise
-        db.refresh(release)
+        if not defer_commit:
+            db.refresh(release)
         return PublishedRelease(release=release, created=True)
 
     def _finalize_release(
@@ -1423,9 +1622,17 @@ class PluginMarketplaceService:
                 validate_upstream_url(request.upstreamUrl)
             except UpstreamFetchError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if db.query(Plugin).filter(Plugin.slug == request.slug).first():
+        if (
+            db.query(Plugin)
+            .filter(
+                Plugin.catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE,
+                Plugin.slug == request.slug,
+            )
+            .first()
+        ):
             raise HTTPException(status_code=409, detail="Plugin slug already exists")
         plugin = Plugin(
+            catalog_namespace=ENTERPRISE_CATALOG_NAMESPACE,
             slug=request.slug,
             name=request.slug,
             display_name=request.displayName,
@@ -1494,9 +1701,19 @@ class PluginMarketplaceService:
             raise HTTPException(status_code=422, detail="Invalid plugin visibility")
         if sync_policy not in {"auto_after_scan", "review_required"}:
             raise HTTPException(status_code=422, detail="Invalid upstream sync policy")
-        plugin = db.query(Plugin).filter(Plugin.slug == slug).with_for_update().first()
+        catalog_namespace = catalog_namespace_for_visibility(visibility)
+        plugin = (
+            db.query(Plugin)
+            .filter(
+                Plugin.catalog_namespace == catalog_namespace,
+                Plugin.slug == slug,
+            )
+            .with_for_update()
+            .first()
+        )
         if not plugin:
             plugin = Plugin(
+                catalog_namespace=catalog_namespace,
                 slug=slug,
                 name=remote_plugin_id,
                 display_name=display_name,
@@ -1914,6 +2131,8 @@ class PluginMarketplaceService:
         )
         return PluginMarketplaceItem(
             id=plugin.id,
+            catalogNamespace=plugin.catalog_namespace,
+            originPersonalPluginId=plugin.origin_plugin_id or None,
             remotePluginId=f"wegent~Plugin_{plugin.id}",
             name=plugin.name,
             displayName=plugin.display_name,
@@ -1942,7 +2161,8 @@ class PluginMarketplaceService:
             allowCopy=bool(plugin.allow_copy),
             grantUserCount=sum(grant.entity_type == "user" for grant in grants),
             grantNamespaceCount=sum(
-                grant.entity_type == "namespace" for grant in grants
+                grant.entity_type in {"namespace", ORG_DEPARTMENT_ENTITY_TYPE}
+                for grant in grants
             ),
             latestReleaseId=release.id,
             listingType=plugin.listing_type,
@@ -1959,7 +2179,11 @@ class PluginMarketplaceService:
                 )
             ),
             currentDeviceInstallation=(
-                self._device_installation_item(device_row) if device_row else None
+                self._device_installation_item(device_row).model_copy(
+                    update={"deviceId": device_id or device_row.device_id}
+                )
+                if device_row
+                else None
             ),
         )
 
@@ -2015,13 +2239,11 @@ class PluginMarketplaceService:
         installed_kind_id: int,
         device_id: str,
     ) -> PluginDeviceInstallation | None:
-        return (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id == installed_kind_id,
-                PluginDeviceInstallation.device_id == device_id,
-            )
-            .first()
+        installed = db.get(Kind, installed_kind_id)
+        if installed is None:
+            return None
+        return plugin_device_rows(db, installed.user_id, device_id).get(
+            installed_kind_id
         )
 
     def _device_has_materialized_release(
@@ -2049,7 +2271,10 @@ class PluginMarketplaceService:
         return {
             "apiVersion": "agent.wecode.io/v1",
             "kind": "InstalledPlugin",
-            "metadata": {"name": self._kind_name(plugin.slug), "namespace": "default"},
+            "metadata": {
+                "name": self._kind_name(plugin.catalog_namespace, plugin.slug),
+                "namespace": "default",
+            },
             "spec": {
                 "source": {
                     "type": "marketplace",
@@ -2179,7 +2404,10 @@ class PluginMarketplaceService:
         granted_namespace_ids = {
             grant.entity_id for grant in grants if grant.entity_type == "namespace"
         }
-        if not granted_namespace_ids:
+        has_org_department_grant = any(
+            grant.entity_type == ORG_DEPARTMENT_ENTITY_TYPE for grant in grants
+        )
+        if not granted_namespace_ids and not has_org_department_grant:
             return False
 
         if access_context is None:
@@ -2189,6 +2417,10 @@ class PluginMarketplaceService:
                 grants_by_plugin_id={plugin.id: grants},
             )
         if access_context is None:
+            return False
+        if plugin.id in access_context.org_department_plugin_ids:
+            return True
+        if not granted_namespace_ids:
             return False
         if access_context.namespace_ids & granted_namespace_ids:
             return True
@@ -2255,10 +2487,25 @@ class PluginMarketplaceService:
                 )
                 .all()
             }
+        has_org_department_grants = any(
+            grant.entity_type == ORG_DEPARTMENT_ENTITY_TYPE
+            for grants in grants_by_plugin_id.values()
+            for grant in grants
+        )
+        org_department_plugin_ids = (
+            get_org_department_resource_ids(
+                db,
+                user_id=user_id,
+                resource_type=ResourceType.PLUGIN.value,
+            )
+            if has_org_department_grants
+            else set()
+        )
         return _UserPluginAccessContext(
             namespace_ids={str(row.id) for row in user_namespaces},
             namespace_names=[row.name for row in user_namespaces],
             namespace_names_by_id=namespace_names_by_id,
+            org_department_plugin_ids=org_department_plugin_ids,
         )
 
     def get_plugin_access(
@@ -2411,6 +2658,17 @@ class PluginMarketplaceService:
     ) -> list[tuple[int, int]]:
         """Remove an owned personal listing and deactivate every installation."""
         plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        from app.services.plugin_publication_service import (
+            plugin_publication_service,
+        )
+
+        if plugin_publication_service.has_active_request(
+            db, source_plugin_id=plugin.id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Withdraw the active enterprise publication request first",
+            )
         installations, shared_target_count, _, current_revision = (
             self._personal_plugin_delete_snapshot(db, plugin=plugin)
         )
@@ -2609,6 +2867,21 @@ class PluginMarketplaceService:
                     )
                 )
                 continue
+            if target.entityType == ORG_DEPARTMENT_ENTITY_TYPE:
+                entity_id, display_name = normalize_org_department_target(
+                    db,
+                    entity_id=target.entityId,
+                    display_name=target.displayName,
+                    invalid_detail="Invalid plugin share department",
+                )
+                normalized.append(
+                    PluginAccessTarget(
+                        entityType=ORG_DEPARTMENT_ENTITY_TYPE,
+                        entityId=entity_id,
+                        displayName=display_name,
+                    )
+                )
+                continue
             namespace = (
                 db.get(Namespace, int(target.entityId))
                 if target.entityId.isdigit()
@@ -2801,14 +3074,26 @@ class PluginMarketplaceService:
             return None
         plugin = (
             db.query(Plugin)
-            .filter(Plugin.status == "published", Plugin.name == normalized)
+            .filter(
+                Plugin.status == "published",
+                Plugin.catalog_namespace.in_(
+                    [ENTERPRISE_CATALOG_NAMESPACE, OFFICIAL_CATALOG_NAMESPACE]
+                ),
+                Plugin.name == normalized,
+            )
             .first()
         )
         if plugin:
             return plugin
         return (
             db.query(Plugin)
-            .filter(Plugin.status == "published", Plugin.slug == normalized)
+            .filter(
+                Plugin.status == "published",
+                Plugin.catalog_namespace.in_(
+                    [ENTERPRISE_CATALOG_NAMESPACE, OFFICIAL_CATALOG_NAMESPACE]
+                ),
+                Plugin.slug == normalized,
+            )
             .first()
         )
 
@@ -2933,7 +3218,9 @@ class PluginMarketplaceService:
         )
         payload["spec"] = spec
         metadata = dict(payload.get("metadata") or {})
-        metadata["name"] = self._kind_name(plugin.slug or plugin.name)
+        metadata["name"] = self._kind_name(
+            plugin.catalog_namespace, plugin.slug or plugin.name
+        )
         payload["metadata"] = metadata
         row.json = payload
         row.name = metadata["name"]
@@ -3153,9 +3440,8 @@ class PluginMarketplaceService:
         if not SEMVER_PATTERN.fullmatch(value):
             raise HTTPException(status_code=422, detail="Plugin version must be SemVer")
 
-    def _kind_name(self, slug):
-        digest = hashlib.sha256(slug.encode()).hexdigest()[:10]
-        return f"{slug[:89]}-{digest}"
+    def _kind_name(self, catalog_namespace, slug):
+        return installed_plugin_kind_name(catalog_namespace, slug)
 
     def _kind_to_installed(self, row):
         payload = dict(row.json)

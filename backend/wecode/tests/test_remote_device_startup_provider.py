@@ -68,11 +68,15 @@ def test_internal_provider_generates_pinned_host_network_commands(monkeypatch):
     assert result.image == "registry.api.weibo.com/ci/wegent-device:1.8.6"
     assert result.env["WEGENT_BACKEND_URL"] == "https://backend.example.com"
     assert result.env["WEGENT_SOCKET_URL"] == "wss://socket.example.com"
+    assert result.env["DEVICE_CODE_SERVER_ENABLED"] == "true"
+    assert result.env["DEVICE_TERMINAL_ENABLED"] == "true"
     assert result.env["DEVICE_SESSION_GATEWAY_HOST"] == "0.0.0.0"
     assert "--network host" in result.command
     assert "--pull always" in result.command
     assert "-p 17888:17888" not in result.command
     assert "--name 'remote device'" in result.command
+    assert "-e DEVICE_CODE_SERVER_ENABLED=true" in result.command
+    assert "-e DEVICE_TERMINAL_ENABLED=true" in result.command
     assert result.command.rstrip().endswith(result.image)
     assert 'if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then' in result.commands[1].command
 

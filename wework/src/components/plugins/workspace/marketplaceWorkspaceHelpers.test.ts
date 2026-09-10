@@ -4,9 +4,11 @@ import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import {
   keepRicherMarketplacePluginDetail,
+  marketplacePluginDetailSelectionKey,
   pluginDetailActionErrorMessage,
   pluginUsesWegentConnectorOAuth,
   queueMarketplacePluginTrial,
+  requiredConnectionNames,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
@@ -24,6 +26,23 @@ const emptyComponents = {
   bins: [],
   connectors: [],
 }
+
+test('account connections do not require legacy login during plugin installation', () => {
+  const item = githubMarketplaceItem()
+  item.components = {
+    ...emptyComponents,
+    connectors: [
+      {
+        slug: 'github',
+        authPolicy: 'on_install',
+        accountAuth: { protocolVersion: 1, credentialType: 'oauth2', adapter: 'scripts/auth.py' },
+      },
+    ],
+  }
+  expect(requiredConnectionNames(item)).toEqual([])
+  delete item.components.connectors![0].accountAuth
+  expect(requiredConnectionNames(item)).toEqual(['GitHub'])
+})
 
 function githubMarketplaceItem(): PluginMarketplaceItem {
   return {
@@ -201,5 +220,31 @@ describe('keepRicherMarketplacePluginDetail', () => {
         description: 'Access repositories, issues, and pull requests.',
       },
     ])
+  })
+})
+
+describe('marketplacePluginDetailSelectionKey', () => {
+  test('separates same-name personal and enterprise cloud listings', () => {
+    const enterprise = githubMarketplaceItem()
+    enterprise.id = 22
+    enterprise.name = 'ip-location'
+    enterprise.version = '0.3.0'
+    enterprise.visibility = 'workspace'
+    enterprise.accessRole = 'catalog'
+    enterprise.sourceProvider = 'wegent'
+    enterprise.manifest = {}
+
+    const personal = {
+      ...enterprise,
+      id: 21,
+      version: '0.1.0',
+      visibility: 'personal' as const,
+      accessRole: 'owner' as const,
+      sourceProvider: 'user' as const,
+    }
+
+    expect(marketplacePluginDetailSelectionKey(enterprise)).not.toBe(
+      marketplacePluginDetailSelectionKey(personal)
+    )
   })
 })

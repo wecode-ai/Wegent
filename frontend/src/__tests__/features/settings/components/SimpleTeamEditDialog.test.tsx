@@ -451,6 +451,49 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('shows and preserves an existing model that is no longer visible', async () => {
+    const team = makeTeam()
+    const hiddenModelBot = makeBot({
+      agent_config: {
+        bind_model: 'retired-model',
+        bind_model_type: 'public',
+        bind_model_namespace: 'default',
+      },
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[hiddenModelBot]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalled()
+      expect(screen.getByTestId('simple-model-select')).toHaveTextContent('retired-model')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        hiddenModelBot.id,
+        expect.objectContaining({
+          agent_config: {
+            bind_model: 'retired-model',
+            bind_model_type: 'public',
+          },
+        })
+      )
+    })
+  })
+
   it.each([
     { mode: 'image', category: 'image' },
     { mode: 'video', category: 'video' },
@@ -1186,46 +1229,6 @@ describe('Simple TeamEditDialog', () => {
         })
       )
       expect(mockedCreateListing.mock.calls[0][0]).not.toHaveProperty('name')
-    })
-  })
-
-  it('saves preload skills when the simple form uses the Claude Code executor', async () => {
-    render(
-      <TeamEditDialog
-        open
-        onClose={jest.fn()}
-        teams={[]}
-        setTeams={jest.fn()}
-        editingTeamId={0}
-        bots={[]}
-        setBots={jest.fn()}
-        toast={jest.fn()}
-      />
-    )
-
-    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
-
-    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
-    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
-    fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
-    fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-
-    await waitFor(() => {
-      expect(mockedCreateBot).toHaveBeenCalledWith(
-        expect.objectContaining({
-          shell_name: 'ClaudeCode',
-          skills: ['repo-reader'],
-          preload_skills: ['repo-reader'],
-          preload_skill_refs: {
-            'repo-reader': {
-              skill_id: 5,
-              namespace: 'default',
-              is_public: false,
-            },
-          },
-        })
-      )
     })
   })
 

@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import { telemetryEvents } from './response-protocol.mjs'
@@ -739,7 +740,35 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
   }
 }
 
-async function verifySitesPluginAutoInstall(control) {
+async function verifySitesPluginAutoInstall(control, executorHome) {
+  control.onApplicationPluginInstalled = async plugin => {
+    const name = plugin.spec.source.pluginKey
+    const capabilities = join(executorHome, 'capabilities')
+    const relativePath = 'store/plugins/' + name + '@wegent'
+    const root = join(capabilities, relativePath)
+    await mkdir(join(root, '.claude-plugin'), { recursive: true })
+    await writeFile(
+      join(root, '.claude-plugin/plugin.json'),
+      JSON.stringify({
+        name,
+        version: plugin.spec.version,
+        description: plugin.spec.description,
+        interface: plugin.spec.interface,
+      })
+    )
+    const manifestPath = join(capabilities, 'manifest.json')
+    const manifest = (await pathExists(manifestPath))
+      ? JSON.parse(await readFile(manifestPath, 'utf8'))
+      : { plugins: {} }
+    manifest.plugins[name + '@wegent'] = {
+      name,
+      marketplace: 'wegent',
+      enabled: true,
+      version: plugin.spec.version,
+      store_path: relativePath,
+    }
+    await writeFile(manifestPath, JSON.stringify(manifest))
+  }
   assert.equal(
     control.sitesConnectionBootstrapRequests,
     0,
@@ -751,10 +780,108 @@ async function verifySitesPluginAutoInstall(control) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
+  await control.command('clickWhenEnabled', '[data-testid="site-more-prj_e2e_product"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-environment-menu-item-prj_e2e_product"]'
+  )
+  await control.command('waitFor', '[data-testid="environment-variables-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="environment-add-button"]')
+  await control.command('fill', '[data-testid="environment-key-new-1"]', {
+    value: 'E2E_API_BASE',
+  })
+  await control.command('fill', '[data-testid="environment-value-new-1"]', {
+    value: 'https://api.example.test',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="environment-save-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('environment-variables-dialog') &&
+      /已保存|Saved/.test(snapshot.text),
+    'Saving Site environment variables did not update the environment dialog',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.deepEqual(
+    control.siteEnvironmentVariables.map(item => [item.key, item.type, item.value]),
+    [['E2E_API_BASE', 'plain', 'https://api.example.test']],
+    'Saving Site environment variables did not persist through the Backend fixture'
+  )
+  await captureVerificationScreenshot(control, 'plugins-05-site-environment.png')
+  await control.command('click', '[data-testid="environment-close-button"]')
+
+  await control.command('clickWhenEnabled', '[data-testid="site-more-prj_e2e_product"]')
+  await control.command('clickWhenEnabled', '[data-testid="site-access-menu-item-prj_e2e_product"]')
+  await control.command('waitFor', '[data-testid="site-access-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="site-access-audience-custom"]')
+  await control.command('fill', '[data-testid="site-access-subjects"]', {
+    value: 'e2e-viewer-b, e2e-viewer-a',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="site-access-save"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('site-access-dialog') &&
+      /访问权限已保存|Access permissions saved/.test(snapshot.text),
+    'Saving Site access did not update the access dialog',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.deepEqual(
+    control.siteAccessPolicy.subjects,
+    ['e2e-viewer-a', 'e2e-viewer-b'],
+    'Saving Site access did not persist through the Backend fixture'
+  )
+  await captureVerificationScreenshot(control, 'plugins-06-site-access.png')
+  await control.command('click', '[data-testid="site-access-close"]')
+
+  await control.command('clickWhenEnabled', '[data-testid="site-more-prj_e2e_product"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-collaborators-menu-item-prj_e2e_product"]'
+  )
+  await control.command('waitFor', '[data-testid="site-collaborators-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="site-collaborator-subject-input"]', {
+    value: 'e2e-collaborator',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="site-collaborator-add"]')
+  await control.command('waitFor', '[data-testid="site-collaborator-remove-e2e-collaborator"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.deepEqual(
+    control.siteCollaborators.map(item => item.subject),
+    ['e2e-collaborator'],
+    'Adding a Site collaborator did not persist through the Backend fixture'
+  )
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-collaborator-remove-e2e-collaborator"]'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('site-collaborators-dialog') &&
+      !snapshot.testIds.includes('site-collaborator-remove-e2e-collaborator'),
+    'Removing a Site collaborator did not update the collaborator dialog',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.deepEqual(
+    control.siteCollaborators,
+    [],
+    'Removing a Site collaborator did not persist through the Backend fixture'
+  )
+  await captureVerificationScreenshot(control, 'plugins-07-site-collaborators.png')
+  await control.command('click', '[data-testid="site-collaborators-close"]')
+
   const siteInstallPath = '/api/plugins/builtin/wegent-sites/ensure-installed'
   const siteContinueCanonical =
-    '[E2E Product Site](wegent-sites-project://prj_e2e_product) 请说出你要做的改动'
-  const siteContinueVisible = 'E2E Product Site 请说出你要做的改动'
+    '[$快速建站](plugin://wegent-sites@wegent) [E2E Product Site](wegent-sites-project://prj_e2e_product) 请说出你要做的改动'
+  const siteContinueVisible = '快速建站 E2E Product Site 请说出你要做的改动'
   const continueIdentity = await captureApplicationChatIdentity(control)
   const siteInstallRequestsBeforeContinue = applicationInstallRequestCount(control, siteInstallPath)
   await control.command(
@@ -775,6 +902,7 @@ async function verifySitesPluginAutoInstall(control) {
     1,
     'Continuing a Site did not install the Site plugin on demand'
   )
+  await assertPluginComposerChip(control, 'wegent-sites')
   const siteLinkSelector = `${ACTIVE_COMPOSER_SELECTOR} [data-testid="composer-link-chip"]`
   assert.equal(await control.command('getText', siteLinkSelector), 'E2E Product Site')
   assert.equal(
@@ -788,9 +916,10 @@ async function verifySitesPluginAutoInstall(control) {
     'wegent-sites-project'
   )
   await assertNoSitesCreateError(control)
-  await captureVerificationScreenshot(control, 'plugins-05-site-continue-fresh-task.png')
+  await captureVerificationScreenshot(control, 'plugins-07-site-continue-fresh-task.png')
 
   await navigateToApplications(control)
+  control.applicationPluginInspectionUnavailable = true
   const siteCreateIdentity = await captureApplicationChatIdentity(control)
   const siteInstallRequestsBeforeCreate = applicationInstallRequestCount(control, siteInstallPath)
   await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
@@ -814,7 +943,7 @@ async function verifySitesPluginAutoInstall(control) {
   )
   await assertPluginComposerChip(control, 'wegent-sites')
   await assertNoSitesCreateError(control)
-  await captureVerificationScreenshot(control, 'plugins-06-site-create-fresh-task.png')
+  await captureVerificationScreenshot(control, 'plugins-08-site-create-fresh-task.png')
 
   await navigateToApplications(control, 'miniapp')
   await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
@@ -850,7 +979,40 @@ async function verifySitesPluginAutoInstall(control) {
   )
   await assertPluginComposerChip(control, 'weibo-miniapp-h5-develop-agent')
   await assertNoSitesCreateError(control)
-  await captureVerificationScreenshot(control, 'plugins-07-mini-program-create-fresh-task.png')
+  await captureVerificationScreenshot(control, 'plugins-09-mini-program-create-fresh-task.png')
+
+  // The real local Executor must find both installed packages on disk even
+  // while Backend inventory is unavailable. No reinstall should be necessary.
+  await navigateToApplications(control)
+  const continueAgain = await captureApplicationChatIdentity(control)
+  const installsBefore = applicationInstallRequestCount(control, siteInstallPath)
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-continue-development-prj_e2e_product"]'
+  )
+  await assertFreshApplicationDraft(control, {
+    before: continueAgain,
+    canonical: siteContinueCanonical,
+    visible: siteContinueVisible,
+    message: 'Installed Site could not continue while cloud inventory was unavailable',
+  })
+  assert.equal(applicationInstallRequestCount(control, siteInstallPath), installsBefore)
+  await navigateToApplications(control, 'miniapp')
+  const miniAgain = await captureApplicationChatIdentity(control)
+  const miniInstallsBefore = applicationInstallRequestCount(control, miniProgramInstallPath)
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]')
+  await assertFreshApplicationDraft(control, {
+    before: miniAgain,
+    canonical:
+      '[$微博小程序H5开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+    visible: '微博小程序H5开发助手 创建并发布一个小程序',
+    message: 'Installed Mini Program could not open while cloud inventory was unavailable',
+  })
+  assert.equal(applicationInstallRequestCount(control, miniProgramInstallPath), miniInstallsBefore)
+  await captureVerificationScreenshot(control, 'plugins-10-local-plugin-reuse.png')
+  control.applicationPluginInspectionUnavailable = false
+  control.onApplicationPluginInstalled = null
 }
 
 function applicationInstallRequestCount(control, pathname) {

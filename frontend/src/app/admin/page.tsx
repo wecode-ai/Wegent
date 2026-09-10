@@ -67,6 +67,10 @@ const MarketplaceManagement = dynamic(
   () => import('@/features/admin/components/MarketplaceManagement'),
   { ssr: false }
 )
+const WeworkMarketplaceManagement = dynamic(
+  () => import('@/features/admin/components/WeworkMarketplaceManagement'),
+  { ssr: false }
+)
 const BackgroundExecutionMonitorPanel = dynamic(
   () => import('@/features/admin/components/BackgroundExecutionMonitorPanel'),
   { ssr: false }
@@ -117,6 +121,12 @@ function AdminContent() {
   const getInitialTab = (): AdminTabId => {
     const tab = searchParams.get('tab')
     if (
+      tab === 'wework-plugin-publications' ||
+      (tab === 'marketplace' && searchParams.get('view') === 'plugin-publications')
+    ) {
+      return 'wework-marketplace'
+    }
+    if (
       tab &&
       [
         'users',
@@ -130,6 +140,7 @@ function AdminContent() {
         'templates',
         'api-keys',
         'marketplace',
+        'wework-marketplace',
         'system-config',
         'im-channels',
         'connector-apps',
@@ -145,6 +156,19 @@ function AdminContent() {
   }
 
   const [activeTab, setActiveTab] = useState<AdminTabId>(getInitialTab)
+
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    const isLegacyPluginRoute =
+      tab === 'wework-plugin-publications' ||
+      (tab === 'marketplace' && searchParams.get('view') === 'plugin-publications')
+    if (!isLegacyPluginRoute) return
+
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', 'wework-marketplace')
+    params.set('view', 'plugin-publications')
+    router.replace(`?${params.toString()}`, { scroll: false })
+  }, [router, searchParams])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -202,6 +226,8 @@ function AdminContent() {
         return <ApiKeyManagement />
       case 'marketplace':
         return <MarketplaceManagement />
+      case 'wework-marketplace':
+        return <WeworkMarketplaceManagement />
       case 'system-config':
         return <SystemConfigPanel />
       case 'im-channels':

@@ -4,6 +4,24 @@ async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
 }
 
+async function waitForReadyAfter(control, readyCount, timeoutMs) {
+  let timeout
+  const reconnectTimeout = new Promise((_, reject) => {
+    timeout = setTimeout(
+      () =>
+        reject(
+          new Error('Restoring the main window from Tray did not reconnect the desktop controller')
+        ),
+      timeoutMs
+    )
+  })
+  try {
+    await Promise.race([control.awaitReadyAfter(readyCount), reconnectTimeout])
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 async function waitForWindowState(control, predicate, message, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let latest = null
@@ -31,10 +49,10 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
     async verify(control) {
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
-      assert.equal(
+      assert.match(
         tray.guid,
-        null,
-        'The Electron Tray must keep the default macOS item identity used by menu bar managers'
+        /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        'The Electron Tray did not expose a persistent application GUID'
       )
       assert.ok(
         tray.menu.some(item => item.id === 'settings'),
@@ -75,7 +93,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       await control.command('activateTray', 'body', {
         value: JSON.stringify({ type: 'click' }),
       })
-      await control.awaitReadyAfter(readyCountBeforeClose)
+      await waitForReadyAfter(control, readyCountBeforeClose, uiTimeoutMs)
       const restored = await waitForWindowState(
         control,
         state => state.visible && !state.minimized,

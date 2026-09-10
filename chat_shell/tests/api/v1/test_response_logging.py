@@ -22,7 +22,6 @@ def test_metadata_log_summary_excludes_sensitive_values() -> None:
         "preload_skills": ["sandbox"],
         "user_selected_skills": ["sandbox"],
         "knowledge_base_ids": [10, 11],
-        "table_contexts": [{"table": "a"}],
         "task_data": {
             "user_mcps": {
                 "dingtalk": {
@@ -67,7 +66,6 @@ def test_metadata_log_summary_excludes_sensitive_values() -> None:
         "knowledge_base_count": 2,
         "document_count": 0,
         "knowledge_base_scope_count": 0,
-        "table_context_count": 1,
         "has_auth_token": True,
         "has_skill_identity_token": True,
         "has_task_data": True,

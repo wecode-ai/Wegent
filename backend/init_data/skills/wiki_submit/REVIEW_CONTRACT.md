@@ -7,8 +7,9 @@ review. It is the single source of truth for Writer/Reviewer handoffs.
 
 Every review response includes the backend-persisted `reviewPolicy`:
 
-- `plan_only` is the current default. Delegate the Reviewer only for Plan. After Plan
-  passes, write every planned page and call `complete`; never open QA or Recheck.
+- `plan_only` is the current default. Delegate the Reviewer for Plan, and only when a
+  necessary omitted page is discovered, one bounded Plan amendment. After the effective
+  Plan passes, write every planned page and call `complete`; never open QA or Recheck.
 - `plan_and_qa` reserves the prior final-review workflow. Use its QA and Recheck
   sections only when the backend explicitly returns this policy.
 
@@ -28,19 +29,23 @@ handoff with `review-status`, reviews it, and runs `review`. A verdict response 
 `state=passed` or `state=changes_requested`; `nextAction` is the Writer's required next
 step. `attempt` is assigned by the server.
 
+`plan_amendment` is optional: before Plan passes its `not_started` action is
+`complete_plan_review_first`; after Plan passes it is `continue_writing`. Open it only
+through the bounded amendment procedure below, never merely because that phase exists.
+
 Writer command for every phase:
 
 ```bash
 node wiki_submit.js review-open \
   --generation-id <id> \
-  --phase <plan|qa|recheck> \
+  --phase <plan|plan_amendment|qa|recheck> \
   --path <handoff-path> \
   --summary "<handoff conclusion>" \
   --handoff-file <contract-markdown> \
   [--writing-plan-file <plan-json>]
 ```
 
-Repeat `--path` for the complete phase scope. Plan requires
+Repeat `--path` for the complete phase scope. Plan and Plan amendment require
 `--writing-plan-file`; QA and Recheck reject it. Then invoke the configured Reviewer
 with the generation ID and phase. The Reviewer runs:
 
@@ -62,14 +67,15 @@ Every successful command returns one JSON object:
 | Field | Meaning |
 | --- | --- |
 | `generationId` | Generation whose state was read or changed |
-| `phase` | `plan`, `qa`, or `recheck` |
+| `phase` | `plan`, `plan_amendment`, `qa`, or `recheck` |
 | `state` | `not_started`, `ready`, `passed`, or `changes_requested` |
 | `attempt` | Server-assigned phase attempt, or null before opening |
 | `reviewPolicy` | `plan_only` or the reserved `plan_and_qa` policy |
 | `nextAction` | The Writer's only valid next transition |
 | `handoff` | Persisted Writer input for the latest attempt, including after verdict |
 | `review` | Persisted Reviewer verdict after submission |
-| `writing` | Planned, written, missing, and unexpected page paths after Plan passes |
+| `effectivePlan` | Current approved paths, focus paths, and Writing Plan; use this for all writing after an amendment passes |
+| `writing` | Effective planned, written, missing, and unexpected page paths after Plan passes |
 
 Run the Reviewer synchronously. After it returns, the Writer runs `review-status`
 exactly once and follows `nextAction`. A remaining `ready` state means the Reviewer
@@ -157,10 +163,51 @@ If attempt 1 requests changes, the Writer revises the complete plan and opens Pl
 attempt 2 with a new handoff that includes a section mapping every prior finding to its
 resolution. Attempt 2 `changes_requested` has `nextAction=fail_generation`.
 
+## Plan amendment
+
+This is an escape hatch for a **necessary page omitted from a passed Plan**, not a
+second planning loop. Only the Coordinator may open it, and only before QA starts.
+Section Writers report a discovered omission to the Coordinator; they do not submit the
+page or open this handoff themselves.
+
+The amendment paths are the complete proposed effective set: retain every passed Plan
+path and add at least one new path. Its Writing Plan also covers that complete set so
+the Coordinator can assign the new page without relying on earlier conversation. The
+backend rejects removed original paths, missing ownership, pages already written but no
+longer declared, added pages written before the amendment, a second amendment round, and
+an amendment after QA has started.
+
+```bash
+node wiki_submit.js review-open \
+  --generation-id <id> \
+  --phase plan_amendment \
+  --path index \
+  --path architecture \
+  --path architecture/runtime \
+  --summary "Add the runtime lifecycle page omitted from the passed Plan" \
+  --handoff-file /tmp/code-wiki-plan-amendment.md \
+  --writing-plan-file /tmp/code-wiki-amended-writing-plan.json
+```
+
+The handoff states the omitted page, source evidence, reader purpose, why existing pages
+cannot absorb it, ownership, and the full final reading order. The Reviewer receives
+only the generation ID and `plan_amendment`; it compares the persisted original Plan and
+the precise addition. A passed amendment may add `--focus-path` for a new deep-dive page
+but retains every original focus path. After it passes, read `effectivePlan` and
+`writing` from `review-status`; they supersede the original Plan for all remaining
+writing, final order, and publication checks.
+
+One amendment gets the same bounded repair as Plan: its first `changes_requested`
+returns `nextAction=revise_plan_amendment_then_open_plan_amendment`; a second one fails
+the generation. A pending or rejected amendment blocks publication rather than silently
+falling back to the smaller Plan.
+
 ## Writing and completion
 
 After Plan passes, `review-status --phase plan` returns the original handoff, verdict,
-Writing Plan, and current `writing` progress. In scoped mode, invoke the configured
+and current `effectivePlan` plus `writing` progress. After a passed amendment, those
+fields contain the amended ownership; use them rather than the original handoff. In
+scoped mode, invoke the configured
 Section Writer synchronously once per Work Package with only the generation ID and
 package ID. It reads this state, writes only its assigned pages, and never opens or
 submits a review. Use the returned `missingPaths` rather than subagent narration to

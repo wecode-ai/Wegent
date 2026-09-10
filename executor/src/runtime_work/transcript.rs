@@ -492,7 +492,18 @@ pub(crate) fn workbench_block_from_codex_item(
         ));
     }
     if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
-        return Some(tool_block(item, fallback_timestamp, options));
+        let mut block = tool_block(item, fallback_timestamp, options);
+        if let Some(object) = block.as_object_mut() {
+            insert_image_generation_render_payload(
+                object,
+                item,
+                ImageGenerationRenderContext {
+                    device_id,
+                    workspace_path,
+                },
+            );
+        }
+        return Some(block);
     }
     None
 }
@@ -524,8 +535,9 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
         {
             object.insert("durationMs".to_owned(), json!(duration_ms.max(0)));
         }
-        insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
-        insert_image_generation_render_payload(object, &item);
+        if item_type != "imagegeneration" {
+            insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
+        }
     }
     if let Some(input) = command_input_from_output(&item) {
         if let Some(object) = updates.as_object_mut() {
@@ -927,9 +939,14 @@ use message_projection::{
 mod tool_projection;
 
 use tool_projection::{
-    command_input_from_output, insert_image_generation_render_payload, insert_tool_output_fields,
-    limit_content_field, merge_tool_output, tool_block, tool_call_id, tool_input, tool_status,
+    command_input_from_output, insert_tool_output_fields, limit_content_field, merge_tool_output,
+    tool_block, tool_call_id, tool_input, tool_status,
 };
+
+#[path = "transcript/image_generation.rs"]
+mod image_generation;
+
+use image_generation::{insert_image_generation_render_payload, ImageGenerationRenderContext};
 
 #[path = "transcript/file_change_projection.rs"]
 mod file_change_projection;

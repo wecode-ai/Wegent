@@ -22,6 +22,7 @@ pub mod local;
 pub mod logging;
 pub mod mcp_utils;
 mod path_compat;
+pub mod plugin_account_auth;
 pub mod plugin_workspace_cli;
 pub mod process;
 pub mod process_environment;

@@ -69,7 +69,7 @@ class WikiGenerationReviewRequest(BaseModel):
     """A verdict submitted by the native Reviewer during a Code Wiki rebuild."""
 
     generation_id: int
-    phase: Literal["plan", "qa", "recheck"]
+    phase: Literal["plan", "plan_amendment", "qa", "recheck"]
     status: Literal["passed", "changes_requested"]
     paths: List[str] = Field(min_length=1)
     focus_paths: List[str] = Field(default_factory=list)
@@ -97,7 +97,7 @@ class WikiGenerationReviewOpenRequest(BaseModel):
     """A durable handoff opened by the Writer before Reviewer delegation."""
 
     generation_id: int
-    phase: Literal["plan", "qa", "recheck"]
+    phase: Literal["plan", "plan_amendment", "qa", "recheck"]
     paths: List[str] = Field(min_length=1)
     summary: str = Field(min_length=1, max_length=2000)
     handoff: str = Field(min_length=1, max_length=30000)

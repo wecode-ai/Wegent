@@ -6,13 +6,14 @@ interface LayoutOptions {
   nodeHeight: number
   rankSep?: number
   nodeSep?: number
+  nodeSize?: (node: Node) => { width: number; height: number }
 }
 
-export function layoutWorkflowGraph<NodeData extends Record<string, unknown>>(
-  nodes: Node<NodeData>[],
+export function layoutWorkflowGraph<NodeType extends Node>(
+  nodes: NodeType[],
   edges: Edge[],
-  { nodeWidth, nodeHeight, rankSep = 80, nodeSep = 40 }: LayoutOptions
-): Node<NodeData>[] {
+  { nodeWidth, nodeHeight, rankSep = 80, nodeSep = 40, nodeSize }: LayoutOptions
+): NodeType[] {
   const graph = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
   graph.setGraph({
     rankdir: 'LR',
@@ -21,19 +22,29 @@ export function layoutWorkflowGraph<NodeData extends Record<string, unknown>>(
     marginx: 28,
     marginy: 28,
   })
-  nodes.forEach(node => graph.setNode(node.id, { width: nodeWidth, height: nodeHeight }))
+  const sizes = new Map(
+    nodes.map(node => [
+      node.id,
+      nodeSize?.(node) ?? {
+        width: nodeWidth,
+        height: nodeHeight,
+      },
+    ])
+  )
+  nodes.forEach(node => graph.setNode(node.id, sizes.get(node.id)))
   edges.forEach(edge => graph.setEdge(edge.source, edge.target))
   dagre.layout(graph)
 
   return nodes.map(node => {
     const position = graph.node(node.id)
+    const size = sizes.get(node.id) ?? { width: nodeWidth, height: nodeHeight }
     return {
       ...node,
       position: {
-        x: position.x - nodeWidth / 2,
-        y: position.y - nodeHeight / 2,
+        x: position.x - size.width / 2,
+        y: position.y - size.height / 2,
       },
-    }
+    } as NodeType
   })
 }
 

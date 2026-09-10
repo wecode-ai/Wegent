@@ -66,12 +66,54 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
   destinationPath: string
 }
 
+export type HarnessAppVerificationStage =
+  | 'environment'
+  | 'manifest'
+  | 'scripts'
+  | 'artifacts'
+  | 'runtime'
+  | 'package'
+
+export interface HarnessAppVerificationIssue {
+  code: string
+  stage: HarnessAppVerificationStage
+  file: string | null
+  message: string
+  expected: string | null
+  actual: string | null
+  blocking: boolean
+  hint: string | null
+}
+
+export interface HarnessAppVerificationStageResult {
+  stage: HarnessAppVerificationStage
+  status: 'passed' | 'failed' | 'skipped'
+  startedAt: string
+  finishedAt: string
+  logPath: string | null
+}
+
+export interface HarnessAppVerificationReport {
+  schemaVersion: 1
+  status: 'passed' | 'failed' | 'stale'
+  projectRoot: string
+  inputFingerprint: string
+  deliverableFingerprint: string | null
+  startedAt: string
+  finishedAt: string
+  stages: HarnessAppVerificationStageResult[]
+  issues: HarnessAppVerificationIssue[]
+}
+
+export type SmartAppTemplate = 'web' | 'host' | 'web-host' | 'web-host-remote'
+
 export const harnessAppsApi = {
   createDirectory(input: {
     parentPath: string
     name: string
     displayName: string
     description: string
+    template: SmartAppTemplate
   }) {
     return invokeDesktopHost<HarnessAppInstallation>('smartApps.createDirectory', input)
   },
@@ -107,6 +149,11 @@ export const harnessAppsApi = {
   },
   export(installationId: string) {
     return invokeDesktopHost<HarnessAppExport>('smartApps.export', { installationId })
+  },
+  inspectVerification(installationId: string) {
+    return invokeDesktopHost<HarnessAppVerificationReport | null>('smartApps.inspectVerification', {
+      installationId,
+    })
   },
   async exportToDownloads(installationId: string): Promise<HarnessAppSavedExport> {
     return invokeDesktopHost<HarnessAppSavedExport>('smartApps.exportToDownloads', {
@@ -147,6 +194,9 @@ export const harnessAppsApi = {
   },
   stop(installationId: string) {
     return invokeDesktopHost<void>('smartApps.stop', { installationId })
+  },
+  verify(installationId: string) {
+    return invokeDesktopHost<HarnessAppVerificationReport>('smartApps.verify', { installationId })
   },
   update(installationId: string, updates: { modelKey?: string; resident?: boolean }) {
     return invokeDesktopHost<HarnessAppInstallation>('smartApps.update', {

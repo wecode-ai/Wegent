@@ -8,10 +8,14 @@ import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browse
 
 const electronMocks = vi.hoisted(() => ({
   appGetLocale: vi.fn(() => 'zh-CN'),
+  createBackgroundWebContents: vi.fn(),
   browserSession: {
     clearCache: vi.fn(),
     clearStorageData: vi.fn(),
     on: vi.fn(),
+    webRequest: {
+      onBeforeSendHeaders: vi.fn(),
+    },
   },
   menuPopup: vi.fn(),
   menuBuildFromTemplate: vi.fn((items: unknown[]) => ({
@@ -26,6 +30,9 @@ vi.mock('electron', () => ({
   },
   BrowserWindow: {
     getAllWindows: vi.fn(() => []),
+  },
+  WebContentsView: class {
+    readonly webContents = electronMocks.createBackgroundWebContents()
   },
   Menu: {
     buildFromTemplate: electronMocks.menuBuildFromTemplate,
@@ -63,6 +70,7 @@ class FakeWebContents extends EventEmitter {
   executeJavaScript = vi.fn()
   focus = vi.fn()
   getTitle = vi.fn(() => '')
+  getUserAgent = vi.fn(() => 'Mozilla/5.0 Electron/43.4.1 Chrome/144.0.0.0')
   getURL = vi.fn(() => this.url)
   inspectElement = vi.fn()
   isDestroyed = vi.fn(() => this.destroyed)
@@ -79,6 +87,9 @@ class FakeWebContents extends EventEmitter {
   reload = vi.fn()
   sendInputEvent = vi.fn()
   setWindowOpenHandler = vi.fn()
+  setUserAgent = vi.fn((userAgent: string) => {
+    this.getUserAgent.mockReturnValue(userAgent)
+  })
   setZoomFactor = vi.fn()
   devToolsWebContents: object | null = {}
   private devToolsOpened = false
@@ -121,6 +132,113 @@ function emitBeforeInput(
 describe('EmbeddedBrowserManager lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  test('applies request headers only to an exact HTTPS origin and path prefix', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    manager.setRequestHeaderRule({
+      id: 'plugin:test',
+      origins: ['https://auth.example.test'],
+      pathPrefixes: ['/login'],
+      headers: { Authorization: 'Bearer secret' },
+    })
+    const listener = electronMocks.browserSession.webRequest.onBeforeSendHeaders.mock.calls[0]?.[0]
+    const matching = vi.fn()
+    listener(
+      {
+        url: 'https://auth.example.test/login?service=example',
+        requestHeaders: { Accept: 'text/html' },
+      },
+      matching
+    )
+    expect(matching).toHaveBeenCalledWith({
+      requestHeaders: { Accept: 'text/html', Authorization: 'Bearer secret' },
+    })
+    const unrelated = vi.fn()
+    listener(
+      {
+        url: 'https://other.example.test/login',
+        requestHeaders: { Accept: 'text/html' },
+      },
+      unrelated
+    )
+    expect(unrelated).toHaveBeenCalledWith({ requestHeaders: { Accept: 'text/html' } })
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('requires an explicit opt-in before sending request headers over HTTP', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+
+    expect(() =>
+      manager.setRequestHeaderRule({
+        id: 'plugin:insecure-rejected',
+        origins: ['http://auth.example.test'],
+        pathPrefixes: ['/login'],
+        headers: { Authorization: 'Bearer secret' },
+      })
+    ).toThrow('insecure HTTP is explicitly allowed')
+
+    manager.setRequestHeaderRule({
+      id: 'plugin:insecure-allowed',
+      origins: ['http://auth.example.test'],
+      pathPrefixes: ['/login'],
+      headers: { Authorization: 'Bearer secret' },
+      allowInsecure: true,
+    })
+    const listener = electronMocks.browserSession.webRequest.onBeforeSendHeaders.mock.calls[0]?.[0]
+    const callback = vi.fn()
+    listener(
+      {
+        url: 'http://auth.example.test/login',
+        requestHeaders: { Accept: 'text/html' },
+      },
+      callback
+    )
+    expect(callback).toHaveBeenCalledWith({
+      requestHeaders: { Accept: 'text/html', Authorization: 'Bearer secret' },
+    })
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('owns hidden pages in the shared browser session without encoding a navigation flow', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const contents = new FakeWebContents()
+    contents.isLoading.mockReturnValue(false)
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+      contents.emit('did-navigate', {}, url, 403, 'Forbidden')
+    })
+    electronMocks.createBackgroundWebContents.mockReturnValue(contents)
+    const manager = new EmbeddedBrowserManager(directory)
+
+    expect(manager.createBackgroundPage('plugin:test')).toMatchObject({
+      id: 'plugin:test',
+      url: 'about:blank',
+      userAgent: 'Mozilla/5.0 Electron/43.4.1 Chrome/144.0.0.0',
+    })
+    expect(
+      manager.setBackgroundPageUserAgent('plugin:test', 'Mozilla/5.0 Chrome/144.0.0.0')
+    ).toMatchObject({
+      userAgent: 'Mozilla/5.0 Chrome/144.0.0.0',
+    })
+    await expect(
+      manager.navigateBackgroundPage('plugin:test', 'https://auth.example.test/login')
+    ).resolves.toMatchObject({
+      id: 'plugin:test',
+      url: 'https://auth.example.test/login',
+      isLoading: false,
+      httpResponseCode: 403,
+      httpStatusText: 'Forbidden',
+    })
+    manager.closeBackgroundPage('plugin:test')
+
+    expect(contents.close).toHaveBeenCalledOnce()
+    expect(() => manager.backgroundPageState('plugin:test')).toThrow(
+      'Browser background page does not exist'
+    )
+    await rm(directory, { recursive: true, force: true })
   })
 
   test('publishes host cursor events and waits for renderer arrival', async () => {
@@ -180,6 +298,53 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     manager.relabel('workspace-browser', 'workspace-browser-task-1')
 
     await expect(arrival).resolves.toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('ignores aborted load rejections instead of recording a navigation error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockRejectedValue(
+      new Error('ERR_ABORTED (-3) loading "https://example.test/"')
+    )
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+
+    const state = await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    expect(state.navigationError).toBeNull()
+    expect(manager.state('workspace-browser').navigationError).toBeNull()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('clears a stale navigation error when a main-frame navigation commits', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    contents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://example.test/', true)
+    expect(manager.state('workspace-browser').navigationError).toMatchObject({ code: -105 })
+
+    contents.commitUrl('https://example.test/')
+    contents.emit('did-navigate', {}, 'https://example.test/')
+    expect(manager.state('workspace-browser').navigationError).toBeNull()
     await rm(directory, { recursive: true, force: true })
   })
 
@@ -296,6 +461,10 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     expect(manager.has('workspace-browser')).toBe(true)
     expect(manager.state('workspace-browser').url).toBe('https://example.test/')
     expect(manager.state('workspace-browser').visible).toBe(true)
+
+    contents.navigationHistory.canGoBack.mockReturnValue(true)
+    expect(manager.state('workspace-browser').canGoBack).toBe(true)
+    expect(manager.state('workspace-browser').canGoForward).toBe(false)
 
     finishNavigation?.()
     await expect(opening).resolves.toMatchObject({
@@ -616,6 +785,123 @@ describe('EmbeddedBrowserManager lifecycle', () => {
 
     manager.close('smart-app:test', currentState.nativeLabel)
     expect(currentContents.close).toHaveBeenCalledOnce()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('keeps existing browser routes valid after relabeling a browser entry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    const temporaryLabel = 'workspace-browser-blank-1'
+    const taskLabel = 'workspace-browser-task-1'
+    manager.attach(temporaryLabel, contents as unknown as WebContents)
+    await manager.open({
+      label: temporaryLabel,
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    manager.setActiveTab(temporaryLabel, temporaryLabel)
+    manager.setActiveTab('workspace-browser', temporaryLabel)
+
+    manager.relabel(temporaryLabel, taskLabel)
+
+    expect(manager.activeLabel(temporaryLabel)).toBe(taskLabel)
+    expect(manager.activeLabel('workspace-browser')).toBe(taskLabel)
+    expect(manager.state(manager.activeLabel(temporaryLabel))).toMatchObject({
+      label: taskLabel,
+      url: 'https://example.test/',
+    })
+
+    contents.close()
+    expect(manager.has(taskLabel)).toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('settles a pending target open when relabeling an attached browser', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    const temporaryLabel = 'workspace-browser-blank-1'
+    const taskLabel = 'workspace-browser-task-1'
+    manager.attach(temporaryLabel, contents as unknown as WebContents)
+    await manager.open({
+      label: temporaryLabel,
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    const pendingOpen = manager.open({
+      label: taskLabel,
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: false,
+    })
+
+    manager.relabel(temporaryLabel, taskLabel)
+
+    await expect(pendingOpen).resolves.toMatchObject({
+      label: taskLabel,
+      url: 'https://example.test/',
+    })
+    manager.close(taskLabel)
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('clears migrated label state when the attached web contents is destroyed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    const temporaryLabel = 'workspace-browser-blank-1'
+    const taskLabel = 'workspace-browser-task-1'
+    manager.attach(temporaryLabel, contents as unknown as WebContents)
+    await manager.open({
+      label: temporaryLabel,
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    manager.setAgentControlPaused(temporaryLabel, true)
+    manager.emitAgentState(temporaryLabel, 'running')
+    manager.showAgentCursor(temporaryLabel, 120, 80)
+    const approvalResult = {
+      error: { code: 'approval_required' },
+      approval: { actionKind: 'click' },
+    }
+    const approval = manager.registerAgentApproval(
+      temporaryLabel,
+      'click:button',
+      'click',
+      approvalResult
+    )
+    expect(approval).not.toBeNull()
+    manager.resolveAgentApproval(temporaryLabel, approval?.approvalId ?? '', true)
+    manager.relabel(temporaryLabel, taskLabel)
+
+    contents.close()
+
+    const internals = manager as unknown as {
+      agentActive: Set<string>
+      agentCursorStates: Map<string, unknown>
+    }
+    expect(manager.has(taskLabel)).toBe(false)
+    expect(manager.isAgentControlPaused(taskLabel)).toBe(false)
+    expect(manager.consumeApprovedAgentRisk(taskLabel, 'click:button')).toBe(false)
+    expect(internals.agentActive.has(taskLabel)).toBe(false)
+    expect(internals.agentCursorStates.has(taskLabel)).toBe(false)
     await rm(directory, { recursive: true, force: true })
   })
 

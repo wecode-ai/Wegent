@@ -30,6 +30,9 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_run': '运行',
           'todo.workflow_node_blocked': '等待前置任务',
           'todo.workflow_node_ready': '可开始',
+          'todo.workflow_node_waiting': '等待事件',
+          'todo.workflow_node_reacting': '处理事件中',
+          'todo.workflow_structure_node': '流程控制',
           'todo.workflow_node_queued': '排队中',
           'todo.workflow_node_running': '执行中',
           'todo.workflow_node_awaiting_approval': '待人工批准',
@@ -48,6 +51,8 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_approve_stage': '批准进入下一阶段',
           'todo.workflow_reject_stage': '驳回',
           'todo.workflow_force_advance': '强制推进',
+          'todo.workflow_branch_collector_poll': '轮询采集中',
+          'todo.workflow_branch_collector_webhook': 'webhook 待注册',
           'todo.workflow_decision_reason_placeholder': '填写原因',
           'todo.workflow_wait_dependencies': '等待前置阶段',
           'todo.workflow_no_stage_tasks': '尚无具体任务',
@@ -75,7 +80,13 @@ vi.mock('@xyflow/react', () => ({
     zoomOnDoubleClick,
     panOnDrag,
   }: {
-    nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>
+    nodes: Array<{
+      id: string
+      type: string
+      parentId?: string
+      style?: { width?: number; height?: number }
+      data: Record<string, unknown>
+    }>
     nodeTypes: Record<string, ComponentType<{ data: Record<string, unknown> }>>
     children?: ReactNode
     onInit?: (instance: { fitView: typeof fitView }) => void
@@ -108,6 +119,9 @@ vi.mock('@xyflow/react', () => ({
             <div
               key={node.id}
               data-testid={`mock-flow-node-${node.id}`}
+              data-parent-id={node.parentId}
+              data-width={node.style?.width}
+              data-height={node.style?.height}
               onClick={event => onNodeClick?.(event, node)}
             >
               <NodeComponent data={node.data} />
@@ -199,6 +213,133 @@ describe('IssueWorkflowDag', () => {
     expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
     expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
     expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
+  })
+
+  test('renders loop body nodes inside the loop container', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('start', { node_type: 'event', status: 'completed', required: false }),
+          stage('loop', {
+            node_type: 'loop',
+            depends_on: ['start'],
+            body_node_ids: ['loop-start', 'branch', 'loop-end'],
+          }),
+          stage('loop-start', {
+            node_type: 'loop_start',
+            loop_id: 'loop',
+            status: 'completed',
+          }),
+          stage('branch', {
+            node_type: 'branch',
+            loop_id: 'loop',
+            depends_on: ['loop-start'],
+            status: 'waiting',
+          }),
+          stage('loop-end', {
+            node_type: 'loop_end',
+            loop_id: 'loop',
+            depends_on: ['branch'],
+            status: 'blocked',
+          }),
+          stage('after', { depends_on: ['loop'], status: 'blocked' }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-loop-loop')).toBeInTheDocument()
+    expect(
+      Number(screen.getByTestId('mock-flow-node-loop').getAttribute('data-width'))
+    ).toBeGreaterThanOrEqual(560)
+    expect(screen.getByTestId('mock-flow-node-loop-start')).toHaveAttribute(
+      'data-parent-id',
+      'loop'
+    )
+    expect(screen.getByTestId('mock-flow-node-branch')).toHaveAttribute('data-parent-id', 'loop')
+    expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveAttribute('data-parent-id', 'loop')
+    expect(screen.getByTestId('mock-flow-node-after')).not.toHaveAttribute('data-parent-id')
+    expect(screen.getByTestId('mock-flow-node-loop-start')).toHaveTextContent('流程控制')
+    expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveTextContent('流程控制')
+  })
+
+  test('renders body nodes only once when only body_node_ids identifies membership', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('loop', {
+            node_type: 'loop',
+            body_node_ids: ['body'],
+          }),
+          stage('body', {
+            node_type: 'task',
+            depends_on: ['loop'],
+          }),
+          stage('after', { depends_on: ['loop'] }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getAllByTestId('mock-flow-node-body')).toHaveLength(1)
+    expect(screen.getByTestId('mock-flow-node-body')).toHaveAttribute('data-parent-id', 'loop')
+    expect(screen.getByTestId('mock-flow-node-after')).not.toHaveAttribute('data-parent-id')
+  })
+
+  test('shows the branch event collector state on the node card', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('branch-poll', {
+            node_type: 'branch',
+            status: 'waiting',
+            collectors: { github: { collector_id: 'hook-1', mode: 'poll', status: 'active' } },
+          }),
+          stage('branch-webhook', {
+            node_type: 'branch',
+            status: 'waiting',
+            collectors: {
+              github: {
+                collector_id: 'hook-2',
+                mode: 'webhook',
+                status: 'needs_registration',
+              },
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('轮询采集中')
+    expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('等待事件')
+    expect(screen.getByTestId('mock-flow-node-branch-webhook')).toHaveTextContent('webhook 待注册')
+  })
+
+  test('prioritizes a failed collector state over webhook registration state', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('branch-error', {
+            node_type: 'branch',
+            status: 'waiting',
+            collectors: {
+              github: {
+                collector_id: 'hook-3',
+                mode: 'webhook',
+                status: 'error',
+                error: 'webhook registration failed',
+              },
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('mock-flow-node-branch-error')).toHaveTextContent(
+      'webhook registration failed'
+    )
   })
 
   test('shows the execution failure reason in the failed stage details', () => {

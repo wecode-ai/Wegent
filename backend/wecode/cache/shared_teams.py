@@ -20,7 +20,8 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.shared_team import SharedTeam
+from app.models.resource_member import ResourceMember
+from app.models.share_link import ResourceType
 from app.services.readers.shared_teams import ISharedTeamReader, SharedTeamReader
 from wecode.cache.base import (
     CACHE_TTL,
@@ -59,7 +60,7 @@ def wrap(base_reader: ISharedTeamReader) -> Optional[ISharedTeamReader]:
     reader = CachedSharedTeamReader(redis)
 
     if not _events_registered:
-        register_events(SharedTeam, _on_change, reader)
+        register_events(ResourceMember, _on_change, reader)
         _events_registered = True
 
     logger.info("SharedTeam cache loaded")
@@ -68,13 +69,24 @@ def wrap(base_reader: ISharedTeamReader) -> Optional[ISharedTeamReader]:
 
 def _on_change(operation: str, target, reader: ISharedTeamReader) -> None:
     """Handle model change event."""
+    if target.resource_type not in (
+        ResourceType.TEAM.value,
+        ResourceType.TEAM.name,
+    ):
+        return
+    if target.entity_type != "user":
+        return
+
     try:
+        team_id = int(target.resource_id)
+        user_id = int(target.entity_id)
         logger.info(
-            f"[shared_team change event] {operation}: team_id={target.team_id}, user_id={target.user_id}"
+            f"[shared_team change event] {operation}: "
+            f"team_id={team_id}, user_id={user_id}"
         )
         reader.on_change(
-            team_id=target.team_id,
-            user_id=target.user_id,
+            team_id=team_id,
+            user_id=user_id,
         )
     except Exception as e:
         logger.warning(f"SharedTeam change handler error: {e}")
@@ -172,7 +184,7 @@ class CachedSharedTeamReader(SharedTeamReader):
 
     def get_by_team_and_user(
         self, db: Session, team_id: int, user_id: int
-    ) -> Optional[SharedTeam]:
+    ) -> Optional[ResourceMember]:
         # Not cached, delegates to parent
         return super().get_by_team_and_user(db, team_id, user_id)
 

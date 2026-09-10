@@ -117,12 +117,14 @@ mod fork_transfer;
 mod hooks;
 mod notifications;
 mod plugin_install;
+mod plugin_marketplace;
 mod queries;
 mod robot_queue_rpc;
 mod sidebar;
 mod supervisor;
 mod system;
 mod tasks;
+mod transcript_sync;
 mod turns;
 mod workspaces;
 
@@ -144,7 +146,10 @@ use super::{
         CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
-    events::{emit_response_event, is_context_compaction_request, CodexNotificationEventMapper},
+    events::{
+        emit_response_event, emit_runtime_work_changed, is_context_compaction_request,
+        CodexNotificationEventMapper,
+    },
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
@@ -538,6 +543,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
+    bundled_plugin_marketplace_reconciliation: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
@@ -745,6 +751,7 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
+            bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
@@ -868,6 +875,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
+            "runtime.tasks.transcript.export" => self.export_transcript_segment(payload).await,
+            "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
+            "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
@@ -932,6 +943,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
             "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
+            "runtime.codex.plugin.reconcile_bundled_marketplace" => {
+                self.reconcile_bundled_plugin_marketplace(payload).await
+            }
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.runtime_config.update" => {
                 self.update_codex_runtime_config(payload).await

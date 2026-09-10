@@ -69,6 +69,7 @@ def test_the_writer_recovers_the_durable_reviewer_verdict(system_prompt: str) ->
     assert "remaining ready state" in normalized_prompt
     assert "Do not sleep, poll" in normalized_prompt
     assert "never submits a Reviewer verdict" in normalized_prompt
+    assert "Only the Coordinator may open a Plan amendment" in normalized_prompt
 
 
 def test_how_much_to_read_is_bounded(system_prompt: str):
@@ -294,3 +295,23 @@ def test_section_writer_has_a_bounded_persisted_assignment() -> None:
     assert "state=passed" in prompt
     assert "only at the package's assigned paths" in prompt
     assert "do not complete or fail" in prompt
+
+
+def test_section_writer_accepts_one_complete_adaptive_package() -> None:
+    resources = list(yaml.safe_load_all(RESOURCES.read_text()))
+    writer = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Ghost"
+        and document.get("metadata", {}).get("name") == "code-wiki-section-writer-ghost"
+    )
+    prompt = " ".join(writer["spec"]["systemPrompt"].split())
+
+    assert "In an adaptive run, do not use review commands" in prompt
+    assert "complete Work Package contract directly" in prompt
+    assert "known facts, and language" in prompt
+    assert "Task" not in writer["spec"]["tools"]
+    assert "Agent" not in writer["spec"]["tools"]
+    for required in ("Bash", "Read", "Write", "Grep", "Skill"):
+        assert required in writer["spec"]["tools"]
