@@ -119,6 +119,8 @@ import {
   GOAL_BUSY_PLAN_PROMPT,
   GOAL_BUSY_PLAN_TEXT,
   GOAL_IDLE_COMPLETION_TEXT,
+  GOAL_IDLE_FOLLOW_UP_PROMPT,
+  GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_PROMPT,
   GOAL_RESTART_COMPLETION_TEXT,
@@ -545,6 +547,9 @@ class DesktopE2EServer {
     })
     this.goalIdleContinuationRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleContinuation = resolvePromise
+    })
+    this.goalIdleFollowUpRelease = new Promise(resolvePromise => {
+      this.releaseGoalIdleFollowUp = resolvePromise
     })
     this.goalBusyPlanRelease = new Promise(resolvePromise => {
       this.releaseGoalBusyPlan = resolvePromise
@@ -991,6 +996,10 @@ class DesktopE2EServer {
 
   releaseGoalIdleResponse() {
     this.releaseGoalIdleContinuation()
+  }
+
+  releaseGoalIdleFollowUpResponse() {
+    this.releaseGoalIdleFollowUp()
   }
 
   releaseGoalBusyPlanResponse() {
@@ -3149,22 +3158,40 @@ class DesktopE2EServer {
         ])
         return
       }
+      if (this.goalIdleStage === 'awaiting_update_output') {
+        assert.equal(
+          requestContainsToolOutput(body),
+          true,
+          'The Goal continuation did not return its update_goal output'
+        )
+        this.goalIdleStage = 'complete'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GOAL_IDLE_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       assert.equal(
         this.goalIdleStage,
-        'awaiting_update_output',
+        'complete',
         `Unexpected Goal idle model stage: ${this.goalIdleStage}`
       )
-      assert.equal(
-        requestContainsToolOutput(body),
-        true,
-        'The Goal continuation did not return its update_goal output'
+      assert.ok(
+        JSON.stringify(body).includes(GOAL_IDLE_FOLLOW_UP_PROMPT),
+        'The real Codex request did not contain the post-Goal continuation prompt'
       )
-      this.goalIdleStage = 'complete'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(GOAL_IDLE_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.goalIdleStage = 'follow_up'
+      const stream = streamingTextEvents(responseId, GOAL_IDLE_FOLLOW_UP_TEXT)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      await this.goalIdleFollowUpRelease
+      response.end(createSse(stream.finish))
       return
     }
 
