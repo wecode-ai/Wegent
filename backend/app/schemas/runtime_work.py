@@ -589,8 +589,12 @@ class RuntimeSendRequest(BaseModel):
 class RuntimeSendResponse(BaseModel):
     """Acknowledgement from the runtime send RPC."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     accepted: bool
     local_task_id: str = Field(..., alias="taskId")
+    status: Optional[Literal["queued", "running"]] = None
+    queue_position: Optional[int] = Field(default=None, alias="queuePosition")
     error: Optional[str] = None
 
 
@@ -882,6 +886,7 @@ class RuntimeTaskCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     schema_version: Literal[1, 2, 3] = Field(default=1, alias="schemaVersion")
+    force_start: Optional[bool] = Field(default=None, alias="forceStart")
     wegent_team_id: Optional[int] = Field(
         default=None,
         alias="wegentTeamId",
@@ -1018,6 +1023,7 @@ class RuntimeTaskCreatePayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     schema_version: Literal[1, 2] = Field(default=1, alias="schemaVersion")
+    force_start: Optional[bool] = Field(default=None, alias="forceStart")
     runtime: RuntimeName
     message: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)
