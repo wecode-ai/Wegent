@@ -148,7 +148,22 @@ export function EnvironmentInfoPopover({
   const outputsService: ConversationOutputsHostService = {
     read: () => buildConversationOutputs(messages),
   }
+  const commandHandlers: Record<string, ((args?: unknown) => unknown) | undefined> = {
+    'environment.refresh': onRefresh,
+    'git.commit': args => onCommitChanges?.(commandStringArgument(args, 'message')),
+    'git.commit-and-push': args => onCommitAndPushChanges?.(commandStringArgument(args, 'message')),
+    'git.push': onPushChanges,
+    'git.list-branches': () => onListBranches?.() ?? [],
+    'git.checkout-branch': args => onCheckoutBranch?.(commandStringArgument(args, 'branchName')),
+    'git.create-branch': args => onCreateBranch?.(commandStringArgument(args, 'branchName')),
+    'git.generate-branch-name': args =>
+      onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? '',
+    'git.open-changes-review': onOpenChangesReview,
+  }
   const services: ConversationSummarySurfaceServices = {
+    canExecuteCommand(id) {
+      return commandHandlers[id] !== undefined
+    },
     getService<T>(id: string): T | undefined {
       if (id === WEWORK_HOST_SERVICES.environment) return environmentService as T
       if (id === WEWORK_HOST_SERVICES.conversationOutputs) return outputsService as T
@@ -162,28 +177,9 @@ export function EnvironmentInfoPopover({
       onOpenWorkspaceFile?.(resource.path)
     },
     async executeCommand(id, args) {
-      switch (id) {
-        case 'environment.refresh':
-          return onRefresh?.()
-        case 'git.commit':
-          return onCommitChanges?.(commandStringArgument(args, 'message'))
-        case 'git.commit-and-push':
-          return onCommitAndPushChanges?.(commandStringArgument(args, 'message'))
-        case 'git.push':
-          return onPushChanges?.()
-        case 'git.list-branches':
-          return onListBranches?.() ?? []
-        case 'git.checkout-branch':
-          return onCheckoutBranch?.(commandStringArgument(args, 'branchName'))
-        case 'git.create-branch':
-          return onCreateBranch?.(commandStringArgument(args, 'branchName'))
-        case 'git.generate-branch-name':
-          return onGenerateBranchName?.(commandStringArgument(args, 'sourceText')) ?? ''
-        case 'git.open-changes-review':
-          return onOpenChangesReview?.()
-        default:
-          throw new Error(`Unsupported conversation summary command: ${id}`)
-      }
+      const handler = commandHandlers[id]
+      if (!handler) throw new Error(`Unavailable conversation summary command: ${id}`)
+      return handler(args)
     },
   }
 

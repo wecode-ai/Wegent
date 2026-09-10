@@ -8,6 +8,7 @@ export interface ConversationSummaryContext {
 }
 
 export interface ConversationSummarySurfaceServices {
+  canExecuteCommand(id: string): boolean
   executeCommand(id: string, args?: unknown): Promise<unknown>
   getService<T>(id: string): T | undefined
   openResource(resource: ConversationSummaryResource): Promise<void>

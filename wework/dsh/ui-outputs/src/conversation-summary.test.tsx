@@ -22,6 +22,7 @@ function surfaceProps(
     docked: true,
     onClose: vi.fn(),
     services: {
+      canExecuteCommand: vi.fn(() => false),
       executeCommand: vi.fn(),
       getService: id => {
         if (id === WEWORK_HOST_SERVICES.conversationOutputs) {

@@ -58,46 +58,83 @@ export default function GitConversationSummary({
   const info = environment.info
   const branchNameSource =
     typeof context['conversation.title'] === 'string' ? context['conversation.title'] : undefined
+  const canExecute = (command: string) => services.canExecuteCommand(command)
 
   return (
     <GitEnvironmentSectionContent
       branchNameSource={branchNameSource}
       docked={docked}
       info={info}
-      onCheckoutBranch={async branchName => {
-        await services.executeCommand('git.checkout-branch', { branchName })
-      }}
+      onCheckoutBranch={
+        canExecute('git.checkout-branch')
+          ? async branchName => {
+              await services.executeCommand('git.checkout-branch', { branchName })
+            }
+          : undefined
+      }
       onClose={onClose}
-      onCommitAndPushChanges={async message => {
-        await services.executeCommand('git.commit-and-push', { message })
-      }}
-      onCommitChanges={async message => {
-        await services.executeCommand('git.commit', { message })
-      }}
-      onCreateBranch={async branchName => {
-        await services.executeCommand('git.create-branch', { branchName })
-      }}
-      onGenerateBranchName={async sourceText => {
-        const result = await services.executeCommand('git.generate-branch-name', {
-          sourceText,
-        })
-        return typeof result === 'string' ? result : ''
-      }}
-      onListBranches={async () => {
-        const result = await services.executeCommand('git.list-branches')
-        return Array.isArray(result)
-          ? result.filter((branch): branch is string => typeof branch === 'string')
-          : []
-      }}
-      onOpenChangesReview={() => {
-        void services.executeCommand('git.open-changes-review')
-      }}
-      onPushChanges={async () => {
-        await services.executeCommand('git.push')
-      }}
-      onRefresh={async () => {
-        await services.executeCommand('environment.refresh')
-      }}
+      onCommitAndPushChanges={
+        canExecute('git.commit-and-push')
+          ? async message => {
+              await services.executeCommand('git.commit-and-push', { message })
+            }
+          : undefined
+      }
+      onCommitChanges={
+        canExecute('git.commit')
+          ? async message => {
+              await services.executeCommand('git.commit', { message })
+            }
+          : undefined
+      }
+      onCreateBranch={
+        canExecute('git.create-branch')
+          ? async branchName => {
+              await services.executeCommand('git.create-branch', { branchName })
+            }
+          : undefined
+      }
+      onGenerateBranchName={
+        canExecute('git.generate-branch-name')
+          ? async sourceText => {
+              const result = await services.executeCommand('git.generate-branch-name', {
+                sourceText,
+              })
+              return typeof result === 'string' ? result : ''
+            }
+          : undefined
+      }
+      onListBranches={
+        canExecute('git.list-branches')
+          ? async () => {
+              const result = await services.executeCommand('git.list-branches')
+              return Array.isArray(result)
+                ? result.filter((branch): branch is string => typeof branch === 'string')
+                : []
+            }
+          : undefined
+      }
+      onOpenChangesReview={
+        canExecute('git.open-changes-review')
+          ? () => {
+              void services.executeCommand('git.open-changes-review')
+            }
+          : undefined
+      }
+      onPushChanges={
+        canExecute('git.push')
+          ? async () => {
+              await services.executeCommand('git.push')
+            }
+          : undefined
+      }
+      onRefresh={
+        canExecute('environment.refresh')
+          ? async () => {
+              await services.executeCommand('environment.refresh')
+            }
+          : undefined
+      }
     />
   )
 }
