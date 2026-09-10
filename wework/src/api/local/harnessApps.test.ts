@@ -1,3 +1,4 @@
+import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { harnessAppsApi, type HarnessAppExport } from './harnessApps'
 
@@ -30,6 +31,23 @@ const exported: HarnessAppExport = {
 describe('harnessAppsApi', () => {
   beforeEach(() => {
     mocks.desktopInvoke.mockReset()
+  })
+
+  test('reports the runtime response rather than treating a resolved failed start as success', async () => {
+    const results: OperationResult[] = []
+    const stop = subscribeOperationResults(result => results.push(result))
+    try {
+      const failed = { state: 'failed', error: 'private runtime error' }
+      mocks.desktopInvoke.mockResolvedValueOnce(failed).mockResolvedValueOnce({ state: 'running' })
+      await expect(harnessAppsApi.start('private-app', null)).resolves.toBe(failed)
+      await harnessAppsApi.start('private-app', null)
+      expect(results).toEqual([
+        { key: 'smart_app.start', outcome: 'failed', failureStage: 'confirm' },
+        { key: 'smart_app.start', outcome: 'succeeded' },
+      ])
+    } finally {
+      stop()
+    }
   })
 
   test('exports an installation and copies the archive to Downloads', async () => {
