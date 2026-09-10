@@ -54,6 +54,58 @@ pub(super) fn remove_superseded_transcript_turns(
     });
 }
 
+fn merge_latest_completed_transcript_messages(
+    messages: &mut Vec<Value>,
+    link: &RuntimeTaskLink,
+    before_cursor: Option<&str>,
+    after_cursor: Option<&str>,
+) {
+    if before_cursor.is_some() || after_cursor.is_some() {
+        return;
+    }
+    for completed in completed_transcript_messages(link) {
+        let message_id = string_field(&completed, "id");
+        if let Some(existing) = messages.iter_mut().find(|message| {
+            message_id.is_some() && string_field(message, "id") == message_id
+        }) {
+            *existing = merge_completed_transcript_message(existing, completed);
+        } else {
+            messages.push(completed);
+        }
+    }
+}
+
+fn merge_completed_transcript_message(existing: &Value, mut completed: Value) -> Value {
+    let (Some(existing), Some(completed_object)) =
+        (existing.as_object(), completed.as_object_mut())
+    else {
+        return completed;
+    };
+    for (key, value) in existing {
+        completed_object.entry(key.clone()).or_insert_with(|| value.clone());
+    }
+    let completed_has_blocks = completed_object
+        .get("blocks")
+        .and_then(Value::as_array)
+        .is_some_and(|blocks| !blocks.is_empty());
+    let existing_blocks = existing
+        .get("blocks")
+        .filter(|value| value.as_array().is_some_and(|blocks| !blocks.is_empty()));
+    if !completed_has_blocks {
+        if let Some(existing_blocks) = existing_blocks {
+            completed_object.insert("blocks".to_owned(), existing_blocks.clone());
+            if let Some(existing_runtime_items) = existing.get("runtimeItems").filter(|value| {
+                value
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+            }) {
+                completed_object.insert("runtimeItems".to_owned(), existing_runtime_items.clone());
+            }
+        }
+    }
+    completed
+}
+
 #[derive(Clone, Copy)]
 enum TranscriptTurnItemSource {
     CodexItems,

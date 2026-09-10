@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -2744,7 +2745,17 @@ async def _runtime_transfer_direct_hosts(
     peer_device_id: str,
 ) -> list[str]:
     hosts: list[str] = []
-    online_info = await device_service.get_device_online_info(user_id, device_id)
+    try:
+        online_info = await device_service.get_device_online_info(user_id, device_id)
+    except RedisError as exc:
+        logger.warning(
+            "runtime_transfer_direct_hosts_unavailable reason=redis_error "
+            "user_id=%s device_id=%s error=%s",
+            user_id,
+            device_id,
+            exc,
+        )
+        return []
     if isinstance(online_info, dict):
         _append_runtime_transfer_host(hosts, online_info.get("runtime_transfer_host"))
         _append_runtime_transfer_host(hosts, online_info.get("client_ip"))

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
@@ -4650,6 +4651,27 @@ async def test_runtime_transfer_direct_hosts_filters_loopback_for_cross_device(
                 "client_ip": "127.0.0.1",
             }
         ),
+    )
+
+    assert (
+        await runtime_work_service._runtime_transfer_direct_hosts(
+            db=None,
+            user_id=7,
+            device_id="target-device",
+            peer_device_id="source-device",
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_transfer_direct_hosts_ignores_redis_failure(monkeypatch):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_online_info",
+        AsyncMock(side_effect=RedisConnectionError("Redis unavailable")),
     )
 
     assert (

@@ -683,10 +683,14 @@ describe('createWorkbenchCapabilityRouter', () => {
     expect(browser.capture).not.toHaveBeenCalled()
   })
 
-  test('grants only owner-view capture capabilities to the workbench principal', async () => {
+  test('grants owner-view capture and read-only device diagnostics to the workbench principal', async () => {
     const router = createWorkbenchCapabilityRouter(null, null)
     const granted = router.describe(WEWORK_WORKBENCH_PRINCIPAL)
-    expect(granted).toEqual(['dshCapture.capabilities', 'dshCapture.ownerRect'])
+    expect(granted).toEqual([
+      'dshCapture.capabilities',
+      'dshCapture.ownerRect',
+      'deviceDiagnostics.microphone',
+    ])
     expect(granted).not.toContain('browser.open')
     expect(granted).not.toContain('filesystem.stat')
     expect(granted).not.toContain('executor.*')
@@ -709,6 +713,7 @@ describe('createWorkbenchCapabilityRouter', () => {
     expect(granted).not.toContain('dshCapture.capabilities')
     expect(granted).not.toContain('dshCapture.ownerRect')
     expect(granted).toContain('browser.open')
+    expect(granted).toContain('deviceDiagnostics.microphone')
   })
 
   test('reports capability available only while the scoped owner is visible', async () => {
