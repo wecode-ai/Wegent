@@ -4,7 +4,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 
-import type { CollaborationApi } from './api'
+import type { SharedWorkspaceProjectsApi } from './ports/SharedWorkspaceApi'
 import type { CollaborationProject, CollaborationStatus, CollaborationStatusColor } from './types'
 
 const STATUS_COLORS: CollaborationStatusColor[] = [
@@ -17,7 +17,7 @@ const STATUS_COLORS: CollaborationStatusColor[] = [
 ]
 
 interface CollaborationSettingsProps {
-  api: CollaborationApi
+  api: SharedWorkspaceProjectsApi
   project: CollaborationProject
   labels: {
     settings: string
@@ -152,7 +152,7 @@ export function CollaborationSettings({
         providerConfig.source_url = aitableUrl.trim()
       }
       onChange(
-        await api.updateProject(project.id, {
+        await api.update(project.id, {
           version: project.version,
           name: name.trim(),
           description: description.trim(),
@@ -161,13 +161,13 @@ export function CollaborationSettings({
             .split(',')
             .map(tag => tag.trim())
             .filter((tag, index, values) => tag && values.indexOf(tag) === index),
-          board_config: {
+          boardConfig: {
             group_by: project.board_config?.group_by ?? 'status',
             processing_start_status_id: processingStatus || null,
             statuses,
           },
-          card_display: cardDisplay,
-          provider_config: providerConfig,
+          cardDisplay,
+          providerConfig,
         })
       )
     } catch (error) {
@@ -363,7 +363,7 @@ export function CollaborationSettings({
           onClick={async () => {
             if (!window.confirm(labels.archiveConfirm)) return
             try {
-              await api.archiveProject(project.id, project.version)
+              await api.archive(project.id, project.version)
               onArchived()
             } catch {
               onError()

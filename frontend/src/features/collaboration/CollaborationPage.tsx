@@ -8,7 +8,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import {
   CollaborationApp,
-  createCollaborationApi,
   type CollaborationHostAdapter,
   type CollaborationLocale,
   type CollaborationView,
@@ -23,6 +22,7 @@ import {
   TaskSidebar,
 } from '@/features/tasks/components/sidebar'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -58,7 +58,7 @@ export function CollaborationPage() {
   const issueId = params.itemId ? decodeURIComponent(params.itemId) : null
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
 
-  const api = useMemo(() => createCollaborationApi(apiClient), [])
+  const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
   const host = useMemo<CollaborationHostAdapter>(
     () => ({
       capabilities: {

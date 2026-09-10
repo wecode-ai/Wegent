@@ -2717,6 +2717,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-sidebar-project-menu-11')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('cloud-sidebar-project-more-11'))
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('cloud-sidebar-project-menu-11')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-more-11'))
     await userEvent.click(screen.getByTestId('cloud-sidebar-copy-project-id-11'))
 
     expect(writeText).toHaveBeenLastCalledWith('11')

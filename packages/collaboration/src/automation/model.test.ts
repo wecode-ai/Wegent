@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'vitest'
-import type { CloudProject, WorkflowExecutionConfig } from '@/api/deliveries'
-import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import {
   automationInputFromUi,
   automationRunFromBackend,
@@ -8,7 +6,13 @@ import {
   automationRuleFromBackend,
   legacyWorkflowFromAutomationRule,
   type AutomationUiRule,
-} from './automationRuleBackend'
+} from './model'
+import type {
+  AutomationBackendRule as ProjectAutomationRule,
+  AutomationBackendRun as ProjectAutomationRun,
+  AutomationProject as CloudProject,
+  WorkflowExecutionConfig,
+} from './types'
 
 function backendRule(overrides: Partial<ProjectAutomationRule> = {}): ProjectAutomationRule {
   return {

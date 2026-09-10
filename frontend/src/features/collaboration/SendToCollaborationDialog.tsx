@@ -5,14 +5,11 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import {
-  createCollaborationApi,
-  type CollaborationIssue,
-  type CollaborationProject,
-} from '@wegent/collaboration'
+import { type CollaborationIssue, type CollaborationProject } from '@wegent/collaboration'
 import { toast } from 'sonner'
 
 import { apiClient } from '@/apis/client'
+import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export interface SendToCollaborationDialogProps {
@@ -29,7 +26,7 @@ export function SendToCollaborationDialog({
   onOpenChange,
 }: SendToCollaborationDialogProps) {
   const { t } = useTranslation('inbox')
-  const api = useMemo(() => createCollaborationApi(apiClient), [])
+  const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const [issues, setIssues] = useState<CollaborationIssue[]>([])
   const [projectId, setProjectId] = useState('')
@@ -41,8 +38,8 @@ export function SendToCollaborationDialog({
 
   useEffect(() => {
     if (!open) return
-    void api
-      .listProjects()
+    void api.projects
+      .list()
       .then(items => {
         setProjects(items)
         setProjectId(current => current || items[0]?.id || '')
@@ -52,7 +49,7 @@ export function SendToCollaborationDialog({
 
   useEffect(() => {
     if (!open || !projectId || targetKind !== 'existing_issue') return
-    void api
+    void api.issues
       .getBoardSnapshot(projectId)
       .then(snapshot => {
         setIssues(snapshot.items)
@@ -70,18 +67,15 @@ export function SendToCollaborationDialog({
     if (!canSubmit) return
     setLoading(true)
     try {
-      const response = await apiClient.post<{ issue: CollaborationIssue }>(
-        `/v1/cloud-projects/${encodeURIComponent(projectId)}/message-imports`,
-        {
-          source_task_id: taskId,
-          subtask_ids: subtaskIds,
-          target: {
-            kind: targetKind,
-            ...(targetKind === 'new_issue' ? { title: title.trim() } : { issue_id: issueId }),
-          },
-          note: note.trim() || undefined,
-        }
-      )
+      const response = await api.projects.importMessages(projectId, {
+        sourceTaskId: taskId,
+        subtaskIds,
+        target:
+          targetKind === 'new_issue'
+            ? { kind: 'new_issue', title: title.trim() }
+            : { kind: 'existing_issue', issueId },
+        note: note.trim() || undefined,
+      })
       toast.success(t('collaboration.success'))
       onOpenChange(false)
       window.location.href = `/collaboration/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(response.issue.id)}`

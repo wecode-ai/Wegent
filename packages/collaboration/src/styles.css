@@ -18,7 +18,6 @@
   font: inherit;
 }
 
-.collaboration-home-header,
 .collaboration-project-header,
 .collaboration-panel > header {
   display: flex;
@@ -28,13 +27,11 @@
   margin-bottom: 24px;
 }
 
-.collaboration-home-header h1,
 .collaboration-project-header h1,
 .collaboration-panel h2 {
   margin: 0;
 }
 
-.collaboration-home-header p,
 .collaboration-project-header p {
   margin: 6px 0 0;
   color: rgb(var(--color-text-muted));
@@ -83,33 +80,6 @@
   cursor: pointer;
 }
 
-.collaboration-project-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
-}
-
-.collaboration-project-card {
-  display: flex;
-  min-height: 150px;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 12px;
-  padding: 16px;
-  text-align: left;
-  color: inherit;
-  background: rgb(var(--color-bg-surface));
-  cursor: pointer;
-}
-
-.collaboration-project-card:hover {
-  background: rgb(var(--color-bg-hover));
-}
-
-.collaboration-project-card span,
-.collaboration-project-card small,
 .collaboration-project-key {
   color: rgb(var(--color-text-muted));
 }
@@ -143,22 +113,11 @@
   white-space: nowrap;
 }
 
-.collaboration-project-card p {
-  margin: 0;
-  color: rgb(var(--color-text-secondary));
-}
-
-.collaboration-empty,
 .collaboration-loading {
   display: grid;
   min-height: 280px;
   place-content: center;
   text-align: center;
-}
-
-.collaboration-empty p {
-  max-width: 420px;
-  color: rgb(var(--color-text-muted));
 }
 
 .collaboration-project-header {
@@ -299,30 +258,6 @@
   color: rgb(var(--color-text-secondary));
   background: transparent;
   cursor: pointer;
-}
-
-.collaboration-tabs {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  border-bottom: 1px solid rgb(var(--color-border));
-  margin-bottom: 20px;
-}
-
-.collaboration-tabs button {
-  min-height: 40px;
-  flex: 0 0 auto;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  padding: 8px 12px;
-  color: rgb(var(--color-text-secondary));
-  background: transparent;
-  cursor: pointer;
-}
-
-.collaboration-tabs button[aria-current='page'] {
-  border-color: rgb(var(--color-primary));
-  color: rgb(var(--color-text-primary));
 }
 
 .collaboration-board {
@@ -468,6 +403,31 @@
 
 .collaboration-dialog h2 {
   margin: 0 0 20px;
+}
+
+.collaboration-workspace-home-dialog {
+  display: flex;
+  max-height: min(720px, calc(100vh - 32px));
+  flex-direction: column;
+}
+
+.collaboration-workspace-home-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.collaboration-workspace-home-dialog-header button {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.collaboration-web-file-preview {
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .collaboration-dialog form,
@@ -700,14 +660,12 @@
     padding: 14px;
   }
 
-  .collaboration-home-header,
   .collaboration-project-header {
     align-items: stretch;
     flex-direction: column;
   }
 
   .collaboration-app button,
-  .collaboration-tabs button,
   .collaboration-primary-button,
   .collaboration-file-button {
     min-height: 44px;

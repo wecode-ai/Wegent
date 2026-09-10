@@ -207,4 +207,72 @@ describe('CloudFilesView', () => {
     expect(await screen.findByTestId('cloud-file-preview-name')).toHaveTextContent('main.zig')
     expect(screen.getByTestId('cloud-file-preview-loading')).toHaveTextContent('false')
   })
+
+  it('keeps upload, folder, move, delete, and download actions in the shared view', async () => {
+    const file = {
+      id: 'file-1',
+      cloud_project_id: 13,
+      path: 'notes.txt',
+      name: 'notes.txt',
+      kind: 'file',
+      content_type: 'text/plain',
+      size_bytes: 5,
+      sha256: null,
+      description: '',
+      created_by_user_id: 1,
+      updated_by_user_id: 1,
+      version: 2,
+      created_at: '2026-09-10T00:00:00Z',
+      updated_at: '2026-09-10T00:00:00Z',
+    } as const
+    const api = {
+      listCloudFiles: vi.fn(async () => ({ items: [file] })),
+      listProjectDeliveryFiles: vi.fn(async () => ({ items: [] })),
+      listProjectTaskAttachments: vi.fn(async () => ({ items: [] })),
+      createCloudFolder: vi.fn(async () => ({ ...file, id: 'folder-1', kind: 'folder' as const })),
+      uploadCloudFile: vi.fn(async () => file),
+      moveCloudFile: vi.fn(async () => ({ ...file, path: 'renamed.txt' })),
+      deleteCloudFile: vi.fn(async () => undefined),
+      accessCloudFile: vi.fn(async () => ({
+        url: 'https://objects.example/notes.txt',
+        expires_in_seconds: 900,
+      })),
+      readCloudFile: vi.fn(async () => new Blob(['notes'], { type: 'text/plain' })),
+    } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+    transferMocks.readFileFromAccessUrl.mockResolvedValue(
+      new Blob(['notes'], { type: 'text/plain' })
+    )
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const { container } = render(<CloudFilesView api={api} project={project} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: '共享文件' }))
+
+    await userEvent.click(screen.getByTestId('cloud-folder-add'))
+    await userEvent.type(screen.getByTestId('cloud-folder-name'), 'drafts')
+    await userEvent.click(screen.getByTestId('cloud-folder-create-confirm'))
+    await waitFor(() => expect(api.createCloudFolder).toHaveBeenCalledWith(13, 'drafts'))
+
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')
+    expect(input).not.toBeNull()
+    await userEvent.upload(input!, new File(['upload'], 'upload.txt', { type: 'text/plain' }))
+    await waitFor(() =>
+      expect(api.uploadCloudFile).toHaveBeenCalledWith(13, expect.any(File), 'upload.txt')
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-file-rename-file-1'))
+    await userEvent.clear(screen.getByTestId('cloud-file-path-file-1'))
+    await userEvent.type(screen.getByTestId('cloud-file-path-file-1'), 'renamed.txt{Enter}')
+    await waitFor(() => expect(api.moveCloudFile).toHaveBeenCalledWith('file-1', 'renamed.txt', 2))
+
+    await userEvent.click(screen.getByTestId('cloud-file-download-file-1'))
+    await waitFor(() => expect(api.accessCloudFile).toHaveBeenCalledWith('file-1'))
+    expect(transferMocks.readFileFromAccessUrl).toHaveBeenCalledWith(
+      'https://objects.example/notes.txt'
+    )
+    expect(transferMocks.saveBlobToDownloads).toHaveBeenCalledWith(expect.any(Blob), 'notes.txt')
+
+    await userEvent.click(screen.getByTestId('cloud-file-delete-file-1'))
+    await waitFor(() => expect(api.deleteCloudFile).toHaveBeenCalledWith('file-1', false))
+  })
 })

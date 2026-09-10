@@ -35,10 +35,16 @@ describe('createBackendWorkbenchServices', () => {
     expect(services.attachmentApi?.deleteAttachment).toBeTypeOf('function')
   })
 
-  test('provides the shared collaboration API to the desktop host', () => {
+  test('provides one complete shared workspace API to the desktop host', () => {
     const services = createBackendWorkbenchServices(baseOptions)
 
-    expect(services.collaborationApi?.listProjects).toBeTypeOf('function')
-    expect(services.collaborationApi?.getBoardSnapshot).toBeTypeOf('function')
+    expect(services.sharedWorkspaceApi?.projects.list).toBeTypeOf('function')
+    expect(services.sharedWorkspaceApi?.projects.get).toBeTypeOf('function')
+    expect(services.sharedWorkspaceApi?.comments.create).toBeTypeOf('function')
+    expect(services.sharedWorkspaceApi?.automations.list).toBeTypeOf('function')
+    expect(services.sharedWorkspaceApi?.incomingHooks.catalog).toBeTypeOf('function')
+    expect(services.sharedWorkspaceApi?.runtimeProfiles.list).toBeTypeOf('function')
+    expect(services.sharedWorkspaceApi?.agents.list).toBeTypeOf('function')
+    expect('collaborationApi' in services).toBe(false)
   })
 })

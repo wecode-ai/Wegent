@@ -4,8 +4,8 @@
 
 import { useEffect, useState, type ChangeEvent } from 'react'
 
-import type { CollaborationApi } from './api'
 import { collaborationMessages } from './i18n'
+import type { SharedWorkspaceApi } from './ports/SharedWorkspaceApi'
 import { collaborationTestIds } from './testIds'
 import type {
   CollaborationAttachment,
@@ -18,7 +18,7 @@ import type {
 type Messages = (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en']
 
 interface IssueDetailProps {
-  api: CollaborationApi
+  api: Pick<SharedWorkspaceApi, 'issues' | 'attachments' | 'comments'>
   issue: CollaborationIssue
   statuses: CollaborationStatus[]
   attachments: CollaborationAttachment[]
@@ -58,13 +58,13 @@ export function IssueDetail({
   const save = async () => {
     try {
       onChange(
-        await api.updateIssue(issue.id, {
+        await api.issues.update(issue.id, {
           version: issue.version,
           title: draft.title,
           description: draft.description,
           status: draft.status,
           priority: draft.priority,
-          due_at: draft.due_at,
+          dueAt: draft.due_at,
           tags: draft.tags,
         })
       )
@@ -78,7 +78,7 @@ export function IssueDetail({
     const file = event.target.files?.[0]
     if (!file) return
     try {
-      const attachment = await api.addAttachment(issue.id, file)
+      const attachment = await api.attachments.upload(issue.id, file)
       onAttachmentsChange([...attachments, attachment])
       event.target.value = ''
     } catch {
@@ -208,7 +208,7 @@ export function IssueDetail({
                 data-testid={`collaboration-attachment-${attachment.id}-delete`}
                 onClick={async () => {
                   try {
-                    await api.deleteAttachment(attachment.id)
+                    await api.attachments.remove(attachment.id)
                     onAttachmentsChange(attachments.filter(item => item.id !== attachment.id))
                   } catch {
                     onError()
@@ -246,7 +246,7 @@ export function IssueDetail({
             disabled={!comment.trim()}
             onClick={async () => {
               try {
-                const created = await api.addComment(issue.id, comment.trim())
+                const created = await api.comments.create(issue.id, comment.trim())
                 onCommentsChange([...comments, created])
                 setComment('')
               } catch {

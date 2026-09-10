@@ -1,39 +1,39 @@
-import type { CloudProjectFile, ProjectDeliveryFile } from '@/api/deliveries'
+import type { CollaborationDeliveryFile, CollaborationProjectFile } from './types'
 
-export type CloudFileBrowserLocation =
+export type CollaborationFileBrowserLocation =
   | { scope: 'root' }
   | { scope: 'shared'; path: string[] }
   | { scope: 'deliveries'; itemIds: string[]; assetPath: string[] }
 
-export type CloudFileBrowserEntry =
+export type CollaborationFileBrowserEntry =
   | {
       kind: 'folder'
       key: string
       name: string
       description: string
-      location: CloudFileBrowserLocation
+      location: CollaborationFileBrowserLocation
       updatedAt: string | null
-      sharedFolder?: CloudProjectFile
+      sharedFolder?: CollaborationProjectFile
     }
   | {
       kind: 'shared-file'
       key: string
       name: string
-      file: CloudProjectFile
+      file: CollaborationProjectFile
     }
   | {
       kind: 'delivery-file'
       key: string
       name: string
-      file: ProjectDeliveryFile
+      file: CollaborationDeliveryFile
     }
 
-type CloudFileBrowserFolderEntry = Extract<CloudFileBrowserEntry, { kind: 'folder' }>
+type FolderEntry = Extract<CollaborationFileBrowserEntry, { kind: 'folder' }>
 
-export interface CloudFileBrowserBreadcrumb {
+export interface CollaborationFileBrowserBreadcrumb {
   key: string
   name: string
-  location: CloudFileBrowserLocation
+  location: CollaborationFileBrowserLocation
 }
 
 function splitPath(path: string): string[] {
@@ -44,13 +44,13 @@ function startsWith<T>(values: T[], prefix: T[]): boolean {
   return prefix.every((value, index) => values[index] === value)
 }
 
-function deliveryItemPath(file: ProjectDeliveryFile) {
+function deliveryItemPath(file: CollaborationDeliveryFile) {
   return file.loop_item_path.length
     ? file.loop_item_path
     : [{ id: file.loop_item_id, title: file.loop_item_title }]
 }
 
-function sortEntries(entries: CloudFileBrowserEntry[]): CloudFileBrowserEntry[] {
+function sortEntries(entries: CollaborationFileBrowserEntry[]): CollaborationFileBrowserEntry[] {
   return entries.sort((left, right) => {
     if (left.kind === 'folder' && right.kind !== 'folder') return -1
     if (left.kind !== 'folder' && right.kind === 'folder') return 1
@@ -59,9 +59,9 @@ function sortEntries(entries: CloudFileBrowserEntry[]): CloudFileBrowserEntry[] 
 }
 
 function rootEntries(
-  sharedFiles: CloudProjectFile[],
-  deliveryFiles: ProjectDeliveryFile[]
-): CloudFileBrowserEntry[] {
+  sharedFiles: CollaborationProjectFile[],
+  deliveryFiles: CollaborationDeliveryFile[]
+): CollaborationFileBrowserEntry[] {
   const issueCount = new Set(
     deliveryFiles.map(file => deliveryItemPath(file)[0]?.id).filter(Boolean)
   ).size
@@ -85,9 +85,12 @@ function rootEntries(
   ]
 }
 
-function sharedEntries(path: string[], files: CloudProjectFile[]): CloudFileBrowserEntry[] {
-  const folders = new Map<string, CloudFileBrowserFolderEntry>()
-  const entries: CloudFileBrowserEntry[] = []
+function sharedEntries(
+  path: string[],
+  files: CollaborationProjectFile[]
+): CollaborationFileBrowserEntry[] {
+  const folders = new Map<string, FolderEntry>()
+  const entries: CollaborationFileBrowserEntry[] = []
   for (const file of files) {
     const parts = splitPath(file.path)
     if (!startsWith(parts, path) || parts.length <= path.length) continue
@@ -120,11 +123,11 @@ function sharedEntries(path: string[], files: CloudProjectFile[]): CloudFileBrow
 }
 
 function deliveryEntries(
-  location: Extract<CloudFileBrowserLocation, { scope: 'deliveries' }>,
-  files: ProjectDeliveryFile[]
-): CloudFileBrowserEntry[] {
-  const folders = new Map<string, CloudFileBrowserFolderEntry>()
-  const entries: CloudFileBrowserEntry[] = []
+  location: Extract<CollaborationFileBrowserLocation, { scope: 'deliveries' }>,
+  files: CollaborationDeliveryFile[]
+): CollaborationFileBrowserEntry[] {
+  const folders = new Map<string, FolderEntry>()
+  const entries: CollaborationFileBrowserEntry[] = []
   for (const file of files) {
     const itemPath = deliveryItemPath(file)
     const itemIds = itemPath.map(item => item.id)
@@ -174,21 +177,21 @@ function deliveryEntries(
   return sortEntries([...folders.values(), ...entries])
 }
 
-export function cloudFileBrowserEntries(
-  location: CloudFileBrowserLocation,
-  sharedFiles: CloudProjectFile[],
-  deliveryFiles: ProjectDeliveryFile[]
-): CloudFileBrowserEntry[] {
+export function collaborationFileBrowserEntries(
+  location: CollaborationFileBrowserLocation,
+  sharedFiles: CollaborationProjectFile[],
+  deliveryFiles: CollaborationDeliveryFile[]
+): CollaborationFileBrowserEntry[] {
   if (location.scope === 'root') return rootEntries(sharedFiles, deliveryFiles)
   if (location.scope === 'shared') return sharedEntries(location.path, sharedFiles)
   return deliveryEntries(location, deliveryFiles)
 }
 
-export function cloudFileBrowserBreadcrumbs(
-  location: CloudFileBrowserLocation,
-  deliveryFiles: ProjectDeliveryFile[]
-): CloudFileBrowserBreadcrumb[] {
-  const breadcrumbs: CloudFileBrowserBreadcrumb[] = [
+export function collaborationFileBrowserBreadcrumbs(
+  location: CollaborationFileBrowserLocation,
+  deliveryFiles: CollaborationDeliveryFile[]
+): CollaborationFileBrowserBreadcrumb[] {
+  const breadcrumbs: CollaborationFileBrowserBreadcrumb[] = [
     { key: 'root', name: '文件', location: { scope: 'root' } },
   ]
   if (location.scope === 'root') return breadcrumbs

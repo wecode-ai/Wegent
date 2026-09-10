@@ -2,20 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
-import type { CollaborationApi } from './api'
 import { CollaborationBoard } from './CollaborationBoard'
 import { collaborationMessages, type CollaborationLocale } from './i18n'
 import { collaborationTestIds } from './testIds'
-import { CollaborationProjectSummary } from './CollaborationProjectSummary'
 import { CollaborationSettings } from './CollaborationSettings'
 import { IssueDetail } from './IssueDetail'
+import { CollaborationFilesAdapter } from './web-adapter/CollaborationFilesAdapter'
+import { WorkspaceProjectsHomeAdapter } from './web-adapter/WorkspaceProjectsHomeAdapter'
+import {
+  ProjectViewSwitcher,
+  type CollaborationProjectViewOption,
+} from './workspace-header/ProjectViewSwitcher'
 import type {
   CollaborationAttachment,
   CollaborationComment,
   CollaborationExecution,
-  CollaborationFile,
   CollaborationHostAdapter,
   CollaborationIssue,
   CollaborationMember,
@@ -25,6 +28,7 @@ import type {
   CollaborationUser,
   CollaborationView,
 } from './types'
+import type { SharedWorkspaceApi } from './ports/SharedWorkspaceApi'
 
 const DEFAULT_STATUSES: CollaborationStatus[] = [
   { id: 'pending', name: '待处理', color: 'gray' },
@@ -33,7 +37,7 @@ const DEFAULT_STATUSES: CollaborationStatus[] = [
 ]
 
 interface CollaborationAppProps {
-  api: CollaborationApi
+  api: SharedWorkspaceApi
   host: CollaborationHostAdapter
   locale?: CollaborationLocale
   pollIntervalMs?: number
@@ -49,12 +53,6 @@ function projectStatuses(project: CollaborationProject): CollaborationStatus[] {
   return statuses && statuses.length > 0 ? statuses : DEFAULT_STATUSES
 }
 
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`
-}
-
 export function CollaborationApp({
   api,
   host,
@@ -63,10 +61,11 @@ export function CollaborationApp({
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale]
   const [projects, setProjects] = useState<CollaborationProject[]>([])
+  const [projectItems, setProjectItems] = useState<Record<string, CollaborationIssue[]>>({})
+  const [projectMembers, setProjectMembers] = useState<Record<string, CollaborationMember[]>>({})
   const [project, setProject] = useState<CollaborationProject | null>(null)
   const [issues, setIssues] = useState<CollaborationIssue[]>([])
   const [members, setMembers] = useState<CollaborationMember[]>([])
-  const [files, setFiles] = useState<CollaborationFile[]>([])
   const [runs, setRuns] = useState<CollaborationExecution[]>([])
   const [selectedIssue, setSelectedIssue] = useState<CollaborationIssue | null>(null)
   const [attachments, setAttachments] = useState<CollaborationAttachment[]>([])
@@ -88,7 +87,22 @@ export function CollaborationApp({
     setLoading(true)
     setError(null)
     try {
-      setProjects(await api.listProjects())
+      const nextProjects = await api.projects.list()
+      const snapshots = await Promise.all(
+        nextProjects.map(async nextProject => ({
+          projectId: nextProject.id,
+          snapshot: await api.issues.getBoardSnapshot(nextProject.id),
+        }))
+      )
+      setProjects(nextProjects)
+      setProjectItems(
+        Object.fromEntries(snapshots.map(({ projectId, snapshot }) => [projectId, snapshot.items]))
+      )
+      setProjectMembers(
+        Object.fromEntries(
+          snapshots.map(({ projectId, snapshot }) => [projectId, snapshot.members])
+        )
+      )
     } catch {
       setError(messages.loadFailed)
     } finally {
@@ -101,8 +115,8 @@ export function CollaborationApp({
       if (showLoading) setLoading(true)
       try {
         const [nextProject, snapshot] = await Promise.all([
-          api.getProject(projectId),
-          api.getBoardSnapshot(projectId),
+          api.projects.get(projectId),
+          api.issues.getBoardSnapshot(projectId),
         ])
         setProject(nextProject)
         setIssues(snapshot.items)
@@ -143,9 +157,9 @@ export function CollaborationApp({
       return
     }
     void Promise.all([
-      api.getIssue(issueId),
-      api.listAttachments(issueId),
-      api.listComments(issueId),
+      api.issues.get(issueId),
+      api.attachments.list(issueId),
+      api.comments.list(issueId),
     ])
       .then(([issue, nextAttachments, nextComments]) => {
         setSelectedIssue(issue)
@@ -157,21 +171,15 @@ export function CollaborationApp({
 
   useEffect(() => {
     if (!project) return
-    if (host.location.view === 'files') {
-      void api
-        .listFiles(project.id)
-        .then(setFiles)
-        .catch(() => setError(messages.loadFailed))
-    }
     if (host.location.view === 'members') {
-      void api
-        .listMembers(project.id)
+      void api.members
+        .list(project.id)
         .then(setMembers)
         .catch(() => setError(messages.loadFailed))
     }
     if (host.location.view === 'runs') {
-      void api
-        .listExecutions(project.id)
+      void api.executions
+        .list(project.id)
         .then(setRuns)
         .catch(() => setError(messages.loadFailed))
     }
@@ -197,17 +205,26 @@ export function CollaborationApp({
         </div>
       )}
       {!project ? (
-        <ProjectHome
+        <WorkspaceProjectsHomeAdapter
           projects={projects}
-          messages={messages}
-          onCreate={() => setCreateProjectOpen(true)}
-          onOpen={nextProject =>
+          projectItems={projectItems}
+          projectMembers={projectMembers}
+          onCreateProject={() => setCreateProjectOpen(true)}
+          onSelectProject={nextProject =>
             host.navigate({
               projectId: nextProject.id,
               issueId: null,
               view: 'board',
             })
           }
+          onManageProject={nextProject =>
+            host.navigate({
+              projectId: nextProject.id,
+              issueId: null,
+              view: 'manage',
+            })
+          }
+          onUnavailable={() => notify(messages.capabilitiesUnavailable)}
         />
       ) : (
         <>
@@ -246,32 +263,52 @@ export function CollaborationApp({
               </button>
             ))}
           </header>
-          <nav className="collaboration-tabs" aria-label={messages.title}>
-            {(
-              [
-                ['board', messages.board],
-                ['files', messages.files],
-                ['members', messages.members],
-                ...(host.capabilities.automation
-                  ? ([
-                      ['automation', messages.automation],
-                      ['runs', messages.runs],
-                    ] as const)
-                  : []),
-                ['manage', messages.settings],
-              ] as Array<[CollaborationView, string]>
-            ).map(([view, label]) => (
-              <button
-                type="button"
-                key={view}
-                data-testid={`collaboration-tab-${view}`}
-                aria-current={host.location.view === view ? 'page' : undefined}
-                onClick={() => navigateView(view)}
-              >
-                {label}
-              </button>
-            ))}
-          </nav>
+          <div className="mb-5">
+            <ProjectViewSwitcher
+              ariaLabel={messages.title}
+              compact={false}
+              value={host.location.view}
+              options={
+                [
+                  {
+                    id: 'board',
+                    label: messages.board,
+                    testId: 'collaboration-tab-board',
+                  },
+                  {
+                    id: 'files',
+                    label: messages.files,
+                    testId: 'collaboration-tab-files',
+                  },
+                  {
+                    id: 'members',
+                    label: messages.members,
+                    testId: 'collaboration-tab-members',
+                  },
+                  ...(host.capabilities.automation
+                    ? [
+                        {
+                          id: 'automation' as const,
+                          label: messages.automation,
+                          testId: 'collaboration-tab-automation',
+                        },
+                        {
+                          id: 'runs' as const,
+                          label: messages.runs,
+                          testId: 'collaboration-tab-runs',
+                        },
+                      ]
+                    : []),
+                  {
+                    id: 'manage',
+                    label: messages.settings,
+                    testId: 'collaboration-tab-manage',
+                  },
+                ] satisfies CollaborationProjectViewOption[]
+              }
+              onChange={view => navigateView(view as CollaborationView)}
+            />
+          </div>
           {host.location.view === 'board' && (
             <CollaborationBoard
               project={project}
@@ -298,10 +335,10 @@ export function CollaborationApp({
               onReorder={async (issue, status, laneIds, optimisticItems) => {
                 try {
                   setIssues(optimisticItems)
-                  const updated = await api.reorderIssues(project.id, {
-                    parent_id: issue.parent_id,
+                  const updated = await api.issues.reorder(project.id, {
+                    parentId: issue.parent_id,
                     status,
-                    item_ids: laneIds,
+                    issueIds: laneIds,
                   })
                   const updatedById = new Map(updated.map(item => [item.id, item]))
                   setIssues(current => current.map(item => updatedById.get(item.id) ?? item))
@@ -326,9 +363,9 @@ export function CollaborationApp({
                 })
                 try {
                   setProject(
-                    await api.updateProject(project.id, {
+                    await api.projects.update(project.id, {
                       version: project.version,
-                      board_config: { ...currentConfig, group_by: groupBy },
+                      boardConfig: { ...currentConfig, group_by: groupBy },
                     })
                   )
                 } catch (updateError) {
@@ -340,18 +377,11 @@ export function CollaborationApp({
             />
           )}
           {host.location.view === 'files' && (
-            <FilesView
-              api={api}
-              project={project}
-              files={files}
-              messages={messages}
-              onChange={setFiles}
-              onError={() => notify(messages.saveFailed)}
-            />
+            <CollaborationFilesAdapter api={api.files} project={project} />
           )}
           {host.location.view === 'members' && (
             <MembersView
-              api={api}
+              api={api.members}
               project={project}
               members={members}
               messages={messages}
@@ -361,7 +391,7 @@ export function CollaborationApp({
           )}
           {host.location.view === 'runs' && (
             <RunsView
-              api={api}
+              api={api.executions}
               project={project}
               runs={runs}
               messages={messages}
@@ -378,7 +408,7 @@ export function CollaborationApp({
           )}
           {host.location.view === 'manage' && (
             <CollaborationSettings
-              api={api}
+              api={api.projects}
               project={project}
               labels={{
                 settings: messages.settings,
@@ -429,7 +459,10 @@ export function CollaborationApp({
           onClose={() => setCreateProjectOpen(false)}
           onCreate={async values => {
             try {
-              const created = await api.createProject(values)
+              const created = await api.projects.create({
+                name: values.name,
+                description: values.description,
+              })
               setCreateProjectOpen(false)
               host.navigate({
                 projectId: created.id,
@@ -449,7 +482,7 @@ export function CollaborationApp({
           onClose={() => setCreateIssueOpen(false)}
           onCreate={async values => {
             try {
-              const created = await api.createIssue(project.id, values)
+              const created = await api.issues.create(project.id, values)
               setIssues(current => [...current, created])
               setCreateIssueOpen(false)
               host.navigate({
@@ -485,7 +518,7 @@ export function CollaborationApp({
           onAttachmentsChange={setAttachments}
           onCommentsChange={setComments}
           onConflict={async () => {
-            const current = await api.getIssue(selectedIssue.id)
+            const current = await api.issues.get(selectedIssue.id)
             setSelectedIssue(current)
             setIssues(items => items.map(item => (item.id === current.id ? current : item)))
             notify(messages.conflict)
@@ -498,64 +531,6 @@ export function CollaborationApp({
 }
 
 type Messages = (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en']
-
-function ProjectHome({
-  projects,
-  messages,
-  onCreate,
-  onOpen,
-}: {
-  projects: CollaborationProject[]
-  messages: Messages
-  onCreate(): void
-  onOpen(project: CollaborationProject): void
-}) {
-  return (
-    <>
-      <header className="collaboration-home-header">
-        <div>
-          <h1>{messages.title}</h1>
-          <p>{messages.subtitle}</p>
-        </div>
-        <button
-          type="button"
-          className="collaboration-primary-button"
-          data-testid={collaborationTestIds.createProject}
-          onClick={onCreate}
-        >
-          {messages.createProject}
-        </button>
-      </header>
-      {projects.length === 0 ? (
-        <div className="collaboration-empty">
-          <strong>{messages.emptyProjects}</strong>
-          <p>{messages.emptyProjectsHint}</p>
-        </div>
-      ) : (
-        <div className="collaboration-project-grid" data-testid={collaborationTestIds.projectList}>
-          {projects.map(project => (
-            <button
-              type="button"
-              className="collaboration-project-card"
-              data-testid={collaborationTestIds.project(project.id)}
-              key={project.id}
-              onClick={() => onOpen(project)}
-            >
-              <CollaborationProjectSummary
-                project={project}
-                description={project.description || project.project_key}
-              />
-              <small>
-                {project.project_store === 'local' ? messages.localProject : messages.cloudProject}
-                {project.access_role ? ` · ${project.access_role}` : ''}
-              </small>
-            </button>
-          ))}
-        </div>
-      )}
-    </>
-  )
-}
 
 function DialogFrame({
   testId,
@@ -768,80 +743,6 @@ function CreateIssueDialog({
   )
 }
 
-function FilesView({
-  api,
-  project,
-  files,
-  messages,
-  onChange,
-  onError,
-}: {
-  api: CollaborationApi
-  project: CollaborationProject
-  files: CollaborationFile[]
-  messages: Messages
-  onChange(files: CollaborationFile[]): void
-  onError(): void
-}) {
-  const upload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-    try {
-      onChange([...files, await api.uploadFile(project.id, file)])
-      event.target.value = ''
-    } catch {
-      onError()
-    }
-  }
-  return (
-    <section className="collaboration-panel" data-testid={collaborationTestIds.files}>
-      <header>
-        <h2>{messages.files}</h2>
-        <label className="collaboration-file-button">
-          {messages.uploadFile}
-          <input type="file" data-testid="collaboration-file-upload" onChange={upload} />
-        </label>
-      </header>
-      {files.length === 0 ? (
-        <p>{messages.emptyFiles}</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>{messages.fileName}</th>
-              <th>{messages.fileSize}</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {files.map(file => (
-              <tr key={file.id}>
-                <td>{file.path}</td>
-                <td>{file.kind === 'folder' ? '—' : formatBytes(file.size_bytes)}</td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await api.deleteFile(file.id, file.kind === 'folder')
-                        onChange(files.filter(item => item.id !== file.id))
-                      } catch {
-                        onError()
-                      }
-                    }}
-                  >
-                    ×
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
-  )
-}
-
 function MembersView({
   api,
   project,
@@ -850,7 +751,7 @@ function MembersView({
   onChange,
   onError,
 }: {
-  api: CollaborationApi
+  api: SharedWorkspaceApi['members']
   project: CollaborationProject
   members: CollaborationMember[]
   messages: Messages
@@ -905,7 +806,7 @@ function MembersView({
                 data-testid={`collaboration-member-add-${user.id}`}
                 onClick={async () => {
                   try {
-                    const added = await api.addMember(project.id, user.id)
+                    const added = await api.add(project.id, user.id)
                     onChange([...members, added])
                     setResults(current => current.filter(item => item.id !== user.id))
                   } catch {
@@ -936,7 +837,7 @@ function MembersView({
                     value={member.role}
                     onChange={async event => {
                       try {
-                        const updated = await api.updateMember(project.id, member.user_id, {
+                        const updated = await api.update(project.id, member.user_id, {
                           role: event.target.value as Exclude<CollaborationMember['role'], 'Owner'>,
                         })
                         onChange(
@@ -957,7 +858,7 @@ function MembersView({
                     data-testid={`collaboration-member-remove-${member.user_id}`}
                     onClick={async () => {
                       try {
-                        await api.removeMember(project.id, member.user_id)
+                        await api.remove(project.id, member.user_id)
                         onChange(members.filter(item => item.user_id !== member.user_id))
                       } catch {
                         onError()
@@ -986,7 +887,7 @@ function RunsView({
   onChange,
   onError,
 }: {
-  api: CollaborationApi
+  api: SharedWorkspaceApi['executions']
   project: CollaborationProject
   runs: CollaborationExecution[]
   messages: Messages
@@ -1011,7 +912,7 @@ function RunsView({
                   type="button"
                   onClick={async () => {
                     try {
-                      await api.stopExecution(project.id, run.id)
+                      await api.stop(project.id, run.id)
                       onChange(
                         runs.map(item =>
                           item.id === run.id ? { ...item, status: 'cancelling' } : item

@@ -8,6 +8,18 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./kanban": {
+      "types": "./src/kanban/index.ts",
+      "import": "./src/kanban/index.ts"
+    },
+    "./automation": {
+      "types": "./src/automation/index.ts",
+      "import": "./src/automation/index.ts"
+    },
+    "./project-manage": {
+      "types": "./src/project-manage/index.ts",
+      "import": "./src/project-manage/index.ts"
+    },
     "./styles.css": "./src/styles.css"
   },
   "scripts": {
