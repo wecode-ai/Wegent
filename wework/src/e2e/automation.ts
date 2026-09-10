@@ -2306,7 +2306,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         )
         if (element) {
           element.dataset.e2eAnchorId = value
-          return element.textContent?.trim() ?? ''
+          return element.dataset.testid ?? element.textContent?.trim() ?? ''
         }
         await waitForDesktopControlTick()
       }
