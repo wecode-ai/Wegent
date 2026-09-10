@@ -29,9 +29,41 @@ import logging
 import threading
 from typing import Any, Callable, Coroutine, Optional, TypeVar
 
+from anyio import CancelScope
+from starlette.concurrency import run_in_threadpool
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+async def run_in_threadpool_with_cleanup(
+    func: Callable[..., T], *args: Any, **kwargs: Any
+) -> T:
+    """Finish synchronous work before propagating cancellation to its owner.
+
+    Use when the caller owns resources, such as a database session, that must
+    not be closed or reused while the worker is running. Starlette handles
+    AnyIO cancellation; the shield also covers direct asyncio task cancellation.
+    The caller must still await operations sequentially for shared resources.
+    """
+    with CancelScope(shield=True):
+        worker = asyncio.create_task(run_in_threadpool(func, *args, **kwargs))
+        cancellation: Optional[asyncio.CancelledError] = None
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+            except Exception:
+                break
+        if cancellation is not None:
+            # Retrieve any worker failure before giving cancellation precedence.
+            if not worker.cancelled():
+                worker.exception()
+            raise cancellation
+        return worker.result()
+
 
 # Global reference to the main event loop (set during application startup)
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
