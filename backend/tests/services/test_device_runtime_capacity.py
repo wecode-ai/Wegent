@@ -54,7 +54,7 @@ def test_sync_capacity_requires_matching_runtime_identity(
 
     with (
         patch(
-            "app.services.device.capacity.cache_manager.get_sync",
+            "app.services.device.capacity.cache_manager.get_sync_or_raise",
             return_value=online,
         ),
         caplog.at_level(logging.DEBUG, logger="app.services.device.capacity"),
@@ -111,7 +111,7 @@ async def test_async_capacity_reads_live_runtime_snapshot(
     }
 
     with patch(
-        "app.services.device.capacity.cache_manager.get",
+        "app.services.device.capacity.cache_manager.get_or_raise",
         AsyncMock(return_value=online),
     ):
         capacity = await get_runtime_capacity(

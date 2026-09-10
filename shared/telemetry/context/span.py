@@ -16,8 +16,9 @@ when telemetry is disabled (e.g., in standalone mode).
 """
 
 import logging
+from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional
 
 from shared.telemetry.context.attributes import SpanAttributes
 
@@ -582,6 +583,20 @@ def init_request_context() -> str:
     request_id = str(uuid.uuid4())[:8]
     set_request_context(request_id)
     return request_id
+
+
+@contextmanager
+def request_context(request_id: Optional[str] = None) -> Iterator[str]:
+    """Scope a supplied or generated request ID and restore the caller on exit."""
+    token = _request_id_var.set(request_id)
+    try:
+        if request_id:
+            set_request_context(request_id)
+        else:
+            request_id = init_request_context()
+        yield request_id
+    finally:
+        _request_id_var.reset(token)
 
 
 def set_repository_context(

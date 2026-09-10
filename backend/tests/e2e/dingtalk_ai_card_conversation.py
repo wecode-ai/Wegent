@@ -35,6 +35,7 @@ from app.services.channels.device_selection import (
     DeviceType,
     device_selection_manager,
 )
+from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk.callback import dingtalk_callback_service
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import CHANNEL_CONV_TASK_PREFIX, MessageContext
@@ -181,6 +182,9 @@ class DingTalkConversationHarness(DingTalkChannelHandler):
             ),
             source="DingTalk CI E2E private-thinking probe",
         )
+        # Verify the progress stage before completion intentionally supersedes it.
+        active_emitter = dingtalk_callback_service._active_emitters[callback_key]
+        await active_emitter.flush()
         await self._forward_runtime_event(
             local_task_id,
             "response.completed",
@@ -334,9 +338,9 @@ async def run() -> None:
         previous_device_selection_ttl = await cache_client.ttl(device_selection_key)
     finally:
         await cache_client.aclose()
-    original_card_class = dingtalk_stream.AIMarkdownCardInstance
+    original_card_class = card_module.DingTalkMarkdownCard
     original_get_channel_manager = channel_manager_module.get_channel_manager
-    dingtalk_stream.AIMarkdownCardInstance = FakeAICardInstance
+    card_module.DingTalkMarkdownCard = FakeAICardInstance
     channel_manager_module.get_channel_manager = lambda: SimpleNamespace(
         get_channel=lambda channel_id: (
             SimpleNamespace(_client=handler._dingtalk_client)
@@ -385,7 +389,7 @@ async def run() -> None:
             WAITING_STATUS
         ]
     finally:
-        dingtalk_stream.AIMarkdownCardInstance = original_card_class
+        card_module.DingTalkMarkdownCard = original_card_class
         channel_manager_module.get_channel_manager = original_get_channel_manager
         await _cleanup(
             user_id=user_id,
