@@ -166,6 +166,13 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 宿主下载、校验和安装就绪阶段，并累计差分失败前已经传输的字节；Squirrel.Mac 对
 本地缓存 ZIP 的安装交接不计入网络下载量。
 
+单个组件下载遇到明确的瞬时传输失败时，客户端最多尝试三次，并在失败后分别等待
+一秒、两秒再重试。可重试范围仅包括连接中断、DNS/连接/请求超时、HTTP 408、429
+和 5xx。HTTP 4xx（408、429 除外）、压缩包大小或 SHA-256 不匹配、解包内容
+SHA-256 不匹配不得重试，必须保留为真实更新失败。失败尝试已传输的组件字节会在
+重试前从当前进度扣除。`app-update.log` 的失败事件记录脱敏后的错误类型、错误码、
+消息及首层 cause，URL 不写入日志。
+
 Wework 不再打包或下载第二份 Node。启动时会在用户数据目录生成轻量 `node`
 入口，将 `PATH`、`WEWORK_NODE_PATH`、`NODE` 和 `npm_node_execpath` 统一指向
 Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex skill 中
