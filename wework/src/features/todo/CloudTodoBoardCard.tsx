@@ -738,7 +738,7 @@ function RuntimeTaskProgressSummary({
             runtimeContext={{ cloudProjectId: String(item.cloud_project_id) }}
             sendEphemeral={false}
             collapseComposerWhenIdle
-            initialScrollPosition="latest"
+            scrollOrigin="bottom"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}
             placeholder={t('workbench.task_activity_inline_placeholder')}
           />
