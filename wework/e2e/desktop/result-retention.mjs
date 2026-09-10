@@ -16,14 +16,10 @@ const CACHE_DIRECTORY_NAMES = new Set([
   'GrShaderCache',
   'ShaderCache',
 ])
-const TRANSIENT_TOP_LEVEL_ENTRIES = new Set([
-  'executor-home',
-  'harness-runtime',
-  'node-runtime',
-  'wegent-executor',
-  'wegent-executor.exe',
-])
-const MACOS_APP_BUNDLE_PATTERN = /^WeWork-Electron-E2E-\d+\.app$/
+const RETAINED_TOP_LEVEL_DIRECTORIES = new Set(['electron-user-data'])
+const TRANSIENT_TOP_LEVEL_FILES = new Set(['wegent-executor', 'wegent-executor.exe'])
+const TRANSIENT_TOP_LEVEL_ARCHIVE_PATTERN = /\.(?:tar(?:\.(?:gz|zst))?|tgz|zip)$/iu
+const REBUILDABLE_USER_DATA_DIRECTORY_NAMES = new Set(['managed-components', 'managed-runtimes'])
 const RESULT_DIRECTORY_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(\d+)$/
 
 function removeOptions() {
@@ -158,33 +154,32 @@ async function removeNamedDirectories(root, names) {
   return removed
 }
 
-async function removeHarnessAppProfiles(userDataDirectory) {
-  const instancesRoot = join(userDataDirectory, 'harness-apps', 'instances')
+function isHarnessAppInstance(ancestors) {
+  return ancestors.some(
+    (name, index) => name === 'harness-apps' && ancestors[index + 1] === 'instances'
+  )
+}
+
+async function removeRebuildableUserDataDirectories(root, ancestors = []) {
   let removed = 0
-  for (const entry of await directoryEntries(instancesRoot)) {
+  for (const entry of await directoryEntries(root)) {
     if (!entry.isDirectory()) continue
-    const profiles = join(instancesRoot, entry.name, 'profiles')
-    const entries = await directoryEntries(profiles)
-    if (entries.length === 0) continue
-    await removePath(profiles)
-    removed += 1
+    const path = join(root, entry.name)
+    const removeProfiles =
+      entry.name === 'profiles' &&
+      (['dsh-core', 'Harness'].includes(basename(root)) || isHarnessAppInstance(ancestors))
+    if (REBUILDABLE_USER_DATA_DIRECTORY_NAMES.has(entry.name) || removeProfiles) {
+      await removePath(path)
+      removed += 1
+      continue
+    }
+    removed += await removeRebuildableUserDataDirectories(path, [...ancestors, entry.name])
   }
   return removed
 }
 
 async function compactElectronUserData(userDataDirectory) {
-  let removed = 0
-  const exactDirectories = [
-    join(userDataDirectory, 'managed-runtimes'),
-    join(userDataDirectory, 'dsh-core', 'profiles'),
-  ]
-  for (const directory of exactDirectories) {
-    const entries = await directoryEntries(directory)
-    if (entries.length === 0) continue
-    await removePath(directory)
-    removed += 1
-  }
-  removed += await removeHarnessAppProfiles(userDataDirectory)
+  let removed = await removeRebuildableUserDataDirectories(userDataDirectory)
   removed += await removeNamedDirectories(userDataDirectory, CACHE_DIRECTORY_NAMES)
   return removed
 }
@@ -214,12 +209,12 @@ export async function clearDesktopE2EResultActive(resultDirectory) {
 export async function compactDesktopE2EResult(resultDirectory) {
   let removed = 0
   for (const entry of await directoryEntries(resultDirectory)) {
-    if (
-      !TRANSIENT_TOP_LEVEL_ENTRIES.has(entry.name) &&
-      !MACOS_APP_BUNDLE_PATTERN.test(entry.name)
-    ) {
-      continue
-    }
+    const removeDirectory = entry.isDirectory() && !RETAINED_TOP_LEVEL_DIRECTORIES.has(entry.name)
+    const removeFile =
+      entry.isFile() &&
+      (TRANSIENT_TOP_LEVEL_FILES.has(entry.name) ||
+        TRANSIENT_TOP_LEVEL_ARCHIVE_PATTERN.test(entry.name))
+    if (!removeDirectory && !removeFile) continue
     await removePath(join(resultDirectory, entry.name))
     removed += 1
   }
