@@ -54,6 +54,18 @@ pub(super) fn remove_superseded_transcript_turns(
     });
 }
 
+fn merge_latest_completed_transcript_messages(
+    messages: &mut Vec<Value>,
+    link: &RuntimeTaskLink,
+    before_cursor: Option<&str>,
+    after_cursor: Option<&str>,
+) {
+    if before_cursor.is_some() || after_cursor.is_some() {
+        return;
+    }
+    append_unique_transcript_messages(messages, completed_transcript_messages(link));
+}
+
 #[derive(Clone, Copy)]
 enum TranscriptTurnItemSource {
     CodexItems,
