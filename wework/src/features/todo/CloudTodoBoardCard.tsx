@@ -78,6 +78,7 @@ const priorityLabels: Record<CloudLoopItem['priority'], string> = {
 
 interface CloudTodoCardContentProps {
   item: CloudLoopItem
+  goalBinding?: CloudTodoBoardTaskBinding
   display: BoardCardDisplaySettings
   processingStatus: boolean
   showWorkflowStage?: boolean
@@ -88,6 +89,7 @@ interface CloudTodoCardContentProps {
 
 export function CloudTodoCardContent({
   item,
+  goalBinding,
   display,
   processingStatus,
   showWorkflowStage = true,
@@ -114,6 +116,14 @@ export function CloudTodoCardContent({
           />
         ) : null}
         <span className="line-clamp-1 min-w-0">{item.title}</span>
+        {goalBinding?.runtimeGoal?.objective.trim() ? (
+          <RuntimeTaskGoalSummary
+            itemId={item.id}
+            bindingId={goalBinding.id}
+            objective={goalBinding.runtimeGoal.objective}
+            compact
+          />
+        ) : null}
       </span>
       {needsExecutionConfiguration ? (
         <span
@@ -447,6 +457,7 @@ export function CloudTodoBoardCard({
       >
         <CloudTodoCardContent
           item={item}
+          goalBinding={currentTaskBinding}
           display={display}
           processingStatus={processingStatus}
           showWorkflowStage={false}
@@ -508,6 +519,7 @@ export function CloudTodoBoardCard({
                     }
                   : undefined
               }
+              onLoadRuntimeGoal={onLoadRuntimeGoal}
             />
           ))}
         </div>
@@ -677,20 +689,12 @@ function RuntimeTaskProgressSummary({
         </div>
       ) : null}
       {!compact && binding.runtimeGoal?.objective.trim() ? (
-        <div
-          data-testid={`cloud-todo-card-popup-goal-${item.id}-${binding.id}`}
-          className="mt-2 flex min-w-0 gap-2 rounded-lg bg-muted/55 px-2.5 py-2"
-        >
-          <Target className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
-          <div className="min-w-0">
-            <div className="text-xs font-medium leading-5 text-text-secondary">
-              {t('todo.current_conversation_goal', '当前会话目标')}
-            </div>
-            <p className="line-clamp-3 text-xs leading-5 text-text-primary">
-              {binding.runtimeGoal.objective}
-            </p>
-          </div>
-        </div>
+        <RuntimeTaskGoalSummary
+          itemId={item.id}
+          bindingId={binding.id}
+          objective={binding.runtimeGoal.objective}
+          compact={compact}
+        />
       ) : !compact && !binding.runtimeGoalLoaded && onLoadRuntimeGoal ? (
         <div
           data-testid={`cloud-todo-card-popup-goal-loading-${item.id}-${binding.id}`}
@@ -739,6 +743,47 @@ function RuntimeTaskProgressSummary({
           {responsePreview}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function RuntimeTaskGoalSummary({
+  itemId,
+  bindingId,
+  objective,
+  compact,
+}: {
+  itemId: string
+  bindingId: number
+  objective: string
+  compact: boolean
+}) {
+  const { t } = useTranslation('common')
+  const label = t('todo.current_conversation_goal', '当前会话目标')
+
+  if (compact) {
+    return (
+      <span
+        data-testid={`cloud-todo-card-goal-${itemId}-${bindingId}`}
+        className="inline-flex shrink-0 items-center text-text-secondary"
+        title={`${label}: ${objective}`}
+        aria-label={`${label}: ${objective}`}
+      >
+        <Target className="h-4 w-4" aria-hidden="true" />
+      </span>
+    )
+  }
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-popup-goal-${itemId}-${bindingId}`}
+      className="mt-2 flex min-w-0 gap-2 rounded-lg bg-muted/55 px-2.5 py-2"
+    >
+      <Target className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+      <div className="min-w-0">
+        <div className="text-xs font-medium leading-5 text-text-secondary">{label}</div>
+        <p className="line-clamp-3 text-xs leading-5 text-text-primary">{objective}</p>
+      </div>
     </div>
   )
 }

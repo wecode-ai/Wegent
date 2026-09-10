@@ -392,6 +392,8 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
+    expect(screen.queryByTestId(/cloud-todo-card-goal-/)).not.toBeInTheDocument()
+
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     await new Promise(resolve => window.setTimeout(resolve, 500))
@@ -539,6 +541,14 @@ describe('CloudTodoBoardCard', () => {
           showDate: false,
         }}
       />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-goal-WEG-85-85')).toHaveAttribute(
+      'title',
+      expect.stringContaining('让用户在看板悬浮态快速理解当前会话正在完成什么')
+    )
+    expect(screen.getByTestId('cloud-todo-card-goal-WEG-85-85')).not.toHaveTextContent(
+      '让用户在看板悬浮态快速理解当前会话正在完成什么'
     )
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
