@@ -319,11 +319,8 @@ async def _cleanup_stale_warmpool_crs(ek_service, *, dry_run: bool) -> Dict[str,
     """
     from wecode.config.orphan_pod_config import ORPHAN_WARMPOOL_CR_GRACE_PERIOD_DAYS
 
-    cleanup = getattr(ek_service, "cleanup_stale_warmpools_async", None)
-    if cleanup is None:
-        return {"status": "skipped", "reason": "unsupported"}
     try:
-        result = await cleanup(
+        result = await ek_service.cleanup_stale_warmpools_async(
             grace_period_days=ORPHAN_WARMPOOL_CR_GRACE_PERIOD_DAYS,
             dry_run=dry_run,
         )
