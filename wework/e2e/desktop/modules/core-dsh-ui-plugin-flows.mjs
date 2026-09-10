@@ -132,7 +132,7 @@ const DEMO_PLUGIN = {
     'wework.action': ['dsh-extension-demo.open'],
     'wework.app': ['dsh-extension-demo'],
     'wework.task.status': ['dsh-extension-demo.task-status'],
-    'wework.conversation.summary': ['dsh-extension-demo.environment-section'],
+    'wework.conversation.summary': ['dsh-extension-demo.summary-section'],
     'wework.board.card.status': ['dsh-extension-demo.board-card-status'],
     'wework.workspace.menu.section': ['demo-workspace-menu'],
     'wework.plugins.action': ['dsh-extension-demo.create'],
