@@ -1,0 +1,53 @@
+{
+  "name": "Wegent conversation answer card",
+  "description": "DingTalk AI card contract for streaming an answer and opening session settings after completion.",
+  "callbackType": "STREAM",
+  "variables": [
+    {
+      "name": "flowStatus",
+      "type": "string",
+      "description": "DingTalk AI card status: 1 processing, 2 writing, 3 done, 4 executing, 5 failed"
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "description": "Card title"
+    },
+    {
+      "name": "content",
+      "type": "markdown",
+      "description": "Streaming answer content"
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "description": "Short execution status"
+    },
+    {
+      "name": "showSettings",
+      "type": "boolean",
+      "description": "Show the session settings action after completion or failure"
+    },
+    {
+      "name": "settingsText",
+      "type": "string",
+      "description": "Session settings action label"
+    }
+  ],
+  "layout": [
+    "Bind the title text to cardData.title.",
+    "Bind the AI markdown component to cardData.content and enable flowStatus.",
+    "Show cardData.status only when it is not empty.",
+    "Show the session settings button only when cardData.showSettings is true."
+  ],
+  "actions": [
+    {
+      "labelVariable": "settingsText",
+      "actionType": "request",
+      "visibleWhen": "showSettings == true",
+      "params": {
+        "action": "open_console"
+      }
+    }
+  ]
+}

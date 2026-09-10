@@ -1,0 +1,113 @@
+{
+  "name": "Wegent session settings card",
+  "description": "DingTalk interactive card contract for selecting a model, device, or private task.",
+  "callbackType": "STREAM",
+  "variables": [
+    { "name": "title", "type": "string" },
+    {
+      "name": "view",
+      "type": "string",
+      "description": "console, options, or closed"
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "privateOverride": true,
+      "description": "Prefer cardPrivateData.status when it is not empty, otherwise use cardData.status"
+    },
+    { "name": "currentModel", "type": "string" },
+    { "name": "currentDevice", "type": "string" },
+    { "name": "currentTask", "type": "string" },
+    { "name": "showTask", "type": "boolean" },
+    { "name": "kind", "type": "string" },
+    { "name": "kindLabel", "type": "string" },
+    {
+      "name": "options",
+      "type": "array",
+      "schema": [
+        { "name": "token", "type": "string" },
+        { "name": "label", "type": "string" },
+        { "name": "description", "type": "string" },
+        { "name": "current", "type": "boolean" },
+        { "name": "disabled", "type": "boolean" }
+      ]
+    },
+    { "name": "pageLabel", "type": "string" },
+    { "name": "showPrevious", "type": "boolean" },
+    { "name": "showNext", "type": "boolean" }
+  ],
+  "views": [
+    {
+      "name": "console",
+      "visibleWhen": "view == console",
+      "content": [
+        "Show currentModel, currentDevice, and currentTask.",
+        "Show the task action only when showTask is true."
+      ]
+    },
+    {
+      "name": "options",
+      "visibleWhen": "view == options",
+      "content": [
+        "Bind a loop container to options.",
+        "Bind each row to label and description.",
+        "Disable the row action when disabled is true."
+      ]
+    },
+    {
+      "name": "closed",
+      "visibleWhen": "view == closed"
+    }
+  ],
+  "actions": [
+    {
+      "label": "切换模型",
+      "actionType": "request",
+      "params": { "action": "open_kind", "kind": "model" }
+    },
+    {
+      "label": "切换设备",
+      "actionType": "request",
+      "params": { "action": "open_kind", "kind": "device" }
+    },
+    {
+      "label": "切换任务",
+      "actionType": "request",
+      "visibleWhen": "showTask == true",
+      "params": { "action": "open_kind", "kind": "task" }
+    },
+    {
+      "labelVariable": "options[].label",
+      "actionType": "request",
+      "enabledWhen": "options[].disabled == false",
+      "params": { "action": "select", "token": "options[].token" }
+    },
+    {
+      "label": "上一页",
+      "actionType": "request",
+      "visibleWhen": "showPrevious == true",
+      "params": { "action": "page", "delta": "-1" }
+    },
+    {
+      "label": "下一页",
+      "actionType": "request",
+      "visibleWhen": "showNext == true",
+      "params": { "action": "page", "delta": "1" }
+    },
+    {
+      "label": "返回",
+      "actionType": "request",
+      "params": { "action": "back" }
+    },
+    {
+      "label": "刷新",
+      "actionType": "request",
+      "params": { "action": "refresh" }
+    },
+    {
+      "label": "关闭",
+      "actionType": "request",
+      "params": { "action": "close" }
+    }
+  ]
+}

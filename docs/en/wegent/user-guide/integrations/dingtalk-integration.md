@@ -52,14 +52,17 @@ Before setting up DingTalk integration, ensure you have:
 Enable the following permissions for your application:
 
 **Robot Permissions:**
+
 - `qyapi_robot_sendmsg` - Send robot messages
 - `qyapi_chat_manage` - Manage group chats
 
 **AI Card Permissions (for streaming responses):**
+
 - `Card.Instance.Write` - Create and update AI card instances
 - `Card.Streaming.Write` - Stream write AI card content
 
 **User Information Permissions:**
+
 - `Contact.User.Read` - Read user information
 - `Contact.User.mobile` - Access user mobile (optional)
 
@@ -93,15 +96,17 @@ Enable the following permissions for your application:
 3. Click **Add Channel**
 4. Fill in the configuration:
 
-| Field | Description | Example |
-|-------|-------------|---------|
-| **Channel Name** | Display name for this channel | "DingTalk Bot" |
-| **Channel Type** | Select platform | DingTalk |
-| **Client ID** | From Step 3 | `dingxxxxxxxx` |
-| **Client Secret** | From Step 3 | `xxxxxxxxxxxxxxxx` |
-| **Default Agent** | Agent to handle messages | Select from list |
-| **Default Model** | Override model (optional) | Leave empty to use agent's default |
-| **Enable AI Card** | Use streaming AI Card | ✅ Recommended |
+| Field                                 | Description                                               | Example                            |
+| ------------------------------------- | --------------------------------------------------------- | ---------------------------------- |
+| **Channel Name**                      | Display name for this channel                             | "DingTalk Bot"                     |
+| **Channel Type**                      | Select platform                                           | DingTalk                           |
+| **Client ID**                         | From Step 3                                               | `dingxxxxxxxx`                     |
+| **Client Secret**                     | From Step 3                                               | `xxxxxxxxxxxxxxxx`                 |
+| **Default Agent**                     | Agent to handle messages                                  | Select from list                   |
+| **Default Model**                     | Override model (optional)                                 | Leave empty to use agent's default |
+| **Enable AI Card**                    | Use streaming AI Card                                     | ✅ Recommended                     |
+| **Conversation Card Template ID**     | Show a Session Settings action after an answer (optional) | `xxxxxxxx.schema`                  |
+| **Session Settings Card Template ID** | Clickable model, device, and task selection (optional)    | `xxxxxxxx.schema`                  |
 
 5. Click **Save** to create the channel
 6. Toggle **Enable** to activate the channel
@@ -154,6 +159,34 @@ DingTalk AI Cards provide a rich streaming response experience:
 - Code block syntax highlighting
 - Collapsible long content
 
+### Clickable session settings
+
+After configuring the **Session Settings Card Template ID**, users can send `设置` to open the console, `切模型` or `切设备` to open a selector, and `切任务` in a direct message to select a task. The existing `/status`, `/models`, `/devices`, and `/switch` commands remain available. Commands with arguments still use their text flow, and a card creation failure falls back to the original text response.
+
+The console displays the current model, device, and direct-message task:
+
+- Selecting an option applies it immediately and returns the same card to the console.
+- Each page contains up to eight options, with previous, next, refresh, back, and close actions.
+- Offline devices, current options, and non-Claude models that are incompatible with device mode are disabled.
+- Tasks are available only in direct messages and include the user's five most recent Wework tasks.
+- In a group, only the user who opened the card can act on it. The server also revalidates identity, ownership, and current availability.
+- Cards contain random 15-minute option tokens rather than internal model, device, or task IDs. Repeated clicks are applied only once.
+
+When the **Conversation Card Template ID** is also configured, completed, failed, and cancelled answers show a Session Settings action on the answer card. Configuring only the conversation template does not replace the built-in answer card, which prevents a non-functional action.
+
+#### Create the two DingTalk card templates
+
+Create two IM card templates in DingTalk Card Platform, then configure their variables, visibility conditions, and request actions according to these contracts:
+
+- [Conversation answer card contract](../../../../examples/dingtalk-conversation-card-contract.json)
+- [Session settings card contract](../../../../examples/dingtalk-session-settings-card-contract.json)
+
+The conversation card's `content` must use an AI Markdown streaming component that supports `flowStatus`. Its settings button sends the fixed parameter `action=open_console`. The settings card uses a loop container for `options`; each row action must send that row's `token`, never an internal resource ID. Use server request actions and select **Stream** as the callback mode.
+
+After publishing both templates, enter their `.schema` template IDs in Wegent Admin and restart the IM channel. The settings template works by itself; the answer-card entry requires both IDs.
+
+> Only one Stream consumer may use the same Client ID and Client Secret at a time. Use separate development-app credentials for live testing so another instance cannot consume the card callback.
+
 ---
 
 ## ❓ Troubleshooting
@@ -163,11 +196,13 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### Channel shows "Disconnected"
 
 **Possible causes:**
+
 1. Invalid Client ID or Client Secret
 2. Network connectivity issues
 3. DingTalk API service disruption
 
 **Solutions:**
+
 1. Verify credentials in DingTalk Open Platform
 2. Check network connectivity from Wegent server
 3. Try restarting the channel
@@ -176,11 +211,13 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### Messages not being received
 
 **Possible causes:**
+
 1. Stream mode not enabled in DingTalk
 2. Robot permissions not configured
 3. Channel not enabled in Wegent
 
 **Solutions:**
+
 1. Verify Stream Mode is enabled in DingTalk app settings
 2. Check all required permissions are granted
 3. Ensure channel is enabled (toggle is on)
@@ -190,11 +227,13 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### Bot not responding
 
 **Possible causes:**
+
 1. Default Agent not configured
 2. Agent has no model assigned
 3. Rate limiting
 
 **Solutions:**
+
 1. Verify a default Agent is selected for the channel
 2. Ensure the Agent has a working model configuration
 3. Check for rate limit errors in channel status
@@ -202,24 +241,44 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### Slow or incomplete responses
 
 **Possible causes:**
+
 1. AI Card streaming issues
 2. Network latency
 3. Large response content
 
 **Solutions:**
+
 1. Try disabling AI Card streaming temporarily
 2. Check network connectivity
 3. The system will fall back to sync mode if streaming fails
+
+#### Card clicks do not respond
+
+**Possible causes:**
+
+1. The settings card callback mode is not Stream
+2. Template action parameters do not match the contract
+3. Card creation and Stream callback registration use different Client IDs
+4. Multiple Stream consumers use the same application credentials
+
+**Solutions:**
+
+1. Verify every template variable and request action against the contract
+2. Restart the Wegent channel and confirm the settings card is reported as configured
+3. Use the same Client ID for card creation and callback registration
+4. Stop other Stream instances using the same credentials and test again
 
 ### User Issues
 
 #### User not recognized
 
 **Possible causes:**
+
 1. User mapping configuration issues
 2. DingTalk user info not accessible
 
 **Solutions:**
+
 1. Check user permissions in DingTalk app
 2. Verify user mapping configuration
 3. Contact administrator for enterprise user mapping
@@ -227,10 +286,12 @@ DingTalk AI Cards provide a rich streaming response experience:
 #### User creation failed
 
 **Possible causes:**
+
 1. Missing `Contact.User.Read` permission
 2. Failed to retrieve DingTalk staff ID
 
 **Solutions:**
+
 1. Ensure permission to read user information is granted
 2. Re-authorize application permissions
 3. Check if DingTalk user is in the enterprise organization
@@ -240,17 +301,20 @@ DingTalk AI Cards provide a rich streaming response experience:
 ## 🔗 Related Resources
 
 ### Wegent Documentation
+
 - [IM Channel Integration Overview](./im-channel-integration.md) - General IM integration concepts and features
 - [Agent Settings](../settings/agent-settings.md) - Configure agents for IM channels
 - [Configuring Models](../settings/configuring-models.md) - Set up AI models
 
 ### DingTalk Official Resources
+
 - [DingTalk Open Platform Documentation](https://open.dingtalk.com/document/)
 - [DingTalk Stream Mode Guide](https://open.dingtalk.com/document/orgapp/receive-message)
 - [DingTalk Robot Development Guide](https://open.dingtalk.com/document/robots/develop-robots)
 - [Enterprise Application Development Guide](https://open.dingtalk.com/document/isvapp-server/create-an-application)
 
 ### Get Help
+
 - 📖 Check [Wegent FAQ](../../faq.md)
 - 🐛 Submit [GitHub Issue](https://github.com/wecode-ai/wegent/issues)
 - 💬 DingTalk Open Platform Technical Support

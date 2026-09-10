@@ -217,6 +217,53 @@ describe('IMChannelList channel config', () => {
     })
   })
 
+  test('creates a DingTalk channel with both session card templates', async () => {
+    render(<IMChannelList />)
+
+    await screen.findByText('admin:im_channels.no_channels')
+    fireEvent.click(await screen.findByText('admin:im_channels.create_channel'))
+
+    const conversationTemplate = screen.getByTestId('im-channel-conversation-card-template-id')
+    const interactionTemplate = screen.getByTestId('im-channel-interaction-card-template-id')
+    expect(conversationTemplate).toBeInTheDocument()
+    expect(interactionTemplate).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.name *'), {
+      target: { value: 'dingtalk-main' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_id *'), {
+      target: { value: 'ding-app-key' },
+    })
+    fireEvent.change(screen.getByLabelText('admin:im_channels.form.client_secret *'), {
+      target: { value: 'ding-app-secret' },
+    })
+    fireEvent.change(conversationTemplate, {
+      target: { value: 'answer.schema' },
+    })
+    fireEvent.change(interactionTemplate, {
+      target: { value: 'settings.schema' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[1], {
+      target: { value: '10' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[4], {
+      target: { value: '20' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.create' }))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createIMChannel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel_type: 'dingtalk',
+          config: expect.objectContaining({
+            conversation_card_template_id: 'answer.schema',
+            interaction_card_template_id: 'settings.schema',
+          }),
+        })
+      )
+    })
+  })
+
   test('shows accessible chat agents and excludes code-only agents', async () => {
     mockedTeamApis.getTeams.mockResolvedValue({
       total: 2,
@@ -402,6 +449,63 @@ describe('IMChannelList channel config', () => {
             user_mapping_config: {
               target_user_id: 20,
             },
+          }),
+        })
+      )
+    })
+  })
+
+  test('edits DingTalk session card template IDs', async () => {
+    mockedAdminApis.getIMChannels.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 8,
+          name: 'dingtalk-main',
+          channel_type: 'dingtalk',
+          is_enabled: true,
+          config: {
+            client_id: 'ding-app-key',
+            client_secret: '***',
+            conversation_card_template_id: 'answer.schema',
+            interaction_card_template_id: 'settings-v1.schema',
+            user_mapping_mode: 'select_user',
+            user_mapping_config: { target_user_id: 20 },
+          },
+          default_team_id: 10,
+          default_model_name: '',
+          created_at: '',
+          updated_at: '',
+          created_by: 0,
+        },
+      ],
+    })
+
+    render(<IMChannelList />)
+
+    await screen.findByText('dingtalk-main')
+    fireEvent.click(screen.getByTitle('admin:im_channels.edit_channel'))
+
+    expect(screen.getByTestId('edit-im-channel-conversation-card-template-id')).toHaveValue(
+      'answer.schema'
+    )
+    fireEvent.change(screen.getByTestId('edit-im-channel-conversation-card-template-id'), {
+      target: { value: '' },
+    })
+    const interactionTemplate = screen.getByTestId('edit-im-channel-interaction-card-template-id')
+    expect(interactionTemplate).toHaveValue('settings-v1.schema')
+    fireEvent.change(interactionTemplate, {
+      target: { value: 'settings-v2.schema' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'admin:common.save' }))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.updateIMChannel).toHaveBeenCalledWith(
+        8,
+        expect.objectContaining({
+          config: expect.objectContaining({
+            conversation_card_template_id: '',
+            interaction_card_template_id: 'settings-v2.schema',
           }),
         })
       )

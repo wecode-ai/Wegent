@@ -12,8 +12,8 @@ from dingtalk_stream import AIMarkdownCardInstance
 from dingtalk_stream.utils import DINGTALK_OPENAPI_ENDPOINT
 
 
-class DingTalkMarkdownCard(AIMarkdownCardInstance):
-    """Retain SDK rendering while propagating update errors to the emitter."""
+class CheckedDingTalkCardUpdates:
+    """Propagate card update failures instead of swallowing them in the SDK."""
 
     def _put(self, path: str, payload: dict[str, Any]) -> None:
         token = self.dingtalk_client.get_access_token()
@@ -62,3 +62,7 @@ class DingTalkMarkdownCard(AIMarkdownCardInstance):
                 "isError": failed,
             },
         )
+
+
+class DingTalkMarkdownCard(CheckedDingTalkCardUpdates, AIMarkdownCardInstance):
+    """Retain SDK rendering while propagating update errors to the emitter."""

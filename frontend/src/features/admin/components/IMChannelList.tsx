@@ -102,6 +102,8 @@ const IMChannelList: React.FC = () => {
     weibo_ws_endpoint: string
     weibo_token_endpoint: string
     card_template_id: string
+    conversation_card_template_id: string
+    interaction_card_template_id: string
     user_mapping_mode: UserMappingMode
     target_user_id: number
   }>({
@@ -118,6 +120,8 @@ const IMChannelList: React.FC = () => {
     weibo_ws_endpoint: '',
     weibo_token_endpoint: '',
     card_template_id: '',
+    conversation_card_template_id: '',
+    interaction_card_template_id: '',
     user_mapping_mode: 'select_user',
     target_user_id: 0,
   })
@@ -304,6 +308,14 @@ const IMChannelList: React.FC = () => {
       if (formData.card_template_id.trim()) {
         config.card_template_id = formData.card_template_id.trim()
       }
+      if (formData.channel_type === 'dingtalk') {
+        if (formData.conversation_card_template_id.trim()) {
+          config.conversation_card_template_id = formData.conversation_card_template_id.trim()
+        }
+        if (formData.interaction_card_template_id.trim()) {
+          config.interaction_card_template_id = formData.interaction_card_template_id.trim()
+        }
+      }
 
       // Add user_mapping_config if select_user mode
       if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
@@ -408,6 +420,10 @@ const IMChannelList: React.FC = () => {
       if (formData.card_template_id.trim()) {
         newConfig.card_template_id = formData.card_template_id.trim()
       }
+      if (selectedChannel.channel_type === 'dingtalk') {
+        newConfig.conversation_card_template_id = formData.conversation_card_template_id.trim()
+        newConfig.interaction_card_template_id = formData.interaction_card_template_id.trim()
+      }
 
       // Add user_mapping_config if select_user mode
       if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
@@ -502,6 +518,8 @@ const IMChannelList: React.FC = () => {
       weibo_ws_endpoint: '',
       weibo_token_endpoint: '',
       card_template_id: '',
+      conversation_card_template_id: '',
+      interaction_card_template_id: '',
       user_mapping_mode: 'select_user',
       target_user_id: 0,
     })
@@ -531,6 +549,9 @@ const IMChannelList: React.FC = () => {
       weibo_ws_endpoint: (channel.config?.ws_endpoint as string) || '',
       weibo_token_endpoint: (channel.config?.token_endpoint as string) || '',
       card_template_id: (channel.config?.card_template_id as string) || '',
+      conversation_card_template_id:
+        (channel.config?.conversation_card_template_id as string) || '',
+      interaction_card_template_id: (channel.config?.interaction_card_template_id as string) || '',
       user_mapping_mode: userMappingMode,
       target_user_id: targetUserId,
     })
@@ -875,6 +896,54 @@ const IMChannelList: React.FC = () => {
                     {t('admin:im_channels.form.card_template_id_help')}
                   </p>
                 </div>
+                {formData.channel_type === 'dingtalk' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="conversation_card_template_id">
+                        {t('admin:im_channels.form.conversation_card_template_id')}
+                      </Label>
+                      <Input
+                        id="conversation_card_template_id"
+                        data-testid="im-channel-conversation-card-template-id"
+                        value={formData.conversation_card_template_id}
+                        onChange={e =>
+                          setFormData({
+                            ...formData,
+                            conversation_card_template_id: e.target.value,
+                          })
+                        }
+                        placeholder={t(
+                          'admin:im_channels.form.conversation_card_template_id_placeholder'
+                        )}
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('admin:im_channels.form.conversation_card_template_id_help')}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="interaction_card_template_id">
+                        {t('admin:im_channels.form.interaction_card_template_id')}
+                      </Label>
+                      <Input
+                        id="interaction_card_template_id"
+                        data-testid="im-channel-interaction-card-template-id"
+                        value={formData.interaction_card_template_id}
+                        onChange={e =>
+                          setFormData({
+                            ...formData,
+                            interaction_card_template_id: e.target.value,
+                          })
+                        }
+                        placeholder={t(
+                          'admin:im_channels.form.interaction_card_template_id_placeholder'
+                        )}
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('admin:im_channels.form.interaction_card_template_id_help')}
+                      </p>
+                    </div>
+                  </>
+                )}
               </>
             )}
             <div className="space-y-2">
@@ -1092,6 +1161,54 @@ const IMChannelList: React.FC = () => {
                     {t('admin:im_channels.form.card_template_id_help')}
                   </p>
                 </div>
+                {formData.channel_type === 'dingtalk' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-conversation_card_template_id">
+                        {t('admin:im_channels.form.conversation_card_template_id')}
+                      </Label>
+                      <Input
+                        id="edit-conversation_card_template_id"
+                        data-testid="edit-im-channel-conversation-card-template-id"
+                        value={formData.conversation_card_template_id}
+                        onChange={e =>
+                          setFormData({
+                            ...formData,
+                            conversation_card_template_id: e.target.value,
+                          })
+                        }
+                        placeholder={t(
+                          'admin:im_channels.form.conversation_card_template_id_placeholder'
+                        )}
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('admin:im_channels.form.conversation_card_template_id_help')}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-interaction_card_template_id">
+                        {t('admin:im_channels.form.interaction_card_template_id')}
+                      </Label>
+                      <Input
+                        id="edit-interaction_card_template_id"
+                        data-testid="edit-im-channel-interaction-card-template-id"
+                        value={formData.interaction_card_template_id}
+                        onChange={e =>
+                          setFormData({
+                            ...formData,
+                            interaction_card_template_id: e.target.value,
+                          })
+                        }
+                        placeholder={t(
+                          'admin:im_channels.form.interaction_card_template_id_placeholder'
+                        )}
+                      />
+                      <p className="text-xs text-text-muted">
+                        {t('admin:im_channels.form.interaction_card_template_id_help')}
+                      </p>
+                    </div>
+                  </>
+                )}
               </>
             )}
             <div className="space-y-2">
