@@ -26,6 +26,8 @@ USER_IM_NOTIFICATION_PRESENCE_PREFIX = "channel:user_im_notification_presence:"
 USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX = "channel:user_runtime_task_subscriptions:"
 RUNTIME_TASK_REPLY_TARGET_PREFIX = "channel:runtime_task_reply_target:"
 RUNTIME_TASK_REPLY_TARGET_TTL_SECONDS = 7 * 24 * 60 * 60
+RUNTIME_NOTIFICATION_REPLY_TARGET_PREFIX = "channel:runtime_notification_reply_target:"
+RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS = 24 * 60 * 60
 IM_NOTIFICATION_PRESENCE_TTL_SECONDS = 90
 IM_NOTIFICATION_PRESENCE_ACTIVE = "active"
 IM_NOTIFICATION_PRESENCE_AWAY = "away"
@@ -363,6 +365,39 @@ class IMSessionService:
             return None
         return data
 
+    async def save_runtime_notification_reply_target(
+        self,
+        *,
+        session: IMPrivateSession,
+        runtime_task: dict[str, Any],
+    ) -> bool:
+        """Remember the latest runtime notification awaiting a direct IM reply."""
+
+        self.runtime_task_notification_key(runtime_task)
+        return await cache_manager.set(
+            self._runtime_notification_reply_target_key(session.session_key),
+            dict(runtime_task),
+            expire=RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS,
+        )
+
+    async def pop_runtime_notification_reply_target(
+        self,
+        *,
+        session: IMPrivateSession,
+    ) -> dict[str, Any] | None:
+        """Atomically consume the latest runtime notification reply target."""
+
+        data = await cache_manager.pop(
+            self._runtime_notification_reply_target_key(session.session_key)
+        )
+        if not isinstance(data, dict):
+            return None
+        try:
+            self.runtime_task_notification_key(data)
+        except ValueError:
+            return None
+        return data
+
     async def list_active_runtime_task_sessions(
         self,
         db: Session | None,
@@ -562,6 +597,9 @@ class IMSessionService:
         message_id: str,
     ) -> str:
         return f"{RUNTIME_TASK_REPLY_TARGET_PREFIX}{session_key}:{message_id}"
+
+    def _runtime_notification_reply_target_key(self, session_key: str) -> str:
+        return f"{RUNTIME_NOTIFICATION_REPLY_TARGET_PREFIX}{session_key}"
 
     def _normalize_reply_message_id(self, message_id: int | str | None) -> str:
         if isinstance(message_id, bool) or message_id is None:

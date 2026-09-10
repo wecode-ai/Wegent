@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.im_session import IMPrivateSession
+from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.user import User
 from app.services.channels.callback import ChannelType
 from app.services.channels.handler import MessageContext
@@ -108,6 +108,21 @@ async def _session(test_db: Session, test_user: User) -> IMPrivateSession:
         channel_id=44,
         conversation_id="telegram-chat",
         sender_id="telegram-user",
+        display_name="Alice",
+    )
+
+
+async def _dingtalk_session(
+    test_db: Session,
+    test_user: User,
+) -> IMPrivateSession:
+    return await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=45,
+        conversation_id="dingtalk-chat",
+        sender_id="dingtalk-user",
         display_name="Alice",
     )
 
@@ -289,6 +304,179 @@ async def test_runtime_notification_reply_inherits_bound_model_selection(
     assert (
         runtime_target["modelSelection"]
         == session.active_runtime_task["modelSelection"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_notification_reply_switches_and_keeps_runtime_task(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    notification_target = {
+        "deviceId": "device-notified",
+        "workspacePath": "/repo/Notified",
+        "localTaskId": "runtime-notified",
+    }
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=notification_target,
+    )
+    _stub_task_lists(monkeypatch)
+
+    first_handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("继续处理这个任务"),
+        port=port,
+    )
+    second_handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("再补一个测试"),
+        port=port,
+    )
+
+    assert first_handled is True
+    assert second_handled is True
+    assert session.mode == IMSessionMode.TASK
+    assert session.active_task_id is None
+    assert session.active_runtime_task == notification_target
+    assert port.continued_tasks == [
+        (None, "继续处理这个任务"),
+        (None, "再补一个测试"),
+    ]
+    assert port.continued_runtime_tasks == [None, None]
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_notification_reply_preserves_matching_runtime_context(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "runtime-1",
+            "modelSelection": {"modelName": "gpt-5.6-luna"},
+        },
+    )
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task={
+            "deviceId": "device-1",
+            "localTaskId": "runtime-1",
+        },
+    )
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("继续"),
+        port=port,
+    )
+
+    assert handled is True
+    assert session.active_runtime_task == {
+        "deviceId": "device-1",
+        "workspacePath": "/repo/Wegent",
+        "localTaskId": "runtime-1",
+        "modelSelection": {"modelName": "gpt-5.6-luna"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_command_does_not_consume_notification_reply_target(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    notification_target = {
+        "deviceId": "device-notified",
+        "localTaskId": "runtime-notified",
+    }
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=notification_target,
+    )
+    _stub_task_lists(monkeypatch)
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("/notify status"),
+        port=port,
+    )
+
+    assert handled is True
+    assert port.continued_tasks == []
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        == notification_target
+    )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_pending_flow_does_not_consume_notification_reply_target(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    await im_session_service.set_pending_state(
+        test_db,
+        session=session,
+        state=IMSessionState.PENDING_TASK_SWITCH,
+        payload={"task_ids": [101]},
+    )
+    notification_target = {
+        "deviceId": "device-notified",
+        "localTaskId": "runtime-notified",
+    }
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=notification_target,
+    )
+    monkeypatch.setattr(
+        "app.services.im.interaction_service.im_task_continuation_service.list_recent_wework_tasks",
+        lambda db, user_id, limit=5: [{"id": 101, "title": "Existing task"}],
+    )
+    monkeypatch.setattr(
+        "app.services.im.interaction_service.im_task_continuation_service.list_wework_projects",
+        lambda db, user_id, limit=8: [],
+    )
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("1"),
+        port=port,
+    )
+
+    assert handled is True
+    assert port.bound_tasks == [101]
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        == notification_target
     )
 
 

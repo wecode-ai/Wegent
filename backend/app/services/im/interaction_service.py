@@ -8,7 +8,7 @@ from typing import Protocol
 
 from sqlalchemy.orm import Session
 
-from app.models.im_session import IMPrivateSession, IMSessionMode
+from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.user import User
 from app.services.channels.commands import parse_command
 from app.services.channels.device_selection import device_selection_manager
@@ -96,6 +96,17 @@ class IMInteractionService:
             and (message_context.content or "").strip()
             and parse_command(message_context.content) is None
         ):
+            runtime_task = runtime_reply_target
+            if im_session.channel_type == "dingtalk":
+                await im_session_service.pop_runtime_notification_reply_target(
+                    session=im_session
+                )
+                await im_session_service.bind_active_runtime_task(
+                    db,
+                    session=im_session,
+                    runtime_task=runtime_reply_target,
+                )
+                runtime_task = None
             await port.execute_private_im_continue_task(
                 db=db,
                 user=user,
@@ -103,7 +114,30 @@ class IMInteractionService:
                 task_id=None,
                 message=message_context.content,
                 message_context=message_context,
-                runtime_task=runtime_reply_target,
+                runtime_task=runtime_task,
+            )
+            return True
+
+        pending_runtime_target = await self._pending_runtime_notification_target(
+            im_session,
+            message_context,
+        )
+        if pending_runtime_target is not None:
+            await im_session_service.bind_active_runtime_task(
+                db,
+                session=im_session,
+                runtime_task=self._merge_active_runtime_task_context(
+                    im_session.active_runtime_task,
+                    pending_runtime_target,
+                ),
+            )
+            await port.execute_private_im_continue_task(
+                db=db,
+                user=user,
+                im_session=im_session,
+                task_id=None,
+                message=message_context.content,
+                message_context=message_context,
             )
             return True
 
@@ -184,7 +218,16 @@ class IMInteractionService:
             session=im_session,
             message_id=reply_to_message_id,
         )
-        active_runtime_task = im_session.active_runtime_task
+        return self._merge_active_runtime_task_context(
+            im_session.active_runtime_task,
+            reply_target,
+        )
+
+    def _merge_active_runtime_task_context(
+        self,
+        active_runtime_task: dict | None,
+        reply_target: dict | None,
+    ) -> dict | None:
         if reply_target is None or not isinstance(active_runtime_task, dict):
             return reply_target
         try:
@@ -197,6 +240,23 @@ class IMInteractionService:
         if reply_key != active_key:
             return reply_target
         return {**active_runtime_task, **reply_target}
+
+    async def _pending_runtime_notification_target(
+        self,
+        im_session: IMPrivateSession,
+        message_context: MessageContext,
+    ) -> dict | None:
+        content = (message_context.content or "").strip()
+        if (
+            im_session.channel_type != "dingtalk"
+            or im_session.state != IMSessionState.IDLE
+            or not content
+            or parse_command(content) is not None
+        ):
+            return None
+        return await im_session_service.pop_runtime_notification_reply_target(
+            session=im_session
+        )
 
     def _should_continue_task_media_message(
         self,

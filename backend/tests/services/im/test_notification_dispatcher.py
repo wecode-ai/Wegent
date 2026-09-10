@@ -326,6 +326,130 @@ async def test_runtime_task_update_uses_global_im_notification_target(
 
 
 @pytest.mark.asyncio
+async def test_dingtalk_runtime_notification_enables_direct_reply_continuation(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_channel(
+        test_db,
+        channel_id=9414,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9414,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.enable_global_notification(test_db, session=session)
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeDingTalkRobotSender:
+        def __init__(self, client_id: str, client_secret: str):
+            calls.append({"client_id": client_id, "client_secret": client_secret})
+
+        async def send_text_message(self, user_ids: list[str], content: str):
+            calls.append({"user_ids": user_ids, "content": content})
+            return {"success": True, "result": {"processQueryKey": "query-1"}}
+
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender",
+        FakeDingTalkRobotSender,
+    )
+    address = {
+        "deviceId": "device-1",
+        "localTaskId": "runtime-1",
+    }
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Implemented from native Codex",
+        source="codex_watcher",
+    )
+
+    assert result["sent"] == 1
+    assert calls[1] == {
+        "user_ids": ["staff-1"],
+        "content": (
+            "任务「Native Codex task」有新的 AI 回复：\n\n"
+            "Implemented from native Codex\n\n"
+            "在当前钉钉私聊中直接回复，即可继续该任务。"
+        ),
+    }
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        == address
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_dingtalk_runtime_notification_does_not_enable_reply(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_channel(
+        test_db,
+        channel_id=9415,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9415,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.enable_global_notification(test_db, session=session)
+    test_db.commit()
+
+    class FakeDingTalkRobotSender:
+        def __init__(self, client_id: str, client_secret: str):
+            pass
+
+        async def send_text_message(self, user_ids: list[str], content: str):
+            return {"success": False, "error": "DingTalk unavailable"}
+
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender",
+        FakeDingTalkRobotSender,
+    )
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address={"deviceId": "device-1", "localTaskId": "runtime-1"},
+        title="Native Codex task",
+        status="updated",
+        content="Update",
+        source="codex_watcher",
+    )
+
+    assert result["sent"] == 0
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_runtime_task_update_suppresses_global_target_while_client_is_active(
     test_db: Session,
     test_user,

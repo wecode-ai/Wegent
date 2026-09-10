@@ -33,6 +33,7 @@ SENSITIVE_CONFIG_KEYS = {
     "encoding_aes_key",
     "bot_token",
 }
+DINGTALK_RUNTIME_REPLY_HINT = "在当前钉钉私聊中直接回复，即可继续该任务。"
 
 
 class IMNotificationDispatcher:
@@ -211,11 +212,27 @@ class IMNotificationDispatcher:
         sent = 0
         results: list[dict[str, Any]] = []
         for session in _dedupe_sessions(sessions):
-            result = await self.send_text(db, session, message)
+            outbound_message = message
+            if runtime_task is not None and session.channel_type == "dingtalk":
+                outbound_message = f"{message}\n\n{DINGTALK_RUNTIME_REPLY_HINT}"
+            result = await self.send_text(db, session, outbound_message)
             result.setdefault("session_key", session.session_key)
             results.append(result)
             if result.get("success"):
                 sent += 1
+                if runtime_task is not None and session.channel_type == "dingtalk":
+                    saved = (
+                        await im_session_service.save_runtime_notification_reply_target(
+                            session=session,
+                            runtime_task=runtime_task,
+                        )
+                    )
+                    if not saved:
+                        logger.warning(
+                            "[IMNotificationDispatcher] Failed to save DingTalk "
+                            "runtime reply target: session_key=%s",
+                            session.session_key,
+                        )
                 message_id = _result_message_id(result)
                 if runtime_task is not None and message_id is not None:
                     await im_session_service.save_runtime_task_reply_target(

@@ -922,7 +922,7 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
 
 
 @pytest.mark.asyncio
-async def test_task_mode_runtime_reply_uses_notification_target_without_rebinding(
+async def test_task_mode_dingtalk_notification_reply_switches_runtime_task(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
@@ -949,9 +949,8 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
             "localTaskId": "codex-active",
         },
     )
-    await im_session_service.save_runtime_task_reply_target(
+    await im_session_service.save_runtime_notification_reply_target(
         session=session,
-        message_id=901,
         runtime_task={
             "deviceId": "device-notified",
             "workspacePath": "/repo/Notified",
@@ -985,12 +984,7 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
         fake_send_runtime_message,
     )
 
-    handled = await handler.handle_message(
-        _message(
-            "回复通知",
-            extra_data={"reply_to_message_id": 901},
-        )
-    )
+    handled = await handler.handle_message(_message("回复通知"))
 
     assert handled is True
     assert handler.replies == []
@@ -998,8 +992,9 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
     assert calls["send"]["request"].address.device_id == "device-notified"
     assert calls["send"]["request"].address.local_task_id == "codex-notified"
     refreshed = await _private_session(test_db, test_user)
-    assert refreshed.active_runtime_task["deviceId"] == "device-active"
-    assert refreshed.active_runtime_task["localTaskId"] == "codex-active"
+    assert refreshed.mode == IMSessionMode.TASK
+    assert refreshed.active_runtime_task["deviceId"] == "device-notified"
+    assert refreshed.active_runtime_task["localTaskId"] == "codex-notified"
 
 
 @pytest.mark.asyncio
@@ -1066,6 +1061,10 @@ async def test_runtime_notification_reply_continues_task_from_chat_mode(
     assert handler.replies == []
     assert calls["callback"] == "runtime:device-notified:codex-notified"
     assert calls["send"]["request"].address.local_task_id == "codex-notified"
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed.mode == IMSessionMode.TASK
+    assert refreshed.active_runtime_task["deviceId"] == "device-notified"
+    assert refreshed.active_runtime_task["localTaskId"] == "codex-notified"
 
 
 @pytest.mark.asyncio

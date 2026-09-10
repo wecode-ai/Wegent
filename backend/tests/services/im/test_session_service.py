@@ -8,7 +8,10 @@ import pytest
 
 from app.models.im_session import IMSessionMode, IMSessionState
 from app.models.user import User
-from app.services.im.session_service import im_session_service
+from app.services.im.session_service import (
+    RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS,
+    im_session_service,
+)
 
 
 @pytest.mark.asyncio
@@ -144,6 +147,76 @@ async def test_bind_active_task_sets_task_mode_and_clears_pending_state(
     assert session.state == IMSessionState.IDLE
     assert session.active_task_id == 7001
     assert session.pending_payload == {}
+
+
+@pytest.mark.asyncio
+async def test_runtime_notification_reply_target_is_latest_and_consumed_once(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    session = await im_session_service.get_or_create_private_session(
+        db=None,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=12,
+        conversation_id="conv-1",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    first_target = {
+        "deviceId": "device-1",
+        "localTaskId": "runtime-1",
+    }
+    latest_target = {
+        "deviceId": "device-2",
+        "localTaskId": "runtime-2",
+    }
+
+    assert await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=first_target,
+    )
+    assert await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=latest_target,
+    )
+
+    cache_key = f"channel:runtime_notification_reply_target:{session.session_key}"
+    assert fake_im_session_cache.expires[cache_key] == (
+        RUNTIME_NOTIFICATION_REPLY_TARGET_TTL_SECONDS
+    )
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        == latest_target
+    )
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_notification_reply_target_rejects_invalid_cached_address(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    session = await im_session_service.get_or_create_private_session(
+        db=None,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=12,
+        conversation_id="conv-1",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    cache_key = f"channel:runtime_notification_reply_target:{session.session_key}"
+    fake_im_session_cache.values[cache_key] = {"deviceId": "device-1"}
+
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        is None
+    )
+    assert cache_key not in fake_im_session_cache.values
 
 
 @pytest.mark.asyncio
