@@ -240,6 +240,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      await verifyWindowsProfileDirectoryLinks(electronUserDataDirectory)
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {
         timeoutMs: uiTimeoutMs,
@@ -284,6 +285,41 @@ export async function createDesktopScenario({
   }
 }
 
+async function verifyWindowsProfileDirectoryLinks(userDataDirectory) {
+  if (process.platform !== 'win32') return
+  const assets = join(
+    userDataDirectory,
+    'dsh-core',
+    'profiles',
+    PROFILE_NAME,
+    'node_modules',
+    '@wegent',
+    'dsh-app-wework',
+    'web',
+    'assets'
+  )
+  const linkType = await captureCommand(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '[Console]::Out.Write((Get-Item -LiteralPath $env:WEWORK_E2E_PROFILE_ASSETS -Force).LinkType)',
+    ],
+    {
+      env: {
+        ...process.env,
+        WEWORK_E2E_PROFILE_ASSETS: assets,
+      },
+    }
+  )
+  assert.equal(
+    linkType.trim(),
+    'Junction',
+    'Windows Core DSH profile assets must use a junction that does not require symlink privilege'
+  )
+}
+
 async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
   const binDirectory = join(userDataDirectory, 'managed-runtimes', 'electron-node', 'bin')
   const skillScript = join(resultDir, 'embedded-node-skill.ts')
@@ -297,6 +333,31 @@ async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
     /^electron-node:\d+\.\d+\.\d+$/m,
     'A Codex skill TypeScript script did not run through Electron embedded Node'
   )
+}
+
+function captureCommand(command, args, options = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => {
+      stdout += String(chunk)
+    })
+    child.stderr.on('data', chunk => {
+      stderr += String(chunk)
+    })
+    child.once('error', reject)
+    child.once('close', code => {
+      if (code === 0) resolvePromise(stdout)
+      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
+    })
+  })
 }
 
 function runNodeSkill(script, binDirectory) {
