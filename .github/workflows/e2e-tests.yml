@@ -521,7 +521,7 @@ jobs:
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests serially
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 4
         timeout-minutes: 15
         working-directory: ./frontend
         env:

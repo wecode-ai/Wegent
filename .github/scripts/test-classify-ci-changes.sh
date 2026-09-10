@@ -924,6 +924,17 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
   fi
 done
 
+platform_e2e_workflow="$script_dir/../workflows/e2e-tests.yml"
+provider_native_step="$(
+  extract_named_workflow_step \
+    "$platform_e2e_workflow" \
+    "Run Provider-native E2E tests serially"
+)"
+if ! grep -Fq "if: matrix.shardIndex == 4" <<<"$provider_native_step"; then
+  printf 'Provider-native E2E must run on the historically fastest shard\n' >&2
+  exit 1
+fi
+
 for workflow in test.yml lint.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
   if ! grep -q "merge_group:" "$workflow_path"; then
