@@ -5,6 +5,7 @@ import {
   getToolActivityFilePaths,
   getToolActivitySearchItem,
   summarizeToolBlocks,
+  unwrapShellCommand,
 } from './toolBlockActivity'
 
 function tool(
@@ -61,6 +62,25 @@ function fileChangesBlock(
 }
 
 describe('toolBlockActivity', () => {
+  test('unwraps the shell launcher from commands shown to users', () => {
+    expect(unwrapShellCommand("/bin/zsh -lc 'pnpm --filter wework test'")).toBe(
+      'pnpm --filter wework test'
+    )
+    expect(
+      unwrapShellCommand(
+        String.raw`/opt/homebrew/bin/zsh -lc "/bin/zsh -lc \"printf '正在验证运行中卡片' && while [ ! -f \\\"/tmp/board-focus-release\\\" ]; do sleep 0.2; done\""`
+      )
+    ).toBe(
+      String.raw`printf '正在验证运行中卡片' && while [ ! -f "/tmp/board-focus-release" ]; do sleep 0.2; done`
+    )
+    expect(
+      unwrapShellCommand(
+        `powershell.exe -NoProfile -Command ${JSON.stringify("Write-Output '正在验证运行中卡片'")}`
+      )
+    ).toBe("Write-Output '正在验证运行中卡片'")
+    expect(unwrapShellCommand('pnpm lint')).toBe('pnpm lint')
+  })
+
   test('groups consecutive completed tools by activity type', () => {
     const rows = buildProcessingDisplayRows([
       tool('read-1', "sed -n '1,5p' first.ts"),

@@ -110,7 +110,7 @@ function s3AccelerationArgs(value) {
 
 function isTransientNotaryFailure(error) {
   const message = error instanceof Error ? error.message : String(error)
-  return /abortedUpload|deadlineExceeded|timed? ?out|connection (?:reset|lost)|NSURLErrorDomain.*-100[15]/i.test(
+  return /abortedUpload|deadlineExceeded|timed? ?out|connection (?:reset|lost)|NSURLErrorDomain.*-100[159]/i.test(
     message
   )
 }

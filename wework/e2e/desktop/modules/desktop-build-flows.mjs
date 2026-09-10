@@ -155,6 +155,7 @@ async function verifyCloudTerminalCompatibility(control, cloudEnvironment) {
       requestedVersion,
       expectedVersion: requestedVersion ?? 1,
       name: `wire-request-${requestedVersion ?? 'absent'}`,
+      forceRevocation: requestedVersion === 2,
     })
   }
   try {

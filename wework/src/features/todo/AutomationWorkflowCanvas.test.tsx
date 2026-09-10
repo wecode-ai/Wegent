@@ -129,4 +129,203 @@ describe('AutomationWorkflowCanvas viewport', () => {
       { duration: 240 }
     )
   })
+
+  test('keeps the selected trigger visible when the editor panel opens', () => {
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={emptyDraft}
+        selectedNode={{ type: 'none' }}
+        rightPanelInset={0}
+      />
+    )
+
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={emptyDraft}
+        selectedNode={{ type: 'trigger' }}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).toHaveBeenCalledWith(
+      {
+        x: 394 - 230 * 0.99,
+        y: 400 - 270 * 0.99,
+        zoom: 0.99,
+      },
+      { duration: 240 }
+    )
+  })
+
+  test('focuses the trigger after the selected step is deleted', () => {
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={{
+          ...emptyDraft,
+          steps: [
+            {
+              id: 'step-deleted',
+              kind: 'task',
+              name: 'Deleted step',
+              prompt: '',
+              dependencies: [],
+              dependencyContext: {},
+              x: 440,
+              y: 220,
+            },
+          ],
+        }}
+        selectedNode={{ type: 'step', id: 'step-deleted' }}
+        rightPanelInset={412}
+      />
+    )
+
+    flowMocks.setViewport.mockClear()
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={emptyDraft}
+        selectedNode={{ type: 'trigger' }}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).toHaveBeenCalledWith(
+      {
+        x: 394 - 230 * 0.99,
+        y: 400 - 270 * 0.99,
+        zoom: 0.99,
+      },
+      { duration: 240 }
+    )
+  })
+
+  test('focuses a selected DAG stage using its parent-relative position', () => {
+    const draft = {
+      ...emptyDraft,
+      steps: [
+        {
+          id: 'dynamic-step',
+          kind: 'dynamic',
+          x: 440,
+          y: 200,
+          dependencies: [],
+          subgraph: {
+            nodes: [{ id: 'stage-1', x: 30, y: 20, dependencies: [] }],
+          },
+        },
+      ],
+    }
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={draft}
+        selectedNode={{ type: 'none' }}
+        rightPanelInset={0}
+      />
+    )
+
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={draft}
+        selectedNode={{ type: 'dagStage', stepId: 'dynamic-step', stageId: 'stage-1' }}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).toHaveBeenCalledWith(
+      {
+        x: 394 - 565 * 0.99,
+        y: 400 - 341 * 0.99,
+        zoom: 0.99,
+      },
+      { duration: 240 }
+    )
+  })
+
+  test('focuses a selected loop body using its parent-relative position', () => {
+    const draft = {
+      ...emptyDraft,
+      steps: [
+        {
+          id: 'loop-step',
+          kind: 'loop',
+          x: 500,
+          y: 180,
+          dependencies: [],
+          subgraph: {
+            nodes: [{ id: 'body-1', nodeType: 'task', x: 40, y: 30, dependencies: [] }],
+          },
+        },
+      ],
+    }
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={draft}
+        selectedNode={{ type: 'none' }}
+        rightPanelInset={0}
+      />
+    )
+
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={draft}
+        selectedNode={{ type: 'loopBody', loopId: 'loop-step', bodyId: 'body-1' }}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).toHaveBeenCalledWith(
+      {
+        x: 394 - 644 * 0.99,
+        y: 400 - 319 * 0.99,
+        zoom: 0.99,
+      },
+      { duration: 240 }
+    )
+  })
+
+  test('does not treat a nested selection as deleted when selecting its parent', () => {
+    const draft = {
+      ...emptyDraft,
+      steps: [
+        {
+          id: 'dynamic-step',
+          kind: 'dynamic',
+          x: 440,
+          y: 200,
+          dependencies: [],
+          subgraph: {
+            nodes: [{ id: 'stage-1', x: 30, y: 20, dependencies: [] }],
+          },
+        },
+      ],
+    }
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={draft}
+        selectedNode={{ type: 'dagStage', stepId: 'dynamic-step', stageId: 'stage-1' }}
+        rightPanelInset={412}
+      />
+    )
+
+    flowMocks.setViewport.mockClear()
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={draft}
+        selectedNode={{ type: 'step', id: 'dynamic-step' }}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).not.toHaveBeenCalled()
+  })
 })

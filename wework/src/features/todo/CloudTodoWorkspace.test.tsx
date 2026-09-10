@@ -20,7 +20,7 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
-import type { User } from '@/types/api'
+import type { RuntimeTaskCreateRequest, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
 import {
   isSelfManagedWorkItem,
@@ -112,6 +112,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     testId,
     initialAddress,
     collapseComposerWhenIdle,
+    initialScrollPosition,
   }: {
     testId: string
     initialAddress?: {
@@ -120,6 +121,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       runtimeHandle?: { modelSelection?: { modelName?: string } }
     } | null
     collapseComposerWhenIdle?: boolean
+    initialScrollPosition?: 'restore' | 'latest'
   }) => (
     <div
       data-testid={testId}
@@ -127,6 +129,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-task-id={initialAddress?.taskId}
       data-model-name={initialAddress?.runtimeHandle?.modelSelection?.modelName}
       data-collapse-composer={String(collapseComposerWhenIdle)}
+      data-initial-scroll-position={initialScrollPosition}
     >
       <div
         data-testid={testId.replace('popup-conversation', 'popup-scroll')}
@@ -226,8 +229,10 @@ vi.mock('./BackgroundTaskStarter', () => ({
     onAddressChange,
     onTaskCreated,
     prepareTask,
+    taskRequest,
   }: {
     onAddressChange: (address: { deviceId: string; taskId: string }) => void
+    taskRequest?: RuntimeTaskCreateRequest | null
     onTaskCreated?: (
       address: { deviceId: string; taskId: string },
       localProject: { id: number; name: string; tasks: [] } | null
@@ -240,6 +245,7 @@ vi.mock('./BackgroundTaskStarter', () => ({
     <button
       type="button"
       data-testid="mock-start-background-task"
+      data-task-request={JSON.stringify(taskRequest ?? null)}
       onClick={() => {
         const address = { deviceId: 'local-device', taskId: 'runtime-created' }
         const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
@@ -1040,8 +1046,25 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-card-add-child-WEG-1')).not.toBeInTheDocument()
   })
 
-  it('shows live thinking for the running runtime task on its board card', async () => {
+  it('shows live process text and the unwrapped command on a running task card', async () => {
     const workbenchServices = services()
+    const getRuntimeGoal = vi.fn(async () => ({
+      accepted: true,
+      taskId: 'runtime-2',
+      goal: {
+        threadId: 'thread-runtime-2',
+        objective: '验证看板悬浮预览始终展示当前会话目标和最新进展',
+        status: 'active' as const,
+        tokenBudget: null,
+        tokensUsed: 800,
+        timeUsedSeconds: 60,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    }))
+    workbenchServices.runtimeWorkApi = {
+      getRuntimeGoal,
+    } as WorkbenchServices['runtimeWorkApi']
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
       {
         id: 2,
@@ -1060,6 +1083,21 @@ describe('CloudTodoWorkspace', () => {
       },
     ])
     const address = { deviceId: 'local-device', taskId: 'runtime-2' }
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-previous',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-previous',
+      itemId: 'assistant-previous',
+      content: '上一轮已经完成的回复，不应覆盖当前进展',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-previous',
+    })
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',
       taskId: address.taskId,
@@ -1106,8 +1144,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(await screen.findByTestId('cloud-todo-card-thinking-WEG-1')).toHaveTextContent(
-      '正在思考 · Investigating board data flow'
+    expect(await screen.findByTestId('cloud-todo-card-activity-WEG-1')).toBeInTheDocument()
+    expect(screen.queryByText('Investigating board data flow')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent(
+      '上一轮已经完成的回复'
     )
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass('text-xs')
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).not.toHaveClass(
@@ -1143,7 +1183,7 @@ describe('CloudTodoWorkspace', () => {
           subtaskId: 'turn-1',
           type: 'tool',
           toolName: 'functions.exec_command',
-          toolInput: { cmd: 'pnpm test' },
+          toolInput: { cmd: "/bin/zsh -lc 'pnpm test'" },
           status: 'streaming',
           createdAt: Date.now(),
         },
@@ -1156,11 +1196,20 @@ describe('CloudTodoWorkspace', () => {
       })
     })
 
-    expect(screen.getByTestId('cloud-todo-card-thinking-WEG-1')).toHaveTextContent(
-      '正在思考 · Rendering latest thinking'
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveTextContent(
+      '先检查项目看板如何组织运行中的消息。'
     )
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass(
+      'line-clamp-3',
+      'leading-5'
+    )
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('h-15')
+    expect(screen.queryByText('Rendering latest thinking')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-1')).toHaveTextContent(
       '运行命令 · pnpm test'
+    )
+    expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-1')).not.toHaveTextContent(
+      '/bin/zsh -lc'
     )
     expect(screen.getByTestId('cloud-todo-card-tool-line-WEG-1')).toHaveClass(
       'ml-2',
@@ -1169,11 +1218,67 @@ describe('CloudTodoWorkspace', () => {
     )
     expect(
       screen
-        .getByTestId('cloud-todo-card-thinking-WEG-1')
+        .getByTestId('cloud-todo-card-process-WEG-1')
         .compareDocumentPosition(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-1')) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.toBe(0)
-    expect(screen.getByTestId('cloud-todo-card-thinking-WEG-1')).toHaveClass('text-xs', 'leading-5')
+
+    const focusView = screen.getByTestId('cloud-board-focus-running')
+    const viewActions = screen.getByTestId('cloud-board-view-actions')
+    expect(viewActions).toHaveClass('ml-auto')
+    expect(viewActions).toContainElement(focusView)
+    expect(focusView).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[292px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[292px]')
+
+    await userEvent.click(focusView)
+
+    expect(focusView).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-pending')).toHaveClass('w-[292px]')
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).toHaveClass('line-clamp-[8]')
+    expect(screen.getByTestId('cloud-todo-card-process-WEG-1')).not.toHaveClass('line-clamp-3')
+    expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBe('true')
+
+    act(() => {
+      for (const [id, cmd] of [
+        ['tool-2', 'pnpm lint'],
+        ['tool-3', 'pnpm typecheck'],
+      ]) {
+        applyRuntimeConversationAction(address, {
+          type: 'block_created',
+          subtaskId: 'turn-1',
+          block: {
+            id,
+            subtaskId: 'turn-1',
+            type: 'tool',
+            toolName: 'functions.exec_command',
+            toolInput: { cmd },
+            status: 'streaming',
+            createdAt: Date.now(),
+          },
+        })
+      }
+    })
+
+    expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-1')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-2')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-3')).toBeInTheDocument()
+
+    await userEvent.click(focusView)
+
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[292px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[292px]')
+    expect(screen.queryByTestId('cloud-todo-card-tool-WEG-1-tool-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-card-tool-WEG-1-tool-2')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-3')).toBeInTheDocument()
+    expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBeNull()
+
+    expect(await screen.findByTestId('cloud-todo-card-goal-WEG-1-2')).toHaveAttribute(
+      'title',
+      expect.stringContaining('验证看板悬浮预览始终展示当前会话目标和最新进展')
+    )
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
@@ -1191,9 +1296,19 @@ describe('CloudTodoWorkspace', () => {
       'true'
     )
     expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-initial-scroll-position',
+      'latest'
+    )
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
       'data-model-name',
       'gpt-5.6-codex'
     )
+    expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-1-2')).toHaveTextContent(
+      '验证看板悬浮预览始终展示当前会话目标和最新进展'
+    )
+    expect(getRuntimeGoal).toHaveBeenCalledWith({
+      address: expect.objectContaining(address),
+    })
     expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
       'max-h-[min(68vh,42rem)]',
       'overflow-y-auto'
@@ -1208,12 +1323,119 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
-    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
-    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
-    expect(await screen.findByTestId('ai-chat-modal')).toHaveAttribute(
-      'data-runtime-task-id',
-      'runtime-2'
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
+      'data-pinned',
+      'true'
     )
+    fireEvent.mouseLeave(screen.getByTestId('cloud-todo-card-WEG-1'))
+    fireEvent.pointerMove(document.body)
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
+  })
+
+  it('keeps a pinned board preview stable and switches it only from another progress row', async () => {
+    const secondItem = {
+      ...item,
+      id: 'WEG-2',
+      sequence_number: 2,
+      title: 'Verify pinned preview switching',
+      status: 'in_review' as const,
+      sort_order: 1,
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [{ ...item, status: 'in_review' as const }, secondItem],
+    }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async itemId => [
+      {
+        id: itemId === item.id ? 1 : 2,
+        loop_item_id: itemId,
+        task_user_id: 1,
+        device_id: 'local-device',
+        task_id: itemId === item.id ? 'runtime-1' : 'runtime-2',
+        task_title: itemId === item.id ? 'First task progress' : 'Second task progress',
+        backend_task_id: null,
+        linked_at: '2026-09-09T00:00:00Z',
+      },
+    ])
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.mouseEnter(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-2'))
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-2')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-2'))
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-1')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveAttribute(
+      'data-pinned',
+      'true'
+    )
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-2')).toHaveTextContent(
+      'Second task progress'
+    )
+  })
+
+  it('restores the execution-stage focus view for the selected project', async () => {
+    localStorage.setItem('wework-board-focus-execution:v1:1:backend:11', 'true')
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-board-focus-running')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-inbox')).toHaveClass('w-[292px]')
+
+    const boardScroll = screen.getByTestId('cloud-board-scroll')
+    boardScroll.scrollLeft = 320
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    await userEvent.click(screen.getByTestId('cloud-board-group-option-priority'))
+
+    expect(screen.queryByTestId('cloud-board-focus-running')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-priority-high')).toHaveClass('w-[292px]')
+    expect(boardScroll.scrollLeft).toBe(0)
+
+    boardScroll.scrollLeft = 240
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    await userEvent.click(screen.getByTestId('cloud-board-group-option-status'))
+
+    expect(screen.getByTestId('cloud-board-focus-running')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[480px]')
+    expect(boardScroll.scrollLeft).toBe(0)
   })
 
   it('shows the cached final assistant response on an in-review task card', async () => {
@@ -3163,17 +3385,15 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    fireEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.getByText('管理项目')).toBeInTheDocument()
     expect(await screen.findByText('2 位成员')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-members-toggle'))
+    fireEvent.click(screen.getByTestId('cloud-project-members-toggle'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
-    await userEvent.type(
-      screen.getByTestId('cloud-project-member-capability-2'),
-      '前端实现与交互验收'
-    )
-    await userEvent.tab()
+    const capabilityInput = screen.getByTestId('cloud-project-member-capability-2')
+    fireEvent.change(capabilityInput, { target: { value: '前端实现与交互验收' } })
+    fireEvent.blur(capabilityInput)
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateCloudProjectMember).toHaveBeenCalledWith(
         project.id,
@@ -3181,10 +3401,12 @@ describe('CloudTodoWorkspace', () => {
         { capability_description: '前端实现与交互验收' }
       )
     )
-    await userEvent.click(screen.getByTestId('cloud-project-board-view'))
+    fireEvent.click(screen.getByTestId('cloud-project-board-view'))
 
-    await userEvent.click(screen.getByTestId('cloud-project-task-search-toggle'))
-    await userEvent.type(screen.getByTestId('cloud-project-task-search-input'), 'missing')
+    fireEvent.click(screen.getByTestId('cloud-project-task-search-toggle'))
+    fireEvent.change(screen.getByTestId('cloud-project-task-search-input'), {
+      target: { value: 'missing' },
+    })
     expect(screen.getByText('没有匹配的任务')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
   })
@@ -3636,16 +3858,18 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await user.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
-    await user.click(screen.getByTestId('cloud-todo-add'))
-    await user.type(screen.getByTestId('workspace-issue-input'), 'Choose one workflow')
-    await user.click(screen.getByTestId('workspace-issue-submit'))
+    fireEvent.click(screen.getByTestId('cloud-todo-add'))
+    const input = screen.getByTestId('workspace-issue-input')
+    await user.click(input)
+    await user.paste('Choose one workflow')
+    fireEvent.click(screen.getByTestId('workspace-issue-submit'))
 
     expect(await screen.findByTestId('automation-selection-options')).toHaveTextContent('Implement')
     expect(screen.getByTestId('automation-selection-options')).toHaveTextContent('Review')
-    await user.click(screen.getByTestId('automation-selection-option-automation-review'))
-    await user.click(screen.getByTestId('automation-selection-confirm'))
+    fireEvent.click(screen.getByTestId('automation-selection-option-automation-review'))
+    fireEvent.click(screen.getByTestId('automation-selection-confirm'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi!.createLoopItem).toHaveBeenLastCalledWith(11, {
@@ -3694,6 +3918,17 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(screen.getByTestId('mock-start-background-task')).toBeInTheDocument()
+    expect(
+      JSON.parse(
+        screen.getByTestId('mock-start-background-task').getAttribute('data-task-request') ?? 'null'
+      )
+    ).toEqual(
+      expect.objectContaining({
+        message: 'Start release work',
+        title: 'Start release work',
+        cloudProjectId: '11',
+      })
+    )
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
@@ -4800,7 +5035,7 @@ describe('CloudTodoWorkspace', () => {
     )
     expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveAttribute(
       'aria-label',
-      'Stopped task'
+      '固定任务进展：Stopped task'
     )
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent('Stopped task')
     expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(

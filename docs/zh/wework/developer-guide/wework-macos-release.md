@@ -8,6 +8,17 @@ Wework 桌面应用使用 Electron。正式构建和发布由
 `.github/workflows/wework-app.yml` 负责；该工作流同时生成 macOS、Windows 和
 Linux 的 Electron 安装包。
 
+macOS arm64 和 x64 发布都使用 Apple Silicon `macos-14` runner。x64 构建先
+校验 Rosetta 2，再通过 `actions/setup-node` 安装 x64 Node.js；安装依赖前，
+工作流校验运行中的 Node.js 架构与目标架构一致。Harness Runtime 的原生依赖按
+运行中的 Node.js 架构准备，仅指定 Electron Builder 的目标架构不足以交叉构建
+完整运行环境。架构不匹配时应修正 Node.js 架构并重新构建，不能复用错误架构的
+产物或仅重跑发布步骤。
+
+正式 macOS arm64 包验证失败时，工作流会清理体积较大的临时运行时目录，并上传
+保留七天的桌面 E2E 诊断产物。必须先用这些日志定位根因，不能通过重跑或放宽
+E2E 断言隐藏失败。
+
 ## 版本与产物
 
 发布版本同时写入 `wework/package.json` 和 `wework/electron/package.json`。正式
@@ -154,6 +165,13 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 完成大小、压缩包哈希和解包内容校验后才写入 `pending`。更新进度依次覆盖组件、
 宿主下载、校验和安装就绪阶段，并累计差分失败前已经传输的字节；Squirrel.Mac 对
 本地缓存 ZIP 的安装交接不计入网络下载量。
+
+单个组件下载遇到明确的瞬时传输失败时，客户端最多尝试三次，并在失败后分别等待
+一秒、两秒再重试。可重试范围仅包括连接中断、DNS/连接/请求超时、HTTP 408、429
+和 5xx。HTTP 4xx（408、429 除外）、压缩包大小或 SHA-256 不匹配、解包内容
+SHA-256 不匹配不得重试，必须保留为真实更新失败。失败尝试已传输的组件字节会在
+重试前从当前进度扣除。`app-update.log` 的失败事件记录脱敏后的错误类型、错误码、
+消息及首层 cause，URL 不写入日志。
 
 Wework 不再打包或下载第二份 Node。启动时会在用户数据目录生成轻量 `node`
 入口，将 `PATH`、`WEWORK_NODE_PATH`、`NODE` 和 `npm_node_execpath` 统一指向
