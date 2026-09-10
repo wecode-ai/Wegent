@@ -236,6 +236,8 @@ import {
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   WINDOW_LIFECYCLE_PROMPT,
   assert,
+  assertModelAttributionHeaders,
+  assertNoModelAttributionHeaders,
   createServer,
   join,
   pathToFileURL,
@@ -1673,6 +1675,7 @@ class DesktopE2EServer {
         'Bearer wework-desktop-e2e-cloud-token',
         'The supervisor model API request did not use the cloud authentication token'
       )
+      assertNoModelAttributionHeaders(request.headers)
       assert.deepEqual(
         body.model_ref,
         {
@@ -1926,7 +1929,12 @@ class DesktopE2EServer {
   async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
-    const modelRequest = { authorization, body, scenario: this.scenario }
+    const modelRequest = {
+      authorization,
+      body,
+      headers: request.headers,
+      scenario: this.scenario,
+    }
     this.modelRequests.push(modelRequest)
     const authenticated =
       authorization === `Bearer ${MODEL_API_KEY}` ||
@@ -1954,6 +1962,7 @@ class DesktopE2EServer {
       )
       assert.ok(modelCase, `Unexpected vision sidecar model request: ${body.model}`)
       if (body.model === modelCase.sidecarModelId) {
+        assertNoModelAttributionHeaders(request.headers)
         assert.equal(protocol, 'chat', 'The vision sidecar reached the wrong protocol endpoint')
         assert.equal(body.stream, false, 'The vision sidecar request must not stream')
         assert.ok(serialized.includes('image_url'), 'The vision sidecar did not receive the image')
@@ -1972,6 +1981,11 @@ class DesktopE2EServer {
         return
       }
       if (body.model === modelCase.mainModelId) {
+        assertModelAttributionHeaders(request.headers, {
+          executor: 'codex',
+          source: 'wegent-app',
+          taskSource: 'wework',
+        })
         assert.equal(protocol, 'responses', 'The vision primary model used the wrong protocol')
         if (codexRequestKind(body) === 'prewarm' || codexRequestKind(body) === 'compaction') {
           const responseId = `vision-sidecar-empty-${this.modelRequests.length}`
@@ -3701,6 +3715,7 @@ class DesktopE2EServer {
       this.recordScenarioRequest('supervisor', modelRequest)
       const requestText = JSON.stringify(body)
       if (body.metadata?.source === 'wework-supervisor') {
+        assertNoModelAttributionHeaders(request.headers)
         assert.equal(body.stream, false, 'The supervisor evaluator request must not stream')
         assert.ok(
           requestText.includes('correction'),
@@ -3748,6 +3763,11 @@ class DesktopE2EServer {
         })
         return
       }
+      assertModelAttributionHeaders(request.headers, {
+        executor: 'codex',
+        source: 'wegent-app',
+        taskSource: requestText.includes(SUPERVISOR_CORRECTION) ? 'unknown' : 'wework',
+      })
       if (requestText.includes(SUPERVISOR_CORRECTION)) {
         const stream = streamingTextEvents(responseId, SUPERVISOR_CORRECTION_COMPLETION_TEXT)
         response.writeHead(200, {
@@ -4574,6 +4594,11 @@ class DesktopE2EServer {
   assertLocalRequestEnvelope(model, body, headers) {
     assert.equal(body.model, model.modelId, `${model.protocol} forwarded the wrong model ID`)
     assert.equal(body.stream, true, `${model.protocol} request was not streaming`)
+    assertModelAttributionHeaders(headers, {
+      executor: 'codex',
+      source: 'wegent-app',
+      taskSource: 'wework',
+    })
     assert.equal(
       headers.authorization,
       `Bearer ${MODEL_API_KEY}`,

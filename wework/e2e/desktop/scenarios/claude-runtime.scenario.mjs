@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
+import { assertModelAttributionHeaders } from '../modules/shared.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -397,7 +398,13 @@ export async function createDesktopScenario({
         writeText(response, `claude-auxiliary-${Date.now()}`, '')
         return true
       }
-      requests.push({ body, prompt })
+      const local = prompt.startsWith('WEWORK_CLAUDE_LOCAL_')
+      assertModelAttributionHeaders(request.headers, {
+        executor: 'claudecode',
+        source: local ? 'wegent-app' : 'wegent-cloud',
+        taskSource: 'wework',
+      })
+      requests.push({ body, headers: request.headers, prompt })
 
       if (prompt === LOCAL_CANCELLATION_PROMPT) {
         response.writeHead(200, {
