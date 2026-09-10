@@ -16,6 +16,19 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+const mockGetRuntimeConfigSync = jest.fn()
+
+jest.mock('@/lib/runtime-config', () => ({
+  getRuntimeConfigSync: () => mockGetRuntimeConfigSync(),
+}))
+
+beforeEach(() => {
+  // This suite exercises tree-derived category visibility. Feature-enabled
+  // deployments deliberately keep the Code Wiki category available without a
+  // current Code Wiki, so they are a different scenario.
+  mockGetRuntimeConfigSync.mockReturnValue({ enableCodeWiki: false })
+})
+
 function createGroup(): Group {
   return {
     id: 1,
