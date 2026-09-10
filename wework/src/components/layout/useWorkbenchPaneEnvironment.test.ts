@@ -62,6 +62,34 @@ describe('resolveConversationSummaryIsGitRepository', () => {
     ).toBe(true)
   })
 
+  test('recognizes a Git worktree from direct branch evidence outside the project root', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        environmentInfo: {
+          additions: '+3',
+          branchName: 'feature/output-summary',
+          deletions: '-1',
+          executionTarget: 'local',
+          isGitRepository: false,
+          workspacePath: '/workspace/worktrees/output-summary',
+        },
+        project: {
+          id: 8,
+          name: 'Repository',
+          tasks: [],
+          config: {
+            workspace: { source: 'local_path', localPath: '/workspace/repository' },
+          },
+        },
+        projectWorkspace: {
+          repoRootFingerprint: null,
+          repoUrl: null,
+          workspacePath: '/workspace/repository',
+        },
+      })
+    ).toBe(true)
+  })
+
   test('recognizes local Git projects from repository metadata', () => {
     expect(
       resolveConversationSummaryIsGitRepository({
@@ -83,6 +111,31 @@ describe('resolveConversationSummaryIsGitRepository', () => {
         },
       })
     ).toBe(true)
+  })
+
+  test('keeps the summary selection unresolved while a project workspace awaits inspection', () => {
+    expect(
+      resolveConversationSummaryIsGitRepository({
+        environmentInfo: {
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+        },
+        project: {
+          id: 8,
+          name: 'Workspace',
+          tasks: [],
+          config: {
+            workspace: { source: 'local_path', localPath: '/workspace/project' },
+          },
+        },
+        projectWorkspace: {
+          repoRootFingerprint: null,
+          repoUrl: null,
+          workspacePath: '/workspace/project',
+        },
+      })
+    ).toBeUndefined()
   })
 
   test('falls back to environment classification before project metadata is available', () => {

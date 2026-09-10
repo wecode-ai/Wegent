@@ -67,6 +67,12 @@ export function resolveConversationSummaryIsGitRepository({
   > | null
 }): boolean | undefined {
   if (project?.config?.workspace?.source === 'git') return true
+  if (
+    Boolean(environmentInfo.branchName?.trim()) ||
+    Boolean(environmentInfo.additions || environmentInfo.deletions)
+  ) {
+    return true
+  }
   const rawEnvironmentWorkspacePath = environmentInfo.workspacePath
   const environmentWorkspacePath = rawEnvironmentWorkspacePath
     ? normalizeRuntimeWorkspacePath(rawEnvironmentWorkspacePath)
@@ -83,7 +89,10 @@ export function resolveConversationSummaryIsGitRepository({
     return environmentInfo.isGitRepository
   }
   if (projectWorkspace) {
-    return Boolean(projectWorkspace.repoRootFingerprint?.trim() || projectWorkspace.repoUrl?.trim())
+    if (projectWorkspace.repoRootFingerprint?.trim() || projectWorkspace.repoUrl?.trim()) {
+      return true
+    }
+    return environmentInfo.isGitRepository === undefined ? undefined : false
   }
   return environmentInfo.isGitRepository
 }

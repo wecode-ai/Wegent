@@ -86,8 +86,6 @@ export default function GitConversationSummary({
   const branchNameSource =
     typeof context['conversation.title'] === 'string' ? context['conversation.title'] : undefined
 
-  if (info.isGitRepository === false) return null
-
   return (
     <>
       <GitEnvironmentOverview info={info} devices={environment.devices} />
