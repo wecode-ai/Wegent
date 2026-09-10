@@ -2859,10 +2859,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'workspace-mention'
       await control.command('fill', composerSelector, { value: '@auth' })
-      await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
+        text: 'auth.ts',
       })
-      await control.command('click', '[data-testid="workspace-mention-option-0"]')
       await control.command('waitFor', '[data-testid="composer-path-chip-auth-ts"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })

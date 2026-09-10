@@ -44,6 +44,7 @@ import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
+import { getTelemetryConfig } from '@/telemetry/config'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -86,6 +87,7 @@ interface TrayDisplayOption {
 }
 
 export function GeneralSettingsPage() {
+  const telemetryDistribution = getTelemetryConfig().distribution
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
@@ -895,19 +897,21 @@ export function GeneralSettingsPage() {
         </SettingsGroup>
       </section>
 
-      <section data-testid="general-settings-privacy-section" className="mt-12">
-        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
-          {t('workbench.general_settings_privacy_title')}
-        </div>
-        <SettingsGroup className="rounded-xl !bg-background">
-          {renderSwitchRow({
-            preferenceKey: 'telemetryEnabled',
-            testId: 'general-telemetry-toggle',
-            label: t('workbench.general_settings_telemetry'),
-            description: t('workbench.general_settings_telemetry_description'),
-          })}
-        </SettingsGroup>
-      </section>
+      {telemetryDistribution === 'public' ? (
+        <section data-testid="general-settings-privacy-section" className="mt-12">
+          <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+            {t('workbench.general_settings_privacy_title')}
+          </div>
+          <SettingsGroup className="rounded-xl !bg-background">
+            {renderSwitchRow({
+              preferenceKey: 'telemetryEnabled',
+              testId: 'general-telemetry-toggle',
+              label: t('workbench.general_settings_telemetry'),
+              description: t('workbench.general_settings_telemetry_description'),
+            })}
+          </SettingsGroup>
+        </section>
+      ) : null}
 
       <section data-testid="general-settings-popout-section" className="mt-12">
         <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">

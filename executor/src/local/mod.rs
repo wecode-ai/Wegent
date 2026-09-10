@@ -15,6 +15,7 @@ pub mod harnesses;
 pub mod local_skills;
 pub mod native_git;
 pub mod plugin_catalog;
+pub mod plugin_creator;
 pub mod plugin_import;
 pub mod pty;
 pub mod session;

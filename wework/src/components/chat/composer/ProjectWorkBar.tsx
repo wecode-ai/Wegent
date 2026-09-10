@@ -496,7 +496,7 @@ export function ProjectWorkBar({
                 isMobile
                   ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
                   : cn(
-                      'z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                      'z-popover flex w-80 flex-col overflow-hidden rounded-2xl border border-border bg-popover p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
                       externalMenuAnchorElement
                         ? 'fixed'
                         : `absolute left-0 ${menuLayout.placement === 'below' ? 'top-9' : 'bottom-9'}`
@@ -521,7 +521,7 @@ export function ProjectWorkBar({
                     t('workbench.enter_project_work', '进入项目工作'),
                   closeMenu
                 )}
-              <div className={cn(isMobile && 'flex min-h-0 flex-col px-5 pb-5')}>
+              <div className={cn('flex min-h-0 flex-1 flex-col', isMobile && 'px-5 pb-5')}>
                 <label
                   className={cn(
                     'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
