@@ -28,14 +28,25 @@ class _MemoryDeviceCache:
         value = self.values.get(key)
         return copy.deepcopy(value) if value is not None else None
 
+    async def get_or_raise(self, key: str):
+        return await self.get(key)
+
     async def set(self, key: str, value: dict, expire: int | None = None) -> bool:
         self.values[key] = copy.deepcopy(value)
         return True
+
+    async def set_or_raise(
+        self, key: str, value: dict, expire: int | None = None
+    ) -> bool:
+        return await self.set(key, value, expire)
 
     async def mget(self, keys: list[str]) -> dict[str, dict]:
         return {
             key: copy.deepcopy(self.values[key]) for key in keys if key in self.values
         }
+
+    async def mget_or_raise(self, keys: list[str]) -> dict[str, dict]:
+        return await self.mget(keys)
 
 
 def _runtime_features(*, managed: bool) -> dict:
