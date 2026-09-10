@@ -2,10 +2,13 @@ import type {
   WeworkCommandDefinition,
   WeworkCommandHandler,
   WeworkComposerReferenceContribution,
+  WeworkConversationReference,
+  WeworkConversationSnapshot,
   WeworkContextPrimitive,
   WeworkExtensionHost,
   WeworkKeybindingContribution,
   WeworkMenuContribution,
+  WeworkTelemetrySink,
 } from '../../../dsh/app-wework/client'
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -14,12 +17,23 @@ import type { KeybindingCommand } from '@/lib/keybindings'
 
 declare global {
   interface Window {
+    __WEWORK_DSH_APP_BRIDGE__?: {
+      bindConversationController(controller: DshConversationController): () => void
+    }
     __WEWORK_DSH_EXTENSIONS__?: WeworkExtensionHost
   }
 }
 
+interface DshConversationController {
+  getTranscript(reference: WeworkConversationReference): Promise<WeworkConversationSnapshot>
+}
+
 export function getDshExtensionHost(): WeworkExtensionHost | null {
   return window.__WEWORK_DSH_EXTENSIONS__ ?? null
+}
+
+export function bindDshConversationController(controller: DshConversationController): () => void {
+  return window.__WEWORK_DSH_APP_BRIDGE__?.bindConversationController(controller) ?? (() => {})
 }
 
 export function registerDshCommand(
@@ -89,6 +103,14 @@ export function subscribeDshExtensions(listener: () => void): () => void {
   return host.subscribe(listener)
 }
 
+export function getDshTelemetrySinks(): readonly WeworkTelemetrySink[] {
+  return getDshExtensionHost()?.telemetry.sinks.list() ?? []
+}
+
+export function subscribeDshTelemetrySinks(listener: () => void): () => void {
+  return getDshExtensionHost()?.telemetry.sinks.subscribe(listener) ?? (() => {})
+}
+
 export function getDshKeybindingDefaults(platform: DesktopPlatform): readonly KeybindingCommand[] {
   const host = getDshExtensionHost()
   if (!host) return []
@@ -111,4 +133,5 @@ export type {
   WeworkMenuContribution,
   WeworkResolvedMenuContribution,
   WeworkResolvedComposerReferenceContribution,
+  WeworkTelemetrySink,
 } from '../../../dsh/app-wework/client'

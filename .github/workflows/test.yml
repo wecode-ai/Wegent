@@ -385,6 +385,10 @@ jobs:
           TZ: Asia/Shanghai
         run: pnpm --filter wework exec vitest run --coverage --passWithNoTests --shard=${{ matrix.shard }}/2
 
+      - name: Run Wework Electron tests
+        if: matrix.shard == 1
+        run: pnpm --dir wework/electron test
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

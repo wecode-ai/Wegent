@@ -7,12 +7,14 @@ export type RuntimeLiveToolActivity = Pick<
 
 export interface RuntimeLiveActivity {
   active: boolean
+  processText: string
   thinking: string
   tools: RuntimeLiveToolActivity[]
 }
 
 export const EMPTY_RUNTIME_LIVE_ACTIVITY: RuntimeLiveActivity = {
   active: false,
+  processText: '',
   thinking: '',
   tools: [],
 }
@@ -30,6 +32,7 @@ export function getLatestRuntimeLiveActivity(messages: WorkbenchMessage[]): Runt
 
     return {
       active: true,
+      processText: getRuntimeMessageProcessText(message),
       thinking: getRuntimeMessageActiveThinking(message),
       tools:
         message.blocks
@@ -49,12 +52,50 @@ export function getLatestRuntimeLiveActivity(messages: WorkbenchMessage[]): Runt
 }
 
 export function runtimeLiveActivitySnapshot(activity: RuntimeLiveActivity): string {
-  if (!activity.active || (!activity.thinking && activity.tools.length === 0)) return ''
+  if (
+    !activity.active ||
+    (!activity.processText && !activity.thinking && activity.tools.length === 0)
+  ) {
+    return ''
+  }
   return JSON.stringify(activity)
 }
 
 export function runtimeLiveActivityFromSnapshot(snapshot: string): RuntimeLiveActivity {
-  return snapshot ? (JSON.parse(snapshot) as RuntimeLiveActivity) : EMPTY_RUNTIME_LIVE_ACTIVITY
+  if (!snapshot) return EMPTY_RUNTIME_LIVE_ACTIVITY
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(snapshot)
+  } catch {
+    return EMPTY_RUNTIME_LIVE_ACTIVITY
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return EMPTY_RUNTIME_LIVE_ACTIVITY
+  }
+
+  const activity = parsed as Record<string, unknown>
+  return {
+    active: activity.active === true,
+    processText: typeof activity.processText === 'string' ? activity.processText : '',
+    thinking: typeof activity.thinking === 'string' ? activity.thinking : '',
+    tools: Array.isArray(activity.tools)
+      ? (activity.tools as RuntimeLiveToolActivity[])
+      : EMPTY_RUNTIME_LIVE_ACTIVITY.tools,
+  }
+}
+
+function getRuntimeMessageProcessText(message: WorkbenchMessage): string {
+  if (message.role !== 'assistant' || message.status !== 'streaming' || !message.blocks?.length) {
+    return ''
+  }
+
+  for (let index = message.blocks.length - 1; index >= 0; index -= 1) {
+    const block = message.blocks[index]
+    if (block?.type === 'text' && block.content.trim()) return block.content.trim()
+  }
+
+  return ''
 }
 
 function getLatestActiveThinkingBlock(blocks: ProcessingBlock[] | undefined): string {

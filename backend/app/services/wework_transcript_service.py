@@ -2,15 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Synchronization and hot/cold storage for Wework transcripts."""
+"""Synchronization metadata for native Wework transcript segments."""
 
 import hashlib
-import json
+import logging
+import tempfile
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import BinaryIO
 
-import zstandard
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.wework_transcript import (
@@ -23,9 +23,15 @@ from app.schemas.wework_transcript import (
     TranscriptArchiveRequest,
     TranscriptLeaseReleaseRequest,
     TranscriptLeaseRequest,
-    TranscriptTurnAppendRequest,
+    TranscriptSegmentCommitRequest,
 )
-from app.services.wework_transcript_storage import wework_transcript_storage
+from app.services.wework_transcript_storage import (
+    WeworkTranscriptStorageError,
+    wework_transcript_storage,
+)
+
+logger = logging.getLogger(__name__)
+MAX_SEGMENTS_PRUNED_PER_COMMIT = 20
 
 
 class WeworkTranscriptError(RuntimeError):
@@ -139,14 +145,12 @@ def acquire_lease(
             "fork_identity_conflict",
             "Wework transcript already exists with a different parent",
         )
-
     lease_active = transcript.writer_lease_expires_at > now
     if lease_active and transcript.writer_client_id != request.client_id:
         raise WeworkTranscriptError(
             "lease_held",
             "Wework transcript is being edited on another device",
         )
-
     if transcript.writer_client_id != request.client_id or not lease_active:
         transcript.writer_fencing_token += 1
     transcript.writer_client_id = request.client_id
@@ -157,17 +161,6 @@ def acquire_lease(
     db.commit()
     db.refresh(transcript)
     return transcript
-
-
-def _validate_fork_request(request: TranscriptLeaseRequest) -> None:
-    has_parent = request.parent_transcript_id is not None
-    has_fork_point = request.forked_at_sequence is not None
-    if has_parent != has_fork_point:
-        raise WeworkTranscriptError(
-            "invalid_fork",
-            "Wework transcript parent and fork point must be provided together",
-            status_code=422,
-        )
 
 
 def renew_lease(
@@ -216,13 +209,14 @@ def release_lease(
     return transcript
 
 
-def append_turns(
+def upload_segment(
     db: Session,
     *,
     user_id: int,
     transcript_id: str,
-    request: TranscriptTurnAppendRequest,
-) -> tuple[WeworkTranscript, int]:
+    request: TranscriptSegmentCommitRequest,
+    source: BinaryIO,
+) -> tuple[WeworkTranscript, bool]:
     transcript = get_transcript(
         db,
         user_id=user_id,
@@ -230,91 +224,112 @@ def append_turns(
         for_update=True,
     )
     _require_lease(transcript, request.client_id, request.fencing_token)
-    if request.turns[-1].sequence <= transcript.archived_through_sequence:
-        return transcript, 0
-
-    expected = request.base_sequence + 1
-    for turn in request.turns:
-        if turn.sequence != expected:
-            raise WeworkTranscriptError(
-                "invalid_sequence",
-                "Transcript turns must contain a contiguous sequence",
-                status_code=422,
-            )
-        expected += 1
-
-    existing_turns = {
-        row.turn_id: row
-        for row in db.query(WeworkTranscriptTurn)
+    existing_archive = (
+        db.query(WeworkTranscriptArchive)
+        .filter(
+            WeworkTranscriptArchive.transcript_db_id == transcript.id,
+            WeworkTranscriptArchive.to_sequence == request.sequence,
+        )
+        .first()
+    )
+    existing_turn = (
+        db.query(WeworkTranscriptTurn)
         .filter(
             WeworkTranscriptTurn.transcript_db_id == transcript.id,
-            WeworkTranscriptTurn.turn_id.in_([turn.turn_id for turn in request.turns]),
+            (
+                (WeworkTranscriptTurn.sequence == request.sequence)
+                | (WeworkTranscriptTurn.turn_id == request.turn_id)
+            ),
         )
-        .all()
-    }
-    if len(existing_turns) == len(request.turns) and all(
-        existing_turns[turn.turn_id].sequence == turn.sequence
-        and existing_turns[turn.turn_id].payload == turn.payload
-        for turn in request.turns
-    ):
-        return transcript, 0
-
-    if transcript.current_sequence != request.base_sequence:
-        raise WeworkTranscriptError(
-            "sequence_conflict",
-            "Transcript sequence has changed; pull remote turns before retrying",
-        )
-
-    if existing_turns:
+        .first()
+    )
+    from_sequence = 0 if "snapshot" in request.format else request.sequence
+    object_key = _segment_object_key(user_id, transcript_id, request)
+    if existing_archive is not None or existing_turn is not None:
+        if _segment_matches(
+            existing_archive,
+            from_sequence=from_sequence,
+            object_key=object_key,
+            request=request,
+        ) and _turn_matches(existing_turn, request):
+            return transcript, False
+        if existing_archive is not None and not _segment_matches(
+            existing_archive,
+            from_sequence=from_sequence,
+            object_key=object_key,
+            request=request,
+        ):
+            raise WeworkTranscriptError(
+                "segment_conflict",
+                "A different native segment already exists at this sequence",
+            )
         raise WeworkTranscriptError(
             "turn_conflict",
-            "One or more transcript turns already exist with a different sequence",
+            "A different transcript summary already exists for this turn or sequence",
         )
-
-    for turn in request.turns:
-        db.add(
-            WeworkTranscriptTurn(
-                transcript_db_id=transcript.id,
-                sequence=turn.sequence,
-                turn_id=turn.turn_id,
-                payload=turn.payload,
+    _validate_segment_write(transcript, request)
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as staged:
+        stored_size, stored_sha256 = _stage_segment(source, staged, request.size_bytes)
+        if stored_size != request.size_bytes:
+            raise WeworkTranscriptError(
+                "segment_size_mismatch",
+                "Uploaded transcript segment size does not match its manifest",
+                status_code=422,
             )
+        if stored_sha256 != request.sha256:
+            raise WeworkTranscriptError(
+                "segment_digest_mismatch",
+                "Uploaded transcript segment digest does not match its manifest",
+                status_code=422,
+            )
+        staged.seek(0)
+        wework_transcript_storage.put_stream(object_key, staged, stored_size)
+    db.add(
+        WeworkTranscriptArchive(
+            transcript_db_id=transcript.id,
+            from_sequence=from_sequence,
+            to_sequence=request.sequence,
+            storage_key=object_key,
+            sha256=request.sha256,
+            size_bytes=request.size_bytes,
+            format=request.format,
         )
-    transcript.current_sequence = request.turns[-1].sequence
+    )
+    db.add(
+        WeworkTranscriptTurn(
+            transcript_db_id=transcript.id,
+            sequence=request.sequence,
+            turn_id=request.turn_id,
+            payload=request.summary,
+        )
+    )
+    transcript.current_sequence = request.sequence
+    if from_sequence == 0:
+        transcript.archived_through_sequence = request.sequence
     transcript.state = "active"
     transcript.archived_at = EPOCH_TIME
     if request.title is not None:
         transcript.title = request.title
     transcript.updated_at = utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        try:
+            wework_transcript_storage.delete(object_key)
+        except WeworkTranscriptStorageError:
+            logger.warning(
+                "Failed to remove uncommitted Wework transcript segment",
+                extra={
+                    "transcript_db_id": transcript.id,
+                    "sequence": request.sequence,
+                },
+                exc_info=True,
+            )
+        raise
     db.refresh(transcript)
-    return transcript, len(request.turns)
-
-
-def list_turns(
-    db: Session,
-    *,
-    user_id: int,
-    transcript_id: str,
-    after: int,
-    limit: int,
-) -> tuple[WeworkTranscript, list[WeworkTranscriptTurn], bool]:
-    transcript = get_transcript(
-        db,
-        user_id=user_id,
-        transcript_id=transcript_id,
-    )
-    rows = (
-        db.query(WeworkTranscriptTurn)
-        .filter(
-            WeworkTranscriptTurn.transcript_db_id == transcript.id,
-            WeworkTranscriptTurn.sequence > after,
-        )
-        .order_by(WeworkTranscriptTurn.sequence)
-        .limit(limit + 1)
-        .all()
-    )
-    return transcript, rows[:limit], len(rows) > limit
+    _prune_obsolete_segments(db, transcript.id)
+    return transcript, True
 
 
 def list_archives(
@@ -322,10 +337,33 @@ def list_archives(
     *,
     transcript_db_id: int,
 ) -> list[WeworkTranscriptArchive]:
+    retained_floor = _retained_archive_floor(db, transcript_db_id)
     return (
         db.query(WeworkTranscriptArchive)
-        .filter(WeworkTranscriptArchive.transcript_db_id == transcript_db_id)
-        .order_by(WeworkTranscriptArchive.from_sequence)
+        .filter(
+            WeworkTranscriptArchive.transcript_db_id == transcript_db_id,
+            WeworkTranscriptArchive.to_sequence >= retained_floor,
+        )
+        .order_by(WeworkTranscriptArchive.to_sequence)
+        .all()
+    )
+
+
+def list_turns(
+    db: Session,
+    *,
+    transcript_db_id: int,
+    after_sequence: int,
+    limit: int,
+) -> list[WeworkTranscriptTurn]:
+    return (
+        db.query(WeworkTranscriptTurn)
+        .filter(
+            WeworkTranscriptTurn.transcript_db_id == transcript_db_id,
+            WeworkTranscriptTurn.sequence > after_sequence,
+        )
+        .order_by(WeworkTranscriptTurn.sequence)
+        .limit(limit)
         .all()
     )
 
@@ -337,11 +375,7 @@ def get_archive(
     transcript_id: str,
     archive_id: int,
 ) -> WeworkTranscriptArchive:
-    transcript = get_transcript(
-        db,
-        user_id=user_id,
-        transcript_id=transcript_id,
-    )
+    transcript = get_transcript(db, user_id=user_id, transcript_id=transcript_id)
     archive = (
         db.query(WeworkTranscriptArchive)
         .filter(
@@ -353,41 +387,16 @@ def get_archive(
     if archive is None:
         raise WeworkTranscriptError(
             "archive_not_found",
-            "Wework transcript archive not found",
+            "Wework transcript segment not found",
+            status_code=404,
+        )
+    if archive.to_sequence < _retained_archive_floor(db, transcript.id):
+        raise WeworkTranscriptError(
+            "archive_not_found",
+            "Wework transcript segment not found",
             status_code=404,
         )
     return archive
-
-
-def list_archive_turns(
-    db: Session,
-    *,
-    user_id: int,
-    transcript_id: str,
-    archive_id: int,
-    after: int,
-    limit: int,
-) -> tuple[WeworkTranscriptArchive, list[dict[str, Any]], bool]:
-    archive = get_archive(
-        db,
-        user_id=user_id,
-        transcript_id=transcript_id,
-        archive_id=archive_id,
-    )
-    content = wework_transcript_storage.get(archive.storage_key)
-    if hashlib.sha256(content).hexdigest() != archive.sha256:
-        raise WeworkTranscriptStorageError(
-            "Archived Wework transcript failed integrity verification"
-        )
-    try:
-        decoded = zstandard.ZstdDecompressor().decompress(content)
-        turns = [json.loads(line) for line in decoded.splitlines() if line]
-    except (json.JSONDecodeError, zstandard.ZstdError) as exc:
-        raise WeworkTranscriptStorageError(
-            "Archived Wework transcript is invalid"
-        ) from exc
-    selected = [turn for turn in turns if turn["sequence"] > after]
-    return archive, selected[:limit], len(selected) > limit
 
 
 def archive_transcript(
@@ -396,7 +405,7 @@ def archive_transcript(
     user_id: int,
     transcript_id: str,
     request: TranscriptArchiveRequest,
-) -> tuple[WeworkTranscript, WeworkTranscriptArchive | None]:
+) -> WeworkTranscript:
     transcript = get_transcript(
         db,
         user_id=user_id,
@@ -404,39 +413,6 @@ def archive_transcript(
         for_update=True,
     )
     _require_lease(transcript, request.client_id, request.fencing_token)
-    turns = (
-        db.query(WeworkTranscriptTurn)
-        .filter(WeworkTranscriptTurn.transcript_db_id == transcript.id)
-        .order_by(WeworkTranscriptTurn.sequence)
-        .all()
-    )
-    archive = None
-    if turns:
-        content = _archive_content(turns)
-        digest = hashlib.sha256(content).hexdigest()
-        from_sequence = turns[0].sequence
-        to_sequence = turns[-1].sequence
-        transcript_key = hashlib.sha256(transcript_id.encode()).hexdigest()
-        object_key = (
-            f"users/{user_id}/transcripts/{transcript_key}/"
-            f"{from_sequence}-{to_sequence}-{digest}.jsonl.zst"
-        )
-        wework_transcript_storage.put(object_key, content)
-        archive = WeworkTranscriptArchive(
-            transcript_db_id=transcript.id,
-            from_sequence=from_sequence,
-            to_sequence=to_sequence,
-            storage_key=object_key,
-            sha256=digest,
-            size_bytes=len(content),
-        )
-        db.add(archive)
-        db.query(WeworkTranscriptTurn).filter(
-            WeworkTranscriptTurn.transcript_db_id == transcript.id,
-            WeworkTranscriptTurn.sequence <= to_sequence,
-        ).delete(synchronize_session=False)
-        transcript.archived_through_sequence = to_sequence
-
     transcript.state = "archived"
     transcript.archived_at = utcnow()
     transcript.writer_client_id = ""
@@ -444,9 +420,157 @@ def archive_transcript(
     transcript.updated_at = utcnow()
     db.commit()
     db.refresh(transcript)
-    if archive is not None:
-        db.refresh(archive)
-    return transcript, archive
+    return transcript
+
+
+def _validate_fork_request(request: TranscriptLeaseRequest) -> None:
+    has_parent = request.parent_transcript_id is not None
+    has_fork_point = request.forked_at_sequence is not None
+    if has_parent != has_fork_point:
+        raise WeworkTranscriptError(
+            "invalid_fork",
+            "Wework transcript parent and fork point must be provided together",
+            status_code=422,
+        )
+
+
+def _validate_segment_write(
+    transcript: WeworkTranscript,
+    request: TranscriptSegmentCommitRequest,
+) -> None:
+    _require_lease(transcript, request.client_id, request.fencing_token)
+    if request.sequence != request.base_sequence + 1:
+        raise WeworkTranscriptError(
+            "invalid_sequence",
+            "A transcript segment must advance exactly one sequence",
+            status_code=422,
+        )
+    if transcript.current_sequence != request.base_sequence:
+        raise WeworkTranscriptError(
+            "sequence_conflict",
+            "Transcript sequence has changed; create a full snapshot branch",
+        )
+
+
+def _segment_object_key(
+    user_id: int,
+    transcript_id: str,
+    request: TranscriptSegmentCommitRequest,
+) -> str:
+    transcript_key = hashlib.sha256(transcript_id.encode()).hexdigest()
+    kind = "snapshot" if "snapshot" in request.format else "delta"
+    return (
+        f"users/{user_id}/transcripts/{transcript_key}/"
+        f"{request.sequence}-{kind}-{request.sha256}.tgz.aes256gcm"
+    )
+
+
+def _stage_segment(
+    source: BinaryIO,
+    target: BinaryIO,
+    declared_size: int,
+) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    while chunk := source.read(1024 * 1024):
+        size += len(chunk)
+        if size > declared_size:
+            return size, ""
+        digest.update(chunk)
+        target.write(chunk)
+    return size, digest.hexdigest()
+
+
+def _segment_matches(
+    archive: WeworkTranscriptArchive | None,
+    *,
+    from_sequence: int,
+    object_key: str,
+    request: TranscriptSegmentCommitRequest,
+) -> bool:
+    return archive is not None and (
+        archive.from_sequence == from_sequence
+        and archive.storage_key == object_key
+        and archive.sha256 == request.sha256
+        and archive.size_bytes == request.size_bytes
+        and archive.format == request.format
+    )
+
+
+def _turn_matches(
+    turn: WeworkTranscriptTurn | None,
+    request: TranscriptSegmentCommitRequest,
+) -> bool:
+    return turn is not None and (
+        turn.sequence == request.sequence
+        and turn.turn_id == request.turn_id
+        and turn.payload == request.summary
+    )
+
+
+def _prune_obsolete_segments(db: Session, transcript_db_id: int) -> None:
+    snapshots = (
+        db.query(WeworkTranscriptArchive)
+        .filter(
+            WeworkTranscriptArchive.transcript_db_id == transcript_db_id,
+            WeworkTranscriptArchive.from_sequence == 0,
+        )
+        .order_by(WeworkTranscriptArchive.to_sequence.desc())
+        .all()
+    )
+    if len(snapshots) < 2:
+        return
+    retained_snapshot_sequence = snapshots[1].to_sequence
+    obsolete = (
+        db.query(WeworkTranscriptArchive)
+        .filter(
+            WeworkTranscriptArchive.transcript_db_id == transcript_db_id,
+            WeworkTranscriptArchive.to_sequence < retained_snapshot_sequence,
+        )
+        .order_by(WeworkTranscriptArchive.to_sequence)
+        .limit(MAX_SEGMENTS_PRUNED_PER_COMMIT)
+        .all()
+    )
+    for segment in obsolete:
+        try:
+            wework_transcript_storage.delete(segment.storage_key)
+        except WeworkTranscriptStorageError:
+            logger.warning(
+                "Failed to prune obsolete Wework transcript segment",
+                extra={
+                    "transcript_db_id": transcript_db_id,
+                    "sequence": segment.to_sequence,
+                },
+                exc_info=True,
+            )
+            continue
+        try:
+            db.delete(segment)
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.warning(
+                "Failed to remove pruned Wework transcript metadata",
+                extra={
+                    "transcript_db_id": transcript_db_id,
+                    "sequence": segment.to_sequence,
+                },
+                exc_info=True,
+            )
+
+
+def _retained_archive_floor(db: Session, transcript_db_id: int) -> int:
+    snapshots = (
+        db.query(WeworkTranscriptArchive.to_sequence)
+        .filter(
+            WeworkTranscriptArchive.transcript_db_id == transcript_db_id,
+            WeworkTranscriptArchive.from_sequence == 0,
+        )
+        .order_by(WeworkTranscriptArchive.to_sequence.desc())
+        .limit(2)
+        .all()
+    )
+    return snapshots[1][0] if len(snapshots) == 2 else 0
 
 
 def _require_lease(
@@ -463,18 +587,3 @@ def _require_lease(
             "lease_invalid",
             "Wework transcript write lease is missing, expired, or stale",
         )
-
-
-def _archive_content(turns: list[WeworkTranscriptTurn]) -> bytes:
-    lines = []
-    for turn in turns:
-        value: dict[str, Any] = {
-            "sequence": turn.sequence,
-            "turnId": turn.turn_id,
-            "payload": turn.payload,
-            "createdAt": turn.created_at.isoformat(),
-        }
-        lines.append(
-            json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
-        )
-    return zstandard.ZstdCompressor(level=6).compress(b"\n".join(lines) + b"\n")

@@ -74,6 +74,8 @@ Wework uses a separate Codex home so it does not write directly into the user's 
 
 To reuse the user's existing login, Wework links the user's `~/.codex/auth.json` into the Wework Codex home. If the target is a stale symlink, it is removed and recreated; on non-Unix systems the auth file is copied. Plugins, marketplace caches, and Wework runtime config remain under Wework's own Codex home.
 
+When no reusable Codex login exists on the device, the user can select **Sign in** under **Settings → Model settings → Codex Settings → Authentication**. Wework asks the local Executor to start Codex app-server's ChatGPT browser-login protocol, opens the authorization page in the system browser, and polls the app-server account state. After sign-in, authentication remains stored in the separate Wework Codex home. Cancelling, timing out, leaving the page, or failing to open the browser cancels the matching login session; the frontend never reads or displays tokens, authentication file paths, or file digests.
+
 On first startup, if the Wework Codex home has not been initialized and a native `~/.codex` directory exists, the app shows a migration choice during startup. The user can choose to:
 
 - Create a new Wework Codex home and only reuse the auth link.

@@ -78,20 +78,27 @@ impl SkillEntry {
 /// deduplicated, sorted JSON array of skills.
 pub async fn list_local_skills() -> CommandResult {
     let started_at = Instant::now();
-    let skills = tokio::task::spawn_blocking(collect_skills)
-        .await
-        .unwrap_or_default();
+    let result = tokio::task::spawn_blocking(|| {
+        super::plugin_creator::install(&codex_home_dir())?;
+        Ok::<_, String>(collect_skills())
+    })
+    .await;
+    let (skills, error) = match result {
+        Ok(Ok(skills)) => (skills, None),
+        Ok(Err(error)) => (Vec::new(), Some(error)),
+        Err(error) => (Vec::new(), Some(format!("Skill discovery failed: {error}"))),
+    };
     let stdout = Value::Array(skills.iter().map(SkillEntry::to_json).collect());
     CommandResult {
-        success: true,
-        exit_code: Some(0),
+        success: error.is_none(),
+        exit_code: Some(if error.is_none() { 0 } else { 1 }),
         stdout,
-        stderr: String::new(),
+        stderr: error.clone().unwrap_or_default(),
         duration: elapsed_seconds(started_at),
         timed_out: false,
         stdout_truncated: false,
         stderr_truncated: false,
-        error: None,
+        error,
     }
 }
 

@@ -23,12 +23,12 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions,
-        start_codex_app_server_thread, AgentCommandPlanner, AgentProcessEngine,
-        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
-        CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
+        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
+        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
+        CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
     config::device::ConnectionConfig,
     hooks::{
@@ -146,7 +146,10 @@ use super::{
         CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
-    events::{emit_response_event, is_context_compaction_request, CodexNotificationEventMapper},
+    events::{
+        emit_response_event, emit_runtime_work_changed, is_context_compaction_request,
+        CodexNotificationEventMapper,
+    },
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
@@ -873,7 +876,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
-            "runtime.tasks.transcript.import" => self.import_transcript_turns(payload).await,
+            "runtime.tasks.transcript.export" => self.export_transcript_segment(payload).await,
+            "runtime.tasks.transcript.restore" => self.restore_transcript_segments(payload).await,
             "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
@@ -923,6 +927,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
+            "runtime.codex.auth.read" => self.read_codex_account().await,
+            "runtime.codex.auth.login.start" => self.start_codex_login().await,
+            "runtime.codex.auth.login.cancel" => self.cancel_codex_login(payload).await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
             "runtime.codex.catalog.overrides.read" => {
                 self.read_codex_model_overrides(payload).await

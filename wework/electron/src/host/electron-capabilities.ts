@@ -51,6 +51,7 @@ import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { SecureValueStore } from './secure-value-store.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 import { RotatingLog } from '../runtime/rotating-log.js'
+import type { WeworkSyncRequest } from './wework-sync-request.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -105,12 +106,7 @@ export interface ElectronDesktopServices {
   openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
-  weworkSyncRequest?: (request: {
-    apiBaseUrl: string
-    path: string
-    method: 'GET' | 'POST' | 'PUT'
-    body?: unknown
-  }) => Promise<unknown>
+  weworkSyncRequest?: (request: WeworkSyncRequest) => Promise<unknown>
 }
 
 interface ElectronNotificationHandle {
@@ -193,7 +189,7 @@ export interface ElectronE2EHost {
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
-  traySnapshot: () => TraySnapshot | null
+  traySnapshot: () => (TraySnapshot & { dockBadge: string | null }) | null
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   popoutWindowSnapshot: () => {
@@ -688,11 +684,27 @@ export function createElectronCapabilityRouter(
     }
     const method = optionalStringParam(params, 'method') ?? 'GET'
     if (!['GET', 'POST', 'PUT'].includes(method)) invalidParam('method')
+    const file = Object.hasOwn(params, 'file') ? recordParam(params, 'file') : null
     return desktopServices.weworkSyncRequest({
       apiBaseUrl: stringParam(params, 'apiBaseUrl'),
       path: stringParam(params, 'path'),
       method: method as 'GET' | 'POST' | 'PUT',
       ...(Object.hasOwn(params, 'body') ? { body: params.body } : {}),
+      ...(Object.hasOwn(params, 'downloadPath')
+        ? { downloadPath: stringParam(params, 'downloadPath') }
+        : {}),
+      ...(Object.hasOwn(params, 'downloadSizeBytes')
+        ? { downloadSizeBytes: requiredIntegerParam(params, 'downloadSizeBytes') }
+        : {}),
+      ...(file
+        ? {
+            file: {
+              path: stringParam(file, 'path'),
+              name: stringParam(file, 'name'),
+              contentType: stringParam(file, 'contentType'),
+            },
+          }
+        : {}),
     })
   })
   registerRendererStorageCapabilities(router, rendererStorage)

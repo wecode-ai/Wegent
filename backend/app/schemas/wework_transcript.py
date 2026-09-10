@@ -9,23 +9,32 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class TranscriptTurnInput(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    turn_id: str = Field(alias="turnId", min_length=1, max_length=100)
-    sequence: int = Field(ge=1)
-    payload: dict[str, Any]
+MAX_ENCRYPTED_TRANSCRIPT_SEGMENT_BYTES = 256 * 1024 * 1024 + 33
 
 
-class TranscriptTurnAppendRequest(BaseModel):
+class TranscriptSegmentRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     client_id: str = Field(alias="clientId", min_length=1, max_length=100)
     base_sequence: int = Field(alias="baseSequence", ge=0)
     fencing_token: int = Field(alias="fencingToken", ge=1)
     title: str | None = Field(default=None, max_length=512)
-    turns: list[TranscriptTurnInput] = Field(min_length=1, max_length=100)
+    sequence: int = Field(ge=1)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(
+        alias="sizeBytes",
+        gt=0,
+        le=MAX_ENCRYPTED_TRANSCRIPT_SEGMENT_BYTES,
+    )
+    format: str = Field(
+        pattern=r"^codex-(delta|snapshot)\.v1\.tgz\.aes256gcm$",
+        max_length=32,
+    )
+
+
+class TranscriptSegmentCommitRequest(TranscriptSegmentRequest):
+    turn_id: str = Field(alias="turnId", min_length=1, max_length=100)
+    summary: dict[str, Any]
 
 
 class TranscriptLeaseRequest(BaseModel):
@@ -68,6 +77,13 @@ class TranscriptLeaseResponse(BaseModel):
     current_sequence: int = Field(alias="currentSequence")
 
 
+class TranscriptEncryptionKeyResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    algorithm: str
+    key: str
+
+
 class TranscriptTurnResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -86,7 +102,6 @@ class TranscriptArchiveResponse(BaseModel):
     sha256: str
     size_bytes: int = Field(alias="sizeBytes")
     format: str
-    download_url: str | None = Field(default=None, alias="downloadUrl")
     created_at: datetime = Field(alias="createdAt")
 
 

@@ -836,6 +836,7 @@ async function verifyMarketplacePluginLifecycle({
     text: PLUGIN_CREATOR_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await verifyCreatorAuthenticationToolkit(codexHome, workspacePath)
 
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
@@ -1191,6 +1192,61 @@ async function verifyMarketplacePluginLifecycle({
   await closeComposerPluginPicker(control)
 }
 
+async function verifyCreatorAuthenticationToolkit(codexHome, workspacePath) {
+  const skillRoot = join(codexHome, 'skills', 'wework-plugin-creator')
+  const toolkit = join(skillRoot, 'scripts', 'auth-sdk', 'tool.py')
+  const validator = join(skillRoot, 'scripts', 'validate_wework_plugin.py')
+  const fixtureRoot = join(workspacePath, 'creator-auth-fixtures')
+  const environment = { ...process.env, CODEX_HOME: codexHome, WEGENT_CODEX_HOME: codexHome }
+  await mkdir(fixtureRoot, { recursive: true })
+  try {
+    for (const credentialType of ['password', 'bearer', 'oauth2']) {
+      const pluginRoot = join(fixtureRoot, credentialType)
+      commandOutput(
+        'uv',
+        [
+          'run',
+          '--no-project',
+          'python',
+          toolkit,
+          'scaffold',
+          credentialType,
+          '--parent',
+          fixtureRoot,
+          '--credential-type',
+          credentialType,
+        ],
+        { cwd: fixtureRoot, env: environment }
+      )
+      commandOutput(
+        'uv',
+        ['run', '--no-project', '--with', 'pyyaml', 'python', validator, pluginRoot],
+        { cwd: fixtureRoot, env: environment }
+      )
+      commandOutput(
+        'uv',
+        ['run', '--no-project', 'python', toolkit, 'vendor', pluginRoot, '--check'],
+        { cwd: fixtureRoot, env: environment }
+      )
+      const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      assert.equal(manifest.connectors[0].accountAuth.credentialType, credentialType)
+      await rm(join(pluginRoot, 'scripts', 'account-auth.py'))
+      assert.throws(
+        () =>
+          commandOutput(
+            'uv',
+            ['run', '--no-project', '--with', 'pyyaml', 'python', validator, pluginRoot],
+            { cwd: fixtureRoot, env: environment }
+          ),
+        /adapter must reference a packaged relative script/
+      )
+    }
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true })
+  }
+}
+
 async function verifySkillMentionRendering({ control, fixture }) {
   const officialPluginTaskId = await createOfficialPluginTask({
     control,
@@ -1301,6 +1357,7 @@ export {
   verifyPluginLifecycle,
   waitForMarketplaceInstallStateAfterUninstall,
   verifyMarketplacePluginLifecycle,
+  verifyCreatorAuthenticationToolkit,
   verifySkillMentionRendering,
   uninstallOfficialPlugin,
   verifyCoreDshPluginManagement,
