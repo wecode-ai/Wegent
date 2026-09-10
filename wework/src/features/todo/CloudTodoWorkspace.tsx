@@ -3658,7 +3658,8 @@ export function CloudTodoWorkspace({
               columnKey,
               beforeItemId,
               executionResult,
-              selectedAutomationId
+              selectedAutomationId,
+              forceStart
             )
             if (!moved) {
               throw new Error(

@@ -35,6 +35,10 @@ import {
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
+import {
+  appendRuntimeTerminalContext,
+  resetRuntimeTerminalContextForTests,
+} from '@/lib/runtime-terminal-context'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
@@ -2533,6 +2537,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     vi.clearAllMocks()
     resetLocalRuntimeChatStreamsForTests()
     resetComposerAppsMemory()
+    resetRuntimeTerminalContextForTests()
     pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
       running: true,
@@ -8368,6 +8373,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   afterEach(() => {
     vi.useRealTimers()
     clearRuntimeConversationCacheForTests()
+    resetRuntimeTerminalContextForTests()
   })
 
   beforeEach(() => {
@@ -15043,6 +15049,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
     })
+    appendRuntimeTerminalContext({
+      taskId: 'runtime-a',
+      sessionId: 'terminal-runtime-a',
+      data: 'queued terminal output',
+    })
 
     renderWorkbenchWithLifecycleCoordinator(
       <>
@@ -15064,6 +15075,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('queued-runtime-state')).toHaveTextContent('runtime:2')
     expect(screen.getByTestId('follow-up-messages')).not.toHaveTextContent('user:继续修')
+    expect(sendRuntimeMessage.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        additionalContext: expect.objectContaining({
+          'wework.terminal.current': expect.any(Object),
+        }),
+      })
+    )
 
     await userEvent.click(screen.getByTestId('queued-cancel-first'))
 
@@ -15080,6 +15098,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('queued-runtime-state')).toHaveTextContent('runtime:1')
     )
+    expect(sendRuntimeMessage.mock.calls[1][0]).not.toHaveProperty('additionalContext')
 
     await userEvent.click(screen.getByTestId('queued-force-start-first'))
 

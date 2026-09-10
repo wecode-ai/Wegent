@@ -287,6 +287,37 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isQueued).toBe(true)
   })
 
+  test('preserves an active turn when a follow-up is queued', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))
+    store.turnStarted(address, 'turn-1')
+    store.sendRequested(address)
+
+    store.sendQueued(address, 2)
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn).toMatchObject({
+      phase: 'streaming',
+      id: 'turn-1',
+    })
+    expect(snapshot?.task).toMatchObject({
+      running: true,
+      status: 'running',
+    })
+    expect(snapshot?.task?.queuePosition).toBeUndefined()
+  })
+
+  test('clears a stale queue position when the executor returns null', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'queued', queuePosition: 3 })))
+    store.sendRequested(address)
+
+    store.sendQueued(address, null)
+
+    expect(store.getTask(address)?.task?.queuePosition).toBeUndefined()
+  })
+
   test('owns optimistic send, accepted, stream, and settled turn transitions', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task()))

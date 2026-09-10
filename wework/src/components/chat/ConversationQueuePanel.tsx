@@ -138,7 +138,11 @@ export function ConversationQueuePanel({
                 onGuide={onSendQueuedAsGuidance}
                 onInterrupt={onInterruptAndSendQueuedMessage}
                 onEdit={onEditQueuedMessage}
-                canReorder={message.status === 'queued' && queuedMessageIds.length > 1}
+                canReorder={
+                  message.status === 'queued' &&
+                  !message.runtimeQueued &&
+                  queuedMessageIds.length > 1
+                }
                 onCancel={onCancelQueuedMessage}
               />
             ))}

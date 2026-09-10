@@ -4093,6 +4093,7 @@ describe('CloudTodoWorkspace', () => {
     }
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [inboxItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => inboxItem)
     workbenchServices.deliveryApi!.updateLoopItem = vi.fn(async () => automatedItem)
 
@@ -4129,7 +4130,7 @@ describe('CloudTodoWorkspace', () => {
 
   it('asks the user to choose one automation before moving into processing', async () => {
     const user = userEvent.setup()
-    const inboxItem = { ...item, status: 'inbox' as const }
+    const inboxItem = { ...item, status: 'pending' as const }
     const selectedItem = {
       ...inboxItem,
       status: 'in_progress' as const,
@@ -4137,6 +4138,7 @@ describe('CloudTodoWorkspace', () => {
     }
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [inboxItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => inboxItem)
     workbenchServices.deliveryApi!.updateLoopItem = vi
       .fn()
@@ -4187,6 +4189,14 @@ describe('CloudTodoWorkspace', () => {
         version: inboxItem.version,
         status: 'in_progress',
         automation_rule_id: 'automation-review',
+      })
+    )
+    expect(screen.getByTestId('mock-start-background-task')).toHaveAttribute(
+      'data-task-request',
+      JSON.stringify({
+        runtime: 'codex',
+        message: 'Implement cloud MCP',
+        forceStart: true,
       })
     )
     expect(screen.queryByTestId('automation-selection-options')).not.toBeInTheDocument()

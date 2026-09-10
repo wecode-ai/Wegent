@@ -90,7 +90,16 @@ export function reduceRuntimeTaskLifecycle(
           }
         : state
 
-    case 'send_queued':
+    case 'send_queued': {
+      const executorAlreadyActive = state.task?.running === true || state.activeTurnId !== null
+      if (executorAlreadyActive) {
+        return {
+          ...state,
+          executionPhase: 'running',
+          turnPhase: state.activeTurnId ? 'streaming' : state.turnPhase,
+          expectedExecutorRunning: true,
+        }
+      }
       return {
         ...state,
         task: state.task
@@ -98,7 +107,9 @@ export function reduceRuntimeTaskLifecycle(
               ...state.task,
               running: false,
               status: 'queued',
-              ...(event.queuePosition != null ? { queuePosition: event.queuePosition } : {}),
+              ...(event.queuePosition === undefined
+                ? {}
+                : { queuePosition: event.queuePosition ?? undefined }),
             }
           : state.task,
         executionPhase: 'queued',
@@ -106,6 +117,7 @@ export function reduceRuntimeTaskLifecycle(
         activeTurnId: null,
         expectedExecutorRunning: false,
       }
+    }
 
     case 'send_rejected': {
       const executorAlreadyConfirmed =

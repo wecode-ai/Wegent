@@ -1163,8 +1163,11 @@ export function useWorkbenchPaneSession({
             )
           )
         }
+      }
+      if (sent) {
         markRuntimeTerminalAdditionalContextDelivered(terminalContext)
-      } else if (appendedLocalMessage) {
+      }
+      if ((!sent || queued) && appendedLocalMessage) {
         const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
           currentRuntimeTask,
           currentRuntimeTaskRef.current,
