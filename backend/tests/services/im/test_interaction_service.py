@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -478,7 +479,40 @@ async def test_dingtalk_command_does_not_consume_notification_reply_target(
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_pending_flow_does_not_consume_notification_reply_target(
+async def test_dingtalk_chat_command_clears_notification_reply_target(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task={
+            "deviceId": "device-notified",
+            "localTaskId": "runtime-notified",
+        },
+    )
+    _stub_task_lists(monkeypatch)
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("/chat"),
+        port=port,
+    )
+
+    assert handled is True
+    assert session.mode == IMSessionMode.CHAT
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_pending_flow_clears_notification_target_after_binding(
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
@@ -520,7 +554,48 @@ async def test_dingtalk_pending_flow_does_not_consume_notification_reply_target(
     assert port.bound_tasks == [101]
     assert (
         await im_session_service.pop_runtime_notification_reply_target(session=session)
-        == notification_target
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_expired_pending_flow_allows_notification_reply(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    await im_session_service.set_pending_state(
+        test_db,
+        session=session,
+        state=IMSessionState.PENDING_TASK_SWITCH,
+        payload={"task_ids": [101]},
+        expires_at=datetime.now() - timedelta(seconds=1),
+    )
+    notification_target = {
+        "deviceId": "device-notified",
+        "localTaskId": "runtime-notified",
+    }
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=notification_target,
+    )
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("继续通知任务"),
+        port=port,
+    )
+
+    assert handled is True
+    assert session.state == IMSessionState.IDLE
+    assert session.active_runtime_task == notification_target
+    assert port.continued_tasks == [(None, "继续通知任务")]
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        is None
     )
 
 

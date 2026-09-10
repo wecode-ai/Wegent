@@ -8,9 +8,9 @@ from typing import Protocol
 
 from sqlalchemy.orm import Session
 
-from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
-from app.services.channels.commands import parse_command
+from app.services.channels.commands import CommandType, parse_command
 from app.services.channels.device_selection import device_selection_manager
 from app.services.channels.handler import MessageContext
 from app.services.im import task_continuation_service as im_task_continuation_service
@@ -116,6 +116,7 @@ class IMInteractionService:
             return True
 
         pending_runtime_target = await self._pending_runtime_notification_target(
+            db,
             im_session,
             message_context,
         )
@@ -154,6 +155,12 @@ class IMInteractionService:
 
         if not result.handled:
             return False
+
+        await self._clear_superseded_runtime_notification_target(
+            im_session,
+            message_context,
+            result.action,
+        )
 
         if result.action == IMCommandAction.NONE:
             if result.reply:
@@ -240,18 +247,59 @@ class IMInteractionService:
 
     async def _pending_runtime_notification_target(
         self,
+        db: Session,
         im_session: IMPrivateSession,
         message_context: MessageContext,
     ) -> dict | None:
         content = (message_context.content or "").strip()
         if (
             im_session.channel_type != "dingtalk"
-            or im_session.state != IMSessionState.IDLE
             or not content
             or parse_command(content) is not None
         ):
             return None
+        if (
+            await im_session_service.get_active_pending_payload(db, im_session)
+            is not None
+        ):
+            return None
         return await im_session_service.pop_runtime_notification_reply_target(
+            session=im_session
+        )
+
+    async def _clear_superseded_runtime_notification_target(
+        self,
+        im_session: IMPrivateSession,
+        message_context: MessageContext,
+        action: IMCommandAction,
+    ) -> None:
+        if im_session.channel_type != "dingtalk":
+            return
+        command = parse_command(message_context.content)
+        command_supersedes_target = command is not None and (
+            command.command
+            in {
+                CommandType.CHAT,
+                CommandType.TASK,
+                CommandType.SWITCH,
+                CommandType.NEW,
+            }
+            or (
+                command.command == CommandType.MODE
+                and (command.argument or "").strip().lower() in {"chat", "task"}
+            )
+        )
+        if (
+            action
+            not in {
+                IMCommandAction.START_CHAT,
+                IMCommandAction.BIND_TASK,
+                IMCommandAction.CREATE_TASK,
+            }
+            and not command_supersedes_target
+        ):
+            return
+        await im_session_service.pop_runtime_notification_reply_target(
             session=im_session
         )
 
