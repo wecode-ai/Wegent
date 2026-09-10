@@ -21,6 +21,7 @@ export interface ExtractedMarkdownLink {
 }
 
 const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
+const MARKDOWN_ESCAPED_PUNCTUATION_PATTERN = /\\([!-/:-@[-`{-~])/g
 // Protected Markdown links may be encoded again by intermediate URL normalizers.
 const MAX_MARKDOWN_FILE_PATH_DECODE_PASSES = 16
 
@@ -197,7 +198,7 @@ function parseMarkdownLinkDestination(
   if (content[start] === '<') {
     const destinationEnd = content.indexOf('>', start + 1)
     if (destinationEnd < 0) return null
-    const href = content.slice(start + 1, destinationEnd).trim()
+    const href = decodeMarkdownDestinationEscapes(content.slice(start + 1, destinationEnd).trim())
     const linkEnd = markdownLinkEnd(content, destinationEnd + 1)
     return href && linkEnd !== null ? { href, end: linkEnd } : null
   }
@@ -228,9 +229,13 @@ function parseMarkdownLinkDestination(
     cursor += 1
   }
 
-  const href = content.slice(start, cursor).trim()
+  const href = decodeMarkdownDestinationEscapes(content.slice(start, cursor).trim())
   const linkEnd = markdownLinkEnd(content, cursor)
   return href && depth === 0 && linkEnd !== null ? { href, end: linkEnd } : null
+}
+
+function decodeMarkdownDestinationEscapes(destination: string): string {
+  return destination.replace(MARKDOWN_ESCAPED_PUNCTUATION_PATTERN, '$1')
 }
 
 function markdownLinkEnd(content: string, start: number): number | null {
