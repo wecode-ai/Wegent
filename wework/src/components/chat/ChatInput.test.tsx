@@ -872,6 +872,48 @@ describe('ChatInput', () => {
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
+  test('renders native queued follow-up actions without local queue controls', async () => {
+    const onForceStartQueuedMessage = vi.fn()
+    const onCancelQueuedMessage = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'runtime-queued-1',
+            content: '继续修复并行问题',
+            status: 'queued',
+            runtimeQueued: true,
+            runtimeQueuePosition: 2,
+            createdAt: '2026-09-10T15:00:00.000+08:00',
+          },
+        ]}
+        onForceStartQueuedMessage={onForceStartQueuedMessage}
+        onCancelQueuedMessage={onCancelQueuedMessage}
+        onSendQueuedAsGuidance={vi.fn()}
+        onInterruptAndSendQueuedMessage={vi.fn()}
+        onEditQueuedMessage={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('workbench.runtime_follow_up_queued_position')).toBeInTheDocument()
+    expect(screen.getByTestId('queue-force-start-button-runtime-queued-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('queue-guidance-button-runtime-queued-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-interrupt-button-runtime-queued-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-more-button-runtime-queued-1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('queue-force-start-button-runtime-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-cancel-button-runtime-queued-1'))
+
+    expect(onForceStartQueuedMessage).toHaveBeenCalledWith('runtime-queued-1')
+    expect(onCancelQueuedMessage).toHaveBeenCalledWith('runtime-queued-1')
+  })
+
   test('restores queued message text into the composer when editing', async () => {
     function Harness() {
       const [value, setValue] = useState('')

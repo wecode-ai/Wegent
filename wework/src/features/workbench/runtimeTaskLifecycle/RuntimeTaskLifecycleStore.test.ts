@@ -269,6 +269,24 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getSnapshot().unreadTaskKeys).toEqual(new Set())
   })
 
+  test('records an accepted send as queued before the next executor snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+    store.sendRequested(address)
+
+    store.sendQueued(address, 2)
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('queued')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.task).toMatchObject({
+      running: false,
+      status: 'queued',
+      queuePosition: 2,
+    })
+    expect(snapshot?.derived.isQueued).toBe(true)
+  })
+
   test('owns optimistic send, accepted, stream, and settled turn transitions', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task()))

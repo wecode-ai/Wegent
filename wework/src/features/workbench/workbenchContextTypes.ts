@@ -35,6 +35,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeName,
   RuntimeSendRequest,
+  RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
   RuntimeTaskQueueReorderRequest,
@@ -173,6 +174,7 @@ export interface CreateProjectRuntimeTaskOptions {
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+  onQueued?: (response: RuntimeSendResponse) => void
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }

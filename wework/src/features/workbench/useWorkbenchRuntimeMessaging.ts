@@ -480,7 +480,12 @@ export function useWorkbenchRuntimeMessaging({
         if (options?.silentBusyRetry) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
-        lifecycleStore.sendAccepted(outboundRequest.address)
+        if (response.status === 'queued') {
+          lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)
+          options?.onQueued?.(response)
+        } else {
+          lifecycleStore.sendAccepted(outboundRequest.address)
+        }
         try {
           await refreshWorkLists()
         } catch (error) {
