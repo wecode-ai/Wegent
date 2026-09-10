@@ -3377,17 +3377,15 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    fireEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.getByText('管理项目')).toBeInTheDocument()
     expect(await screen.findByText('2 位成员')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-members-toggle'))
+    fireEvent.click(screen.getByTestId('cloud-project-members-toggle'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
-    await userEvent.type(
-      screen.getByTestId('cloud-project-member-capability-2'),
-      '前端实现与交互验收'
-    )
-    await userEvent.tab()
+    const capabilityInput = screen.getByTestId('cloud-project-member-capability-2')
+    fireEvent.change(capabilityInput, { target: { value: '前端实现与交互验收' } })
+    fireEvent.blur(capabilityInput)
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.updateCloudProjectMember).toHaveBeenCalledWith(
         project.id,
@@ -3395,10 +3393,12 @@ describe('CloudTodoWorkspace', () => {
         { capability_description: '前端实现与交互验收' }
       )
     )
-    await userEvent.click(screen.getByTestId('cloud-project-board-view'))
+    fireEvent.click(screen.getByTestId('cloud-project-board-view'))
 
-    await userEvent.click(screen.getByTestId('cloud-project-task-search-toggle'))
-    await userEvent.type(screen.getByTestId('cloud-project-task-search-input'), 'missing')
+    fireEvent.click(screen.getByTestId('cloud-project-task-search-toggle'))
+    fireEvent.change(screen.getByTestId('cloud-project-task-search-input'), {
+      target: { value: 'missing' },
+    })
     expect(screen.getByText('没有匹配的任务')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
   })
@@ -3850,16 +3850,18 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await user.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
-    await user.click(screen.getByTestId('cloud-todo-add'))
-    await user.type(screen.getByTestId('workspace-issue-input'), 'Choose one workflow')
-    await user.click(screen.getByTestId('workspace-issue-submit'))
+    fireEvent.click(screen.getByTestId('cloud-todo-add'))
+    const input = screen.getByTestId('workspace-issue-input')
+    await user.click(input)
+    await user.paste('Choose one workflow')
+    fireEvent.click(screen.getByTestId('workspace-issue-submit'))
 
     expect(await screen.findByTestId('automation-selection-options')).toHaveTextContent('Implement')
     expect(screen.getByTestId('automation-selection-options')).toHaveTextContent('Review')
-    await user.click(screen.getByTestId('automation-selection-option-automation-review'))
-    await user.click(screen.getByTestId('automation-selection-confirm'))
+    fireEvent.click(screen.getByTestId('automation-selection-option-automation-review'))
+    fireEvent.click(screen.getByTestId('automation-selection-confirm'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi!.createLoopItem).toHaveBeenLastCalledWith(11, {
