@@ -43,6 +43,10 @@ class WikiContentSummary(BaseModel):
     # decision compares against — so a wrong one here costs a needless full rebuild
     # or, worse, a skipped set of changes.
     head_commit: Optional[str] = None
+    # Counted locally by ``wiki_submit`` from the checkout that produced
+    # ``head_commit``. The next run uses it as an optional proportional-change
+    # denominator; an older version without it continues to use absolute limits.
+    tracked_file_count: Optional[int] = Field(default=None, ge=0)
 
 
 class WikiPageRead(BaseModel):
