@@ -46,7 +46,12 @@ from app.schemas.cloud_project import (
     CollaborationMessageImportCreate,
     CollaborationMessageImportResponse,
 )
-from app.schemas.delivery import LoopItemCreate, LoopItemResponse
+from app.schemas.delivery import (
+    LoopItemCreate,
+    LoopItemResponse,
+    ProjectLoopItemAttachmentListResponse,
+    ProjectLoopItemAttachmentResponse,
+)
 from app.schemas.project_board import ProjectBoardSnapshotResponse
 from app.schemas.project_chat import (
     LoopItemApproval,
@@ -559,6 +564,31 @@ def list_project_delivery_files(
             )
             for row in rows
             if row.delivery.delivered_at is not None
+        ]
+    )
+
+
+@router.get(
+    "/{project_id}/task-attachments",
+    response_model=ProjectLoopItemAttachmentListResponse,
+)
+def list_project_task_attachments(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectLoopItemAttachmentListResponse:
+    """List attachments from all active tasks in a project."""
+
+    rows = loop_item_service.list_project_attachments(db, project_id, current_user.id)
+    return ProjectLoopItemAttachmentListResponse(
+        items=[
+            ProjectLoopItemAttachmentResponse.model_validate(
+                {
+                    **attachment.__dict__,
+                    "loop_item_title": item.title or item.name or item.id,
+                }
+            )
+            for attachment, item in rows
         ]
     )
 

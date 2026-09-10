@@ -131,8 +131,8 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
   },
   {
     capability: 'attachments.listProjectTaskAttachments',
-    status: 'unsupported',
-    reason: 'No matching backend endpoint exists.',
+    status: 'supported',
+    endpoint: 'GET /v1/cloud-projects/{id}/task-attachments',
   },
   {
     capability: 'attachments.upload',
@@ -141,8 +141,8 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
   },
   {
     capability: 'attachments.importContexts',
-    status: 'unsupported',
-    reason: 'No matching backend endpoint exists.',
+    status: 'supported',
+    endpoint: 'POST /v1/loop-items/{id}/attachments/import-contexts',
   },
   {
     capability: 'attachments.access',
@@ -766,26 +766,21 @@ export function createWebSharedWorkspaceApi(
       list(issueId) {
         return client.get(`/v1/loop-items/${encoded(issueId)}/attachments`)
       },
-      listProjectTaskAttachments() {
-        return Promise.reject(
-          new UnsupportedWorkspaceCapabilityError(
-            'attachments.listProjectTaskAttachments',
-            'No matching backend endpoint exists.'
-          )
+      async listProjectTaskAttachments(projectId) {
+        const response = await client.get<{ items: CollaborationAttachment[] }>(
+          `/v1/cloud-projects/${encoded(projectId)}/task-attachments`
         )
+        return response.items
       },
       upload(issueId, file) {
         const form = new FormData()
         form.set('file', file, file.name)
         return client.postForm(`/v1/loop-items/${encoded(issueId)}/attachments`, form)
       },
-      importContexts() {
-        return Promise.reject(
-          new UnsupportedWorkspaceCapabilityError(
-            'attachments.importContexts',
-            'No matching backend endpoint exists.'
-          )
-        )
+      importContexts(issueId, contextIds) {
+        return client.post(`/v1/loop-items/${encoded(issueId)}/attachments/import-contexts`, {
+          context_ids: contextIds,
+        })
       },
       async access(attachmentId) {
         const response = await client.get<Record<string, unknown>>(

@@ -133,23 +133,23 @@ describe('createWebSharedWorkspaceApi', () => {
     expect(getBlob).toHaveBeenCalledWith('/v1/loop-item-attachments/attachment%2F1/content')
   })
 
-  it('rejects capabilities without backend endpoints and maps team assignment to issue update', async () => {
+  it('maps project attachment APIs and team assignment to backend endpoints', async () => {
     const client = createClient()
+    client.get.mockResolvedValue({ items: [{ id: 'attachment-1' }] })
+    client.post.mockResolvedValue([{ id: 'attachment-2' }])
     client.patch.mockResolvedValue({ id: 'issue-1', assignee_team_id: 9 })
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
-    await expect(api.attachments.listProjectTaskAttachments('11')).rejects.toEqual(
-      expect.objectContaining({
-        name: 'UnsupportedWorkspaceCapabilityError',
-        capability: 'attachments.listProjectTaskAttachments',
-      })
-    )
-    await expect(api.attachments.importContexts('issue-1', [1])).rejects.toEqual(
-      expect.objectContaining({
-        name: 'UnsupportedWorkspaceCapabilityError',
-        capability: 'attachments.importContexts',
-      })
-    )
+    await expect(api.attachments.listProjectTaskAttachments('11')).resolves.toEqual([
+      { id: 'attachment-1' },
+    ])
+    await expect(api.attachments.importContexts('issue-1', [1])).resolves.toEqual([
+      { id: 'attachment-2' },
+    ])
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/11/task-attachments')
+    expect(client.post).toHaveBeenCalledWith('/v1/loop-items/issue-1/attachments/import-contexts', {
+      context_ids: [1],
+    })
     await api.issues.assign('11', 'issue-1', {
       version: 1,
       assigneeType: 'team',
@@ -168,7 +168,6 @@ describe('createWebSharedWorkspaceApi', () => {
         assigneeId: 'not-a-number',
       })
     ).toThrow(TypeError)
-    expect(client.post).not.toHaveBeenCalled()
   })
 
   it('publishes a complete and non-silent capability matrix', () => {
@@ -182,12 +181,9 @@ describe('createWebSharedWorkspaceApi', () => {
       capability => capability.status === 'supported'
     )
 
-    expect(unsupported.map(item => item.capability)).toEqual([
-      'attachments.listProjectTaskAttachments',
-      'attachments.importContexts',
-    ])
+    expect(unsupported).toEqual([])
     expect(partial).toEqual([])
-    expect(supported).toHaveLength(88)
+    expect(supported).toHaveLength(90)
     expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(90)
     expect(
       WEB_SHARED_WORKSPACE_CAPABILITIES.every(

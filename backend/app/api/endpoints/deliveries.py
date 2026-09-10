@@ -45,6 +45,7 @@ from app.schemas.delivery import (
     DeliveryListResponse,
     DeliveryResponse,
     LoopItemAttachmentAccessResponse,
+    LoopItemAttachmentImport,
     LoopItemAttachmentResponse,
     LoopItemCollaboratorCreate,
     LoopItemCollaboratorResponse,
@@ -1308,6 +1309,28 @@ def add_loop_item_attachment(
         settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024,
     )
     return LoopItemAttachmentResponse.model_validate(attachment)
+
+
+@router.post(
+    "/loop-items/{item_id}/attachments/import-contexts",
+    response_model=list[LoopItemAttachmentResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+def import_loop_item_attachments(
+    item_id: str,
+    values: LoopItemAttachmentImport,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> list[LoopItemAttachmentResponse]:
+    """Copy uploaded conversation contexts into the task attachment store."""
+
+    attachments = loop_item_service.import_context_attachments(
+        db, item_id, current_user.id, values.context_ids
+    )
+    return [
+        LoopItemAttachmentResponse.model_validate(attachment)
+        for attachment in attachments
+    ]
 
 
 @router.get(
