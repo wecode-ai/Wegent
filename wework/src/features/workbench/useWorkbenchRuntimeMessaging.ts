@@ -115,17 +115,7 @@ export interface PreparedRuntimeTaskIntent {
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type { WorkbenchServices } from './workbenchServices'
 import { track } from '@/telemetry/client'
-import type { ExecutionTarget } from '@/telemetry/events'
-
-function telemetryExecutionTarget(
-  deviceId: string,
-  devices: WorkbenchState['devices']
-): ExecutionTarget {
-  const device = devices.find(item => item.device_id === deviceId)
-  if (device?.device_type === 'local' || device?.device_type === 'app') return 'local'
-  if (device?.device_type === 'cloud' || device?.device_type === 'remote') return 'cloud'
-  return deviceId === 'local-device' ? 'local' : 'unknown'
-}
+import { telemetryExecutionTarget } from '@/telemetry/executionTarget'
 
 interface RuntimeAttachmentTransport {
   attachmentIds: number[]
