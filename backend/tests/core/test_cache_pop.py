@@ -26,4 +26,4 @@ async def test_pop_atomically_gets_and_deletes_cached_json(
     assert "redis.call('GET', KEYS[1])" in script
     assert "redis.call('DEL', KEYS[1])" in script
     assert (key_count, key) == (1, "oauth:one-time")
-    client.aclose.assert_awaited_once()
+    client.aclose.assert_not_awaited()

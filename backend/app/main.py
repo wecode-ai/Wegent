@@ -604,7 +604,19 @@ async def lifespan(app: FastAPI):
         await stop_device_monitor_async()
         logger.info("✓ Device heartbeat monitor stopped")
 
-        # Step 7: Shutdown OpenTelemetry
+        # Close the process-owned Redis cache pool after all cache consumers stop.
+        from app.core.cache import cache_manager
+
+        try:
+            await cache_manager.aclose()
+            logger.info("✓ Redis cache connection pools closed")
+        except Exception:
+            logger.warning(
+                "Failed to close Redis cache connection pools",
+                exc_info=True,
+            )
+
+        # Step 8: Shutdown OpenTelemetry
         from shared.telemetry.config import get_otel_config
         from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
