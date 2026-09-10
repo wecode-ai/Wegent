@@ -29,15 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/generate-telemetry-catalog.test.mjs scripts/sync-posthog-event-definitions.test.mjs
+      - run: node --test scripts/generate-telemetry-catalog.test.mjs scripts/sync-posthog-event-definitions.test.mjs e2e/desktop/modules/telemetry-consent.test.mjs
       - run: pnpm telemetry:catalog:check
 
   sync-posthog:
@@ -51,8 +49,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
