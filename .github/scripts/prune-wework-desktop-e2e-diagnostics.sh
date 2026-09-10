@@ -8,6 +8,20 @@ if [[ ! -d "$diagnostics_root" ]]; then
   exit 0
 fi
 
+find "$diagnostics_root" \
+  -mindepth 2 \
+  -maxdepth 2 \
+  -type d \
+  ! -name 'electron-user-data' \
+  -prune \
+  -exec rm -rf {} +
+
+find "$diagnostics_root" \
+  -type d \
+  -path '*/electron-user-data/managed-components' \
+  -prune \
+  -exec rm -rf {} +
+
 find "$diagnostics_root" -type d \( \
   -name 'Cache' -o \
   -name 'Code Cache' -o \

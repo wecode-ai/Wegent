@@ -297,9 +297,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-core-e2e-build-diagnostics
-          path: wework/test-results/desktop-e2e/
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 6
 
   wework-desktop-core-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -404,6 +407,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**
             !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
             !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
             !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
@@ -412,7 +416,7 @@ jobs:
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   build-wework-desktop-windows-core-e2e:
     name: Build Windows Wework Desktop Core E2E Artifact
@@ -547,9 +551,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-windows-core-e2e-build-diagnostics
-          path: wework/test-results/desktop-e2e/
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 6
 
   wework-desktop-windows-core-e2e:
     name: Wework Desktop Windows E2E (${{ matrix.name }})
@@ -662,6 +669,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**
             !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
             !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
             !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
@@ -670,7 +678,7 @@ jobs:
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   wework-desktop-cloud-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -772,6 +780,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**
             !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
             !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
             !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
@@ -780,7 +789,7 @@ jobs:
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -870,6 +879,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**
             !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
             !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
             !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
@@ -878,7 +888,7 @@ jobs:
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
   wework-e2e-summary:
     name: Wework E2E Summary
@@ -1137,6 +1147,7 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-components/**
             !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
             !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
             !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
@@ -1145,4 +1156,4 @@ jobs:
             !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
-          compression-level: 0
+          compression-level: 6

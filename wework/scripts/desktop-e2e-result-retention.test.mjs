@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, test } from 'vitest'
 
@@ -12,6 +14,7 @@ import {
 } from '../e2e/desktop/result-retention.mjs'
 
 const roots = []
+const execFileAsync = promisify(execFile)
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
@@ -52,16 +55,25 @@ describe('desktop E2E result retention', () => {
     const resultDirectory = join(await temporaryRoot(), '2026-09-02T00-00-00-000Z-123')
     const transientDirectories = [
       'WeWork-Electron-E2E-123.app',
+      'cloud-executor-home',
       'executor-home',
       'harness-runtime',
       'node-runtime',
-      'electron-user-data/Cache',
-      'electron-user-data/dsh-core/profiles',
-      'electron-user-data/harness-apps/instances/app-1/profiles',
-      'electron-user-data/managed-runtimes',
+      'simulated-device-b',
+      'workspace',
     ]
     await Promise.all(
       transientDirectories.map(path => createDirectoryWithFile(join(resultDirectory, path)))
+    )
+    const transientUserDataDirectories = [
+      'electron-user-data/Cache',
+      'electron-user-data/dsh-core/profiles',
+      'electron-user-data/harness-apps/instances/app-1/profiles',
+      'electron-user-data/managed-components',
+      'electron-user-data/managed-runtimes',
+    ]
+    await Promise.all(
+      transientUserDataDirectories.map(path => createDirectoryWithFile(join(resultDirectory, path)))
     )
     await writeFile(join(resultDirectory, 'wegent-executor'), 'binary\n')
     await writeFile(join(resultDirectory, 'app.log'), 'diagnostic\n')
@@ -73,9 +85,40 @@ describe('desktop E2E result retention', () => {
     for (const path of transientDirectories) {
       await expectMissing(join(resultDirectory, path))
     }
+    for (const path of transientUserDataDirectories) {
+      await expectMissing(join(resultDirectory, path))
+    }
     await expectMissing(join(resultDirectory, 'wegent-executor'))
     await expectExists(join(resultDirectory, 'app.log'))
     await expectExists(join(resultDirectory, 'electron-user-data', 'Local Storage', 'payload'))
+  })
+
+  test('prunes managed components after an interrupted desktop run', async () => {
+    const resultRoot = await temporaryRoot()
+    const resultDirectory = join(resultRoot, '2026-09-02T00-00-00-000Z-321')
+    const managedComponents = join(
+      resultDirectory,
+      'electron-user-data',
+      'managed-components',
+      'composed',
+      'wework-core-plugins'
+    )
+    const cache = join(resultDirectory, 'electron-user-data', 'Cache')
+    const workspace = join(resultDirectory, 'workspace')
+    await createDirectoryWithFile(managedComponents)
+    await createDirectoryWithFile(cache)
+    await createDirectoryWithFile(workspace)
+    await writeFile(join(resultDirectory, 'app.log'), 'diagnostic\n')
+
+    await execFileAsync(
+      resolve(import.meta.dirname, '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'),
+      [resultRoot]
+    )
+
+    await expectMissing(join(resultDirectory, 'electron-user-data', 'managed-components'))
+    await expectMissing(cache)
+    await expectMissing(workspace)
+    await expectExists(join(resultDirectory, 'app.log'))
   })
 
   test('compacts inactive results without touching a live desktop run', async () => {

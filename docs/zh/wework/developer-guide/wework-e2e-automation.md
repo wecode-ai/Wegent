@@ -247,8 +247,16 @@ Electron 应用及其内置 Executor，再启动所选场景。可选的 `WEWORK
 Electron 应用；传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景
 复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在
 `wework/test-results/desktop-e2e/`。场景结束后会保留日志、截图、请求和 UI 状态，
-同时删除复制的应用包、Executor Home、解压 Runtime 和 Electron 可重建缓存；runner
-启动时也会清理之前异常中断留下的非活动结果目录，避免本地磁盘随运行次数持续增长。
+同时删除复制的应用包、Executor Home、工作区夹具、解压 Runtime 和其他顶层可重建
+测试环境。`electron-user-data` 仅保留诊断状态，物化的 `managed-components`、
+`managed-runtimes`、DSH/Harness profile 和 Electron 缓存都会删除；runner 启动时也会
+清理之前异常中断留下的非活动结果目录，避免本地磁盘随运行次数持续增长。
+
+GitHub Actions 上传前会再次执行同样的清理，并在 Artifact 路径中排除
+`managed-components`，防止 teardown 失败时把完整 Web/WASM 组件包上传为诊断证据。
+诊断 Artifact 使用标准压缩，正常目标是不超过 20 MiB；诊断包只应包含日志、截图、
+请求、UI 状态和必要的 Electron 持久化状态，不应包含任何可重新构建的应用、Runtime、
+Executor Home、工作区或组件目录。
 
 本地 runner 会把前置 Electron 和 Executor 构建的完整 stdout、stderr 写入
 `wework/test-results/desktop-e2e/desktop-build-<pid>.log`，终端只显示构建阶段、

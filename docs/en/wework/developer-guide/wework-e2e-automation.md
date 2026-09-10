@@ -283,9 +283,20 @@ application launch to control CI duration. Test artifacts, captured model
 requests, and failure diagnostics are stored in
 `wework/test-results/desktop-e2e/`. Each scenario retains logs, screenshots,
 requests, and UI state while removing copied application bundles, Executor
-homes, extracted runtimes, and rebuildable Electron caches. The runner also
-compacts inactive result directories left by interrupted runs so repeated local
-execution does not continuously consume disk space.
+homes, workspace fixtures, extracted runtimes, and every other rebuildable
+top-level test environment. `electron-user-data` retains diagnostic state only:
+materialized `managed-components`, `managed-runtimes`, DSH and Harness profiles,
+and Electron caches are removed. The runner also compacts inactive result
+directories left by interrupted runs so repeated local execution does not
+continuously consume disk space.
+
+Before upload, GitHub Actions repeats the cleanup and excludes
+`managed-components` from the Artifact path so a teardown failure cannot upload
+the complete Web and WASM component payload as diagnostic evidence. Diagnostic
+Artifacts use standard compression and should normally remain below 20 MiB.
+They should contain logs, screenshots, requests, UI state, and necessary
+Electron persistence only, never rebuildable applications, runtimes, Executor
+homes, workspaces, or component directories.
 
 The local runner writes complete stdout and stderr from the prerequisite
 Electron and Executor build to

@@ -16,14 +16,8 @@ const CACHE_DIRECTORY_NAMES = new Set([
   'GrShaderCache',
   'ShaderCache',
 ])
-const TRANSIENT_TOP_LEVEL_ENTRIES = new Set([
-  'executor-home',
-  'harness-runtime',
-  'node-runtime',
-  'wegent-executor',
-  'wegent-executor.exe',
-])
-const MACOS_APP_BUNDLE_PATTERN = /^WeWork-Electron-E2E-\d+\.app$/
+const RETAINED_TOP_LEVEL_DIRECTORIES = new Set(['electron-user-data'])
+const TRANSIENT_TOP_LEVEL_FILES = new Set(['wegent-executor', 'wegent-executor.exe'])
 const RESULT_DIRECTORY_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(\d+)$/
 
 function removeOptions() {
@@ -175,6 +169,7 @@ async function removeHarnessAppProfiles(userDataDirectory) {
 async function compactElectronUserData(userDataDirectory) {
   let removed = 0
   const exactDirectories = [
+    join(userDataDirectory, 'managed-components'),
     join(userDataDirectory, 'managed-runtimes'),
     join(userDataDirectory, 'dsh-core', 'profiles'),
   ]
@@ -214,12 +209,9 @@ export async function clearDesktopE2EResultActive(resultDirectory) {
 export async function compactDesktopE2EResult(resultDirectory) {
   let removed = 0
   for (const entry of await directoryEntries(resultDirectory)) {
-    if (
-      !TRANSIENT_TOP_LEVEL_ENTRIES.has(entry.name) &&
-      !MACOS_APP_BUNDLE_PATTERN.test(entry.name)
-    ) {
-      continue
-    }
+    const removeDirectory = entry.isDirectory() && !RETAINED_TOP_LEVEL_DIRECTORIES.has(entry.name)
+    const removeFile = entry.isFile() && TRANSIENT_TOP_LEVEL_FILES.has(entry.name)
+    if (!removeDirectory && !removeFile) continue
     await removePath(join(resultDirectory, entry.name))
     removed += 1
   }
