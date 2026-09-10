@@ -98,9 +98,6 @@ class IMInteractionService:
         ):
             runtime_task = runtime_reply_target
             if im_session.channel_type == "dingtalk":
-                await im_session_service.pop_runtime_notification_reply_target(
-                    session=im_session
-                )
                 await im_session_service.bind_active_runtime_task(
                     db,
                     session=im_session,

@@ -358,6 +358,50 @@ async def test_dingtalk_notification_reply_switches_and_keeps_runtime_task(
 
 
 @pytest.mark.asyncio
+async def test_dingtalk_explicit_reply_preserves_pending_notification_target(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    explicit_target = {
+        "deviceId": "device-explicit",
+        "localTaskId": "runtime-explicit",
+    }
+    pending_target = {
+        "deviceId": "device-pending",
+        "localTaskId": "runtime-pending",
+    }
+    await im_session_service.save_runtime_task_reply_target(
+        session=session,
+        message_id=901,
+        runtime_task=explicit_target,
+    )
+    await im_session_service.save_runtime_notification_reply_target(
+        session=session,
+        runtime_task=pending_target,
+    )
+    context = _context("回复指定消息")
+    context.extra_data["reply_to_message_id"] = 901
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=context,
+        port=port,
+    )
+
+    assert handled is True
+    assert session.active_runtime_task == explicit_target
+    assert port.continued_runtime_tasks == [None]
+    assert (
+        await im_session_service.pop_runtime_notification_reply_target(session=session)
+        == pending_target
+    )
+
+
+@pytest.mark.asyncio
 async def test_dingtalk_notification_reply_preserves_matching_runtime_context(
     test_db: Session,
     test_user: User,
