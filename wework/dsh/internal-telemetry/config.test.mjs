@@ -107,6 +107,9 @@ test('rejects disallowed PostHog URLs', async () => {
     'https://user:password@telemetry.example.test',
     'https://telemetry.example.test/?query=value',
     'https://telemetry.example.test/#fragment',
+    'https://@telemetry.example.test',
+    'https://telemetry.example.test?',
+    'https://telemetry.example.test#',
   ]) {
     const config = await loadTelemetryConfig({
       environment: enabledEnvironment({ POSTHOG_HOST: posthogHost }),
@@ -128,10 +131,17 @@ test('allows an http loopback host only in a test environment', async () => {
       POSTHOG_HOST: 'http://localhost:8000',
     }),
   })
+  const whitespacePadded = await loadTelemetryConfig({
+    environment: enabledEnvironment({
+      NODE_ENV: ' test ',
+      POSTHOG_HOST: 'http://localhost:8000',
+    }),
+  })
 
   assert.equal(accepted.public.error, null)
   assert.equal(accepted.private.posthogHost, 'http://localhost:8000')
   assert.deepEqual(rejected.public, publicConfig('invalid_posthog_host'))
+  assert.deepEqual(whitespacePadded.public, publicConfig('invalid_posthog_host'))
 })
 
 test('rejects absent project keys and too-short HMAC keys', async () => {

@@ -154,10 +154,7 @@ function parsePublicValues(values) {
 }
 
 function parsePrivateValues(values, environment) {
-  const posthogHost = parsePosthogHost(
-    values.POSTHOG_HOST,
-    nonEmptyString(environment.NODE_ENV) === 'test'
-  )
+  const posthogHost = parsePosthogHost(values.POSTHOG_HOST, environment.NODE_ENV === 'test')
   if (posthogHost.error) return posthogHost
 
   const posthogProjectKey = nonEmptyString(values.POSTHOG_PROJECT_KEY)
@@ -198,6 +195,9 @@ function parseBoundedInteger(value, config) {
 function parsePosthogHost(value, allowHttpLoopback) {
   const host = nonEmptyString(value)
   if (!host) return { error: 'missing_posthog_host' }
+  if (host.includes('@') || host.includes('?') || host.includes('#')) {
+    return { error: 'invalid_posthog_host' }
+  }
 
   try {
     const url = new URL(host)
