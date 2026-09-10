@@ -6,7 +6,9 @@
 
 import hashlib
 import logging
+import tempfile
 from datetime import UTC, datetime, timedelta
+from typing import BinaryIO
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -22,7 +24,6 @@ from app.schemas.wework_transcript import (
     TranscriptLeaseReleaseRequest,
     TranscriptLeaseRequest,
     TranscriptSegmentCommitRequest,
-    TranscriptSegmentRequest,
 )
 from app.services.wework_transcript_storage import (
     WeworkTranscriptStorageError,
@@ -208,32 +209,13 @@ def release_lease(
     return transcript
 
 
-def prepare_segment_upload(
-    db: Session,
-    *,
-    user_id: int,
-    transcript_id: str,
-    request: TranscriptSegmentRequest,
-) -> tuple[str, dict[str, str], datetime]:
-    transcript = get_transcript(
-        db,
-        user_id=user_id,
-        transcript_id=transcript_id,
-        for_update=True,
-    )
-    _validate_segment_write(transcript, request)
-    return wework_transcript_storage.upload_policy(
-        _segment_object_key(user_id, transcript_id, request),
-        request.size_bytes,
-    )
-
-
-def commit_segment(
+def upload_segment(
     db: Session,
     *,
     user_id: int,
     transcript_id: str,
     request: TranscriptSegmentCommitRequest,
+    source: BinaryIO,
 ) -> tuple[WeworkTranscript, bool]:
     transcript = get_transcript(
         db,
@@ -286,22 +268,22 @@ def commit_segment(
             "A different transcript summary already exists for this turn or sequence",
         )
     _validate_segment_write(transcript, request)
-    stored_size, stored_sha256 = wework_transcript_storage.integrity(
-        object_key,
-        request.size_bytes,
-    )
-    if stored_size != request.size_bytes:
-        raise WeworkTranscriptError(
-            "segment_size_mismatch",
-            "Uploaded transcript segment size does not match its manifest",
-            status_code=422,
-        )
-    if stored_sha256 != request.sha256:
-        raise WeworkTranscriptError(
-            "segment_digest_mismatch",
-            "Uploaded transcript segment digest does not match its manifest",
-            status_code=422,
-        )
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as staged:
+        stored_size, stored_sha256 = _stage_segment(source, staged, request.size_bytes)
+        if stored_size != request.size_bytes:
+            raise WeworkTranscriptError(
+                "segment_size_mismatch",
+                "Uploaded transcript segment size does not match its manifest",
+                status_code=422,
+            )
+        if stored_sha256 != request.sha256:
+            raise WeworkTranscriptError(
+                "segment_digest_mismatch",
+                "Uploaded transcript segment digest does not match its manifest",
+                status_code=422,
+            )
+        staged.seek(0)
+        wework_transcript_storage.put_stream(object_key, staged, stored_size)
     db.add(
         WeworkTranscriptArchive(
             transcript_db_id=transcript.id,
@@ -329,7 +311,22 @@ def commit_segment(
     if request.title is not None:
         transcript.title = request.title
     transcript.updated_at = utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        try:
+            wework_transcript_storage.delete(object_key)
+        except WeworkTranscriptStorageError:
+            logger.warning(
+                "Failed to remove uncommitted Wework transcript segment",
+                extra={
+                    "transcript_db_id": transcript.id,
+                    "sequence": request.sequence,
+                },
+                exc_info=True,
+            )
+        raise
     db.refresh(transcript)
     _prune_obsolete_segments(db, transcript.id)
     return transcript, True
@@ -439,7 +436,7 @@ def _validate_fork_request(request: TranscriptLeaseRequest) -> None:
 
 def _validate_segment_write(
     transcript: WeworkTranscript,
-    request: TranscriptSegmentRequest,
+    request: TranscriptSegmentCommitRequest,
 ) -> None:
     _require_lease(transcript, request.client_id, request.fencing_token)
     if request.sequence != request.base_sequence + 1:
@@ -458,7 +455,7 @@ def _validate_segment_write(
 def _segment_object_key(
     user_id: int,
     transcript_id: str,
-    request: TranscriptSegmentRequest,
+    request: TranscriptSegmentCommitRequest,
 ) -> str:
     transcript_key = hashlib.sha256(transcript_id.encode()).hexdigest()
     kind = "snapshot" if "snapshot" in request.format else "delta"
@@ -466,6 +463,22 @@ def _segment_object_key(
         f"users/{user_id}/transcripts/{transcript_key}/"
         f"{request.sequence}-{kind}-{request.sha256}.tgz.aes256gcm"
     )
+
+
+def _stage_segment(
+    source: BinaryIO,
+    target: BinaryIO,
+    declared_size: int,
+) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    while chunk := source.read(1024 * 1024):
+        size += len(chunk)
+        if size > declared_size:
+            return size, ""
+        digest.update(chunk)
+        target.write(chunk)
+    return size, digest.hexdigest()
 
 
 def _segment_matches(

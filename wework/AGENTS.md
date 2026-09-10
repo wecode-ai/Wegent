@@ -107,7 +107,7 @@ pnpm --filter wework ai:verify stop --session <session-path>
 - Execute the complete QA test plan in the isolated Electron session, including the primary path, relevant boundary and error cases, and recovery. Document the environment, cases run, actual results, and evidence in the change handoff or pull request.
 - Use `capture` after the final assertion when a visual verification artifact is required. It renders the current WebView without macOS screen-recording permission.
 - Use `request-close` to exercise the native main-window close request and its close-to-tray preference or confirmation flow.
-- Use `close-to-tray` only for window-lifecycle verification. It destroys the controlled renderer while leaving the isolated Electron process running so native reopen behavior can be tested.
+- Use `close-to-tray` only for window-lifecycle verification. It hides the controlled window while preserving its renderer and the isolated Electron process so native reopen behavior can be tested.
 - On failure, inspect `app.log`, `executor.log`, and Electron host logs under `test-results/ai-verify/`; do not silently downgrade to mocked verification.
 
 ## Local runtime boundaries

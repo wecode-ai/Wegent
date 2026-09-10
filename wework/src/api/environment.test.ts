@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  applyProjectEnvironmentPatch,
   buildPullRequestUrl,
   checkoutProjectBranch,
   commitAndPushProjectChanges,
@@ -2076,6 +2077,52 @@ describe('loadProjectEnvironment', () => {
 })
 
 describe('commitProjectChanges', () => {
+  test('applies a selected patch through the restricted device command', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+    const patch = [
+      'diff --git a/src/env.ts b/src/env.ts',
+      '--- a/src/env.ts',
+      '+++ b/src/env.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      '',
+    ].join('\n')
+
+    await applyProjectEnvironmentPatch(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+      'stage',
+      patch
+    )
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_apply_patch',
+      path: '/workspace/Wegent',
+      args: ['stage', btoa(patch)],
+      timeout_seconds: 30,
+      max_output_bytes: 64 * 1024,
+    })
+  })
+
   test('loads the full environment diff through the project device command API', async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       success: true,

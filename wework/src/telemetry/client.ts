@@ -3,6 +3,7 @@ import type { CaptureResult, PostHog } from 'posthog-js'
 import {
   ANALYTICS_EVENT_PROPERTY_KEYS,
   ANALYTICS_EVENT_VALUE_CONSTRAINTS,
+  type AnalyticsEvent,
   type AnalyticsEventMap,
   type AnalyticsEventName,
   type CommonTelemetryProperties,
@@ -412,6 +413,10 @@ export function track<EventName extends AnalyticsEventName>(
   }
   queuedEvents = [...queuedEvents.slice(-(MAX_QUEUED_EVENTS - 1)), event]
   void initialize()
+}
+
+export function trackEvent(event: AnalyticsEvent): void {
+  track(event.name, event.properties)
 }
 
 export function captureError(error: unknown): void {

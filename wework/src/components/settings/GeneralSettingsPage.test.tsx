@@ -64,6 +64,11 @@ const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const refreshWorkListsMock = vi.hoisted(() => vi.fn())
 const changeWorkbenchModeMock = vi.hoisted(() => vi.fn())
+const telemetryConfigMock = vi.hoisted(() => ({ distribution: 'public' as 'public' | 'internal' }))
+
+vi.mock('@/telemetry/config', () => ({
+  getTelemetryConfig: () => telemetryConfigMock,
+}))
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -163,6 +168,7 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
+    telemetryConfigMock.distribution = 'public'
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()
@@ -503,6 +509,15 @@ describe('GeneralSettingsPage', () => {
         telemetryEnabled: false,
       })
     })
+  })
+
+  test('hides public telemetry controls in an internal build', () => {
+    telemetryConfigMock.distribution = 'internal'
+
+    render(<GeneralSettingsPage />)
+
+    expect(screen.queryByTestId('general-settings-privacy-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('general-telemetry-toggle')).not.toBeInTheDocument()
   })
 
   test('shows the loaded shared preferences without flashing defaults', async () => {

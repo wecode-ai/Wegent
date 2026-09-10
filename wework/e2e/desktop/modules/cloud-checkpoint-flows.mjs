@@ -1,5 +1,6 @@
 import { access } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
+import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
 import { basename } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
@@ -311,10 +312,9 @@ async function verifyCloudWorkspacePathMentions({ composerSelector, control, wor
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
   await control.command('fill', composerSelector, { value: `@${folderName}` })
-  await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
+    text: folderName,
   })
-  await control.command('click', '[data-testid="workspace-mention-option-0"]')
   const folderChipSelector = `[data-testid="composer-path-chip-${folderName}"]`
   await control.command('waitFor', folderChipSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -328,10 +328,9 @@ async function verifyCloudWorkspacePathMentions({ composerSelector, control, wor
   )
 
   await control.command('fill', composerSelector, { value: '@auth' })
-  await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
+    text: 'auth.ts',
   })
-  await control.command('click', '[data-testid="workspace-mention-option-0"]')
   const fileChipSelector = '[data-testid="composer-path-chip-auth-ts"]'
   await control.command('waitFor', fileChipSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -368,6 +367,7 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   const taskId = taskAddress.taskId
   const runtimeTask = await cloudEnvironment.waitForRuntimeTask(taskAddress)
   const taskWorkspace = runtimeTask.workspacePath
+  await verifyCreatorAuthenticationToolkit(cloudEnvironment.remoteCodexHome, taskWorkspace)
   const pluginRoot = join(taskWorkspace, 'plugins', 'cloud-workspace-e2e')
   await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
   await mkdir(join(pluginRoot, 'skills', 'cloud-draft'), { recursive: true })

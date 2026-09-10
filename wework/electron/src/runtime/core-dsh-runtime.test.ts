@@ -120,6 +120,7 @@ describe('core DSH runtime', () => {
     ).toMatchObject({
       dependencies: {
         '@wegent/dsh-app-wework': expect.stringContaining('wework-app'),
+        '@wegent/dsh-conversation-export': expect.stringContaining('wework-conversation-export'),
         '@wegent/dsh-browser-runtime': expect.stringContaining('wework-browser-runtime'),
         '@wegent/dsh-electron-host': expect.stringContaining('wework-electron-host'),
         '@wegent/dsh-executor-runtime': expect.stringContaining('wework-executor-runtime'),
@@ -151,6 +152,7 @@ describe('core DSH runtime', () => {
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
             '@wegent/dsh-transcript-sync',
+            '@wegent/dsh-conversation-export',
             '@wegent/dsh-ui-core-apps',
             '@wegent/dsh-ui-core-settings',
             '@wegent/dsh-ui-plugin-center',
@@ -801,6 +803,7 @@ async function writeRuntime(
   const pluginRoots = Object.fromEntries(
     [
       ['@wegent/dsh-app-wework', 'wework-app'],
+      ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
       ['@wegent/dsh-electron-host', 'wework-electron-host'],
       ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
       ['@wegent/dsh-secure-storage', 'wework-secure-storage'],

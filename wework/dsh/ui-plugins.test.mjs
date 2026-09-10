@@ -4,6 +4,7 @@ import test from 'node:test'
 import vm from 'node:vm'
 
 const packages = [
+  'conversation-export',
   'ui-core-apps',
   'ui-core-settings',
   'ui-plugin-center',

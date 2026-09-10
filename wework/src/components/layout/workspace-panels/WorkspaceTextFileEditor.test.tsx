@@ -59,6 +59,30 @@ describe('WorkspaceTextFileEditor', () => {
     window.removeEventListener(SELECTED_TEXT_CHANGED_EVENT, handleSelection)
   })
 
+  test('selects a requested source line when the editor opens', () => {
+    const selections: Array<string | null> = []
+    const handleSelection = (event: Event) => {
+      selections.push((event as CustomEvent<{ text: string | null }>).detail.text)
+    }
+    window.addEventListener(SELECTED_TEXT_CHANGED_EVENT, handleSelection)
+
+    const { unmount } = render(
+      <WorkspaceTextFileEditor
+        path="/workspace/auth.ts"
+        value={'first line\nsecond line\nthird line'}
+        themeType="light"
+        targetLineStart={2}
+        targetLineEnd={2}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+      />
+    )
+
+    expect(selections).toContain('second line')
+    unmount()
+    window.removeEventListener(SELECTED_TEXT_CHANGED_EVENT, handleSelection)
+  })
+
   test('preserves unsaved content and undo history when the theme changes', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()

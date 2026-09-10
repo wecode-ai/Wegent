@@ -126,6 +126,7 @@ import type {
   ModelSelectionConfig,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
+  RuntimeGoal,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeTaskSummary,
@@ -1412,6 +1413,10 @@ export function CloudTodoWorkspace({
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
   const boardScrollRef = useRef<HTMLDivElement>(null)
+  const [pinnedBoardPreview, setPinnedBoardPreview] = useState<{
+    contextKey: string
+    itemId: string
+  } | null>(null)
   const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
     useState<PendingExecutionConfiguration | null>(null)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
@@ -1557,8 +1562,12 @@ export function CloudTodoWorkspace({
       }
     >
   >({})
+  const [runtimeGoalsByAddress, setRuntimeGoalsByAddress] = useState<
+    Record<string, RuntimeGoal | null>
+  >({})
   const runtimeConversationRequestsRef = useRef(new Set<string>())
   const runtimeConversationLatestSignatureRef = useRef(new Map<string, string>())
+  const runtimeGoalRequestsRef = useRef(new Set<string>())
   useEffect(() => {
     if (projectMenuId === null) return
 
@@ -1785,6 +1794,10 @@ export function CloudTodoWorkspace({
             })
             const runtimeTask = runtimeTaskByAddress.get(addressKey)
             const preview = runtimeConversationPreviews[addressKey]
+            const runtimeGoalLoaded = Object.prototype.hasOwnProperty.call(
+              runtimeGoalsByAddress,
+              addressKey
+            )
 
             return {
               id: binding.id,
@@ -1798,6 +1811,8 @@ export function CloudTodoWorkspace({
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
                 : null,
               finalResponsePreview: preview?.text ?? null,
+              runtimeGoal: runtimeGoalsByAddress[addressKey] ?? null,
+              runtimeGoalLoaded,
             }
           }),
         ])
@@ -1805,9 +1820,44 @@ export function CloudTodoWorkspace({
     [
       itemTaskBindings,
       runtimeConversationPreviews,
+      runtimeGoalsByAddress,
       runtimeTaskByAddress,
       runtimeTaskRunningByAddress,
     ]
+  )
+  const loadBoardTaskRuntimeGoal = useCallback(
+    async (address: RuntimeTaskAddress): Promise<void> => {
+      const runtimeWorkApi = services.runtimeWorkApi
+      if (!runtimeWorkApi) return
+      const addressKey = runtimeConversationKey(address)
+      if (
+        Object.prototype.hasOwnProperty.call(runtimeGoalsByAddress, addressKey) ||
+        runtimeGoalRequestsRef.current.has(addressKey)
+      ) {
+        return
+      }
+
+      runtimeGoalRequestsRef.current.add(addressKey)
+      try {
+        const response = await runtimeWorkApi.getRuntimeGoal({ address })
+        setRuntimeGoalsByAddress(current => ({
+          ...current,
+          [addressKey]: response.accepted ? response.goal : null,
+        }))
+      } catch (error) {
+        console.warn('[Wework project board] failed to load task goal', {
+          address,
+          error,
+        })
+        setRuntimeGoalsByAddress(current => ({
+          ...current,
+          [addressKey]: null,
+        }))
+      } finally {
+        runtimeGoalRequestsRef.current.delete(addressKey)
+      }
+    },
+    [runtimeGoalsByAddress, services.runtimeWorkApi]
   )
   const localProjectIdForItem = useCallback(
     (item: CloudLoopItem): number | null => {
@@ -1824,6 +1874,19 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
+  const boardPreviewContextKey = [
+    selectedProjectKey,
+    boardParentId,
+    rootView,
+    projectView,
+    localProjectFilter,
+    nativeGroupFilter,
+    nativeBoardQuery,
+    aitableBoardQuery,
+    aitableGroupFilter,
+  ].join(':')
+  const pinnedBoardPreviewItemId =
+    pinnedBoardPreview?.contextKey === boardPreviewContextKey ? pinnedBoardPreview.itemId : null
   async function continueChangeRequestRepair(
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
@@ -5001,7 +5064,10 @@ export function CloudTodoWorkspace({
                       <DndContext
                         sensors={boardSensors}
                         collisionDetection={boardCollisionDetection}
-                        onDragStart={event => setActiveDragItemId(String(event.active.id))}
+                        onDragStart={event => {
+                          setPinnedBoardPreview(null)
+                          setActiveDragItemId(String(event.active.id))
+                        }}
                         onDragCancel={() => setActiveDragItemId(null)}
                         onDragEnd={finishBoardDrop}
                       >
@@ -5204,6 +5270,7 @@ export function CloudTodoWorkspace({
                                       }
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
+                                          setPinnedBoardPreview(null)
                                           setBackgroundTaskItemId(null)
                                           closeTaskPanel()
                                           setSelectedItem(item)
@@ -5219,28 +5286,26 @@ export function CloudTodoWorkspace({
                                         setArchiveError(null)
                                         setArchiveItem(item)
                                       }}
-                                      onOpenActivity={() => {
-                                        if (item.can_view_detail === false) return
-                                        const binding =
-                                          boardTaskBindings[item.id]?.find(
-                                            candidate => candidate.running
-                                          ) ?? boardTaskBindings[item.id]?.[0]
-                                        if (!binding) return
-                                        setBackgroundTaskItemId(null)
-                                        setSelectedItem(item)
-                                        openTaskBinding({
-                                          id: binding.id,
-                                          device_id: binding.device_id,
-                                          task_id: binding.task_id,
-                                          task_title: binding.task_title,
-                                          work_item_id: item.id,
-                                        })
-                                      }}
+                                      previewPinned={pinnedBoardPreviewItemId === item.id}
+                                      onPreviewPinnedChange={pinned =>
+                                        setPinnedBoardPreview(
+                                          pinned
+                                            ? {
+                                                contextKey: boardPreviewContextKey,
+                                                itemId: item.id,
+                                              }
+                                            : null
+                                        )
+                                      }
+                                      onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
                                       previewDisabled={
-                                        selectedItem !== null || activeDragItemId !== null
+                                        selectedItem !== null ||
+                                        activeDragItemId !== null ||
+                                        (pinnedBoardPreviewItemId !== null &&
+                                          pinnedBoardPreviewItemId !== item.id)
                                       }
                                       archiveDisabled={isAITableProject}
                                       progressDisplay={progressDisplay}

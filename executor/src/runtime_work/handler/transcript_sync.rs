@@ -98,7 +98,8 @@ impl RuntimeWorkRpcHandler {
         let snapshot = payload
             .get("snapshot")
             .and_then(Value::as_bool)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || requires_snapshot(&link);
         let encryption_key = string_field(&payload, "encryptionKey")
             .or_else(|| string_field(&payload, "encryption_key"))
             .ok_or_else(|| {
@@ -243,21 +244,34 @@ impl RuntimeWorkRpcHandler {
         let rollout_end = alias_u64(&payload, "rolloutEnd", "rollout_end")?;
         let parent_id = string_field(&payload, "parentTranscriptId")
             .or_else(|| string_field(&payload, "parent_transcript_id"));
-        let updated = self.store.update_task(&task_id, |link| {
+        let should_rekey = self.local_task_link(&task_id).is_some_and(|link| {
+            task_id != transcript_id
+                && parent_id.as_deref() == cloud_transcript_id(&link).as_deref()
+        });
+        let update = |link: &mut RuntimeTaskLink| {
             let current_id = cloud_transcript_id(link);
             if current_id.as_deref() == Some(transcript_id.as_str())
                 || current_id.is_none()
                 || parent_id.as_deref() == current_id.as_deref()
             {
-                set_cloud_transcript(link, &transcript_id, sequence, rollout_end);
+                set_cloud_transcript(link, &transcript_id, sequence, rollout_end, false);
                 link.updated_at = now_ms();
             }
-        });
+        };
+        let updated = if should_rekey {
+            self.store.rekey_task(&task_id, &transcript_id, update)
+        } else {
+            self.store.update_task(&task_id, update)
+        };
         let Some(link) = updated else {
             return Ok(status(&task_id, &transcript_id, false, 0, "task_missing"));
         };
+        if should_rekey {
+            emit_runtime_work_changed(&self.event_tx, &self.device_id, &task_id);
+            emit_runtime_work_changed(&self.event_tx, &self.device_id, &transcript_id);
+        }
         Ok(status(
-            &task_id,
+            &link.local_task_id,
             &transcript_id,
             transcript_matches(&link, &transcript_id),
             imported_through(&link),
@@ -282,6 +296,7 @@ fn restored_task_link(
         transcript_id,
         restored.sequence,
         restored.rollout_end,
+        true,
     );
     link
 }
@@ -352,11 +367,20 @@ fn synchronized_rollout_bytes(link: &RuntimeTaskLink) -> u64 {
         .unwrap_or(0)
 }
 
+fn requires_snapshot(link: &RuntimeTaskLink) -> bool {
+    link.runtime_handle
+        .get(CLOUD_TRANSCRIPT_HANDLE_KEY)
+        .and_then(|value| value.get("requiresSnapshot"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn set_cloud_transcript(
     link: &mut RuntimeTaskLink,
     transcript_id: &str,
     sequence: u64,
     rollout_bytes: u64,
+    requires_snapshot: bool,
 ) {
     if !link.runtime_handle.is_object() {
         link.runtime_handle = json!({});
@@ -365,6 +389,7 @@ fn set_cloud_transcript(
         "transcriptId": transcript_id,
         "importedThrough": sequence,
         "rolloutBytes": rollout_bytes,
+        "requiresSnapshot": requires_snapshot,
     });
 }
 
@@ -372,7 +397,10 @@ fn set_cloud_transcript(
 mod tests {
     use std::path::PathBuf;
 
-    use super::{cloud_transcript_id, imported_through, restored_task_link, RestoredTranscript};
+    use super::{
+        cloud_transcript_id, imported_through, requires_snapshot, restored_task_link,
+        RestoredTranscript,
+    };
 
     #[test]
     fn restore_preserves_the_requested_local_task_identity() {
@@ -392,5 +420,6 @@ mod tests {
             Some("cloud-transcript")
         );
         assert_eq!(imported_through(&link), 4);
+        assert!(requires_snapshot(&link));
     }
 }

@@ -14,6 +14,7 @@ vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
 beforeEach(() => {
   document.documentElement.dataset.theme = 'light'
+  Element.prototype.scrollIntoView = vi.fn()
 })
 
 function getRenderedDiffText() {
@@ -119,6 +120,8 @@ describe('FileChangesReviewPanel', () => {
 
     const fileToggles = screen.getAllByTestId('file-changes-review-file-diff-toggle')
     expect(fileToggles).toHaveLength(2)
+    expect(fileToggles[0]).toHaveTextContent('src/alpha.ts')
+    expect(fileToggles[1]).toHaveTextContent('src/beta.ts')
 
     fireEvent.click(fileToggles[0])
     expect(fileToggles[0]).toHaveAttribute('aria-expanded', 'false')
@@ -172,8 +175,8 @@ describe('FileChangesReviewPanel', () => {
 
     expect(screen.getByText(/This diff is large|此差异较大/)).toBeInTheDocument()
     expect(screen.getByTestId('file-changes-review-toolbar')).toHaveTextContent('上轮对话')
-    expect(screen.queryByTestId('file-changes-review-file-tree')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('toggle-file-tree-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('file-changes-review-file-tree')).not.toBeVisible()
+    expect(screen.getByTestId('toggle-file-tree-button')).toHaveAttribute('aria-pressed', 'false')
 
     const diff = screen.getByTestId('file-changes-review-diff')
     await waitFor(() => {
@@ -274,8 +277,21 @@ describe('FileChangesReviewPanel', () => {
 
     await userEvent.click(screen.getByTestId('refresh-review-diff-button'))
     expect(onRefresh).toHaveBeenCalledTimes(1)
-    expect(screen.queryByTestId('toggle-file-tree-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('file-changes-review-file-tree')).toBeInTheDocument()
+
+    const searchInput = screen.getByTestId('file-changes-review-file-search-input')
+    await userEvent.type(searchInput, 'alpha')
+    await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
+    expect(screen.getByTestId('file-changes-review-file-tree')).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('toggle-file-tree-button'))
+    expect(screen.getByTestId('file-changes-review-file-tree')).toBeVisible()
+    expect(searchInput).toHaveValue('alpha')
+
+    await userEvent.click(screen.getByTestId('toggle-diff-style-button'))
+    expect(screen.getByTestId('file-changes-review-diff-lines')).toHaveAttribute(
+      'data-diff-style',
+      'split'
+    )
 
     await userEvent.click(screen.getByTestId('toggle-line-wrap-button'))
     expect(screen.getByTestId('file-changes-review-diff-lines')).toHaveAttribute(
@@ -292,5 +308,100 @@ describe('FileChangesReviewPanel', () => {
     await userEvent.click(screen.getByTestId('copy-git-apply-command-button'))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("git apply <<'PATCH'"))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining(treeDiff))
+  })
+
+  test('positions the requested file and opens its source location', async () => {
+    const onOpenSourceFile = vi.fn()
+
+    render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={twoFileDiff}
+        focusFilePath="src/beta.ts"
+        onOpenSourceFile={onOpenSourceFile}
+      />
+    )
+
+    const betaSection = screen
+      .getAllByTestId('file-changes-review-file-diff-section')
+      .find(section => section.getAttribute('data-review-path') === 'src/beta.ts')
+    expect(betaSection).toBeDefined()
+    await waitFor(() =>
+      expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(betaSection)
+    )
+
+    await userEvent.click(
+      within(betaSection as HTMLElement).getByTestId('file-changes-review-open-source-button')
+    )
+    expect(onOpenSourceFile).toHaveBeenCalledWith('src/beta.ts', 1, 1)
+  })
+
+  test('supports file-level staging and reverting in unstaged review', async () => {
+    const onApplyPatch = vi.fn().mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={twoFileDiff}
+        reviewMode="unstaged"
+        onApplyPatch={onApplyPatch}
+      />
+    )
+
+    const fileActions = screen.getAllByTestId('file-changes-review-file-actions')[0]
+    const hunkActions = screen.getAllByTestId('file-changes-review-hunk-actions')[0]
+    expect(fileActions).toHaveClass('opacity-0')
+    expect(hunkActions).toHaveClass('absolute', 'rounded-full', 'opacity-0')
+    expect(
+      Array.from(fileActions.querySelectorAll('button')).map(button =>
+        button.getAttribute('data-testid')
+      )
+    ).toEqual(['file-changes-review-revert-file-button', 'file-changes-review-stage-file-button'])
+    expect(
+      Array.from(hunkActions.querySelectorAll('button')).map(button =>
+        button.getAttribute('data-testid')
+      )
+    ).toEqual(['file-changes-review-revert-hunk-button', 'file-changes-review-stage-hunk-button'])
+    expect(screen.getAllByTestId('file-changes-review-stage-file-button')[0]).not.toHaveTextContent(
+      /Stage file|暂存文件/
+    )
+    expect(screen.getAllByTestId('file-changes-review-stage-hunk-button')[0]).toHaveAccessibleName(
+      /Stage$|暂存$/
+    )
+
+    await userEvent.click(screen.getAllByTestId('file-changes-review-stage-file-button')[0])
+    expect(onApplyPatch).toHaveBeenCalledWith(
+      'stage',
+      expect.stringContaining('diff --git a/src/alpha.ts b/src/alpha.ts')
+    )
+
+    await userEvent.click(screen.getAllByTestId('file-changes-review-revert-file-button')[0])
+    expect(window.confirm).toHaveBeenCalledTimes(1)
+    expect(onApplyPatch).toHaveBeenCalledWith(
+      'revert',
+      expect.stringContaining('diff --git a/src/alpha.ts b/src/alpha.ts')
+    )
+  })
+
+  test('applies only the selected hunk', async () => {
+    const onApplyPatch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={twoFileDiff}
+        reviewMode="unstaged"
+        onApplyPatch={onApplyPatch}
+      />
+    )
+
+    await userEvent.click(screen.getAllByTestId('file-changes-review-stage-hunk-button')[0])
+
+    expect(onApplyPatch).toHaveBeenCalledWith(
+      'stage',
+      expect.stringContaining('diff --git a/src/alpha.ts b/src/alpha.ts')
+    )
+    expect(onApplyPatch.mock.calls[0]?.[1]).not.toContain('diff --git a/src/beta.ts b/src/beta.ts')
   })
 })
