@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-neutral model, device, and private-task selection operations."""
+"""Provider-neutral model, device, agent, and private-task selections."""
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.im_session import IMPrivateSession
+from app.models.kind import Kind
 from app.models.user import User
 from app.services.channels.device_selection import (
     DeviceType,
@@ -23,6 +24,12 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.channels.team_selection import (
+    TeamSelection,
+    get_team_display_name,
+    resolve_selected_team,
+    team_selection_manager,
+)
 from app.services.im import task_continuation_service as task_service
 from app.services.im.session_service import im_session_service
 
@@ -32,6 +39,7 @@ class SelectionKind(str, Enum):
 
     MODEL = "model"
     DEVICE = "device"
+    AGENT = "agent"
     TASK = "task"
 
 
@@ -194,6 +202,94 @@ class ChannelSelectionService:
             detail=f"当前模型：{model_label}",
         )
 
+    async def list_agents(
+        self,
+        db: Session,
+        user: User,
+        *,
+        include_default: bool = False,
+        default_team: Kind | None = None,
+    ) -> list[SelectionOption]:
+        """List Teams the user can currently access."""
+
+        from app.services.adapters.team_kinds import team_kinds_service
+
+        current = await resolve_selected_team(db, user.id)
+        teams = team_kinds_service.get_user_teams(
+            db=db,
+            user_id=user.id,
+            scope="all",
+        )
+        options = [self._agent_option(team, current) for team in teams]
+        if not include_default:
+            return options
+
+        default_label = get_team_display_name(default_team)
+        description = (
+            f"恢复默认（{default_label}）"
+            if default_team is not None
+            else "清除当前选择并恢复系统默认"
+        )
+        return [
+            SelectionOption(
+                value="default",
+                label="系统默认智能体",
+                description=description,
+                is_current=current is None,
+                aliases=("default",),
+            ),
+            *options,
+        ]
+
+    async def apply_agent(
+        self,
+        db: Session,
+        user: User,
+        value: str,
+        *,
+        default_team: Kind | None = None,
+    ) -> SelectionApplyResult:
+        """Revalidate and persist one Team selection."""
+
+        current = await resolve_selected_team(db, user.id)
+        if value == "default":
+            try:
+                await team_selection_manager.clear_selection(user.id)
+            except Exception as exc:
+                raise SelectionError("智能体选择保存失败，请稍后重试。") from exc
+            return SelectionApplyResult(
+                SelectionKind.AGENT,
+                get_team_display_name(default_team),
+                current is not None,
+                detail="default",
+            )
+
+        team_id = self._split_agent_value(value)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource(db, team_id, user.id)
+        if team is None:
+            raise SelectionError("智能体已不可用，请刷新后重新选择。")
+
+        saved = await team_selection_manager.set_selection(
+            user.id,
+            TeamSelection(
+                team_id=team.id,
+                team_name=team.name,
+                team_namespace=team.namespace,
+                display_name=get_team_display_name(team),
+            ),
+        )
+        if not saved:
+            raise SelectionError("智能体选择保存失败，请稍后重试。")
+
+        return SelectionApplyResult(
+            SelectionKind.AGENT,
+            get_team_display_name(team),
+            current is None or current.id != team.id,
+            detail=team.namespace,
+        )
+
     async def list_tasks(
         self,
         db: Session,
@@ -295,6 +391,23 @@ class ChannelSelectionService:
             prefix_aliases=(logical_id, target_id),
         )
 
+    def _agent_option(
+        self,
+        team: dict[str, Any],
+        current: Kind | None,
+    ) -> SelectionOption:
+        team_id = int(team["id"])
+        name = str(team.get("name") or f"智能体 {team_id}")
+        display_name = str(team.get("displayName") or name)
+        namespace = str(team.get("namespace") or "default")
+        return SelectionOption(
+            value=f"team:{team_id}",
+            label=display_name,
+            description=f"命名空间：{namespace}",
+            is_current=current is not None and current.id == team_id,
+            aliases=(name, display_name),
+        )
+
     async def _device_model_label(
         self,
         db: Session,
@@ -361,7 +474,11 @@ class ChannelSelectionService:
     ) -> SelectionOption:
         option = next((item for item in options if item.value == value), None)
         if option is None:
-            labels = {SelectionKind.MODEL: "模型", SelectionKind.DEVICE: "设备"}
+            labels = {
+                SelectionKind.MODEL: "模型",
+                SelectionKind.DEVICE: "设备",
+                SelectionKind.AGENT: "智能体",
+            }
             raise SelectionError(f"{labels.get(kind, '选项')}已不可用，请刷新后重试。")
         return option
 
@@ -373,6 +490,15 @@ class ChannelSelectionService:
         if len(parts) != 2 or not all(parts):
             raise SelectionError("模型选择无效，请刷新后重新选择。")
         return parts[0], parts[1]
+
+    def _split_agent_value(self, value: str) -> int:
+        prefix, separator, raw_id = value.partition(":")
+        if prefix != "team" or not separator:
+            raise SelectionError("智能体选择无效，请刷新后重新选择。")
+        try:
+            return int(raw_id)
+        except (TypeError, ValueError) as exc:
+            raise SelectionError("智能体选择无效，请刷新后重新选择。") from exc
 
 
 channel_selection_service = ChannelSelectionService()

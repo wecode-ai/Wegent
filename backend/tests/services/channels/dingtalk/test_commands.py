@@ -32,6 +32,7 @@ class TestParseCommand:
             ("会话设置", CommandType.STATUS),
             ("切模型", CommandType.MODELS),
             ("换设备", CommandType.DEVICES),
+            ("切智能体", CommandType.AGENTS),
             ("切任务", CommandType.SWITCH),
         ],
     )

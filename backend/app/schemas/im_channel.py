@@ -147,7 +147,7 @@ class DingTalkChannelConfig(BaseModel):
     )
     interaction_card_template_id: Optional[str] = Field(
         default=None,
-        description="Custom model, device, and task selection card template",
+        description="Custom model, device, agent, and task selection card template",
     )
     # User mapping mode: how to map DingTalk users to Wegent users
     # - "staff_id": Use DingTalk staff_id as username (default)

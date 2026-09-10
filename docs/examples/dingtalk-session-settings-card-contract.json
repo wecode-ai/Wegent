@@ -1,6 +1,6 @@
 {
   "name": "Wegent session settings card",
-  "description": "DingTalk interactive card contract for selecting a model, device, or private task.",
+  "description": "DingTalk interactive card contract for selecting a model, device, agent, or private task.",
   "callbackType": "STREAM",
   "variables": [
     { "name": "title", "type": "string" },
@@ -18,6 +18,9 @@
     { "name": "currentModel", "type": "string" },
     { "name": "currentDevice", "type": "string" },
     { "name": "currentTask", "type": "string" },
+    { "name": "currentTaskAgent", "type": "string" },
+    { "name": "nextTaskAgent", "type": "string" },
+    { "name": "showAgent", "type": "boolean" },
     { "name": "showTask", "type": "boolean" },
     { "name": "kind", "type": "string" },
     { "name": "kindLabel", "type": "string" },
@@ -41,7 +44,8 @@
       "name": "console",
       "visibleWhen": "view == console",
       "content": [
-        "Show currentModel, currentDevice, and currentTask.",
+        "Show currentModel, currentDevice, currentTask, currentTaskAgent, and nextTaskAgent.",
+        "Show the agent action only when showAgent is true.",
         "Show the task action only when showTask is true."
       ]
     },
@@ -69,6 +73,12 @@
       "label": "切换设备",
       "actionType": "request",
       "params": { "action": "open_kind", "kind": "device" }
+    },
+    {
+      "label": "切换智能体",
+      "actionType": "request",
+      "visibleWhen": "showAgent == true",
+      "params": { "action": "open_kind", "kind": "agent" }
     },
     {
       "label": "切换任务",
