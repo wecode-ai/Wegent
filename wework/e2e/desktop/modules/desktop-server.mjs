@@ -384,12 +384,13 @@ class DesktopE2EServer {
     workspacePath,
     cloudWorkspacePath = workspacePath,
     desktopScenario = null,
-    { enableMarketplaceConnectorAppsStub = false } = {}
+    { enableMarketplaceConnectorAppsStub = false, modelAttributionSource = 'wegent-app' } = {}
   ) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
     this.desktopScenario = desktopScenario
     this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
+    this.modelAttributionSource = modelAttributionSource
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
@@ -1983,7 +1984,7 @@ class DesktopE2EServer {
       if (body.model === modelCase.mainModelId) {
         assertModelAttributionHeaders(request.headers, {
           executor: 'codex',
-          source: 'wegent-app',
+          source: modelCase.source === 'cloud' ? 'wegent-cloud' : 'wegent-app',
           taskSource: 'wework',
         })
         assert.equal(protocol, 'responses', 'The vision primary model used the wrong protocol')
@@ -3765,7 +3766,7 @@ class DesktopE2EServer {
       }
       assertModelAttributionHeaders(request.headers, {
         executor: 'codex',
-        source: 'wegent-app',
+        source: this.modelAttributionSource,
         taskSource: requestText.includes(SUPERVISOR_CORRECTION) ? 'unknown' : 'wework',
       })
       if (requestText.includes(SUPERVISOR_CORRECTION)) {
@@ -4596,7 +4597,7 @@ class DesktopE2EServer {
     assert.equal(body.stream, true, `${model.protocol} request was not streaming`)
     assertModelAttributionHeaders(headers, {
       executor: 'codex',
-      source: 'wegent-app',
+      source: model.execution === 'cloud' ? 'wegent-cloud' : 'wegent-app',
       taskSource: 'wework',
     })
     assert.equal(

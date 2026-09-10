@@ -1094,6 +1094,8 @@ async function main() {
   }
   const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
     enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
+    modelAttributionSource:
+      CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY ? 'wegent-cloud' : 'wegent-app',
   })
   const modelSwitchVerification = []
   let app

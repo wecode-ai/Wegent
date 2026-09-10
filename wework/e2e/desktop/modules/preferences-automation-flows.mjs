@@ -734,7 +734,16 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
   try {
     await control.command('click', `[data-testid="${automationActions}"]`)
     await control.command('click', '[data-testid="automation-run-now-button"]')
-    await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
+    const manualModelRequest = await control.awaitScenarioRequestCount(
+      'automation',
+      1,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+    assertModelAttributionHeaders(manualModelRequest.headers, {
+      executor: 'codex',
+      source: 'wegent-cloud',
+      taskSource: 'wework',
+    })
 
     const taskSnapshot = await waitForSnapshot(
       control,
