@@ -37,6 +37,7 @@
     "project_chat_cloud_required": "Connect to cloud to use activity",
     "project_chat_load_failed": "Failed to load activity",
     "project_chat_send_failed": "Failed to send message",
+    "retry_failed": "Retry failed",
     "project_chat_close": "Close AI messages",
     "project_chat_loading": "Loading activity…",
     "project_chat_empty_title": "Message AI",

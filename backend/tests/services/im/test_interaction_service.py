@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.im_session import IMPrivateSession
+from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
 from app.services.channels.callback import ChannelType
 from app.services.channels.handler import MessageContext
@@ -108,6 +108,21 @@ async def _session(test_db: Session, test_user: User) -> IMPrivateSession:
         channel_id=44,
         conversation_id="telegram-chat",
         sender_id="telegram-user",
+        display_name="Alice",
+    )
+
+
+async def _dingtalk_session(
+    test_db: Session,
+    test_user: User,
+) -> IMPrivateSession:
+    return await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=45,
+        conversation_id="dingtalk-chat",
+        sender_id="dingtalk-user",
         display_name="Alice",
     )
 
@@ -290,6 +305,94 @@ async def test_runtime_notification_reply_inherits_bound_model_selection(
         runtime_target["modelSelection"]
         == session.active_runtime_task["modelSelection"]
     )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_quoted_notification_routes_exact_runtime_task(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={"deviceId": "device-old", "localTaskId": "runtime-old"},
+    )
+    quoted_target = {
+        "deviceId": "device-notified",
+        "workspacePath": "/repo/Notified",
+        "localTaskId": "runtime-notified",
+        "modelSelection": {
+            "modelName": "deepseek-v4-pro-responses(public)",
+            "modelType": "public",
+            "options": {"reasoning": "medium"},
+        },
+    }
+    await im_session_service.save_runtime_task_reply_target(
+        session=session,
+        message_id="quoted-notification-query-key",
+        runtime_task=quoted_target,
+    )
+    await im_session_service.save_runtime_task_reply_target(
+        session=session,
+        message_id="newer-notification-query-key",
+        runtime_task={
+            "deviceId": "device-newer",
+            "localTaskId": "runtime-newer",
+        },
+    )
+    context = _context("继续处理这个任务")
+    context.extra_data["reply_to_message_id"] = "quoted-notification-query-key"
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=context,
+        port=port,
+    )
+
+    assert handled is True
+    assert session.mode == IMSessionMode.TASK
+    assert session.active_runtime_task == quoted_target
+    assert port.continued_tasks == [(None, "继续处理这个任务")]
+    assert port.continued_runtime_tasks == [None]
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_unquoted_message_does_not_switch_runtime_task(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _dingtalk_session(test_db, test_user)
+    active_target = {"deviceId": "device-old", "localTaskId": "runtime-old"}
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task=active_target,
+    )
+    await im_session_service.save_runtime_task_reply_target(
+        session=session,
+        message_id="notification-query-key",
+        runtime_task={
+            "deviceId": "device-notified",
+            "localTaskId": "runtime-notified",
+        },
+    )
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=_context("没有引用通知"),
+        port=port,
+    )
+
+    assert handled is True
+    assert session.active_runtime_task == active_target
+    assert port.continued_runtime_tasks == [None]
 
 
 @pytest.mark.asyncio

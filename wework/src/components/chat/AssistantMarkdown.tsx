@@ -676,6 +676,7 @@ function AssistantMarkdownLink({
 
   if (target.kind === 'file') {
     const filePath = target.path
+    const canOpenWithoutWorkspace = isHtmlFilePath(filePath)
     const lineLabel = formatMarkdownLineLabel(target)
     const tooltip = formatMarkdownFileTooltip(target)
     const openOptions = getMarkdownFileOpenOptions(target)
@@ -690,6 +691,7 @@ function AssistantMarkdownLink({
           type="button"
           className={ASSISTANT_MARKDOWN_LINK_CLASS}
           data-testid="assistant-markdown-link"
+          disabled={!onOpenFile && !canOpenWithoutWorkspace}
           onClick={() => {
             if (isHtmlFilePath(filePath)) {
               if (requestEmbeddedBrowserOpen(filePath)) return

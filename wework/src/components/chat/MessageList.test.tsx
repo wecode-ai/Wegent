@@ -732,6 +732,8 @@ describe('MessageList', () => {
 
     const { container } = render(
       <MessageList
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
         messages={[
           {
             id: 'assistant-streaming-windowed',
@@ -5020,6 +5022,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 
@@ -5561,6 +5565,8 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
+        onRetryFailedMessage={vi.fn()}
+        onSwitchModelForFailedMessage={vi.fn()}
       />
     )
 
