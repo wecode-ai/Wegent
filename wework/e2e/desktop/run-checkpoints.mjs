@@ -16,6 +16,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
+  'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
@@ -62,6 +63,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-account-auth',
+  'codex-account-login',
   'cloud-space-mention',
   'change-request-status',
   'claude-runtime',

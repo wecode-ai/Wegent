@@ -83,6 +83,34 @@ GIT_PUSH_COMMAND = (
     'exec git push -u origin "$branch"\''
 )
 
+GIT_APPLY_PATCH_SCRIPT = """
+import base64
+import subprocess
+import sys
+
+
+action = sys.argv[1] if len(sys.argv) > 1 else ""
+encoded_patch = sys.argv[2] if len(sys.argv) > 2 else ""
+args_by_action = {
+    "stage": ["git", "apply", "--cached", "--whitespace=nowarn", "-"],
+    "unstage": ["git", "apply", "--cached", "--reverse", "--whitespace=nowarn", "-"],
+    "revert": ["git", "apply", "--reverse", "--whitespace=nowarn", "-"],
+}
+git_args = args_by_action.get(action)
+if git_args is None:
+    print("Unsupported patch action", file=sys.stderr)
+    raise SystemExit(64)
+
+try:
+    patch = base64.b64decode(encoded_patch, validate=True)
+except Exception:
+    print("Invalid patch payload", file=sys.stderr)
+    raise SystemExit(64)
+
+result = subprocess.run(git_args, input=patch, check=False)
+raise SystemExit(result.returncode)
+""".strip()
+
 GIT_HOSTING_CLI_STATUS_SCRIPT = """
 import json
 import re
@@ -1716,6 +1744,9 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command='sh -c \'git -C "$1" cat-file -e "$2^{commit}"\' --'
     ),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
+    "git_apply_patch": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(GIT_APPLY_PATCH_SCRIPT)}"
+    ),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "git_push": LocalDeviceCommandDefinition(command=GIT_PUSH_COMMAND),
     "git_generate_commit_message": LocalDeviceCommandDefinition(

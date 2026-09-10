@@ -224,6 +224,12 @@ async function findFile(root, pattern) {
   throw new Error(`No file matching ${pattern} under ${root}`)
 }
 
+async function requireDirectory(path) {
+  if (!(await stat(path).catch(() => null))?.isDirectory()) {
+    throw new Error(`Required application directory is missing: ${path}`)
+  }
+}
+
 async function requireFile(path) {
   if (!(await stat(path).catch(() => null))?.isFile()) {
     throw new Error(`Required release file is missing: ${path}`)

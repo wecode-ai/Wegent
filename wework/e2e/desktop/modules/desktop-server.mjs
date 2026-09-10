@@ -2116,6 +2116,12 @@ class DesktopE2EServer {
     }
 
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
+      if (JSON.stringify(body).includes('Read wework-plugin-creator before scaffolding')) {
+        assert.ok(
+          JSON.stringify(body).includes('wework-plugin-creator/SKILL.md'),
+          'Wework Plugin Creator did not resolve its shipped skill'
+        )
+      }
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PLUGIN_CREATOR_COMPLETION_TEXT),

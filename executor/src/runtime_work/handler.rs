@@ -927,6 +927,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
+            "runtime.codex.auth.read" => self.read_codex_account().await,
+            "runtime.codex.auth.login.start" => self.start_codex_login().await,
+            "runtime.codex.auth.login.cancel" => self.cancel_codex_login(payload).await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
             "runtime.codex.catalog.overrides.read" => {
                 self.read_codex_model_overrides(payload).await

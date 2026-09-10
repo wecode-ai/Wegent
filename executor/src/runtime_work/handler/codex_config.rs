@@ -20,6 +20,37 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    pub(super) async fn read_codex_account(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server
+            .request("account/read", json!({"refreshToken": false}))
+            .await
+            .map_err(|error| AppIpcError::new("codex_auth_read_failed", error))
+    }
+
+    pub(super) async fn start_codex_login(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server
+            .request(
+                "account/login/start",
+                json!({
+                    "type": "chatgpt",
+                    "useHostedLoginSuccessPage": true,
+                    "appBrand": "codex",
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_login_start_failed", error))
+    }
+
+    pub(super) async fn cancel_codex_login(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let login_id = string_field(&payload, "loginId")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "loginId is required"))?;
+        self.codex_app_server
+            .request("account/login/cancel", json!({"loginId": login_id.trim()}))
+            .await
+            .map_err(|error| AppIpcError::new("codex_login_cancel_failed", error))
+    }
+
     pub(super) async fn configure_codex_runtime_proxy(
         &self,
         proxy_url: Option<String>,

@@ -124,6 +124,7 @@ interface ScrollableMessageAreaProps {
   loadingFullTranscript?: boolean
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
+  initialScrollPosition?: 'restore' | 'latest'
 }
 
 export const ScrollableMessageArea = memo(function ScrollableMessageArea(
@@ -211,6 +212,7 @@ function areScrollableMessageAreaPropsEqual(
       ? 'onLoadTurnNavigationItem'
       : null,
     previous.onLoadTranscriptGap !== next.onLoadTranscriptGap ? 'onLoadTranscriptGap' : null,
+    previous.initialScrollPosition !== next.initialScrollPosition ? 'initialScrollPosition' : null,
   ].filter((key): key is string => key !== null)
 
   return changed.length === 0
@@ -262,6 +264,7 @@ function ScrollableMessagePaneContent({
   loadingFullTranscript = false,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
+  initialScrollPosition = 'restore',
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
   const internalScrollRef = useRef<HTMLDivElement>(null)
@@ -899,6 +902,7 @@ function ScrollableMessagePaneContent({
     const pendingAssistantResponseStarted =
       pendingAssistantResponseStartRef.current && !autoScrollIsSuspended
     const shouldRestoreScroll = Boolean(
+      initialScrollPosition === 'restore' &&
       currentScrollKey &&
       messages.length > 0 &&
       (conversationChanged || messagesLoaded) &&
@@ -1022,6 +1026,7 @@ function ScrollableMessagePaneContent({
     isWaitingForAssistant,
     lastMessage,
     latestGuidanceMessageId,
+    initialScrollPosition,
     loading,
     messageScrollSignature,
     messages,

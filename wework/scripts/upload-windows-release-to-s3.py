@@ -9,7 +9,6 @@ import json
 import mimetypes
 import os
 import re
-from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -140,17 +139,6 @@ def version_parts(version: str) -> tuple[int, int, int, int, int]:
     )
 
 
-def upload_channel_manifest(
-    client: Minio,
-    bucket: str,
-    prefix: str,
-    path: Path,
-) -> None:
-    if not path.is_file():
-        raise SystemExit(f"Updater channel manifest not found: {path}")
-    upload_file(client, bucket, prefix, path, "no-cache, no-store")
-
-
 def release_advances_channel(
     client: Minio,
     bucket: str,
@@ -164,8 +152,8 @@ def release_advances_channel(
     current = read_manifest(client, bucket, prefix, path.name)
     if current is None:
         return True
-    candidate_version = candidate["version"]
-    current_version = current["version"]
+    candidate_version = candidate["appVersion"]
+    current_version = current["appVersion"]
     if version_parts(candidate_version) > version_parts(current_version):
         return True
 
@@ -229,7 +217,6 @@ def publish_channel(
     channel: str,
     publish_components,
 ) -> bool:
-    channel_manifest = output_dir / f"{channel}-windows-x86_64.json"
     component_manifest = output_dir / f"components-{channel}-windows-x64.json"
     electron_channel = "latest" if channel == "stable" else "beta"
     electron_manifest = output_dir / f"{electron_channel}.yml"
@@ -237,34 +224,13 @@ def publish_channel(
         client,
         bucket,
         prefix,
-        channel_manifest,
+        component_manifest,
         ((prefix, electron_manifest.name), (prefix, component_manifest.name)),
     ):
         return False
     publish_components()
-    upload_channel_manifest(client, bucket, prefix, channel_manifest)
     upload_electron_manifest(client, bucket, prefix, electron_manifest)
     return True
-
-
-def publish_stable_bootstrap_manifest(
-    client: Minio, bucket: str, prefix: str, path: Path
-) -> None:
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    entry = manifest["platforms"]["windows-x86_64"]
-    manifest["platforms"]["stable-windows"] = entry
-    manifest["platforms"]["beta-windows"] = entry
-    content = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
-    object_name = storage_key(prefix, "latest.json")
-    client.put_object(
-        bucket,
-        object_name,
-        BytesIO(content),
-        len(content),
-        content_type="application/json",
-        metadata={"Cache-Control": "no-cache, no-store"},
-    )
-    print(f"Published stable bootstrap manifest: s3://{bucket}/{object_name}")
 
 
 def main() -> None:
@@ -346,9 +312,6 @@ def main() -> None:
                 "public, max-age=31536000, immutable",
             ),
         )
-    manifest = output_dir / "latest.json"
-    if not manifest.is_file():
-        raise SystemExit(f"Updater manifest not found: {manifest}")
     advanced = publish_channel(
         client,
         bucket,
@@ -369,8 +332,6 @@ def main() -> None:
     if channel != "stable" or not advanced:
         return
     publish_latest_installer(client, bucket, prefix, version, artifacts)
-    publish_stable_bootstrap_manifest(client, bucket, prefix, manifest)
-    print("Uploaded latest.json last so legacy clients stay on stable releases.")
 
 
 if __name__ == "__main__":

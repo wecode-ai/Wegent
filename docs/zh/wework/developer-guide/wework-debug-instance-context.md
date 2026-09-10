@@ -53,9 +53,13 @@ macOS 托盘会根据 `WEWORK_APP_IDENTIFIER` 派生稳定的 UUID v5，并作�
 `WEWORK_APP_IDENTIFIER` 与正式版和其他 worktree 隔离。不要修改 UUID
 namespace 或改用随机 GUID，否则会再次重置用户的菜单栏显示规则。
 
-Electron 在 macOS 上创建 `NSStatusItem` 后才写入 `autosaveName`。托盘必须先用
-空图片完成构造，再设置真实图标，避免 iBar 在这段窗口期把正式版识别成临时的
-`Item-0` 并套用错误的隐藏规则。不要把真实图片重新放回 `Tray` 构造函数。
+托盘的生命周期必须持续到进程退出。不要在退出清理中调用 `Tray.destroy()`，
+也不要释放持有托盘的管理器：底层 `NSStatusBar.removeStatusItem` 会删除
+`NSStatusItem Preferred Position <GUID>`，导致重启后图标回到菜单栏最左侧，
+落入 iBar 的隐藏区域，即使 GUID 和“始终显示”规则都未改变。
+空图片不会使原生状态栏项不可见，也不能保护已保存的位置，因此直接使用真实图标创建托盘。
+macOS `tray-lifecycle` 回归会在独立应用域中设置位置，验证退出后该值仍存在，
+并验证重启后的 GUID 和位置；只检查 GUID 不足以覆盖这一问题。
 
 脚本也会把这些值导出为 `VITE_WEWORK_*`，供前端在运行时显示。
 

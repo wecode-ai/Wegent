@@ -74,6 +74,8 @@ Wework 使用独立的 Codex home，避免直接污染用户命令行 Codex 的�
 
 为了复用用户已有登录态，Wework Codex home 会软链用户 `~/.codex/auth.json`。如果目标位置存在失效软链，会先移除再重新创建；如果不是 Unix 系统，则复制 auth 文件。插件、市场缓存和 Wework 运行时配置继续存放在 Wework 自己的 Codex home 中。
 
+本机没有可复用的 Codex 登录态时，用户可以在“设置 → 模型设置 → Codex 设置 → 认证信息”中选择“登录”。Wework 通过本机 Executor 调用 Codex app-server 的 ChatGPT 浏览器登录协议，在系统浏览器中打开授权页，并轮询 app-server 的账号状态；登录成功后，认证仍由独立的 Wework Codex home 保存。取消、超时、页面离开或浏览器打开失败都会取消对应登录会话，前端不会读取或展示 token、认证文件路径和文件摘要。
+
 首次启动时，如果 Wework Codex home 还没有初始化，而本机存在原生 `~/.codex`，应用启动阶段会显示迁移选择。用户可以选择：
 
 - 创建新的 Wework Codex home，只复用 auth 链接。

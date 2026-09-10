@@ -63,6 +63,30 @@ test('registers a default-enabled cloud sync setting and applies changes to the 
           return {
             async request(method, params) {
               backendRequests.push({ method, params })
+              if (method === 'getStatus') {
+                return {
+                  configured: true,
+                  enabled: true,
+                  pendingTurns: 1,
+                  transcripts: 28,
+                  syncing: false,
+                  lastError: 'Not Found',
+                  lastAttemptAt: '2026-09-09T17:41:48.000Z',
+                  lastSuccessAt: null,
+                }
+              }
+              if (method === 'flush') {
+                return {
+                  configured: true,
+                  enabled: true,
+                  pendingTurns: 0,
+                  transcripts: 29,
+                  syncing: false,
+                  lastError: null,
+                  lastAttemptAt: '2026-09-09T17:45:00.000Z',
+                  lastSuccessAt: '2026-09-09T17:45:01.000Z',
+                }
+              }
               return { enabled: params.enabled }
             },
           }
@@ -96,7 +120,7 @@ test('registers a default-enabled cloud sync setting and applies changes to the 
   }
 
   plugin.apply(ctx)
-  await Promise.resolve()
+  await new Promise(resolve => setImmediate(resolve))
 
   assert.equal(configurationDefinition.defaults.enabled, true)
   assert.equal(backendRequests[0].method, 'setEnabled')
@@ -105,6 +129,15 @@ test('registers a default-enabled cloud sync setting and applies changes to the 
   assert.ok(pageRegistration)
   assert.equal(registrations.find(entry => entry.descriptor)?.descriptor.page, 'connections')
   const wrapper = pageRegistration.component({})
+  const statusSnapshots = []
+  const unsubscribeStatus = wrapper.props.store.subscribe(snapshot => {
+    statusSnapshots.push(snapshot)
+  })
+  await wrapper.props.store.refreshStatus()
+  unsubscribeStatus()
+  assert.ok(statusSnapshots.some(snapshot => snapshot.statusRefreshing))
+  assert.ok(statusSnapshots.every(snapshot => !snapshot.statusPending))
+
   const page = wrapper.type(wrapper.props)
   const checkbox = findElement(
     page,
@@ -112,11 +145,28 @@ test('registers a default-enabled cloud sync setting and applies changes to the 
   )
   assert.ok(checkbox)
   assert.equal(checkbox.props.checked, true)
+  const runtimeStatus = findElement(
+    page,
+    node => node.props?.['data-testid'] === 'transcript-sync-runtime-status'
+  )
+  assert.ok(runtimeStatus)
+  assert.ok(
+    findElement(page, node => node.props?.['data-testid'] === 'transcript-sync-runtime-error')
+  )
+  const retry = findElement(
+    page,
+    node => node.props?.['data-testid'] === 'transcript-sync-retry-button'
+  )
+  assert.ok(retry)
+  retry.props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(backendRequests.at(-1).method, 'flush')
 
   checkbox.props.onChange({ target: { checked: false } })
   await new Promise(resolve => setImmediate(resolve))
 
   assert.equal(configured.enabled, false)
-  assert.equal(backendRequests.at(-1).method, 'setEnabled')
-  assert.equal(backendRequests.at(-1).params.enabled, false)
+  assert.equal(backendRequests.at(-2).method, 'setEnabled')
+  assert.equal(backendRequests.at(-2).params.enabled, false)
+  assert.equal(backendRequests.at(-1).method, 'getStatus')
 })

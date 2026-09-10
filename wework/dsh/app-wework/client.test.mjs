@@ -109,6 +109,30 @@ test('registers Wework as the DSH root application', async () => {
   assert.equal(typeof registration.component, 'function')
 })
 
+test('registers telemetry sinks with Cordis lifecycle cleanup', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  const cleanups = []
+  const owner = { effect: factory => cleanups.push(factory()) }
+  const sink = {
+    id: 'internal',
+    protocol: 'telemetry-sink/v1',
+    accept() {},
+  }
+
+  runtime.service.telemetry.sinks.register(owner, sink)
+  assert.equal(runtime.service.telemetry.sinks.list()[0].id, sink.id)
+  assert.equal(runtime.service.telemetry.sinks.list()[0].protocol, sink.protocol)
+  assert.throws(
+    () => runtime.service.telemetry.sinks.register(owner, { ...sink, accept: undefined }),
+    /requires accept\(\)/
+  )
+  assert.throws(() => runtime.service.telemetry.sinks.register(owner, sink), /already registered/)
+
+  for (const cleanup of cleanups.reverse()) cleanup()
+  assert.equal(runtime.service.telemetry.sinks.list().length, 0)
+})
+
 test('projects native DSH sidebar slot entries into Wework containers', async () => {
   const client = await loadClient()
   const registrations = []
@@ -613,6 +637,54 @@ test('binds the active Composer without exposing a second editor registry', asyn
   assert.equal(value, 'replaced')
   dispose()
   assert.throws(() => runtime.service.composer.insertText('missing'), /No active Wework composer/)
+})
+
+test('binds the conversation transcript controller for client plugins', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  const reference = { deviceId: 'device-1', taskId: 'task-1' }
+  const snapshot = { reference, title: 'Conversation', turns: [] }
+  const dispose = runtime.bindConversationController({
+    async getTranscript(value) {
+      assert.deepEqual(value, reference)
+      return snapshot
+    },
+  })
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await runtime.service.conversations.getTranscript(reference))),
+    snapshot
+  )
+  assert.equal(runtime.host.conversations.bind, undefined)
+  dispose()
+  await assert.rejects(
+    async () => runtime.service.conversations.getTranscript(reference),
+    /No active Wework conversation controller/
+  )
+})
+
+test('exposes only the save dialog capability to contribution modules', async () => {
+  const client = await loadClient()
+  const calls = []
+  const runtime = client.exports.createExtensionRuntime({
+    async saveDialog(options) {
+      calls.push(options)
+      return { canceled: false, filePath: '/tmp/conversation.html' }
+    },
+  })
+
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        await runtime.host.dialog.save({
+          defaultPath: 'conversation.html',
+        })
+      )
+    ),
+    { canceled: false, filePath: '/tmp/conversation.html' }
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ defaultPath: 'conversation.html' }])
+  assert.equal('host' in runtime.host, false)
 })
 
 test('provides namespaced state, validated configuration, and secure values', async () => {

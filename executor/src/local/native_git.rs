@@ -12,7 +12,7 @@
 
 use std::{collections::HashMap, path::Path, process::Stdio, time::Duration};
 
-use tokio::{process::Command, time};
+use tokio::{io::AsyncWriteExt, process::Command, time};
 
 use crate::process::hide_windows_console;
 
@@ -97,6 +97,63 @@ pub async fn run_git_capture(
         message: error.to_string(),
         timed_out: false,
     })?;
+    let output = time::timeout(timeout, child.wait_with_output())
+        .await
+        .map_err(|_| GitRunError {
+            message: format!("Git command timed out after {}s", timeout.as_secs()),
+            timed_out: true,
+        })?;
+    let output = output.map_err(|error| GitRunError {
+        message: error.to_string(),
+        timed_out: false,
+    })?;
+    let success = output.status.success();
+    let (stdout, truncated) = truncate_bytes(&output.stdout, max_output_bytes);
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    Ok(GitCapture {
+        stdout,
+        stderr,
+        success,
+        truncated,
+    })
+}
+
+/// Run `git` directly with bounded stdin input.
+pub async fn run_git_capture_with_input(
+    args: &[String],
+    input: &[u8],
+    cwd: Option<&Path>,
+    env: &HashMap<String, String>,
+    timeout: Duration,
+    max_output_bytes: usize,
+) -> Result<GitCapture, GitRunError> {
+    let mut command = Command::new("git");
+    hide_windows_console(&mut command);
+    command.args(args);
+    command.env_clear();
+    command.envs(sanitize_git_env(env));
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    command.kill_on_drop(true);
+
+    let mut child = command.spawn().map_err(|error| GitRunError {
+        message: error.to_string(),
+        timed_out: false,
+    })?;
+    let mut stdin = child.stdin.take().ok_or_else(|| GitRunError {
+        message: "Failed to open git stdin".to_owned(),
+        timed_out: false,
+    })?;
+    stdin.write_all(input).await.map_err(|error| GitRunError {
+        message: error.to_string(),
+        timed_out: false,
+    })?;
+    drop(stdin);
+
     let output = time::timeout(timeout, child.wait_with_output())
         .await
         .map_err(|_| GitRunError {
