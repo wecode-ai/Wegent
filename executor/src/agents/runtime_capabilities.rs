@@ -491,7 +491,7 @@ async fn deploy_request_skills(
 
     let api_base_url = request_api_base_url(request);
     let report = deploy_skills(&plan, &api_base_url).await?;
-    log_degraded_preload_skills(request, &report);
+    log_degraded_preload_skills(request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
         return Err(required_skill_failure_message(&missing_required, &report));
@@ -532,7 +532,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
 
     let api_base_url = request_api_base_url(&request);
     let report = deploy_skills(&plan, &api_base_url).await?;
-    log_degraded_preload_skills(&request, &report);
+    log_degraded_preload_skills(&request, &required_skills, &report);
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
         return Err(required_skill_failure_message(&missing_required, &report));
@@ -572,12 +572,26 @@ fn extra_skill_names(request: &ExecutionRequest, key: &str) -> Vec<String> {
     names.into_iter().collect()
 }
 
-fn log_degraded_preload_skills(request: &ExecutionRequest, report: &SkillDeploymentReport) {
-    let preload_skills = extra_skill_names(request, "preload_skills");
-    let degraded: Vec<_> = preload_skills
-        .iter()
-        .filter(|skill| report.failed_skills.contains(skill))
-        .collect();
+/// Failed preloaded Skills that degrade to on-demand loading. Skills also
+/// declared under `required_skills` are excluded: they fail the turn instead
+/// of degrading, so reporting them as degraded would be misleading.
+fn degraded_preload_skill_names(
+    request: &ExecutionRequest,
+    required_skills: &[String],
+    report: &SkillDeploymentReport,
+) -> Vec<String> {
+    extra_skill_names(request, "preload_skills")
+        .into_iter()
+        .filter(|skill| !required_skills.contains(skill) && report.failed_skills.contains(skill))
+        .collect()
+}
+
+fn log_degraded_preload_skills(
+    request: &ExecutionRequest,
+    required_skills: &[String],
+    report: &SkillDeploymentReport,
+) {
+    let degraded = degraded_preload_skill_names(request, required_skills, report);
     if degraded.is_empty() {
         return;
     }
@@ -589,9 +603,9 @@ fn log_degraded_preload_skills(request: &ExecutionRequest, report: &SkillDeploym
             .map(|skill| {
                 report
                     .failed_skill_reasons
-                    .get(*skill)
+                    .get(skill)
                     .map(|reason| format!("{} ({})", skill, safe_skill_deployment_reason(reason)))
-                    .unwrap_or_else(|| (*skill).clone())
+                    .unwrap_or_else(|| skill.clone())
             })
             .collect::<Vec<_>>()
             .join(", "),
@@ -3007,6 +3021,31 @@ mod tests {
 
         assert_eq!(reason, "backend download request failed");
         assert!(!reason.contains("secret-task-token"));
+    }
+
+    #[test]
+    fn degraded_preload_skills_exclude_skills_that_are_also_required() {
+        let request = ExecutionRequest {
+            extra: Map::from_iter([
+                ("required_skills".to_owned(), json!(["required-skill"])),
+                (
+                    "preload_skills".to_owned(),
+                    json!(["required-skill", "preload-skill"]),
+                ),
+            ]),
+            ..ExecutionRequest::default()
+        };
+        let report = SkillDeploymentReport {
+            skill_count: 2,
+            success_skills: Vec::new(),
+            failed_skills: vec!["preload-skill".to_owned(), "required-skill".to_owned()],
+            failed_skill_reasons: BTreeMap::new(),
+        };
+
+        let degraded =
+            degraded_preload_skill_names(&request, &hard_required_skill_names(&request), &report);
+
+        assert_eq!(degraded, vec!["preload-skill".to_owned()]);
     }
 
     #[test]
