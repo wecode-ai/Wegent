@@ -110,7 +110,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.equal(modelStage, 'initial', `Unexpected board focus model stage: ${modelStage}`)
       modelStage = 'streaming-process'
       const stream = streamingTextEvents(responseId, PROCESS_TEXT)
-      const command = `/bin/zsh -lc ${JSON.stringify("printf '正在验证运行中卡片'")}`
+      const command =
+        process.platform === 'win32'
+          ? `powershell.exe -NoProfile -Command ${JSON.stringify(
+              "Write-Output '正在验证运行中卡片'"
+            )}`
+          : `/bin/zsh -lc ${JSON.stringify("printf '正在验证运行中卡片'")}`
       const tool = selectShellToolCommand(body, command, workspacePath)
 
       response.writeHead(200, {
@@ -309,8 +314,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       })
       assert.ok(compactProcessClass.includes('line-clamp-3'))
       const commandText = await control.command('getText', toolSelector)
-      assert.ok(commandText.includes("printf '正在验证运行中卡片'"))
-      assert.ok(!commandText.includes('/bin/zsh'), 'The card exposed the Shell wrapper path')
+      assert.ok(commandText.includes("'正在验证运行中卡片'"))
+      assert.ok(
+        !/\/bin\/zsh|powershell(?:\.exe)?/iu.test(commandText),
+        'The card exposed the Shell wrapper path'
+      )
       await captureScreenshot(
         control,
         '02-running-card-compact-process-and-command.png',
@@ -337,9 +345,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
       })
       const popupText = await control.command('getText', progressPopup)
-      assert.ok(popupText.includes("printf '正在验证运行中卡片'"))
+      assert.ok(popupText.includes("'正在验证运行中卡片'"))
       assert.ok(
-        !popupText.includes('/bin/zsh'),
+        !/\/bin\/zsh|powershell(?:\.exe)?/iu.test(popupText),
         'The progress popup exposed the Shell wrapper path'
       )
       assert.ok(

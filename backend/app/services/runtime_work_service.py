@@ -1494,6 +1494,7 @@ def _runtime_task_create_payload(
         "modelId": request.model_id,
         "modelType": request.model_type,
         "modelConfig": request.runtime_model_config,
+        "forceStart": request.force_start,
         "cloudProjectId": (
             str(request.cloud_project_id)
             if request.cloud_project_id is not None
@@ -2363,6 +2364,8 @@ def _runtime_send_response(
     return RuntimeSendResponse(
         accepted=bool(result.get("accepted", True)),
         taskId=str(result.get("taskId") or local_task_id),
+        status=result.get("status"),
+        queuePosition=result.get("queuePosition"),
         error=result.get("error"),
     )
 

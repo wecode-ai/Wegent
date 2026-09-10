@@ -557,8 +557,6 @@ export function CloudTodoBoardCard({
       closeLabel={t('common.close', '关闭')}
       estimatedWidth={480}
       estimatedHeight={620}
-      placement="viewport-right"
-      viewportTop={48}
       cardClassName="w-[480px] max-w-[calc(100vw-1rem)]"
       content={
         <RuntimeTaskProgressPopup

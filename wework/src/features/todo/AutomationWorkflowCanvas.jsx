@@ -813,32 +813,84 @@ function focusedViewport(node, viewport, canvasRect, rightPanelInset) {
   }
 }
 
-const CanvasNewNodeFocus = memo(function CanvasNewNodeFocus({
+function nodeWithAbsolutePosition(node, nodesById) {
+  let parentId = node.parentId
+  let x = node.position.x
+  let y = node.position.y
+  const visited = new Set([node.id])
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = nodesById.get(parentId)
+    if (!parent) break
+    x += parent.position.x
+    y += parent.position.y
+    parentId = parent.parentId
+  }
+
+  return {
+    ...node,
+    position: { x, y },
+  }
+}
+
+function selectedCanvasNodeId(selectedNode) {
+  if (selectedNode.type === 'trigger') return 'trigger'
+  if (selectedNode.type === 'step') return selectedNode.id
+  if (selectedNode.type === 'dagStage') return `dag:${selectedNode.stepId}:${selectedNode.stageId}`
+  if (selectedNode.type === 'loopBody') return `loop:${selectedNode.loopId}:${selectedNode.bodyId}`
+  return null
+}
+
+const CanvasViewportFocus = memo(function CanvasViewportFocus({
   canvasRef,
-  outerNodes,
+  nodes,
   rightPanelInset,
   selectedNode,
 }) {
   const { getViewport, setViewport } = useReactFlow()
-  const previousOuterNodeIds = useRef(new Set(outerNodes.map(node => node.id)))
+  const previousNodeIds = useRef(new Set(nodes.map(node => node.id)))
+  const previousRightPanelInset = useRef(rightPanelInset)
+  const previousSelectedId = useRef(selectedCanvasNodeId(selectedNode))
 
   useLayoutEffect(() => {
-    const previousIds = previousOuterNodeIds.current
+    const previousIds = previousNodeIds.current
+    const priorSelectedId = previousSelectedId.current
+    const nodesById = new Map(nodes.map(node => [node.id, node]))
+    const panelOpened = previousRightPanelInset.current === 0 && rightPanelInset > 0
     const addedNode =
       selectedNode.type === 'step' && !previousIds.has(selectedNode.id)
-        ? outerNodes.find(node => node.id === selectedNode.id)
-        : outerNodes.find(node => !previousIds.has(node.id))
-    previousOuterNodeIds.current = new Set(outerNodes.map(node => node.id))
-    if (!addedNode) return undefined
+        ? nodes.find(node => node.id === selectedNode.id)
+        : nodes.find(node => !previousIds.has(node.id))
+    const selectedId = selectedCanvasNodeId(selectedNode)
+    const selectedAfterDeletion =
+      priorSelectedId !== null &&
+      priorSelectedId !== selectedId &&
+      !nodes.some(node => node.id === priorSelectedId)
+    const targetNode =
+      addedNode ??
+      (panelOpened || selectedAfterDeletion
+        ? nodes.find(node => node.id === selectedId)
+        : undefined)
+    previousNodeIds.current = new Set(nodes.map(node => node.id))
+    previousRightPanelInset.current = rightPanelInset
+    previousSelectedId.current = selectedId
+    if (!targetNode) return undefined
 
     const canvas = canvasRef.current
     if (!canvas) return undefined
+    const absoluteTargetNode = nodeWithAbsolutePosition(targetNode, nodesById)
     void setViewport(
-      focusedViewport(addedNode, getViewport(), canvas.getBoundingClientRect(), rightPanelInset),
+      focusedViewport(
+        absoluteTargetNode,
+        getViewport(),
+        canvas.getBoundingClientRect(),
+        rightPanelInset
+      ),
       { duration: 240 }
     )
     return undefined
-  }, [canvasRef, getViewport, outerNodes, rightPanelInset, selectedNode, setViewport])
+  }, [canvasRef, getViewport, nodes, rightPanelInset, selectedNode, setViewport])
 
   return null
 })
@@ -1425,9 +1477,9 @@ export function AutomationWorkflowCanvas({
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={['Backspace', 'Delete']}
       >
-        <CanvasNewNodeFocus
+        <CanvasViewportFocus
           canvasRef={canvasRef}
-          outerNodes={graph.nodes.filter(node => node.id !== 'trigger' && !node.parentId)}
+          nodes={graph.nodes}
           rightPanelInset={rightPanelInset}
           selectedNode={selectedNode}
         />

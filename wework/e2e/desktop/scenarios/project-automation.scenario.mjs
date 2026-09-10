@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -388,7 +389,12 @@ function assertExecutionTruthContract(execution) {
   }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  resultDir,
+  uiTimeoutMs,
+  workspacePath,
+}) {
   // Cloud executions are claimed asynchronously. Keep the assertion budget
   // beyond one complete claim window so a commit at the boundary is observed.
   const automationRuntimeTimeoutMs = Math.max(
@@ -683,6 +689,110 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-create-task-tab"]`)
+    const taskProjectButton = `${activeBoard} [data-testid="workspace-issue-composer"] [data-testid="project-work-button"]`
+    await control.command('waitFor', taskProjectButton, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', taskProjectButton)
+    await control.command('waitFor', '[data-testid="project-options-list"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const taskProjectMenuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const currentTaskProjectId = taskProjectMenuSnapshot.testIds
+      .find(testId => testId.startsWith('project-selected-icon-'))
+      ?.slice('project-selected-icon-'.length)
+    let taskTargetProjectTestId = null
+    for (const testId of taskProjectMenuSnapshot.testIds.filter(
+      candidate =>
+        candidate.startsWith('project-option-') &&
+        candidate !== `project-option-${currentTaskProjectId ?? ''}` &&
+        !taskProjectMenuSnapshot.testIds.includes(
+          `project-bind-workspace-${candidate.slice('project-option-'.length)}`
+        )
+    )) {
+      const projectText = await control.command('getText', `[data-testid="${testId}"]`, {
+        visible: true,
+      })
+      if (projectText.includes('project-automation-primary')) {
+        taskTargetProjectTestId = testId
+        break
+      }
+    }
+    assert.ok(
+      taskTargetProjectTestId,
+      'Task creation requires another runtime project for project-switch regression coverage'
+    )
+    const taskTargetProjectText = await control.command(
+      'getText',
+      `[data-testid="${taskTargetProjectTestId}"]`,
+      { visible: true }
+    )
+    assert.ok(
+      taskTargetProjectText.includes('project-automation-primary'),
+      'The task regression did not select the primary runtime project'
+    )
+    const taskTargetProjectName = 'project-automation-primary'
+    await control.command('click', `[data-testid="${taskTargetProjectTestId}"]`, {
+      visible: true,
+    })
+    const taskTargetWorkspaceSelector = '[data-testid^="project-workspace-option-"]'
+    if (
+      Number(
+        await control.command('getElementCount', taskTargetWorkspaceSelector, {
+          visible: true,
+        })
+      ) > 0
+    ) {
+      await control.command('clickWhenEnabled', taskTargetWorkspaceSelector, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+    }
+    await control.command('waitFor', taskProjectButton, {
+      timeoutMs: uiTimeoutMs,
+      text: taskTargetProjectName,
+      visible: true,
+    })
+    const switchedTaskTitle = '创建任务时切换运行项目'
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      value: switchedTaskTitle,
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    const switchedTaskIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response => (response.items ?? []).find(item => item.title === switchedTaskTitle),
+      'The project-switched task Issue was not persisted',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.title === switchedTaskTitle))
+    const switchedTaskBindings = await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${switchedTaskIssue.id}/tasks`),
+      bindings => bindings.length > 0,
+      'The project-switched task was not bound to its Issue',
+      uiTimeoutMs
+    )
+    const switchedTaskBinding = switchedTaskBindings[0]
+    const switchedTaskRuntimeLog = await waitForValue(
+      () => readFile(join(resultDir, 'executor.log'), 'utf8').catch(() => ''),
+      content =>
+        new RegExp(
+          `local_task_id=${switchedTaskBinding.task_id}[^\\n]*project_name=${taskTargetProjectName}(?:\\s|$)`
+        ).test(content),
+      'The created task did not run in the runtime project selected before submission',
+      uiTimeoutMs
+    )
+    assert.match(
+      switchedTaskRuntimeLog,
+      new RegExp(
+        `local_task_id=${switchedTaskBinding.task_id}[^\\n]*project_name=${taskTargetProjectName}(?:\\s|$)`
+      )
+    )
 
     const statusWorkflowRule = await cloudRequest(
       `/api/v1/cloud-projects/${projectId}/automations`,
@@ -1204,14 +1314,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The completed Issue did not reach the review state required for board follow-up',
       uiTimeoutMs
     )
-    await control.command(
-      'waitFor',
-      `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`,
-      {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      }
-    )
+    const moonshotTaskListSelector = `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`
+    await control.command('scrollIntoView', moonshotTaskListSelector)
+    await control.command('waitFor', moonshotTaskListSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
     const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
     const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
@@ -1226,14 +1334,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const [moonshotPopupMetrics] = JSON.parse(
       await control.command('getElementMetrics', moonshotProgressPopup)
     )
+    const [moonshotCardMetrics] = JSON.parse(
+      await control.command('getElementMetrics', moonshotOverrideCard)
+    )
     const [bodyMetrics] = JSON.parse(await control.command('getElementMetrics', 'body'))
+    const popupHorizontalGap =
+      moonshotPopupMetrics.left >= moonshotCardMetrics.right
+        ? moonshotPopupMetrics.left - moonshotCardMetrics.right
+        : moonshotCardMetrics.left - moonshotPopupMetrics.right
     assert.ok(
-      Math.abs(moonshotPopupMetrics.top - 48) <= 1,
-      `The board popup did not keep its stable viewport top: ${JSON.stringify(moonshotPopupMetrics)}`
+      Math.abs(popupHorizontalGap - 10) <= 1,
+      `The board popup was not positioned beside its card: ${JSON.stringify({
+        moonshotCardMetrics,
+        moonshotPopupMetrics,
+      })}`
     )
     assert.ok(
-      Math.abs(bodyMetrics.right - moonshotPopupMetrics.right - 8) <= 1,
-      `The board popup did not stay at the viewport right edge: ${JSON.stringify({
+      moonshotPopupMetrics.top >= bodyMetrics.top + 8 - 1 &&
+        moonshotPopupMetrics.bottom <= bodyMetrics.bottom - 8 + 1,
+      `The board popup escaped the viewport bounds: ${JSON.stringify({
         bodyMetrics,
         moonshotPopupMetrics,
       })}`
