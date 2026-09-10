@@ -28,6 +28,7 @@ import {
 } from './smart-app-scaffold.js'
 import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
+import { ensureDirectory } from './ensure-directory.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -522,7 +523,7 @@ export class SmartAppManager {
 
   async exportToDownloads(installationId: string): Promise<SmartAppSavedExport> {
     const exported = await this.export(installationId)
-    await mkdir(this.options.downloadsDirectory, { recursive: true })
+    await ensureDirectory(this.options.downloadsDirectory)
     const filename = `${safeName(exported.manifest.name)}-${exported.manifest.version}.zip`
     const destinationPath = await uniquePath(this.options.downloadsDirectory, filename)
     await copyFile(exported.archivePath, destinationPath)
