@@ -84,6 +84,7 @@ export interface WorkspaceProjectsHomeAdapterProps {
   onCreateProject(): void
   onSelectProject(project: CollaborationProject): void
   onManageProject(project: CollaborationProject): void
+  onOpenMyWork(): void
   onUnavailable(): void
 }
 
@@ -138,6 +139,7 @@ export function WorkspaceProjectsHomeAdapter({
   onCreateProject,
   onSelectProject,
   onManageProject,
+  onOpenMyWork,
   onUnavailable,
 }: WorkspaceProjectsHomeAdapterProps) {
   const workspaceProjects = projects.map(project => ({
@@ -183,7 +185,7 @@ export function WorkspaceProjectsHomeAdapter({
       onSelectProject={onSelectProject}
       onManageProject={onManageProject}
       onSelectItem={onUnavailable}
-      onOpenMyWork={onUnavailable}
+      onOpenMyWork={onOpenMyWork}
     />
   )
 }

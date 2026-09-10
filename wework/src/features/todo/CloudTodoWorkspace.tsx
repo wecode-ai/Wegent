@@ -3,7 +3,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -62,13 +61,19 @@ import { isDefaultWorkItemProject } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import { KanbanBoard } from '@wegent/collaboration/kanban'
 import {
   ProjectSpaceSidebar,
   ProjectViewSwitcher,
   type CollaborationProjectView,
   type CollaborationProjectViewOption,
 } from '@wegent/collaboration'
+import {
+  ProjectBoardBody,
+  useProjectBoardState,
+  type ProjectBoardColumn,
+  type ProjectBoardGroupBy,
+} from '@wegent/collaboration/project-board'
+import { ProjectShell } from '@wegent/collaboration/project-shell'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import {
   DesktopSidebarAccount,
@@ -238,7 +243,7 @@ function formatCompactFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
-type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
+type NativeBoardGroupBy = ProjectBoardGroupBy
 type PendingExecutionConfiguration = {
   item: LocatedLoopItem
   continuation:
@@ -1338,7 +1343,6 @@ export function CloudTodoWorkspace({
   const [createTodoParent, setCreateTodoParent] = useState<LocatedLoopItem | null>(null)
   const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
   const [createTodoInitialTitle, setCreateTodoInitialTitle] = useState<string | undefined>()
-  const [quickCreateStatus, setQuickCreateStatus] = useState<CloudLoopItem['status'] | null>(null)
   const [issueComposerOpen, setIssueComposerOpen] = useState(false)
   const [issueComposerBoardKey, setIssueComposerBoardKey] = useState('')
   const [issueComposerStatus, setIssueComposerStatus] = useState<CloudLoopItem['status']>('inbox')
@@ -1379,16 +1383,9 @@ export function CloudTodoWorkspace({
   }
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
-  const [aitableGroupFilter, setAitableGroupFilter] = useState('')
-  const [aitableBoardQuery, setAitableBoardQuery] = useState('')
-  const [nativeGroupBy, setNativeGroupBy] = useState<NativeBoardGroupBy>('status')
-  const [nativeGroupFilter, setNativeGroupFilter] = useState('')
-  const [nativeBoardQuery, setNativeBoardQuery] = useState('')
-  const [focusExecutionColumns, setFocusExecutionColumns] = useState(false)
   const [localProjectFilter, setLocalProjectFilter] = useState('all')
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
-  const boardScrollRef = useRef<HTMLDivElement>(null)
   const [pinnedBoardPreview, setPinnedBoardPreview] = useState<{
     contextKey: string
     itemId: string
@@ -1407,20 +1404,6 @@ export function CloudTodoWorkspace({
     useState<TaskSearchFilters>(emptyTaskSearchFilters)
   const locallyRequestedProjectRef = useRef<RuntimeProjectSpaceRef | null | undefined>(undefined)
   const focusedItemRequestRef = useRef<string | null>(null)
-  const projectHeaderRef = useRef<HTMLElement>(null)
-  const projectHeaderContentRef = useRef<HTMLDivElement>(null)
-  const projectHeaderTabsRef = useRef<HTMLElement>(null)
-  const projectHeaderAskAiRef = useRef<HTMLButtonElement>(null)
-  const projectHeaderSearchRef = useRef<HTMLButtonElement>(null)
-  const projectHeaderAddRef = useRef<HTMLButtonElement>(null)
-  const projectHeaderNaturalWidthsRef = useRef({
-    content: 0,
-    tabs: 0,
-    askAi: 0,
-    search: 0,
-    add: 0,
-  })
-  const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
   const boardLiveSubscriptionActiveRef = useRef(false)
   const markingReadItemKeysRef = useRef(new Set<string>())
@@ -1449,64 +1432,6 @@ export function CloudTodoWorkspace({
     }
     resetProjectViewState()
   }, [activeProjectKey, resetProjectViewState])
-
-  useLayoutEffect(() => {
-    const header = projectHeaderRef.current
-    const content = projectHeaderContentRef.current
-    if (!header || !content) return
-
-    const compute = () => {
-      if (header.clientWidth <= 0) return
-      const style = getComputedStyle(header)
-      const base =
-        header.clientWidth -
-        (parseFloat(style.paddingLeft) || 0) -
-        (parseFloat(style.paddingRight) || 0)
-      const rememberWidth = (
-        key: keyof typeof projectHeaderNaturalWidthsRef.current,
-        el: HTMLElement | null
-      ) => {
-        const measured = el?.getBoundingClientRect().width ?? 0
-        if (measured > projectHeaderNaturalWidthsRef.current[key]) {
-          projectHeaderNaturalWidthsRef.current[key] = measured
-        }
-        return projectHeaderNaturalWidthsRef.current[key] > 0
-          ? projectHeaderNaturalWidthsRef.current[key] + 8
-          : 0
-      }
-      const contentW = rememberWidth('content', content)
-      const tabsW = rememberWidth('tabs', projectHeaderTabsRef.current)
-      const askAiW = projectAssistantOpen
-        ? 0
-        : rememberWidth('askAi', projectHeaderAskAiRef.current)
-      const searchW = rememberWidth('search', projectHeaderSearchRef.current)
-      const addW = rememberWidth('add', projectHeaderAddRef.current)
-      const tabsDropdownW = 96
-      const compactControlW = 48
-      const overflowW = !projectAssistantOpen || projectView === 'board' ? compactControlW : 0
-      const compactAddW = projectView === 'board' && selectedProjectId ? compactControlW : 0
-
-      const usedAt = (lv: number): number => {
-        let used = lv < 2 ? contentW + 8 : 0
-        used += lv < 2 ? tabsW : tabsDropdownW
-        if (lv >= 2) return used + overflowW + compactAddW
-        used += lv >= 1 ? compactControlW : searchW
-        if (!projectAssistantOpen) used += lv >= 1 ? compactControlW : askAiW
-        used += lv >= 1 ? compactControlW : addW
-        return used
-      }
-
-      let next = 0
-      while (next < 2 && usedAt(next) > base) next += 1
-      setProjectHeaderLevel(next)
-    }
-
-    compute()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(compute)
-    observer.observe(header)
-    return () => observer.disconnect()
-  }, [items, projectAssistantOpen, projectHeaderLevel, projectView, selectedProjectId])
 
   const [localProjectsLoading, setLocalProjectsLoading] = useState(Boolean(projectSpaceApis.local))
   const [cloudProjectsLoading, setCloudProjectsLoading] = useState(Boolean(projectSpaceApis.cloud))
@@ -1827,6 +1752,28 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
+  const personalGroupKey = selectedProject
+    ? `wework-board-group:${user.id}:${selectedProject.id}`
+    : null
+  const focusExecutionColumnsKey = selectedProjectKey
+    ? `wework-board-focus-execution:v1:${user.id}:${selectedProjectKey}`
+    : null
+  const boardState = useProjectBoardState({
+    defaultGroupBy: selectedProject?.board_config?.group_by ?? 'status',
+    focusStorageKey: focusExecutionColumnsKey,
+    personalGroupStorageKey: personalGroupKey,
+  })
+  const {
+    externalGroupFilter: aitableGroupFilter,
+    externalQuery: aitableBoardQuery,
+    groupBy: nativeGroupBy,
+    groupFilter: nativeGroupFilter,
+    query: nativeBoardQuery,
+    setExternalGroupFilter: setAitableGroupFilter,
+    setGroupFilter: setNativeGroupFilter,
+    setQuery: setNativeBoardQuery,
+    setQuickCreateStatus,
+  } = boardState
   const boardPreviewContextKey = [
     selectedProjectKey,
     boardParentId,
@@ -1992,13 +1939,6 @@ export function CloudTodoWorkspace({
     showTags: selectedProject?.card_display?.show_tags ?? true,
     showDate: selectedProject?.card_display?.show_date ?? true,
   }
-  const personalGroupKey = selectedProject
-    ? `wework-board-group:${user.id}:${selectedProject.id}`
-    : null
-  const focusExecutionColumnsKey = selectedProjectKey
-    ? `wework-board-focus-execution:v1:${user.id}:${selectedProjectKey}`
-    : null
-
   useEffect(() => {
     if (
       selectedProject?.location !== 'local' ||
@@ -2052,29 +1992,6 @@ export function CloudTodoWorkspace({
     const statusIndex = nativeStatuses.findIndex(candidate => candidate.id === status)
     return processingStartIndex >= 0 && statusIndex >= processingStartIndex
   }
-
-  useEffect(() => {
-    if (!selectedProject || isAITableProject) return
-    const personal = personalGroupKey ? localStorage.getItem(personalGroupKey) : null
-    // The selected project changes the external localStorage key we synchronize from.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setNativeGroupBy(
-      personal === 'status' ||
-        personal === 'priority' ||
-        personal === 'assignee' ||
-        personal === 'tag'
-        ? personal
-        : (selectedProject.board_config?.group_by ?? 'status')
-    )
-  }, [isAITableProject, personalGroupKey, selectedProject])
-
-  useEffect(() => {
-    // The selected project changes the external localStorage key we synchronize from.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFocusExecutionColumns(
-      focusExecutionColumnsKey ? localStorage.getItem(focusExecutionColumnsKey) === 'true' : false
-    )
-  }, [focusExecutionColumnsKey])
 
   const selectedGroupField = aitableFields.find(field => field.id === aitableGroupFieldId)
   const configuredGroupValues = Array.isArray(selectedGroupField?.config?.options)
@@ -3627,29 +3544,6 @@ export function CloudTodoWorkspace({
     }
   }
 
-  function savePersonalGroupBy(groupBy: NativeBoardGroupBy) {
-    if (nativeGroupBy !== groupBy && boardScrollRef.current) {
-      boardScrollRef.current.scrollLeft = 0
-    }
-    setNativeGroupBy(groupBy)
-    setNativeGroupFilter('')
-    if (personalGroupKey) localStorage.setItem(personalGroupKey, groupBy)
-  }
-
-  function toggleFocusExecutionColumns() {
-    setFocusExecutionColumns(current => {
-      const next = !current
-      if (focusExecutionColumnsKey) {
-        if (next) {
-          localStorage.setItem(focusExecutionColumnsKey, 'true')
-        } else {
-          localStorage.removeItem(focusExecutionColumnsKey)
-        }
-      }
-      return next
-    })
-  }
-
   async function saveGlobalGroupBy() {
     if (!selectedProject || groupScopeBusy) return
     const projectApi = projectSpaceApis[selectedProject.location] ?? selectedProjectApi
@@ -4283,52 +4177,36 @@ export function CloudTodoWorkspace({
               onOpenMyWork={() => setRootView('my-work')}
             />
           ) : (
-            <>
-              <header
-                ref={projectHeaderRef}
-                data-testid="cloud-project-header"
-                className={cn(
-                  'relative z-10 flex h-[52px] shrink-0 items-center border-b border-border bg-background pr-6',
-                  !embedded && sidebarCollapsed ? 'pl-[240px]' : 'pl-6'
-                )}
-              >
-                {!embedded && (
+            <ProjectShell
+              assistantAction={{
+                icon: <Bot className="h-3.5 w-3.5" />,
+                label: t('workbench.project_chat'),
+                onClick: openProjectAssistant,
+                renderTooltip: (children, label) => (
+                  <Tooltip label={label} side="bottom" align="end">
+                    {children}
+                  </Tooltip>
+                ),
+              }}
+              assistantOpen={projectAssistantOpen}
+              boardView={projectView === 'board'}
+              dragRegion={
+                !embedded ? (
                   <MacOSTitleBarDragRegion
                     className={cn(
                       'absolute right-0 top-0 z-0 h-full',
                       sidebarCollapsed ? 'left-12' : 'left-0'
                     )}
                   />
-                )}
-                <div
-                  ref={projectHeaderContentRef}
-                  data-testid="cloud-project-header-title"
-                  className={cn(
-                    'relative z-10 min-w-0 items-center',
-                    projectHeaderLevel < 2 ? 'flex' : 'hidden'
-                  )}
-                >
-                  {embedded ? (
-                    <Grid3X3 className="h-4 w-4 shrink-0 text-text-muted" />
-                  ) : selectedProject.location === 'local' ? (
-                    <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
-                  ) : (
-                    <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
-                  )}
-                  {embedded ? (
-                    <span className="ml-2 min-w-0 truncate text-base font-semibold">
-                      {t('workbench.work_items', '工作空间')}
-                    </span>
-                  ) : (
-                    <span className="ml-2 min-w-0 truncate text-base font-semibold">
-                      {selectedProject.name}
-                    </span>
-                  )}
-                </div>
+                ) : null
+              }
+              embedded={embedded}
+              hasCreateAction={canCreateBoardTask}
+              renderViewSwitcher={({ compact, containerRef }) => (
                 <ProjectViewSwitcher<ProjectView>
-                  compact={projectHeaderLevel >= 2}
+                  compact={compact}
                   compactIcon={<ChevronDown className="h-3 w-3" />}
-                  containerRef={projectHeaderTabsRef}
+                  containerRef={containerRef}
                   value={projectView}
                   options={
                     [
@@ -4378,150 +4256,141 @@ export function CloudTodoWorkspace({
                   }
                   onChange={setProjectView}
                 />
-                <span className="flex-1" />
-                {selectedProject && !projectAssistantOpen && projectHeaderLevel < 2 ? (
-                  <Tooltip label={t('workbench.project_chat')} side="bottom" align="end">
-                    <button
-                      ref={projectHeaderAskAiRef}
-                      type="button"
-                      data-testid="cloud-project-ask-ai"
-                      aria-label={t('workbench.project_chat')}
-                      onClick={openProjectAssistant}
-                      className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
-                    >
-                      <Bot className="h-3.5 w-3.5" />
-                      {projectHeaderLevel < 1 ? t('workbench.project_chat') : null}
-                    </button>
-                  </Tooltip>
-                ) : null}
-                {projectView === 'board' && projectHeaderLevel < 2 && (
-                  <>
-                    <Tooltip
-                      label={
-                        boardParent || isMyTasksBoard
-                          ? t('todo.search_tasks', '搜索任务')
-                          : t('todo.search_issues', '搜索 Issue')
-                      }
-                      side="bottom"
-                      align="end"
-                    >
-                      <button
-                        ref={projectHeaderSearchRef}
-                        type="button"
-                        data-testid="cloud-project-task-search-toggle"
-                        aria-label={
-                          boardParent || isMyTasksBoard
-                            ? t('todo.search_tasks', '搜索任务')
-                            : t('todo.search_issues', '搜索 Issue')
-                        }
-                        onClick={() => setProjectSearchOpen(current => !current)}
-                        className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
-                      >
-                        <Search className="h-3.5 w-3.5" />
-                        {projectHeaderLevel < 1
-                          ? boardParent || isMyTasksBoard
-                            ? t('todo.search_tasks', '搜索任务')
-                            : t('todo.search_issues', '搜索 Issue')
-                          : null}
-                      </button>
-                    </Tooltip>
-                    {canCreateBoardTask && (
+              )}
+              renderRightActions={({ actionRefs, level, showLabels }) => (
+                <>
+                  {projectView === 'board' && level < 2 ? (
+                    <>
                       <Tooltip
                         label={
                           boardParent || isMyTasksBoard
-                            ? t('todo.new_task', '新建任务')
-                            : t('todo.new_issue', '新建 Issue')
+                            ? t('todo.search_tasks', '搜索任务')
+                            : t('todo.search_issues', '搜索 Issue')
                         }
                         side="bottom"
                         align="end"
                       >
                         <button
-                          ref={projectHeaderAddRef}
+                          ref={actionRefs.search}
                           type="button"
-                          data-testid="cloud-todo-add"
+                          data-testid="cloud-project-task-search-toggle"
                           aria-label={
+                            boardParent || isMyTasksBoard
+                              ? t('todo.search_tasks', '搜索任务')
+                              : t('todo.search_issues', '搜索 Issue')
+                          }
+                          onClick={() => setProjectSearchOpen(current => !current)}
+                          className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
+                        >
+                          <Search className="h-3.5 w-3.5" />
+                          {showLabels
+                            ? boardParent || isMyTasksBoard
+                              ? t('todo.search_tasks', '搜索任务')
+                              : t('todo.search_issues', '搜索 Issue')
+                            : null}
+                        </button>
+                      </Tooltip>
+                      {canCreateBoardTask ? (
+                        <Tooltip
+                          label={
                             boardParent || isMyTasksBoard
                               ? t('todo.new_task', '新建任务')
                               : t('todo.new_issue', '新建 Issue')
                           }
-                          onClick={() =>
-                            boardParent ? openTodoCreation(boardParent) : openIssueCreation()
-                          }
-                          className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                          side="bottom"
+                          align="end"
                         >
-                          <Plus className="h-3.5 w-3.5" />
-                          {projectHeaderLevel < 1
-                            ? boardParent || isMyTasksBoard
-                              ? t('todo.new_task', '新建任务')
-                              : t('todo.new_issue', '新建 Issue')
-                            : null}
-                        </button>
-                      </Tooltip>
-                    )}
-                  </>
-                )}
-                {projectHeaderLevel >= 2 && (!projectAssistantOpen || projectView === 'board') ? (
-                  <ActionMenu
-                    ariaLabel={t('workbench.more', '更多')}
-                    testId="cloud-project-header-more"
-                    icon={Ellipsis}
-                    placement="bottom-end"
-                    triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                    items={[
-                      ...(!projectAssistantOpen
-                        ? [
-                            {
-                              label: t('workbench.project_chat'),
-                              icon: Bot,
-                              testId: 'cloud-project-header-more-ask-ai',
-                              onSelect: openProjectAssistant,
-                            },
-                          ]
-                        : []),
-                      ...(projectView === 'board'
-                        ? [
-                            {
-                              label:
-                                boardParent || isMyTasksBoard
-                                  ? t('todo.search_tasks', '搜索任务')
-                                  : t('todo.search_issues', '搜索 Issue'),
-                              icon: Search,
-                              testId: 'cloud-project-header-more-search',
-                              onSelect: () => setProjectSearchOpen(true),
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
-                ) : null}
-                {projectView === 'board' && projectHeaderLevel >= 2 && canCreateBoardTask ? (
-                  <Tooltip
-                    label={
-                      boardParent || isMyTasksBoard
-                        ? t('todo.new_task', '新建任务')
-                        : t('todo.new_issue', '新建 Issue')
-                    }
-                    side="bottom"
-                    align="end"
-                  >
-                    <button
-                      type="button"
-                      data-testid="cloud-todo-add"
-                      aria-label={
+                          <button
+                            ref={actionRefs.add}
+                            type="button"
+                            data-testid="cloud-todo-add"
+                            aria-label={
+                              boardParent || isMyTasksBoard
+                                ? t('todo.new_task', '新建任务')
+                                : t('todo.new_issue', '新建 Issue')
+                            }
+                            onClick={() =>
+                              boardParent ? openTodoCreation(boardParent) : openIssueCreation()
+                            }
+                            className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            {showLabels
+                              ? boardParent || isMyTasksBoard
+                                ? t('todo.new_task', '新建任务')
+                                : t('todo.new_issue', '新建 Issue')
+                              : null}
+                          </button>
+                        </Tooltip>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {level >= 2 && (!projectAssistantOpen || projectView === 'board') ? (
+                    <ActionMenu
+                      ariaLabel={t('workbench.more', '更多')}
+                      testId="cloud-project-header-more"
+                      icon={Ellipsis}
+                      placement="bottom-end"
+                      triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                      items={[
+                        ...(!projectAssistantOpen
+                          ? [
+                              {
+                                label: t('workbench.project_chat'),
+                                icon: Bot,
+                                testId: 'cloud-project-header-more-ask-ai',
+                                onSelect: openProjectAssistant,
+                              },
+                            ]
+                          : []),
+                        ...(projectView === 'board'
+                          ? [
+                              {
+                                label:
+                                  boardParent || isMyTasksBoard
+                                    ? t('todo.search_tasks', '搜索任务')
+                                    : t('todo.search_issues', '搜索 Issue'),
+                                icon: Search,
+                                testId: 'cloud-project-header-more-search',
+                                onSelect: () => setProjectSearchOpen(true),
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
+                  ) : null}
+                  {projectView === 'board' && level >= 2 && canCreateBoardTask ? (
+                    <Tooltip
+                      label={
                         boardParent || isMyTasksBoard
                           ? t('todo.new_task', '新建任务')
                           : t('todo.new_issue', '新建 Issue')
                       }
-                      onClick={() =>
-                        boardParent ? openTodoCreation(boardParent) : openIssueCreation()
-                      }
-                      className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
+                      side="bottom"
+                      align="end"
                     >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                  </Tooltip>
-                ) : null}
-                {projectView === 'board' && projectSearchOpen ? (
+                      <button
+                        ref={actionRefs.add}
+                        type="button"
+                        data-testid="cloud-todo-add"
+                        aria-label={
+                          boardParent || isMyTasksBoard
+                            ? t('todo.new_task', '新建任务')
+                            : t('todo.new_issue', '新建 Issue')
+                        }
+                        onClick={() =>
+                          boardParent ? openTodoCreation(boardParent) : openIssueCreation()
+                        }
+                        className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
+                  ) : null}
+                </>
+              )}
+              searchPanel={
+                projectView === 'board' && projectSearchOpen ? (
                   <TaskSearchPanel
                     items={boardItems}
                     members={selectedProjectKey ? (projectMembers[selectedProjectKey] ?? []) : []}
@@ -4536,8 +4405,20 @@ export function CloudTodoWorkspace({
                       setProjectSearchOpen(false)
                     }}
                   />
-                ) : null}
-              </header>
+                ) : null
+              }
+              sidebarCollapsed={sidebarCollapsed}
+              title={embedded ? t('workbench.work_items', '工作空间') : selectedProject.name}
+              titleIcon={
+                embedded ? (
+                  <Grid3X3 className="h-4 w-4 shrink-0 text-text-muted" />
+                ) : selectedProject.location === 'local' ? (
+                  <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
+                ) : (
+                  <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
+                )
+              }
+            >
               {projectView === 'files' && selectedProjectApi ? (
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
               ) : projectView === 'table' && isAITableProject && aitableApi ? (
@@ -4593,629 +4474,435 @@ export function CloudTodoWorkspace({
                   onProjectUpdated={updated => replaceProject(selectedProject, updated)}
                 />
               ) : (
-                <div className="flex min-h-0 flex-1 flex-col pb-6 pt-4">
-                  {isAITableProject ? (
-                    <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
-                      <AITableGroupFieldPicker
-                        fields={aitableFields}
-                        value={aitableGroupFieldId}
-                        onChange={fieldId => {
-                          setAitableGroupFieldId(fieldId)
-                          setAitableGroupFilter('')
-                        }}
+                <ProjectBoardBody<LocatedLoopItem>
+                  state={boardState}
+                  activeDragItemId={activeDragItemId}
+                  boardError={boardError}
+                  boardItemsLoading={boardItemsLoading}
+                  breadcrumb={boardBreadcrumb}
+                  columns={boardColumns as ProjectBoardColumn[]}
+                  currentParent={boardParent}
+                  currentParentId={boardParentId}
+                  dnd={{ DndContext, DragOverlay, useDroppable }}
+                  dndContextProps={{
+                    sensors: boardSensors,
+                    collisionDetection: boardCollisionDetection,
+                    onDragStart: (event: DragStartEvent) => {
+                      setPinnedBoardPreview(null)
+                      setActiveDragItemId(String(event.active.id))
+                    },
+                    onDragCancel: () => setActiveDragItemId(null),
+                    onDragEnd: finishBoardDrop,
+                  }}
+                  externalGroupLabel={selectedGroupField?.name ?? '记录'}
+                  externalGroupValues={aitableGroupValues}
+                  externalManagedLabel="数据由钉钉托管 · AI 可直接管理"
+                  externalSearchPlaceholder="搜索记录"
+                  focusLabels={{
+                    enter: t('todo.focus_view_description', '展开进行中与待确认列'),
+                    exit: t('todo.exit_focus_view_description', '退出执行阶段专注视图'),
+                    title: t('todo.focus_view', '专注视图'),
+                  }}
+                  getColumnDragHint={column =>
+                    activeDragItemId && nativeGroupBy === 'status'
+                      ? columnDragHints[column.status as CloudLoopItem['status']]
+                      : undefined
+                  }
+                  getColumnEmptyState={column => {
+                    const status = column.status as CloudLoopItem['status']
+                    const hint = (
+                      boardParent || isMyTasksBoard ? taskColumnEmptyHints : issueColumnEmptyHints
+                    )[status]
+                    if (!hint) return undefined
+                    if (status !== 'inbox' && status !== 'pending') return { hint }
+                    const onClick = () => {
+                      if (!boardParent && status === 'pending')
+                        openIssueCreation('pending', '', 'popup')
+                      else setQuickCreateStatus(status)
+                    }
+                    return {
+                      hint,
+                      action: {
+                        label:
+                          status === 'inbox'
+                            ? t(
+                                boardParent || isMyTasksBoard
+                                  ? 'todo.create_first_task'
+                                  : 'todo.create_first_issue',
+                                boardParent || isMyTasksBoard
+                                  ? '创建第一个任务'
+                                  : '创建第一个 Issue'
+                              )
+                            : t(
+                                boardParent || isMyTasksBoard
+                                  ? 'todo.create_task_in_pending'
+                                  : 'todo.create_issue_in_pending',
+                                boardParent || isMyTasksBoard
+                                  ? '创建到待开始'
+                                  : '创建 Issue 到待开始'
+                              ),
+                        ariaLabel: t(
+                          boardParent || isMyTasksBoard
+                            ? 'todo.new_task_in_column'
+                            : 'todo.new_issue_in_column',
+                          { column: column.label }
+                        ),
+                        onClick,
+                      },
+                    }
+                  }}
+                  getColumnItems={(column, state) =>
+                    boardItems.filter(
+                      item =>
+                        item.parent_id === boardParentId &&
+                        (!isMyTasksBoard ||
+                          activeLocalProjectFilter === 'all' ||
+                          !selectedLocalProject ||
+                          localProjectIdForItem(item) === selectedLocalProject.id ||
+                          (item.status === 'inbox' && localProjectIdForItem(item) === null)) &&
+                        (!isAITableProject ||
+                          !column.groupValue ||
+                          (column.groupValue === '未设置'
+                            ? !aitableCellLabels(item.source_cells?.[aitableGroupFieldId]).length
+                            : aitableCellLabels(item.source_cells?.[aitableGroupFieldId]).includes(
+                                column.groupValue
+                              ))) &&
+                        (isAITableProject ||
+                          (state.groupBy === 'status'
+                            ? item.status === column.status
+                            : state.groupBy === 'priority'
+                              ? item.priority === column.groupValue
+                              : state.groupBy === 'assignee'
+                                ? itemMatchesAssigneeGroup(item, column.groupValue)
+                                : column.groupValue
+                                  ? (item.tags ?? []).includes(column.groupValue)
+                                  : !(item.tags ?? []).length)) &&
+                        (isAITableProject ||
+                          !state.groupFilter ||
+                          column.key === state.groupFilter) &&
+                        (isAITableProject ||
+                          !state.query.trim() ||
+                          `${item.title} ${item.description ?? ''}`
+                            .toLowerCase()
+                            .includes(state.query.trim().toLowerCase())) &&
+                        (!state.externalGroupFilter ||
+                          column.groupValue === state.externalGroupFilter) &&
+                        (!state.externalQuery.trim() ||
+                          `${item.title} ${item.description ?? ''}`
+                            .toLowerCase()
+                            .includes(state.externalQuery.trim().toLowerCase()))
+                    )
+                  }
+                  getItemKey={item => item.id}
+                  groupFields={
+                    nativeBoardGroupFields as Array<{ id: ProjectBoardGroupBy; name: string }>
+                  }
+                  isExternalBoard={isAITableProject}
+                  isMyTasksBoard={isMyTasksBoard}
+                  layerCount={boardLayerCount}
+                  localProjectFilter={
+                    isMyTasksBoard
+                      ? {
+                          activeId: activeLocalProjectFilter,
+                          allLabel: t('todo.all_local_projects', '全部项目'),
+                          ariaLabel: t('todo.local_project_filter', '本地项目'),
+                          label: t('todo.project_with_name', '项目：{{project}}', {
+                            project: '{{project}}',
+                          }),
+                          options: localProjectOptions,
+                          selectedName:
+                            activeLocalProjectFilter === 'all'
+                              ? t('todo.all_local_projects', '全部项目')
+                              : (selectedLocalProject?.name ??
+                                t('todo.select_local_project', '选择项目')),
+                          onChange: setLocalProjectFilter,
+                        }
+                      : undefined
+                  }
+                  onBreadcrumbSelect={setBoardParentId}
+                  onSaveGlobalGroupBy={saveGlobalGroupBy}
+                  renderAddIcon={() => <Plus className="h-5 w-5" />}
+                  renderChevronDown={className => <ChevronDown className={className} />}
+                  renderChevronRight={className => <ChevronRight className={className} />}
+                  renderColumnFooter={(column, _items, state) => {
+                    const status = column.status as CloudLoopItem['status']
+                    return canCreateBoardTask &&
+                      !isAITableProject &&
+                      state.groupBy === 'status' &&
+                      status === 'inbox' &&
+                      state.quickCreateStatus === status ? (
+                      <BoardQuickCreate
+                        key={`${selectedProjectKey}:${boardParentId ?? 'root'}:${column.key}`}
+                        columnKey={column.key}
+                        columnLabel={column.label}
+                        localProjects={isMyTasksBoard ? localProjectOptions : undefined}
+                        localProjectId={selectedLocalProject?.id}
+                        onLocalProjectChange={
+                          isMyTasksBoard ? id => setLocalProjectFilter(String(id)) : undefined
+                        }
+                        onCancel={() => setQuickCreateStatus(null)}
+                        onCreate={title => createTodoInBoardColumn(status, title)}
+                        onOpenFull={title =>
+                          boardParent
+                            ? openTodoCreation(boardParent, status, title)
+                            : openIssueCreation(status, title, 'popup')
+                        }
                       />
-                      <span className="relative inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary">
-                        {aitableGroupFilter || `全部${selectedGroupField?.name ?? '记录'}`}
-                        <ChevronDown className="ml-2 h-3 w-3" />
-                        <select
-                          data-testid="dingtalk-board-assignee-filter"
-                          value={aitableGroupFilter}
-                          onChange={event => setAitableGroupFilter(event.target.value)}
-                          className="absolute inset-0 cursor-pointer opacity-0"
-                          aria-label="分组值筛选"
-                        >
-                          <option value="">全部</option>
-                          {aitableGroupValues.map(name => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
-                      </span>
-                      <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
-                        <Search className="h-3.5 w-3.5" />
-                        <input
-                          data-testid="dingtalk-board-search"
-                          value={aitableBoardQuery}
-                          onChange={event => setAitableBoardQuery(event.target.value)}
-                          placeholder="搜索记录"
-                          className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
-                        />
-                      </label>
-                      <span className="ml-auto text-xs text-text-muted">
-                        数据由钉钉托管 · AI 可直接管理
-                      </span>
-                    </div>
-                  ) : (
-                    <div
-                      data-testid="cloud-board-toolbar"
-                      className="scrollbar-none flex shrink-0 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
-                    >
-                      {isMyTasksBoard && localProjectOptions.length > 0 ? (
-                        <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
-                          <span className="sr-only">
-                            {t('todo.local_project_filter', '本地项目')}
-                          </span>
-                          <span className="pointer-events-none min-w-0 truncate">
-                            {t('todo.project_with_name', '项目：{{project}}', {
-                              project:
-                                activeLocalProjectFilter === 'all'
-                                  ? t('todo.all_local_projects', '全部项目')
-                                  : (selectedLocalProject?.name ??
-                                    t('todo.select_local_project', '选择项目')),
-                            })}
-                          </span>
-                          <ChevronDown className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-text-muted" />
-                          <select
-                            data-testid="cloud-local-project-filter"
-                            aria-label={t('todo.local_project_filter', '本地项目')}
-                            value={activeLocalProjectFilter}
-                            onChange={event => {
-                              setQuickCreateStatus(null)
-                              setLocalProjectFilter(event.target.value)
-                            }}
-                            className="absolute inset-0 cursor-pointer opacity-0"
-                          >
-                            <option value="all">{t('todo.all_local_projects', '全部项目')}</option>
-                            {localProjectOptions.map(project => (
-                              <option key={project.id} value={project.id}>
-                                {project.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      ) : null}
-                      <AITableGroupFieldPicker
-                        fields={nativeBoardGroupFields}
-                        value={nativeGroupBy}
-                        testIdPrefix="cloud-board-group"
-                        searchPlaceholder="搜索分组字段"
-                        onChange={fieldId => savePersonalGroupBy(fieldId as NativeBoardGroupBy)}
-                      />
-                      <label className="relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
-                        <span data-testid="cloud-board-group-filter-label">
-                          {nativeGroupFilter
-                            ? boardColumns.find(column => column.key === nativeGroupFilter)?.label
-                            : `全部${nativeBoardGroupFields.find(field => field.id === nativeGroupBy)?.name ?? '任务'}`}
-                        </span>
-                        <ChevronDown className="ml-2 h-3 w-3" />
-                        <select
-                          data-testid="cloud-board-group-filter"
-                          value={nativeGroupFilter}
-                          onChange={event => setNativeGroupFilter(event.target.value)}
-                          className="absolute inset-0 cursor-pointer opacity-0"
-                          aria-label="分组值筛选"
-                        >
-                          <option value="">全部</option>
-                          {boardColumns.map(column => (
-                            <option key={column.key} value={column.key}>
-                              {column.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="flex h-8 min-w-52 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
-                        <Search className="h-3.5 w-3.5" />
-                        <input
-                          data-testid="cloud-board-search"
-                          value={nativeBoardQuery}
-                          onChange={event => setNativeBoardQuery(event.target.value)}
-                          placeholder={
-                            boardParent
-                              ? t('todo.search_tasks', '搜索任务')
-                              : t('todo.search_issues', '搜索 Issue')
-                          }
-                          className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
-                        />
-                      </label>
-                      <div
-                        data-testid="cloud-board-view-actions"
-                        className="ml-auto flex shrink-0 items-center gap-2"
-                      >
-                        {nativeGroupBy === 'status' ? (
+                    ) : null
+                  }}
+                  renderColumnHeaderActions={(column, columnItems, state) => {
+                    const status = column.status as CloudLoopItem['status']
+                    const open = () =>
+                      !boardParent && status === 'pending'
+                        ? openIssueCreation('pending', '', 'popup')
+                        : setQuickCreateStatus(status)
+                    return (
+                      <>
+                        {isMyTasksBoard &&
+                        state.groupBy === 'status' &&
+                        status === 'completed' &&
+                        columnItems.length > 0 &&
+                        onArchiveRuntimeTasks ? (
                           <Tooltip
-                            label={t(
-                              focusExecutionColumns
-                                ? 'todo.exit_focus_view_description'
-                                : 'todo.focus_view_description',
-                              focusExecutionColumns
-                                ? '退出执行阶段专注视图'
-                                : '展开进行中与待确认列'
-                            )}
+                            label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
+                            side="bottom"
+                            align="end"
                           >
                             <button
                               type="button"
-                              data-testid="cloud-board-focus-running"
-                              aria-pressed={focusExecutionColumns}
-                              aria-label={t(
-                                focusExecutionColumns
-                                  ? 'todo.exit_focus_view_description'
-                                  : 'todo.focus_view_description',
-                                focusExecutionColumns
-                                  ? '退出执行阶段专注视图'
-                                  : '展开进行中与待确认列'
-                              )}
-                              onClick={toggleFocusExecutionColumns}
-                              className={cn(
-                                'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
-                                focusExecutionColumns
-                                  ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
-                                  : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
-                              )}
+                              data-testid="cloud-my-tasks-archive-completed"
+                              onClick={() => setRuntimeBatchArchiveItems([...columnItems])}
+                              className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                              aria-label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
                             >
-                              {focusExecutionColumns ? (
-                                <Minimize2 className="h-3.5 w-3.5" />
-                              ) : (
-                                <Maximize2 className="h-3.5 w-3.5" />
-                              )}
-                              {t('todo.focus_view', '专注视图')}
+                              <Archive className="h-3.5 w-3.5" />
                             </button>
                           </Tooltip>
                         ) : null}
-                        {personalGroupKey && localStorage.getItem(personalGroupKey) ? (
-                          <button
-                            type="button"
-                            data-testid="cloud-board-save-global"
-                            disabled={
-                              groupScopeBusy ||
-                              !['Owner', 'Maintainer'].includes(
-                                selectedProject.access_role ?? 'Owner'
-                              )
-                            }
-                            onClick={() => void saveGlobalGroupBy()}
-                            className="h-8 shrink-0 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                        {canCreateBoardTask &&
+                        !isAITableProject &&
+                        state.groupBy === 'status' &&
+                        (status === 'inbox' || status === 'pending') ? (
+                          <Tooltip
+                            label={t(
+                              boardParent || isMyTasksBoard
+                                ? 'todo.new_task_in_column'
+                                : 'todo.new_issue_in_column',
+                              boardParent || isMyTasksBoard
+                                ? '在{{column}}中新建任务'
+                                : '在{{column}}中新建 Issue',
+                              { column: column.label }
+                            )}
+                            side="bottom"
+                            align="end"
                           >
-                            应用到全局
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
-                  <nav
-                    data-testid="cloud-todo-board-breadcrumb"
-                    aria-label="任务层级"
-                    className="px-6"
-                  >
-                    {boardParent ? (
-                      <>
-                        <div className="flex h-7 items-center gap-1 text-xs">
-                          <button
-                            type="button"
-                            onClick={() => setBoardParentId(null)}
-                            className="rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
-                          >
-                            Issue
-                          </button>
-                          {boardBreadcrumb.map(parent => (
-                            <span key={parent.id} className="flex min-w-0 items-center gap-1">
-                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                              <button
-                                type="button"
-                                data-testid={`cloud-todo-board-breadcrumb-${parent.id}`}
-                                onClick={() => setBoardParentId(parent.id)}
-                                className={cn(
-                                  'max-w-48 truncate rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary',
-                                  parent.id === boardParentId && 'font-medium text-text-primary'
-                                )}
-                              >
-                                {parent.title}
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                        <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
-                          <h1 className="text-heading-sm font-semibold">{boardParent.title}</h1>
-                          <span className="text-xs text-text-muted">
-                            {boardLayerCount} 个任务 · 仅显示当前层的直接子任务
-                          </span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
-                        <h1 className="text-heading-sm font-semibold">
-                          {isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
-                        </h1>
-                        <span className="text-xs text-text-muted">
-                          {boardLayerCount}{' '}
-                          {isMyTasksBoard ? '个任务' : isAITableProject ? '条记录' : '个 Issue'}
-                        </span>
-                      </div>
-                    )}
-                  </nav>
-                  {quickStartStorageKey &&
-                  !boardItemsLoading &&
-                  !isAITableProject &&
-                  !boardParent &&
-                  nativeGroupBy === 'status' &&
-                  !nativeGroupFilter &&
-                  !nativeBoardQuery.trim() ? (
-                    <BoardQuickStartGuide
-                      key={quickStartStorageKey}
-                      storageKey={quickStartStorageKey}
-                      itemKind={isMyTasksBoard ? 'task' : 'issue'}
-                      hasCreatedItem={rootBoardItems.length > 0}
-                      hasAdvancedItem={rootBoardItems.some(item => item.status !== 'inbox')}
-                      detailOpened={quickStartDetailOpened}
-                      onCreateItem={() => openIssueCreation()}
-                      onOpenFirstItem={() => {
-                        if (firstRootBoardItem?.can_view_detail !== false) {
-                          setSelectedItem(firstRootBoardItem)
-                        }
-                      }}
-                    />
-                  ) : null}
-                  {isAITableProject && dingtalkAuthPrompt && !boardItemsLoading ? (
-                    <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
-                      <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
-                      <button
-                        type="button"
-                        data-testid="aitable-board-dws-login"
-                        disabled={dingtalkAuthBusy}
-                        onClick={() => void connectDingTalkBoard()}
-                        className="h-7 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition hover:bg-muted disabled:opacity-50"
-                      >
-                        {dingtalkAuthBusy
-                          ? t('todo.dingtalk_board_connecting')
-                          : t('todo.dingtalk_board_connect')}
-                      </button>
-                    </div>
-                  ) : boardError ? (
-                    <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
-                      {boardError}
-                    </p>
-                  ) : null}
-                  {boardItemsLoading ? (
-                    <div
-                      ref={boardScrollRef}
-                      data-testid="cloud-board-scroll"
-                      className="min-h-0 flex-1 overflow-x-auto"
-                    >
-                      <CloudTodoBoardSkeleton />
-                    </div>
-                  ) : (
-                    <div
-                      ref={boardScrollRef}
-                      data-testid="cloud-board-scroll"
-                      className="min-h-0 flex-1 overflow-x-auto"
-                    >
-                      <KanbanBoard
-                        columns={boardColumns}
-                        activeDragItemId={activeDragItemId}
-                        dnd={{ DndContext, DragOverlay, useDroppable }}
-                        dndContextProps={{
-                          sensors: boardSensors,
-                          collisionDetection: boardCollisionDetection,
-                          onDragStart: (event: DragStartEvent) => {
-                            setPinnedBoardPreview(null)
-                            setActiveDragItemId(String(event.active.id))
-                          },
-                          onDragCancel: () => setActiveDragItemId(null),
-                          onDragEnd: finishBoardDrop,
-                        }}
-                        dropIdPrefix="todo-column:"
-                        testIdPrefix="cloud-todo"
-                        getColumnKey={column => column.key}
-                        getColumnLabel={column => column.label}
-                        getColumnDotClassName={column => column.dotClass}
-                        getColumnItems={column =>
-                          boardItems.filter(
-                            item =>
-                              item.parent_id === boardParentId &&
-                              (!isMyTasksBoard ||
-                                activeLocalProjectFilter === 'all' ||
-                                !selectedLocalProject ||
-                                localProjectIdForItem(item) === selectedLocalProject?.id ||
-                                (item.status === 'inbox' &&
-                                  localProjectIdForItem(item) === null)) &&
-                              (!isAITableProject ||
-                                !column.groupValue ||
-                                (column.groupValue === '未设置'
-                                  ? !aitableCellLabels(item.source_cells?.[aitableGroupFieldId])
-                                      .length
-                                  : aitableCellLabels(
-                                      item.source_cells?.[aitableGroupFieldId]
-                                    ).includes(column.groupValue))) &&
-                              (isAITableProject ||
-                                (nativeGroupBy === 'status'
-                                  ? item.status === column.status
-                                  : nativeGroupBy === 'priority'
-                                    ? item.priority === column.groupValue
-                                    : nativeGroupBy === 'assignee'
-                                      ? itemMatchesAssigneeGroup(item, column.groupValue)
-                                      : column.groupValue
-                                        ? (item.tags ?? []).includes(column.groupValue)
-                                        : !(item.tags ?? []).length)) &&
-                              (isAITableProject ||
-                                !nativeGroupFilter ||
-                                column.key === nativeGroupFilter) &&
-                              (isAITableProject ||
-                                !nativeBoardQuery.trim() ||
-                                `${item.title} ${item.description ?? ''}`
-                                  .toLowerCase()
-                                  .includes(nativeBoardQuery.trim().toLowerCase())) &&
-                              (!aitableGroupFilter || column.groupValue === aitableGroupFilter) &&
-                              (!aitableBoardQuery.trim() ||
-                                `${item.title} ${item.description ?? ''}`
-                                  .toLowerCase()
-                                  .includes(aitableBoardQuery.trim().toLowerCase()))
-                          )
-                        }
-                        getColumnWidthClassName={column =>
-                          focusExecutionColumns &&
-                          nativeGroupBy === 'status' &&
-                          (column.status === 'in_progress' || column.status === 'in_review')
-                            ? 'w-[480px]'
-                            : 'w-[292px]'
-                        }
-                        getColumnDragHint={column =>
-                          activeDragItemId && nativeGroupBy === 'status'
-                            ? columnDragHints[column.status]
-                            : undefined
-                        }
-                        renderColumnHeaderActions={(column, columnItems) => {
-                          const canCreateInColumn =
-                            column.status === 'inbox' || column.status === 'pending'
-                          const openColumnCreation = () => {
-                            if (!boardParent && column.status === 'pending') {
-                              openIssueCreation('pending', '', 'popup')
-                              return
-                            }
-                            setQuickCreateStatus(column.status)
-                          }
-                          return (
-                            <>
-                              {isMyTasksBoard &&
-                              nativeGroupBy === 'status' &&
-                              column.status === 'completed' &&
-                              columnItems.length > 0 &&
-                              onArchiveRuntimeTasks ? (
-                                <Tooltip
-                                  label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
-                                  side="bottom"
-                                  align="end"
-                                >
-                                  <button
-                                    type="button"
-                                    data-testid="cloud-my-tasks-archive-completed"
-                                    onClick={() => setRuntimeBatchArchiveItems([...columnItems])}
-                                    className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                    aria-label={t(
-                                      'todo.archive_completed_tasks',
-                                      '批量归档已完成任务'
-                                    )}
-                                  >
-                                    <Archive className="h-3.5 w-3.5" />
-                                  </button>
-                                </Tooltip>
-                              ) : null}
-                              {canCreateBoardTask &&
-                                !isAITableProject &&
-                                nativeGroupBy === 'status' &&
-                                canCreateInColumn && (
-                                  <Tooltip
-                                    label={t(
-                                      boardParent || isMyTasksBoard
-                                        ? 'todo.new_task_in_column'
-                                        : 'todo.new_issue_in_column',
-                                      boardParent || isMyTasksBoard
-                                        ? '在{{column}}中新建任务'
-                                        : '在{{column}}中新建 Issue',
-                                      { column: column.label }
-                                    )}
-                                    side="bottom"
-                                    align="end"
-                                  >
-                                    <button
-                                      type="button"
-                                      data-testid={`cloud-todo-column-add-${column.key}`}
-                                      onClick={openColumnCreation}
-                                      className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                      aria-label={t(
-                                        boardParent || isMyTasksBoard
-                                          ? 'todo.new_task_in_column'
-                                          : 'todo.new_issue_in_column',
-                                        boardParent || isMyTasksBoard
-                                          ? '在{{column}}中新建任务'
-                                          : '在{{column}}中新建 Issue',
-                                        { column: column.label }
-                                      )}
-                                    >
-                                      <Plus className="h-3.5 w-3.5" />
-                                    </button>
-                                  </Tooltip>
-                                )}
-                            </>
-                          )
-                        }}
-                        getItemKey={item => item.id}
-                        renderItem={(item, column) => {
-                          const focusedExecutionColumn =
-                            focusExecutionColumns &&
-                            nativeGroupBy === 'status' &&
-                            (column.status === 'in_progress' || column.status === 'in_review')
-                          const progressDisplay: BoardCardProgressDisplay = focusedExecutionColumn
-                            ? 'focused'
-                            : 'compact'
-                          return (
-                            <CloudTodoBoardCard
-                              item={item}
-                              processingStatus={isProcessingStatus(item.status)}
-                              taskBindings={
-                                itemTaskBindingsProjectKey === selectedProjectKey
-                                  ? (boardTaskBindings[item.id] ?? []).map(binding =>
-                                      withBoardTaskModelSelection(item, binding, runtimeWork)
-                                    )
-                                  : []
-                              }
-                              onClick={() => {
-                                if (item.can_view_detail !== false) {
-                                  setPinnedBoardPreview(null)
-                                  setBackgroundTaskItemId(null)
-                                  closeTaskPanel()
-                                  setSelectedItem(item)
-                                }
-                              }}
-                              onConfigureExecution={() =>
-                                openExecutionConfiguration({
-                                  item,
-                                  continuation: { type: 'save' },
-                                })
-                              }
-                              onArchive={() => {
-                                setArchiveError(null)
-                                setArchiveItem(item)
-                              }}
-                              previewPinned={pinnedBoardPreviewItemId === item.id}
-                              onPreviewPinnedChange={pinned =>
-                                setPinnedBoardPreview(
-                                  pinned
-                                    ? {
-                                        contextKey: boardPreviewContextKey,
-                                        itemId: item.id,
-                                      }
-                                    : null
-                                )
-                              }
-                              onMarkRead={markItemRead}
-                              onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
-                              display={boardCardDisplay}
-                              agentNames={agentNameById}
-                              dragDisabled={isAITableProject}
-                              previewDisabled={
-                                selectedItem !== null ||
-                                activeDragItemId !== null ||
-                                (pinnedBoardPreviewItemId !== null &&
-                                  pinnedBoardPreviewItemId !== item.id)
-                              }
-                              archiveDisabled={isAITableProject}
-                              progressDisplay={progressDisplay}
-                              changeRequestMonitor={changeRequestMonitor}
-                              onContinueChangeRequestRepair={
-                                workbench ? continueChangeRequestRepair : undefined
-                              }
-                            />
-                          )
-                        }}
-                        renderItemsFooter={column =>
-                          isExternalGitBoard && externalPageCursors[column.status] ? (
                             <button
                               type="button"
-                              data-testid={`cloud-todo-column-load-more-${column.key}`}
-                              disabled={externalPageLoading[column.status]}
-                              onClick={() => void loadMoreExternalColumn(column.status)}
-                              className="flex h-8 w-full items-center justify-center rounded-lg border border-border bg-background text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
-                            >
-                              {externalPageLoading[column.status]
-                                ? t('todo.loading_more_issues')
-                                : t('todo.load_more_issues')}
-                            </button>
-                          ) : null
-                        }
-                        getColumnEmptyState={column => {
-                          const emptyHint =
-                            boardParent || isMyTasksBoard
-                              ? taskColumnEmptyHints[column.status]
-                              : issueColumnEmptyHints[column.status]
-                          if (!emptyHint) return undefined
-                          const canCreateInColumn =
-                            column.status === 'inbox' || column.status === 'pending'
-                          if (!canCreateInColumn) return { hint: emptyHint }
-                          const openColumnCreation = () => {
-                            if (!boardParent && column.status === 'pending') {
-                              openIssueCreation('pending', '', 'popup')
-                              return
-                            }
-                            setQuickCreateStatus(column.status)
-                          }
-                          return {
-                            hint: emptyHint,
-                            action: {
-                              label:
-                                column.status === 'inbox'
-                                  ? t(
-                                      boardParent || isMyTasksBoard
-                                        ? 'todo.create_first_task'
-                                        : 'todo.create_first_issue',
-                                      boardParent || isMyTasksBoard
-                                        ? '创建第一个任务'
-                                        : '创建第一个 Issue'
-                                    )
-                                  : t(
-                                      boardParent || isMyTasksBoard
-                                        ? 'todo.create_task_in_pending'
-                                        : 'todo.create_issue_in_pending',
-                                      boardParent || isMyTasksBoard
-                                        ? '创建到待开始'
-                                        : '创建 Issue 到待开始'
-                                    ),
-                              ariaLabel: t(
+                              data-testid={`cloud-todo-column-add-${column.key}`}
+                              onClick={open}
+                              className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                              aria-label={t(
                                 boardParent || isMyTasksBoard
                                   ? 'todo.new_task_in_column'
                                   : 'todo.new_issue_in_column',
                                 { column: column.label }
-                              ),
-                              onClick: openColumnCreation,
-                            },
+                              )}
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                        ) : null}
+                      </>
+                    )
+                  }}
+                  renderDragOverlay={() =>
+                    activeDragItemId ? (
+                      <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
+                        <CloudTodoCardContent
+                          item={items.find(item => item.id === activeDragItemId)!}
+                          display={boardCardDisplay}
+                          processingStatus={isProcessingStatus(
+                            items.find(item => item.id === activeDragItemId)!.status
+                          )}
+                          agentNames={agentNameById}
+                        />
+                      </div>
+                    ) : null
+                  }
+                  renderExternalGroupPicker={() => (
+                    <AITableGroupFieldPicker
+                      fields={aitableFields}
+                      value={aitableGroupFieldId}
+                      onChange={id => {
+                        setAitableGroupFieldId(id)
+                        setAitableGroupFilter('')
+                      }}
+                    />
+                  )}
+                  renderFocusIcon={focused =>
+                    focused ? (
+                      <Minimize2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    )
+                  }
+                  renderGroupPicker={(value, onChange) => (
+                    <AITableGroupFieldPicker
+                      fields={nativeBoardGroupFields}
+                      value={value}
+                      testIdPrefix="cloud-board-group"
+                      searchPlaceholder="搜索分组字段"
+                      onChange={id => onChange(id as NativeBoardGroupBy)}
+                    />
+                  )}
+                  renderItem={(item, column, state) => {
+                    const progressDisplay: BoardCardProgressDisplay =
+                      state.focusExecutionColumns &&
+                      state.groupBy === 'status' &&
+                      (column.status === 'in_progress' || column.status === 'in_review')
+                        ? 'focused'
+                        : 'compact'
+                    return (
+                      <CloudTodoBoardCard
+                        item={item}
+                        processingStatus={isProcessingStatus(item.status)}
+                        taskBindings={
+                          itemTaskBindingsProjectKey === selectedProjectKey
+                            ? (boardTaskBindings[item.id] ?? []).map(binding =>
+                                withBoardTaskModelSelection(item, binding, runtimeWork)
+                              )
+                            : []
+                        }
+                        onClick={() => {
+                          if (item.can_view_detail !== false) {
+                            setPinnedBoardPreview(null)
+                            setBackgroundTaskItemId(null)
+                            closeTaskPanel()
+                            setSelectedItem(item)
                           }
                         }}
-                        renderAddIcon={() => <Plus className="h-5 w-5" />}
-                        renderColumnFooter={column =>
-                          canCreateBoardTask &&
-                          !isAITableProject &&
-                          nativeGroupBy === 'status' &&
-                          column.status === 'inbox' &&
-                          quickCreateStatus === column.status ? (
-                            <BoardQuickCreate
-                              key={`${selectedProjectKey}:${boardParentId ?? 'root'}:${column.key}`}
-                              columnKey={column.key}
-                              columnLabel={column.label}
-                              localProjects={isMyTasksBoard ? localProjectOptions : undefined}
-                              localProjectId={selectedLocalProject?.id}
-                              onLocalProjectChange={
-                                isMyTasksBoard
-                                  ? projectId => setLocalProjectFilter(String(projectId))
-                                  : undefined
-                              }
-                              onCancel={() => setQuickCreateStatus(null)}
-                              onCreate={title => createTodoInBoardColumn(column.status, title)}
-                              onOpenFull={title =>
-                                boardParent
-                                  ? openTodoCreation(boardParent, column.status, title)
-                                  : openIssueCreation(column.status, title, 'popup')
-                              }
-                            />
-                          ) : null
+                        onConfigureExecution={() =>
+                          openExecutionConfiguration({ item, continuation: { type: 'save' } })
                         }
-                        renderDragOverlay={() =>
-                          activeDragItemId ? (
-                            <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
-                              <CloudTodoCardContent
-                                item={items.find(item => item.id === activeDragItemId)!}
-                                display={boardCardDisplay}
-                                processingStatus={isProcessingStatus(
-                                  items.find(item => item.id === activeDragItemId)!.status
-                                )}
-                                agentNames={agentNameById}
-                              />
-                            </div>
-                          ) : null
+                        onArchive={() => {
+                          setArchiveError(null)
+                          setArchiveItem(item)
+                        }}
+                        previewPinned={pinnedBoardPreviewItemId === item.id}
+                        onPreviewPinnedChange={pinned =>
+                          setPinnedBoardPreview(
+                            pinned ? { contextKey: boardPreviewContextKey, itemId: item.id } : null
+                          )
+                        }
+                        onMarkRead={markItemRead}
+                        onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
+                        display={boardCardDisplay}
+                        agentNames={agentNameById}
+                        dragDisabled={isAITableProject}
+                        previewDisabled={
+                          selectedItem !== null ||
+                          activeDragItemId !== null ||
+                          (pinnedBoardPreviewItemId !== null &&
+                            pinnedBoardPreviewItemId !== item.id)
+                        }
+                        archiveDisabled={isAITableProject}
+                        progressDisplay={progressDisplay}
+                        changeRequestMonitor={changeRequestMonitor}
+                        onContinueChangeRequestRepair={
+                          workbench ? continueChangeRequestRepair : undefined
                         }
                       />
-                    </div>
+                    )
+                  }}
+                  renderItemsFooter={column =>
+                    isExternalGitBoard &&
+                    externalPageCursors[column.status as CloudLoopItem['status']] ? (
+                      <button
+                        type="button"
+                        data-testid={`cloud-todo-column-load-more-${column.key}`}
+                        disabled={externalPageLoading[column.status as CloudLoopItem['status']]}
+                        onClick={() =>
+                          void loadMoreExternalColumn(column.status as CloudLoopItem['status'])
+                        }
+                        className="flex h-8 w-full items-center justify-center rounded-lg border border-border bg-background text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                      >
+                        {externalPageLoading[column.status as CloudLoopItem['status']]
+                          ? t('todo.loading_more_issues')
+                          : t('todo.load_more_issues')}
+                      </button>
+                    ) : null
+                  }
+                  renderQuickStart={() =>
+                    quickStartStorageKey ? (
+                      <BoardQuickStartGuide
+                        key={quickStartStorageKey}
+                        storageKey={quickStartStorageKey}
+                        itemKind={isMyTasksBoard ? 'task' : 'issue'}
+                        hasCreatedItem={rootBoardItems.length > 0}
+                        hasAdvancedItem={rootBoardItems.some(item => item.status !== 'inbox')}
+                        detailOpened={quickStartDetailOpened}
+                        onCreateItem={() => openIssueCreation()}
+                        onOpenFirstItem={() => {
+                          if (firstRootBoardItem?.can_view_detail !== false)
+                            setSelectedItem(firstRootBoardItem)
+                        }}
+                      />
+                    ) : null
+                  }
+                  renderSearchIcon={() => <Search className="h-3.5 w-3.5" />}
+                  renderSkeleton={() => <CloudTodoBoardSkeleton />}
+                  renderStatus={() =>
+                    isAITableProject && dingtalkAuthPrompt && !boardItemsLoading ? (
+                      <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
+                        <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
+                        <button
+                          type="button"
+                          data-testid="aitable-board-dws-login"
+                          disabled={dingtalkAuthBusy}
+                          onClick={() => void connectDingTalkBoard()}
+                          className="h-7 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition hover:bg-muted disabled:opacity-50"
+                        >
+                          {dingtalkAuthBusy
+                            ? t('todo.dingtalk_board_connecting')
+                            : t('todo.dingtalk_board_connect')}
+                        </button>
+                      </div>
+                    ) : boardError ? (
+                      <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
+                        {boardError}
+                      </p>
+                    ) : null
+                  }
+                  renderTooltip={(label, child) => <Tooltip label={label}>{child}</Tooltip>}
+                  rootLabel={isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
+                  rootUnitLabel={
+                    isMyTasksBoard ? '个任务' : isAITableProject ? '条记录' : '个 Issue'
+                  }
+                  saveGlobalDisabled={
+                    groupScopeBusy ||
+                    !['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner')
+                  }
+                  saveGlobalLabel="应用到全局"
+                  searchPlaceholder={
+                    boardParent
+                      ? t('todo.search_tasks', '搜索任务')
+                      : t('todo.search_issues', '搜索 Issue')
+                  }
+                  showQuickStart={Boolean(
+                    quickStartStorageKey &&
+                    !boardItemsLoading &&
+                    !isAITableProject &&
+                    !boardParent &&
+                    nativeGroupBy === 'status' &&
+                    !nativeGroupFilter &&
+                    !nativeBoardQuery.trim()
                   )}
-                </div>
+                  showSaveGlobal={Boolean(
+                    personalGroupKey && localStorage.getItem(personalGroupKey)
+                  )}
+                />
               )}
-            </>
+            </ProjectShell>
           )}
         </main>
         {pendingAutomationSelection ? (

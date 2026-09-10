@@ -10,6 +10,7 @@ import { collaborationTestIds } from './testIds'
 import { CollaborationSettings } from './CollaborationSettings'
 import { IssueDetail } from './IssueDetail'
 import { CollaborationFilesAdapter } from './web-adapter/CollaborationFilesAdapter'
+import { MyWorkAdapter } from './web-adapter/MyWorkAdapter'
 import { WorkspaceProjectsHomeAdapter } from './web-adapter/WorkspaceProjectsHomeAdapter'
 import {
   ProjectViewSwitcher,
@@ -18,23 +19,24 @@ import {
 import type {
   CollaborationAttachment,
   CollaborationComment,
-  CollaborationExecution,
   CollaborationHostAdapter,
   CollaborationIssue,
   CollaborationMember,
   CollaborationPriority,
   CollaborationProject,
   CollaborationStatus,
-  CollaborationUser,
   CollaborationView,
 } from './types'
 import type { SharedWorkspaceApi } from './ports/SharedWorkspaceApi'
+import type { WorkspaceMyWorkItem } from './ports/SharedWorkspaceApi'
 
 const DEFAULT_STATUSES: CollaborationStatus[] = [
   { id: 'pending', name: '待处理', color: 'gray' },
   { id: 'in_progress', name: '进行中', color: 'blue' },
   { id: 'completed', name: '已完成', color: 'green' },
 ]
+
+export const collaborationProjectViewIds = ['board', 'files', 'automation', 'manage'] as const
 
 interface CollaborationAppProps {
   api: SharedWorkspaceApi
@@ -61,12 +63,11 @@ export function CollaborationApp({
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale]
   const [projects, setProjects] = useState<CollaborationProject[]>([])
+  const [myWork, setMyWork] = useState<WorkspaceMyWorkItem[]>([])
   const [projectItems, setProjectItems] = useState<Record<string, CollaborationIssue[]>>({})
   const [projectMembers, setProjectMembers] = useState<Record<string, CollaborationMember[]>>({})
   const [project, setProject] = useState<CollaborationProject | null>(null)
   const [issues, setIssues] = useState<CollaborationIssue[]>([])
-  const [members, setMembers] = useState<CollaborationMember[]>([])
-  const [runs, setRuns] = useState<CollaborationExecution[]>([])
   const [selectedIssue, setSelectedIssue] = useState<CollaborationIssue | null>(null)
   const [attachments, setAttachments] = useState<CollaborationAttachment[]>([])
   const [comments, setComments] = useState<CollaborationComment[]>([])
@@ -120,7 +121,6 @@ export function CollaborationApp({
         ])
         setProject(nextProject)
         setIssues(snapshot.items)
-        setMembers(snapshot.members)
         setError(null)
       } catch {
         setError(messages.loadFailed)
@@ -131,15 +131,31 @@ export function CollaborationApp({
     [api, messages.loadFailed]
   )
 
+  const loadMyWork = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setMyWork(await api.projects.listMyWork())
+    } catch {
+      setError(messages.loadFailed)
+    } finally {
+      setLoading(false)
+    }
+  }, [api, messages.loadFailed])
+
   useEffect(() => {
     if (host.location.projectId) {
       void loadProject(host.location.projectId)
+    } else if (host.location.rootView === 'my-work') {
+      setProject(null)
+      setSelectedIssue(null)
+      void loadMyWork()
     } else {
       setProject(null)
       setSelectedIssue(null)
       void loadProjects()
     }
-  }, [host.location.projectId, loadProject, loadProjects])
+  }, [host.location.projectId, host.location.rootView, loadMyWork, loadProject, loadProjects])
 
   useEffect(() => {
     const projectId = host.location.projectId
@@ -169,22 +185,6 @@ export function CollaborationApp({
       .catch(() => setError(messages.loadFailed))
   }, [api, host.location.issueId, messages.loadFailed])
 
-  useEffect(() => {
-    if (!project) return
-    if (host.location.view === 'members') {
-      void api.members
-        .list(project.id)
-        .then(setMembers)
-        .catch(() => setError(messages.loadFailed))
-    }
-    if (host.location.view === 'runs') {
-      void api.executions
-        .list(project.id)
-        .then(setRuns)
-        .catch(() => setError(messages.loadFailed))
-    }
-  }, [api, host.location.view, messages.loadFailed, project])
-
   const navigateView = (view: CollaborationView) => {
     host.navigate({ projectId: project?.id ?? null, issueId: null, view })
   }
@@ -204,7 +204,27 @@ export function CollaborationApp({
           {error}
         </div>
       )}
-      {!project ? (
+      {!project && host.location.rootView === 'my-work' ? (
+        <MyWorkAdapter
+          items={myWork}
+          locale={locale}
+          onBack={() =>
+            host.navigate({
+              projectId: null,
+              issueId: null,
+              view: 'board',
+              rootView: 'home',
+            })
+          }
+          onSelectItem={item =>
+            host.navigate({
+              projectId: item.cloud_project_id,
+              issueId: item.id,
+              view: 'board',
+            })
+          }
+        />
+      ) : !project ? (
         <WorkspaceProjectsHomeAdapter
           projects={projects}
           projectItems={projectItems}
@@ -222,6 +242,14 @@ export function CollaborationApp({
               projectId: nextProject.id,
               issueId: null,
               view: 'manage',
+            })
+          }
+          onOpenMyWork={() =>
+            host.navigate({
+              projectId: null,
+              issueId: null,
+              view: 'board',
+              rootView: 'my-work',
             })
           }
           onUnavailable={() => notify(messages.capabilitiesUnavailable)}
@@ -268,44 +296,23 @@ export function CollaborationApp({
               ariaLabel={messages.title}
               compact={false}
               value={host.location.view}
-              options={
-                [
-                  {
-                    id: 'board',
-                    label: messages.board,
-                    testId: 'collaboration-tab-board',
-                  },
-                  {
-                    id: 'files',
-                    label: messages.files,
-                    testId: 'collaboration-tab-files',
-                  },
-                  {
-                    id: 'members',
-                    label: messages.members,
-                    testId: 'collaboration-tab-members',
-                  },
-                  ...(host.capabilities.automation
-                    ? [
-                        {
-                          id: 'automation' as const,
-                          label: messages.automation,
-                          testId: 'collaboration-tab-automation',
-                        },
-                        {
-                          id: 'runs' as const,
-                          label: messages.runs,
-                          testId: 'collaboration-tab-runs',
-                        },
-                      ]
-                    : []),
-                  {
-                    id: 'manage',
-                    label: messages.settings,
-                    testId: 'collaboration-tab-manage',
-                  },
-                ] satisfies CollaborationProjectViewOption[]
-              }
+              options={collaborationProjectViewIds
+                .filter(view => view !== 'automation' || host.capabilities.automation)
+                .map(
+                  view =>
+                    ({
+                      id: view,
+                      label:
+                        view === 'board'
+                          ? messages.board
+                          : view === 'files'
+                            ? messages.files
+                            : view === 'automation'
+                              ? messages.automation
+                              : messages.settings,
+                      testId: `collaboration-tab-${view}`,
+                    }) satisfies CollaborationProjectViewOption
+                )}
               onChange={view => navigateView(view as CollaborationView)}
             />
           </div>
@@ -379,26 +386,6 @@ export function CollaborationApp({
           {host.location.view === 'files' && (
             <CollaborationFilesAdapter api={api.files} project={project} />
           )}
-          {host.location.view === 'members' && (
-            <MembersView
-              api={api.members}
-              project={project}
-              members={members}
-              messages={messages}
-              onChange={setMembers}
-              onError={() => notify(messages.saveFailed)}
-            />
-          )}
-          {host.location.view === 'runs' && (
-            <RunsView
-              api={api.executions}
-              project={project}
-              runs={runs}
-              messages={messages}
-              onChange={setRuns}
-              onError={() => notify(messages.saveFailed)}
-            />
-          )}
           {host.location.view === 'automation' && (
             <CapabilityView
               title={messages.automation}
@@ -408,45 +395,9 @@ export function CollaborationApp({
           )}
           {host.location.view === 'manage' && (
             <CollaborationSettings
-              api={api.projects}
+              api={api}
               project={project}
-              labels={{
-                settings: messages.settings,
-                projectName: messages.projectName,
-                projectDescription: messages.projectDescription,
-                visibility: messages.visibility,
-                privateVisibility: messages.privateVisibility,
-                publicVisibility: messages.publicVisibility,
-                tags: messages.tags,
-                tagsHint: messages.tagsHint,
-                boardLayout: messages.boardLayout,
-                boardLayoutHint: messages.boardLayoutHint,
-                statusName: messages.statusName,
-                statusColor: messages.statusColor,
-                processingStatus: messages.processingStatus,
-                addStatus: messages.addStatus,
-                remove: messages.remove,
-                moveUp: messages.moveUp,
-                moveDown: messages.moveDown,
-                cardDisplay: messages.cardDisplay,
-                showAssignee: messages.showAssignee,
-                showPriority: messages.showPriority,
-                showTags: messages.showTags,
-                showDate: messages.showDate,
-                repository: messages.repository,
-                providerToken: messages.providerToken,
-                providerTokenHint: messages.providerTokenHint,
-                aitableUrl: messages.aitableUrl,
-                save: messages.save,
-                archiveProject: messages.archiveProject,
-                archiveConfirm: messages.archiveConfirm,
-              }}
               onChange={setProject}
-              onArchived={() => host.navigate({ projectId: null, issueId: null, view: 'board' })}
-              onConflict={async () => {
-                await loadProject(project.id, false)
-                notify(messages.conflict)
-              }}
               onError={() => notify(messages.saveFailed)}
             />
           )}
@@ -740,197 +691,6 @@ function CreateIssueDialog({
         </footer>
       </form>
     </DialogFrame>
-  )
-}
-
-function MembersView({
-  api,
-  project,
-  members,
-  messages,
-  onChange,
-  onError,
-}: {
-  api: SharedWorkspaceApi['members']
-  project: CollaborationProject
-  members: CollaborationMember[]
-  messages: Messages
-  onChange(members: CollaborationMember[]): void
-  onError(): void
-}) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<CollaborationUser[]>([])
-  const [searching, setSearching] = useState(false)
-  const canManage = project.access_role === 'Owner' || project.access_role === 'Maintainer'
-  const search = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!query.trim()) return
-    setSearching(true)
-    try {
-      const memberIds = new Set(members.map(member => member.user_id))
-      setResults((await api.searchUsers(query.trim())).filter(user => !memberIds.has(user.id)))
-    } catch {
-      onError()
-    } finally {
-      setSearching(false)
-    }
-  }
-  return (
-    <section className="collaboration-panel" data-testid={collaborationTestIds.members}>
-      <header>
-        <h2>{messages.members}</h2>
-        {canManage && (
-          <form className="collaboration-member-search" onSubmit={search}>
-            <input
-              data-testid="collaboration-member-search"
-              value={query}
-              placeholder={messages.searchMembers}
-              onChange={event => setQuery(event.target.value)}
-            />
-            <button type="submit" disabled={!query.trim() || searching}>
-              {messages.search}
-            </button>
-          </form>
-        )}
-      </header>
-      {results.length > 0 && (
-        <ul className="collaboration-member-results">
-          {results.map(user => (
-            <li key={user.id}>
-              <span>
-                <strong>{user.user_name}</strong>
-                <small>{user.email}</small>
-              </span>
-              <button
-                type="button"
-                data-testid={`collaboration-member-add-${user.id}`}
-                onClick={async () => {
-                  try {
-                    const added = await api.add(project.id, user.id)
-                    onChange([...members, added])
-                    setResults(current => current.filter(item => item.id !== user.id))
-                  } catch {
-                    onError()
-                  }
-                }}
-              >
-                {messages.add}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {members.length === 0 ? (
-        <p>{messages.emptyMembers}</p>
-      ) : (
-        <ul className="collaboration-member-list">
-          {members.map(member => (
-            <li key={member.id}>
-              <span>
-                <strong>{member.user_name}</strong>
-                <small>{member.email}</small>
-              </span>
-              {canManage && member.role !== 'Owner' ? (
-                <span className="collaboration-member-actions">
-                  <select
-                    aria-label={`${messages.role}: ${member.user_name}`}
-                    value={member.role}
-                    onChange={async event => {
-                      try {
-                        const updated = await api.update(project.id, member.user_id, {
-                          role: event.target.value as Exclude<CollaborationMember['role'], 'Owner'>,
-                        })
-                        onChange(
-                          members.map(item => (item.user_id === updated.user_id ? updated : item))
-                        )
-                      } catch {
-                        onError()
-                      }
-                    }}
-                  >
-                    <option value="Maintainer">Maintainer</option>
-                    <option value="Developer">Developer</option>
-                    <option value="Reporter">Reporter</option>
-                  </select>
-                  <button
-                    type="button"
-                    aria-label={`${messages.remove}: ${member.user_name}`}
-                    data-testid={`collaboration-member-remove-${member.user_id}`}
-                    onClick={async () => {
-                      try {
-                        await api.remove(project.id, member.user_id)
-                        onChange(members.filter(item => item.user_id !== member.user_id))
-                      } catch {
-                        onError()
-                      }
-                    }}
-                  >
-                    {messages.remove}
-                  </button>
-                </span>
-              ) : (
-                <span>{member.role}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  )
-}
-
-function RunsView({
-  api,
-  project,
-  runs,
-  messages,
-  onChange,
-  onError,
-}: {
-  api: SharedWorkspaceApi['executions']
-  project: CollaborationProject
-  runs: CollaborationExecution[]
-  messages: Messages
-  onChange(runs: CollaborationExecution[]): void
-  onError(): void
-}) {
-  return (
-    <section className="collaboration-panel" data-testid={collaborationTestIds.runs}>
-      <h2>{messages.runs}</h2>
-      {runs.length === 0 ? (
-        <p>{messages.emptyRuns}</p>
-      ) : (
-        <ul className="collaboration-run-list">
-          {runs.map(run => (
-            <li key={run.id}>
-              <span>
-                <strong>{run.task_title}</strong>
-                <small>{run.display_state || run.status}</small>
-              </span>
-              {['queued', 'running', 'starting'].includes(run.status) && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await api.stop(project.id, run.id)
-                      onChange(
-                        runs.map(item =>
-                          item.id === run.id ? { ...item, status: 'cancelling' } : item
-                        )
-                      )
-                    } catch {
-                      onError()
-                    }
-                  }}
-                >
-                  {messages.stop}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
   )
 }
 

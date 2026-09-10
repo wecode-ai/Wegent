@@ -10,6 +10,7 @@ import {
   CollaborationApp,
   type CollaborationHostAdapter,
   type CollaborationLocale,
+  type CollaborationRootView,
   type CollaborationView,
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
@@ -50,6 +51,7 @@ export function CollaborationPage() {
   }, [])
 
   const rawView = searchParams.get('view')
+  const rootView: CollaborationRootView = rawView === 'my-work' ? 'my-work' : 'home'
   const view: CollaborationView =
     rawView && COLLABORATION_VIEWS.has(rawView as CollaborationView)
       ? (rawView as CollaborationView)
@@ -69,8 +71,12 @@ export function CollaborationPage() {
         terminal: false,
         dingtalkAitable: false,
       },
-      location: { projectId, issueId, view },
+      location: { projectId, issueId, view, rootView },
       navigate(location) {
+        if (!location.projectId && location.rootView === 'my-work') {
+          router.push('/collaboration?view=my-work')
+          return
+        }
         const nextView = location.view === 'board' ? '' : `?view=${location.view}`
         if (!location.projectId) {
           router.push('/collaboration')
@@ -90,7 +96,7 @@ export function CollaborationPage() {
         else toast.error(message)
       },
     }),
-    [issueId, projectId, router, view]
+    [issueId, projectId, rootView, router, view]
   )
 
   const toggleCollapsed = () => {

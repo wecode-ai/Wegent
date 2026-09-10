@@ -2,377 +2,248 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useMemo, type ComponentType, type SVGProps } from 'react'
 
-import type { SharedWorkspaceProjectsApi } from './ports/SharedWorkspaceApi'
-import type { CollaborationProject, CollaborationStatus, CollaborationStatusColor } from './types'
-
-const STATUS_COLORS: CollaborationStatusColor[] = [
-  'gray',
-  'blue',
-  'orange',
-  'purple',
-  'green',
-  'red',
-]
+import {
+  ProjectManageView,
+  type ProjectManageApi,
+  type ProjectManageCardDisplay,
+  type ProjectManageHost,
+  type ProjectManageStatus,
+} from './project-manage'
+import type { SharedWorkspaceApi } from './ports/SharedWorkspaceApi'
+import type {
+  CollaborationIssue,
+  CollaborationMember,
+  CollaborationProject,
+  CollaborationUser,
+} from './types'
 
 interface CollaborationSettingsProps {
-  api: SharedWorkspaceProjectsApi
+  api: SharedWorkspaceApi
   project: CollaborationProject
-  labels: {
-    settings: string
-    projectName: string
-    projectDescription: string
-    visibility: string
-    privateVisibility: string
-    publicVisibility: string
-    tags: string
-    tagsHint: string
-    boardLayout: string
-    boardLayoutHint: string
-    statusName: string
-    statusColor: string
-    processingStatus: string
-    addStatus: string
-    remove: string
-    moveUp: string
-    moveDown: string
-    cardDisplay: string
-    showAssignee: string
-    showPriority: string
-    showTags: string
-    showDate: string
-    repository: string
-    providerToken: string
-    providerTokenHint: string
-    aitableUrl: string
-    save: string
-    archiveProject: string
-    archiveConfirm: string
-  }
   onChange(project: CollaborationProject): void
-  onArchived(): void
-  onConflict(): Promise<void>
   onError(): void
 }
 
-function defaultStatuses(project: CollaborationProject): CollaborationStatus[] {
+function createManageIcon(paths: string[]): ComponentType<SVGProps<SVGSVGElement>> {
+  return function ManageIcon({ className }) {
+    return (
+      <svg
+        aria-hidden="true"
+        className={className}
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        {paths.map(path => (
+          <path d={path} key={path} />
+        ))}
+      </svg>
+    )
+  }
+}
+
+const manageIcons: ProjectManageHost['icons'] = {
+  Check: createManageIcon(['M5 12l4 4L19 7']),
+  GitBranch: createManageIcon(['M6 3v12', 'M18 9V3', 'M6 9h8a4 4 0 0 0 4-4']),
+  LockKeyhole: createManageIcon(['M7 10V7a5 5 0 0 1 10 0v3', 'M5 10h14v11H5z', 'M12 14v3']),
+  Pencil: createManageIcon(['M4 20l4-1 11-11-3-3L5 16z', 'M14 7l3 3']),
+  Search: createManageIcon(['M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14', 'M16 16l5 5']),
+  Trash2: createManageIcon(['M4 7h16', 'M9 7V4h6v3', 'M7 7l1 14h8l1-14']),
+  X: createManageIcon(['M6 6l12 12', 'M18 6L6 18']),
+}
+
+function moveStatus(
+  statuses: ProjectManageStatus[],
+  index: number,
+  offset: -1 | 1
+): ProjectManageStatus[] {
+  const target = index + offset
+  if (target < 0 || target >= statuses.length) return statuses
+  const next = [...statuses]
+  ;[next[index], next[target]] = [next[target], next[index]]
+  return next
+}
+
+function WebBoardLayout({
+  statuses,
+  display,
+  statusBusy,
+  displayBusy,
+  canEditStatuses,
+  onStatusesChange,
+  onDisplayChange,
+}: {
+  statuses: ProjectManageStatus[]
+  display: ProjectManageCardDisplay
+  statusBusy: boolean
+  displayBusy: boolean
+  canEditStatuses: boolean
+  onStatusesChange(statuses: ProjectManageStatus[]): void
+  onDisplayChange(key: keyof ProjectManageCardDisplay, checked: boolean): void
+}) {
   return (
-    project.board_config?.statuses ?? [
-      { id: 'pending', name: 'Pending', color: 'gray' },
-      { id: 'in_progress', name: 'In progress', color: 'blue' },
-      { id: 'completed', name: 'Completed', color: 'green' },
-    ]
+    <section className="border-t border-border py-6">
+      <h2 className="text-heading-md font-semibold">看板布局</h2>
+      <p className="mt-1 text-sm text-text-muted">配置项目状态和任务卡片显示内容。</p>
+      {canEditStatuses && (
+        <div className="mt-4 space-y-2">
+          {statuses.map((status, index) => (
+            <div className="flex items-center gap-2" key={status.id}>
+              <input
+                aria-label="状态名称"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
+                value={status.name}
+                disabled={statusBusy}
+                onChange={event =>
+                  onStatusesChange(
+                    statuses.map(item =>
+                      item.id === status.id ? { ...item, name: event.target.value } : item
+                    )
+                  )
+                }
+              />
+              <button
+                type="button"
+                disabled={statusBusy || index === 0}
+                onClick={() => onStatusesChange(moveStatus(statuses, index, -1))}
+              >
+                上移
+              </button>
+              <button
+                type="button"
+                disabled={statusBusy || index === statuses.length - 1}
+                onClick={() => onStatusesChange(moveStatus(statuses, index, 1))}
+              >
+                下移
+              </button>
+              <button
+                type="button"
+                disabled={statusBusy || statuses.length === 1}
+                onClick={() => onStatusesChange(statuses.filter(item => item.id !== status.id))}
+              >
+                删除
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {(
+          [
+            ['showAssignee', '显示负责人'],
+            ['showPriority', '显示优先级'],
+            ['showTags', '显示标签'],
+            ['showDate', '显示日期'],
+          ] as const
+        ).map(([key, label]) => (
+          <label className="flex items-center gap-2" key={key}>
+            <input
+              type="checkbox"
+              checked={display[key]}
+              disabled={displayBusy}
+              onChange={event => onDisplayChange(key, event.target.checked)}
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+    </section>
   )
 }
 
 export function CollaborationSettings({
   api,
   project,
-  labels,
   onChange,
-  onArchived,
-  onConflict,
   onError,
 }: CollaborationSettingsProps) {
-  const [name, setName] = useState(project.name)
-  const [description, setDescription] = useState(project.description)
-  const [visibility, setVisibility] = useState(project.visibility ?? 'private')
-  const [tags, setTags] = useState(project.tags.join(', '))
-  const [statuses, setStatuses] = useState(() => defaultStatuses(project))
-  const [processingStatus, setProcessingStatus] = useState(
-    project.board_config?.processing_start_status_id ?? defaultStatuses(project)[0]?.id ?? ''
+  const manageApi = useMemo<
+    ProjectManageApi<
+      CollaborationProject,
+      CollaborationMember,
+      CollaborationIssue,
+      CollaborationUser
+    >
+  >(
+    () => ({
+      listMembers: projectId => api.members.list(projectId),
+      listItems: async projectId => {
+        const snapshot = await api.issues.getBoardSnapshot(projectId)
+        return { items: snapshot.items }
+      },
+      searchUsers: async query => ({ users: await api.members.searchUsers(query) }),
+      addMember: (projectId, userId, role) =>
+        api.members.add(projectId, userId, role === 'Owner' ? undefined : role),
+      updateMember: (projectId, userId, values) =>
+        api.members.update(projectId, userId, {
+          role: values.role,
+          capabilityDescription: values.capability_description,
+        }),
+      removeMember: (projectId, userId) => api.members.remove(projectId, userId),
+      updateItem: (itemId, values) =>
+        api.issues.update(itemId, {
+          version: values.version,
+          tags: values.tags,
+        }),
+      updateProject: (projectId, values) =>
+        api.projects.update(projectId, {
+          version: values.version,
+          tags: values.tags,
+          visibility: values.visibility,
+          providerConfig: values.provider_config,
+          boardConfig: values.board_config,
+          cardDisplay: values.card_display,
+        }),
+    }),
+    [api]
   )
-  const [cardDisplay, setCardDisplay] = useState(
-    project.card_display ?? {
-      show_assignee: true,
-      show_priority: true,
-      show_tags: true,
-      show_date: true,
-    }
-  )
-  const [repository, setRepository] = useState(
-    typeof project.provider_config.repository === 'string' ? project.provider_config.repository : ''
-  )
-  const [providerToken, setProviderToken] = useState('')
-  const [aitableUrl, setAitableUrl] = useState(
-    typeof project.provider_config.source_url === 'string' ? project.provider_config.source_url : ''
-  )
-  const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    const nextStatuses = defaultStatuses(project)
-    setName(project.name)
-    setDescription(project.description)
-    setVisibility(project.visibility ?? 'private')
-    setTags(project.tags.join(', '))
-    setStatuses(nextStatuses)
-    setProcessingStatus(
-      project.board_config?.processing_start_status_id ?? nextStatuses[0]?.id ?? ''
-    )
-    setCardDisplay(
-      project.card_display ?? {
-        show_assignee: true,
-        show_priority: true,
-        show_tags: true,
-        show_date: true,
-      }
-    )
-    setRepository(
-      typeof project.provider_config.repository === 'string'
-        ? project.provider_config.repository
-        : ''
-    )
-    setProviderToken('')
-    setAitableUrl(
-      typeof project.provider_config.source_url === 'string'
-        ? project.provider_config.source_url
-        : ''
-    )
-  }, [project])
-
-  const moveStatus = (index: number, offset: -1 | 1) => {
-    const target = index + offset
-    if (target < 0 || target >= statuses.length) return
-    const next = [...statuses]
-    ;[next[index], next[target]] = [next[target], next[index]]
-    setStatuses(next)
-  }
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    setSaving(true)
-    try {
-      const providerConfig = { ...project.provider_config }
-      if (project.task_provider === 'github' || project.task_provider === 'gitlab') {
-        providerConfig.repository = repository.trim()
-        if (providerToken.trim()) providerConfig.token = providerToken.trim()
-      }
-      if (project.task_provider === 'dingtalk_aitable') {
-        providerConfig.source_url = aitableUrl.trim()
-      }
-      onChange(
-        await api.update(project.id, {
-          version: project.version,
-          name: name.trim(),
-          description: description.trim(),
-          visibility,
-          tags: tags
-            .split(',')
-            .map(tag => tag.trim())
-            .filter((tag, index, values) => tag && values.indexOf(tag) === index),
-          boardConfig: {
-            group_by: project.board_config?.group_by ?? 'status',
-            processing_start_status_id: processingStatus || null,
-            statuses,
-          },
-          cardDisplay,
-          providerConfig,
-        })
-      )
-    } catch (error) {
-      if (error && typeof error === 'object' && 'status' in error && error.status === 409) {
-        await onConflict()
-      } else {
-        onError()
-      }
-    } finally {
-      setSaving(false)
-    }
-  }
+  const host = useMemo<ProjectManageHost>(
+    () => ({
+      icons: manageIcons,
+      translate: (_key, fallback, options) =>
+        Object.entries(options ?? {}).reduce(
+          (text, [name, value]) => text.replace(`{{${name}}}`, String(value)),
+          fallback
+        ),
+      confirm: message => window.confirm(message),
+      trackCompleted: () => undefined,
+      trackFailed: onError,
+      renderTooltip: ({ label, children }) => <span title={label}>{children}</span>,
+      renderActionMenu: ({ ariaLabel, testId, triggerClassName, items }) => (
+        <details className="relative">
+          <summary aria-label={ariaLabel} className={triggerClassName} data-testid={testId}>
+            ···
+          </summary>
+          <div className="absolute right-0 z-10 min-w-28 rounded-lg border border-border bg-background p-1 shadow-lg">
+            {items.map(item => {
+              const Icon = item.icon as ComponentType<{ className?: string }>
+              return (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                  data-testid={item.testId}
+                  disabled={item.disabled}
+                  key={item.testId}
+                  onClick={() => void item.onSelect()}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {item.label}
+                </button>
+              )
+            })}
+          </div>
+        </details>
+      ),
+      renderBoardLayout: options => <WebBoardLayout {...options} />,
+    }),
+    [onError]
+  )
 
   return (
-    <form
-      className="collaboration-panel collaboration-settings"
-      data-testid="collaboration-project-settings"
-      onSubmit={submit}
-    >
-      <h2>{labels.settings}</h2>
-      <label>
-        {labels.projectName}
-        <input value={name} onChange={event => setName(event.target.value)} />
-      </label>
-      <label>
-        {labels.projectDescription}
-        <textarea value={description} onChange={event => setDescription(event.target.value)} />
-      </label>
-      <label>
-        {labels.visibility}
-        <select
-          value={visibility}
-          onChange={event => setVisibility(event.target.value as 'private' | 'public')}
-        >
-          <option value="private">{labels.privateVisibility}</option>
-          <option value="public">{labels.publicVisibility}</option>
-        </select>
-      </label>
-      <label>
-        {labels.tags}
-        <input value={tags} onChange={event => setTags(event.target.value)} />
-        <small>{labels.tagsHint}</small>
-      </label>
-
-      <fieldset className="collaboration-settings-section">
-        <legend>{labels.boardLayout}</legend>
-        <p>{labels.boardLayoutHint}</p>
-        {statuses.map((status, index) => (
-          <div className="collaboration-status-editor" key={status.id}>
-            <input
-              aria-label={labels.statusName}
-              value={status.name}
-              onChange={event =>
-                setStatuses(current =>
-                  current.map(item =>
-                    item.id === status.id ? { ...item, name: event.target.value } : item
-                  )
-                )
-              }
-            />
-            <select
-              aria-label={labels.statusColor}
-              value={status.color}
-              onChange={event =>
-                setStatuses(current =>
-                  current.map(item =>
-                    item.id === status.id
-                      ? { ...item, color: event.target.value as CollaborationStatusColor }
-                      : item
-                  )
-                )
-              }
-            >
-              {STATUS_COLORS.map(color => (
-                <option value={color} key={color}>
-                  {color}
-                </option>
-              ))}
-            </select>
-            <button type="button" disabled={index === 0} onClick={() => moveStatus(index, -1)}>
-              {labels.moveUp}
-            </button>
-            <button
-              type="button"
-              disabled={index === statuses.length - 1}
-              onClick={() => moveStatus(index, 1)}
-            >
-              {labels.moveDown}
-            </button>
-            <button
-              type="button"
-              disabled={statuses.length === 1}
-              onClick={() => {
-                const next = statuses.filter(item => item.id !== status.id)
-                setStatuses(next)
-                if (processingStatus === status.id) setProcessingStatus(next[0]?.id ?? '')
-              }}
-            >
-              {labels.remove}
-            </button>
-          </div>
-        ))}
-        <button
-          type="button"
-          onClick={() => {
-            const id = `status-${Date.now().toString(36)}`
-            setStatuses(current => [
-              ...current,
-              {
-                id,
-                name: labels.addStatus,
-                color: STATUS_COLORS[current.length % STATUS_COLORS.length],
-              },
-            ])
-          }}
-        >
-          {labels.addStatus}
-        </button>
-        <label>
-          {labels.processingStatus}
-          <select
-            value={processingStatus}
-            onChange={event => setProcessingStatus(event.target.value)}
-          >
-            {statuses.map(status => (
-              <option value={status.id} key={status.id}>
-                {status.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </fieldset>
-
-      <fieldset className="collaboration-settings-section">
-        <legend>{labels.cardDisplay}</legend>
-        {(
-          [
-            ['show_assignee', labels.showAssignee],
-            ['show_priority', labels.showPriority],
-            ['show_tags', labels.showTags],
-            ['show_date', labels.showDate],
-          ] as const
-        ).map(([key, label]) => (
-          <label className="collaboration-checkbox" key={key}>
-            <input
-              type="checkbox"
-              checked={cardDisplay[key]}
-              onChange={event =>
-                setCardDisplay(current => ({ ...current, [key]: event.target.checked }))
-              }
-            />
-            {label}
-          </label>
-        ))}
-      </fieldset>
-
-      {(project.task_provider === 'github' || project.task_provider === 'gitlab') && (
-        <fieldset className="collaboration-settings-section">
-          <label>
-            {labels.repository}
-            <input value={repository} onChange={event => setRepository(event.target.value)} />
-          </label>
-          <label>
-            {labels.providerToken}
-            <input
-              type="password"
-              value={providerToken}
-              placeholder={labels.providerTokenHint}
-              onChange={event => setProviderToken(event.target.value)}
-            />
-          </label>
-        </fieldset>
-      )}
-
-      {project.task_provider === 'dingtalk_aitable' && (
-        <label>
-          {labels.aitableUrl}
-          <input value={aitableUrl} onChange={event => setAitableUrl(event.target.value)} />
-        </label>
-      )}
-
-      <div className="collaboration-settings-actions">
-        <button
-          type="submit"
-          className="collaboration-primary-button"
-          disabled={saving || !name.trim() || statuses.some(status => !status.name.trim())}
-        >
-          {labels.save}
-        </button>
-        <button
-          type="button"
-          className="collaboration-danger-button"
-          onClick={async () => {
-            if (!window.confirm(labels.archiveConfirm)) return
-            try {
-              await api.archive(project.id, project.version)
-              onArchived()
-            } catch {
-              onError()
-            }
-          }}
-        >
-          {labels.archiveProject}
-        </button>
-      </div>
-    </form>
+    <ProjectManageView api={manageApi} host={host} project={project} onProjectUpdated={onChange} />
   )
 }

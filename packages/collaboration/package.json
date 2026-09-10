@@ -20,6 +20,14 @@
       "types": "./src/project-manage/index.ts",
       "import": "./src/project-manage/index.ts"
     },
+    "./project-board": {
+      "types": "./src/project-board/index.ts",
+      "import": "./src/project-board/index.ts"
+    },
+    "./project-shell": {
+      "types": "./src/project-shell/index.ts",
+      "import": "./src/project-shell/index.ts"
+    },
     "./styles.css": "./src/styles.css"
   },
   "scripts": {

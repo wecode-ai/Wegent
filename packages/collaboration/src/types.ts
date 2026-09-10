@@ -167,11 +167,13 @@ export interface CollaborationCapabilities {
 }
 
 export type CollaborationView = 'board' | 'files' | 'members' | 'automation' | 'runs' | 'manage'
+export type CollaborationRootView = 'home' | 'my-work'
 
 export interface CollaborationLocation {
   projectId: string | null
   issueId: string | null
   view: CollaborationView
+  rootView?: CollaborationRootView
 }
 
 export interface CollaborationHostAdapter {
