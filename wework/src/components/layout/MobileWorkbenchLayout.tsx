@@ -534,6 +534,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       }
                       taskPlan={paneSession.taskPlan}
                       onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                      onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
                       onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                       queuePaused={paneSession.queuedMessagesPaused}
                       onResumeQueue={paneSession.resumeQueuedMessages}
@@ -647,6 +648,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 }
                 taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                onForceStartQueuedMessage={paneSession.forceStartQueuedMessage}
                 onReorderQueuedMessages={paneSession.reorderQueuedMessages}
                 queuePaused={paneSession.queuedMessagesPaused}
                 onResumeQueue={paneSession.resumeQueuedMessages}

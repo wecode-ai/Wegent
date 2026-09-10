@@ -307,6 +307,12 @@ pub struct RuntimeTaskAddress {
     pub task_title: Option<String>,
     #[serde(default, alias = "backendTaskId")]
     pub backend_task_id: Option<i64>,
+    #[serde(
+        default,
+        alias = "modelSelection",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_selection: Option<Value>,
     #[serde(default, alias = "workflowNodeId")]
     pub workflow_node_id: Option<String>,
 }
@@ -321,6 +327,8 @@ pub struct TaskBinding {
     pub task_id: String,
     pub task_title: Option<String>,
     pub backend_task_id: Option<i64>,
+    #[serde(rename = "modelSelection", skip_serializing_if = "Option::is_none")]
+    pub model_selection: Option<Value>,
     pub workflow_node_id: Option<String>,
     #[serde(default)]
     pub workflow_stage_input: Option<Value>,

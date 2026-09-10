@@ -1,4 +1,15 @@
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
 import { hashComponentPath } from './component-update-manager.js'
@@ -309,12 +320,55 @@ async function prepareProfile(options: {
     const source = options.runtime.pluginRoots[packageName as CorePluginPackage]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
     await rm(destination, { recursive: true, force: true })
-    await cp(source, destination, { recursive: true })
+    await copyManagedPlugin(source, destination)
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
+}
+
+export async function copyManagedPlugin(
+  source: string,
+  destination: string,
+  options: {
+    platform?: NodeJS.Platform
+    linkDirectory?: typeof symlink
+  } = {}
+): Promise<void> {
+  const platform = options.platform ?? process.platform
+  if (platform !== 'win32') {
+    await cp(source, destination, { recursive: true })
+    return
+  }
+  await copyWindowsEntry(source, destination, options.linkDirectory ?? symlink)
+}
+
+async function copyWindowsEntry(
+  source: string,
+  destination: string,
+  linkDirectory: typeof symlink
+): Promise<void> {
+  const metadata = await lstat(source)
+  if (metadata.isSymbolicLink()) {
+    const target = await realpath(source)
+    const targetMetadata = await lstat(target)
+    if (targetMetadata.isDirectory()) {
+      await linkDirectory(target, destination, 'junction')
+    } else {
+      await cp(target, destination)
+    }
+    return
+  }
+  if (!metadata.isDirectory()) {
+    await cp(source, destination)
+    return
+  }
+  await mkdir(destination, { recursive: true, mode: 0o700 })
+  const entries = await readdir(source)
+  for (const entry of entries) {
+    await copyWindowsEntry(join(source, entry), join(destination, entry), linkDirectory)
+  }
 }
 
 async function ensureCoreWorkspace(workspacePath: string): Promise<void> {

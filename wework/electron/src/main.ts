@@ -1072,10 +1072,10 @@ async function reactivateMainWindow(): Promise<void> {
     app.setActivationPolicy('regular')
   }
   await setDockVisible(true)
-  await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
   target.show()
   target.focus()
+  await loadPrimaryDshView()
 }
 
 function dispatchTrayAction(action: TrayAction): void {

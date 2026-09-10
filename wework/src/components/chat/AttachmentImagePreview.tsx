@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from 'react'
 import { createPortal } from 'react-dom'
 import {
   ChevronLeft,
@@ -15,7 +23,7 @@ import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { readWorkspaceFileBytes } from '@/lib/workspace-file-bytes'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
-import { acquireCachedImagePreview } from './imagePreviewCache'
+import { acquireCachedImagePreview, isCurrentImageLoadError } from './imagePreviewCache'
 import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
 import {
   localPathFromMarkdownImageSrc,
@@ -246,6 +254,8 @@ export function AttachmentImagePreview({
   const loadsPreviewImmediately = isElectronRuntime() || typeof IntersectionObserver === 'undefined'
   const [shouldLoadPreview, setShouldLoadPreview] = useState(loadsPreviewImmediately)
   const previewContainerRef = useRef<HTMLElement | null>(null)
+  const previewUrlRef = useRef(previewUrl)
+  const lightboxUrlRef = useRef(lightboxUrl)
   const previewIdentity = attachmentPreviewIdentity(attachment)
   const previewAspectRatio = attachmentAspectRatio(attachment)
   const previewContainerStyle =
@@ -257,6 +267,10 @@ export function AttachmentImagePreview({
   useEffect(() => {
     attachmentRef.current = attachment
   }, [attachment])
+  useLayoutEffect(() => {
+    previewUrlRef.current = previewUrl
+    lightboxUrlRef.current = lightboxUrl
+  }, [lightboxUrl, previewUrl])
   const gallery = useMemo(
     () => (galleryAttachments?.length ? galleryAttachments : [attachment]),
     [attachment, galleryAttachments]
@@ -448,6 +462,21 @@ export function AttachmentImagePreview({
     setLightboxIndex(current => (current >= gallery.length - 1 ? 0 : current + 1))
   }
 
+  const handlePreviewError = (event: SyntheticEvent<HTMLImageElement>) => {
+    const failedUrl = event.currentTarget.currentSrc || event.currentTarget.src
+    if (!isCurrentImageLoadError(failedUrl, previewUrlRef.current)) return
+    rememberFailedAttachmentPreview(attachment)
+    setPreviewUrl(null)
+    setHasError(true)
+  }
+
+  const handleLightboxError = (event: SyntheticEvent<HTMLImageElement>) => {
+    const failedUrl = event.currentTarget.currentSrc || event.currentTarget.src
+    if (!isCurrentImageLoadError(failedUrl, lightboxUrlRef.current)) return
+    setLightboxUrl(null)
+    setHasLightboxError(true)
+  }
+
   if (previewUrl) {
     const lightbox =
       !disableLightbox && isLightboxOpen && typeof document !== 'undefined'
@@ -570,10 +599,7 @@ export function AttachmentImagePreview({
                   className="max-h-[calc(100dvh-9rem)] max-w-[calc(100dvw-8rem)] rounded-2xl object-contain transition-transform duration-150 ease-out"
                   style={{ transform: `scale(${zoom})` }}
                   onClick={event => event.stopPropagation()}
-                  onError={() => {
-                    setLightboxUrl(null)
-                    setHasLightboxError(true)
-                  }}
+                  onError={handleLightboxError}
                 />
               ) : (
                 <div
@@ -614,11 +640,7 @@ export function AttachmentImagePreview({
             data-context-image-local-path={previewLocalPath ?? undefined}
             loading="lazy"
             className={imageClassName}
-            onError={() => {
-              rememberFailedAttachmentPreview(attachment)
-              setPreviewUrl(null)
-              setHasError(true)
-            }}
+            onError={handlePreviewError}
           />
         </div>
       )
@@ -643,11 +665,7 @@ export function AttachmentImagePreview({
             data-context-image-local-path={previewLocalPath ?? undefined}
             loading="lazy"
             className={imageClassName}
-            onError={() => {
-              rememberFailedAttachmentPreview(attachment)
-              setPreviewUrl(null)
-              setHasError(true)
-            }}
+            onError={handlePreviewError}
           />
         </button>
         {lightbox}

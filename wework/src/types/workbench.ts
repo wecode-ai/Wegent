@@ -104,6 +104,9 @@ export interface QueuedWorkbenchMessage {
   id: string
   content: string
   status: QueuedMessageStatus
+  runtimeQueued?: boolean
+  runtimeQueuePosition?: number | null
+  runtimeTurnIdsBeforeStart?: string[]
   deliveryMode?: 'message' | 'guidance'
   awaitingTurnStart?: boolean
   awaitingGuidanceAcceptance?: boolean

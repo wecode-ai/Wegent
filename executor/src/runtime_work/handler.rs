@@ -288,6 +288,12 @@ impl RuntimeTurnScheduler {
         Some(turn)
     }
 
+    fn enqueue_forced(&mut self, turn: SpawnTurnRequest) -> SpawnTurnRequest {
+        self.active_tasks += 1;
+        self.active_task_ids.insert(turn.local_task_id.clone());
+        turn
+    }
+
     fn queued_position(&self, local_task_id: &str) -> Option<usize> {
         self.queued_turns
             .iter()

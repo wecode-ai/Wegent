@@ -195,7 +195,12 @@ export class AppUpdateService {
         this.progress = { ...this.progress, phase: 'ready' }
         this.log({ taskId, event: 'update-ready', ...this.progress })
       } catch (error) {
-        this.log({ taskId, event: 'update-failed', downloadedBytes: this.progress.downloadedBytes })
+        this.log({
+          taskId,
+          event: 'update-failed',
+          downloadedBytes: this.progress.downloadedBytes,
+          ...errorLogFields(error),
+        })
         throw error
       } finally {
         this.updater.off('download-progress', progress)
@@ -215,6 +220,28 @@ export class AppUpdateService {
       this.updater.quitAndInstall(false, true)
     }
   }
+}
+
+function errorLogFields(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { errorType: typeof error }
+  return {
+    errorType: error.name,
+    errorMessage: sanitizeLogMessage(error.message),
+    ...('code' in error && typeof error.code === 'string' ? { errorCode: error.code } : {}),
+    ...(error.cause instanceof Error
+      ? {
+          causeType: error.cause.name,
+          causeMessage: sanitizeLogMessage(error.cause.message),
+          ...('code' in error.cause && typeof error.cause.code === 'string'
+            ? { causeCode: error.cause.code }
+            : {}),
+        }
+      : {}),
+  }
+}
+
+function sanitizeLogMessage(message: string): string {
+  return message.replace(/\b(?:https?|wss?):\/\/[^\s<>"']+/gi, '[URL removed]').slice(0, 500)
 }
 
 function isMissingChannelManifestError(error: unknown): boolean {

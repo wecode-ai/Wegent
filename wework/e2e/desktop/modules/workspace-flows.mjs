@@ -1172,14 +1172,13 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
       snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
     'The work-item board did not settle on the tracked task awaiting confirmation'
   )
-  await control.command(
-    'waitFor',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`,
-    {
-      text: 'WEWORK_DESKTOP_E2E_TASK',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
+  await control.command('scrollIntoView', reviewColumnSelector)
+  await control.command('waitFor', reviewColumnSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(
     control,
     'workspace-05-awaiting-confirmation-on-board.png',
@@ -1372,15 +1371,13 @@ async function verifyExistingTaskBoardAssociation(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command(
-    'waitFor',
-    `${movedBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`,
-    {
-      text: 'WEWORK_DESKTOP_E2E_TASK',
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  const movedReviewColumnSelector = `${movedBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
+  await control.command('scrollIntoView', movedReviewColumnSelector)
+  await control.command('waitFor', movedReviewColumnSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   if (captureScreenshots) {
     await captureVerificationScreenshot(
       control,

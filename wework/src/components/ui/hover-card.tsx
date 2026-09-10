@@ -27,6 +27,7 @@ interface HoverCardProps {
   pinOnInteractionSelector?: string
   pinned?: boolean
   onPinnedChange?: (pinned: boolean) => void
+  onOpenChange?: (open: boolean) => void
   closeLabel?: string
   cardClassName?: string
   estimatedWidth?: number
@@ -99,6 +100,7 @@ export function HoverCard({
   pinOnInteractionSelector,
   pinned: controlledPinned,
   onPinnedChange,
+  onOpenChange,
   closeLabel = 'Close',
   cardClassName,
   estimatedWidth = 310,
@@ -118,6 +120,10 @@ export function HoverCard({
   const [uncontrolledPinned, setUncontrolledPinned] = useState(false)
   const pinned = controlledPinned ?? uncontrolledPinned
   const displayedOpen = open || pinned
+
+  useEffect(() => {
+    onOpenChange?.(displayedOpen)
+  }, [displayedOpen, onOpenChange])
 
   useEffect(() => {
     pinnedRef.current = pinned

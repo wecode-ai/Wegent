@@ -214,6 +214,10 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'send_accepted' })
   }
 
+  sendQueued(address: RuntimeTaskAddress, queuePosition?: number | null): void {
+    this.dispatch(address, { type: 'send_queued', queuePosition })
+  }
+
   sendRejected(address: RuntimeTaskAddress): void {
     this.dispatch(address, { type: 'send_rejected' })
   }
