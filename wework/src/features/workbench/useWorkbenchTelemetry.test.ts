@@ -28,6 +28,7 @@ const device: DeviceInfo = {
 } as DeviceInfo
 
 function makeSnapshot(overrides?: {
+  deviceId?: string
   isRunning?: boolean
   isTurnActive?: boolean
   status?: string
@@ -35,14 +36,15 @@ function makeSnapshot(overrides?: {
   error?: string
   executionPhase?: string
 }): RuntimeTaskLifecycleStoreSnapshot {
+  const deviceId = overrides?.deviceId ?? 'local-device'
   return {
     version: 1,
     tasks: new Map([
       [
-        'local-device\0task-42',
+        `${deviceId}\0task-42`,
         {
-          key: 'local-device\0task-42',
-          address: { deviceId: 'local-device', taskId: 'task-42' },
+          key: `${deviceId}\0task-42`,
+          address: { deviceId, taskId: 'task-42' },
           task: overrides
             ? {
                 id: 'task-42',
@@ -109,6 +111,34 @@ describe('useWorkbenchTelemetry', () => {
         $ai_trace_id: RUN_TRACE_ID,
         $ai_trace_phase: 'start',
         execution_target: 'local',
+      })
+    )
+  })
+
+  test('reports a remote device separately when a task starts running', () => {
+    const remoteDevice = {
+      ...device,
+      device_id: 'remote-device',
+      device_type: 'remote',
+      name: 'Remote',
+    } as DeviceInfo
+
+    renderHook(() =>
+      useWorkbenchTelemetry({
+        currentProject: null,
+        devices: [remoteDevice],
+        lifecycle: makeSnapshot({ deviceId: 'remote-device', isRunning: true }),
+      })
+    )
+
+    expect(trackMock).toHaveBeenCalledWith('task_started', {
+      execution_target: 'remote',
+    })
+    expect(trackMock).toHaveBeenCalledWith(
+      '$ai_trace',
+      expect.objectContaining({
+        $ai_trace_phase: 'start',
+        execution_target: 'remote',
       })
     )
   })
