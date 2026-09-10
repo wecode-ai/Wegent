@@ -178,6 +178,22 @@ describe('telemetry client', () => {
     expect(endCall?.[1]).not.toHaveProperty('prompt')
   })
 
+  test('preserves the remote execution target on task events', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('task_started', {
+      execution_target: 'remote',
+    })
+
+    await flushPostHogCaptures()
+
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      'task_started',
+      expect.objectContaining({ execution_target: 'remote' })
+    )
+  })
+
   test('captures $ai_generation with model, tokens, latency, and estimated cost', async () => {
     const { installTelemetry, track } = await import('./client')
     await installTelemetry(true)
