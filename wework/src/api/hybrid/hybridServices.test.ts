@@ -682,6 +682,24 @@ describe('createHybridWorkbenchServices', () => {
     info.mockRestore()
   })
 
+  it('preserves a refresh requested while a failing cloud model request is still settling', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    let rejectInitial!: (error: Error) => void
+    mocks.cloudListModels.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectInitial = reject
+        })
+    )
+    const services = createServices()
+    await services.modelApi.listModels()
+    await services.modelApi.listModels()
+    expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
+    rejectInitial(new Error('Cloud temporarily unavailable'))
+    await vi.waitFor(() => expect(mocks.cloudListModels).toHaveBeenCalledTimes(2))
+    warning.mockRestore()
+  })
+
   it('displays cloud models that support Responses, Chat Completions, or Anthropic Messages protocols', async () => {
     mocks.localListModels.mockResolvedValue({ data: [chatCompletionsModel] })
     mocks.cloudListModels.mockResolvedValue({
