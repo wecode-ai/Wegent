@@ -102,6 +102,7 @@ cloud_segments=(
   project-automation
   plugin-auto-update
   plugin-account-auth
+  plugin-task-token
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -121,7 +122,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-account-auth
+  plugin-account-auth,plugin-task-token
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -292,6 +293,10 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/plugin-task-token.scenario.mjs)
+      select_target "cloud:plugin-task-token"
+      return
+      ;;
     wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
@@ -774,6 +779,10 @@ classify_path() {
   esac
 
   case "$path" in
+    executor/src/plugin_task_token/* | backend/app/services/auth/*task_token.py | \
+      backend/tests/api/test_runtime_task_token.py | backend/app/api/endpoints/mcp_identity.py)
+      select_target "cloud:plugin-task-token"
+      ;;
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
       executor/tests/plugin_account_auth_contract.rs | \
       backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \

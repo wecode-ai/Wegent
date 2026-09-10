@@ -746,6 +746,14 @@ jobs:
           setup-python: "false"
           setup-uv: "false"
 
+      - name: Install local harness CLIs for TaskToken E2E
+        if: contains(matrix.segments, 'plugin-task-token')
+        run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
+
+      - name: Verify local harness CLIs for TaskToken E2E
+        if: contains(matrix.segments, 'plugin-task-token')
+        run: .github/scripts/verify-local-harness-clis.sh
+
       - name: Prepare the pinned native DWS compiler for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
         uses: actions/setup-go@v6

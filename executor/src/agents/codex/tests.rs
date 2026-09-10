@@ -2661,6 +2661,29 @@ fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
 }
 
 #[test]
+fn codex_task_mcp_followup_reconfigures_the_existing_thread() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("pluginTaskMcpPrepared".into(), json!(true));
+    let plan = codex_thread_plan(
+        Some("existing"),
+        None,
+        None,
+        None,
+        &request,
+        &CodexLaunchConfig::default(),
+    );
+    match plan.start {
+        CodexThreadStart::Request { operation, params } => {
+            assert_eq!(operation, "thread/resume");
+            assert_eq!(params["threadId"], "existing");
+        }
+        _ => panic!("task MCP routes must be refreshed before a follow-up"),
+    }
+}
+
+#[test]
 fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
     let plan = codex_thread_plan(
         Some("   "),
