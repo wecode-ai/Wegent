@@ -227,6 +227,52 @@ async fn execute_command_missing_cwd_returns_error() {
         .contains("Working directory does not exist"));
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn execute_windows_pwd_builtin_uses_requested_cwd() {
+    let workdir = tempfile::tempdir().unwrap();
+    let requested_cwd = workdir.path().display().to_string();
+
+    let result = CommandHandler
+        .execute(CommandRequest {
+            command_key: Some("pwd".to_owned()),
+            command: "pwd".to_owned(),
+            cwd: Some(requested_cwd.clone()),
+            timeout_seconds: 5.0,
+            max_output_bytes: 1024,
+            ..CommandRequest::default()
+        })
+        .await;
+
+    assert!(result.success);
+    assert_eq!(result.stdout, Value::String(requested_cwd));
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn execute_windows_pwd_builtin_rejects_missing_cwd() {
+    let missing_cwd = unique_dir("missing-windows-pwd-cwd");
+
+    let result = CommandHandler
+        .execute(CommandRequest {
+            command_key: Some("pwd".to_owned()),
+            command: "pwd".to_owned(),
+            cwd: Some(missing_cwd.display().to_string()),
+            timeout_seconds: 5.0,
+            max_output_bytes: 1024,
+            ..CommandRequest::default()
+        })
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.exit_code, None);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Working directory does not exist"));
+}
+
 fn unique_dir(label: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "wegent-executor-local-command-{label}-{}",

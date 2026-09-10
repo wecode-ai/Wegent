@@ -161,10 +161,6 @@ impl DeviceCommandHandler for CommandHandler {
 impl CommandHandler {
     pub async fn execute(&self, request: CommandRequest) -> CommandResult {
         let started_at = Instant::now();
-        #[cfg(windows)]
-        if let Some(result) = execute_windows_builtin_command(&request) {
-            return result;
-        }
         if request.command.trim().is_empty() {
             return CommandResult::error(
                 "command is required".to_owned(),
@@ -181,6 +177,11 @@ impl CommandHandler {
                     false,
                 );
             }
+        }
+
+        #[cfg(windows)]
+        if let Some(result) = execute_windows_builtin_command(&request) {
+            return result;
         }
 
         let mut command = process_command(&request);
@@ -275,11 +276,13 @@ fn execute_windows_builtin_command(request: &CommandRequest) -> Option<CommandRe
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| ".".to_owned()),
         )),
-        Some("pwd") => Some(CommandResult::ok(
-            std::env::current_dir()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|_| ".".to_owned()),
-        )),
+        Some("pwd") => Some(CommandResult::ok(request.cwd.clone().unwrap_or_else(
+            || {
+                std::env::current_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| ".".to_owned())
+            },
+        ))),
         Some("project_workspace_root") => Some(match project_workspace_root_path() {
             Ok(path) => CommandResult::ok(path),
             Err(error) => CommandResult::error(error, 0.0, false),
