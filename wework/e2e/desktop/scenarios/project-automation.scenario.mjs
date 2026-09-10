@@ -1363,6 +1363,11 @@ export function createDesktopScenario({
         `${moonshotPopupConversation} [data-testid="right-workspace-chat-scroll-area"]`
       )
     )
+    assert.equal(
+      popupScrollMetrics.scrollOrigin,
+      'bottom',
+      `The board popup did not use the task conversation bottom-origin scroll model: ${JSON.stringify(popupScrollMetrics)}`
+    )
     const popupDistanceFromBottom =
       popupScrollMetrics.scrollOrigin === 'bottom'
         ? Math.max(

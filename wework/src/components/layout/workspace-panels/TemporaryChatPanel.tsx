@@ -91,6 +91,7 @@ interface TemporaryChatPanelProps {
   projectWorkBarTrailingContext?: ReactNode
   onRestoreConversation?: () => void
   initialScrollPosition?: 'restore' | 'latest'
+  scrollOrigin?: 'top' | 'bottom'
 }
 
 export function TemporaryChatPanel({
@@ -117,6 +118,7 @@ export function TemporaryChatPanel({
   projectWorkBarTrailingContext,
   onRestoreConversation,
   initialScrollPosition = 'restore',
+  scrollOrigin = 'top',
 }: TemporaryChatPanelProps) {
   const { t } = useTranslation('common')
   const {
@@ -774,6 +776,7 @@ export function TemporaryChatPanel({
           onLoadFullTranscript={loadFullTranscript}
           loadingFullTranscript={loadingFullTranscript}
           initialScrollPosition={initialScrollPosition}
+          scrollOrigin={scrollOrigin}
         />
       )}
       <div
