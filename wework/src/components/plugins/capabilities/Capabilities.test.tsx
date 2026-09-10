@@ -75,7 +75,7 @@ describe('Plugins capability workspace', () => {
       <SkillInstallDialog kind="git" projectPath="" onClose={vi.fn()} onInstalled={onInstalled} />
     )
     fireEvent.change(screen.getByTestId('skill-source'), {
-      target: { value: 'git@git.intra.weibo.com:company/skills.git' },
+      target: { value: 'git@git.example.test:company/skills.git' },
     })
     fireEvent.click(screen.getByTestId('skill-install-submit'))
     await screen.findByTestId('skill-candidate-0')

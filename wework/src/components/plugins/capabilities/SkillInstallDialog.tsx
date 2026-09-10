@@ -129,7 +129,7 @@ export function SkillInstallDialog({
                 onChange={e => setSource(e.target.value)}
                 list={kind === 'git' ? 'skill-repositories' : undefined}
                 placeholder={
-                  kind === 'git' ? 'git@git.intra.weibo.com:team/skills.git' : t('localPathHint')
+                  kind === 'git' ? 'git@git.example.test:team/skills.git' : t('localPathHint')
                 }
               />
             </label>

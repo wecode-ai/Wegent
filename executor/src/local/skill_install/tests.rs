@@ -72,7 +72,7 @@ fn rejects_forged_tokens_paths_and_protected_removal() {
     assert!(remove(&request(json!({"action":"remove","path":home.path().join("plugins/test/skills/example/SKILL.md")})), home.path()).is_err());
     assert!(validate_git_source("https://token@github.com/company/skills").is_err());
     assert!(validate_git_source("--upload-pack=evil").is_err());
-    assert!(validate_git_source("git@git.intra.weibo.com:company/skills.git").is_ok());
+    assert!(validate_git_source("git@git.example.test:company/skills.git").is_ok());
 }
 #[test]
 fn installs_selected_project_scope_only() {
