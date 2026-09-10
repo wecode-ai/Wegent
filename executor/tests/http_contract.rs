@@ -245,6 +245,7 @@ async fn responses_endpoint_accepts_openai_background_requests() {
         "metadata": {
             "task_id": 123,
             "subtask_id": 456,
+            "task_source": "wework",
             "bot": [{"shell_type": "ClaudeCode"}]
         }
     });
@@ -278,6 +279,8 @@ async fn responses_endpoint_accepts_openai_background_requests() {
     assert_eq!(submitted[0].task_id, "123");
     assert_eq!(submitted[0].subtask_id, "456");
     assert_eq!(submitted[0].prompt, json!("run this task"));
+    assert_eq!(submitted[0].task_source, "wework");
+    assert!(!submitted[0].execution_device_type.is_empty());
 }
 
 #[tokio::test]

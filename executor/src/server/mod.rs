@@ -35,8 +35,7 @@ use serde_json::{json, Value};
 use tokio::{process::Command, sync::Semaphore, time::timeout};
 
 use crate::{
-    agents::runtime_capabilities,
-    agents::{AgentCommandPlanner, AgentProcessEngine},
+    agents::{model_attribution, runtime_capabilities, AgentCommandPlanner, AgentProcessEngine},
     callback::CallbackSink,
     envd::archive::{
         create_runtime_archive, restore_runtime_archive, ArchiveError, ArchiveMode, ArchiveOptions,
@@ -928,7 +927,12 @@ where
     let payload_preview = sanitized_json_preview(&payload, REQUEST_PAYLOAD_PREVIEW_CHARS);
     let request = OpenAIResponsesRequest::from_value(payload)?;
     let background = request.background();
-    let execution_request = request.to_execution_request();
+    let mut execution_request = request.to_execution_request();
+    model_attribution::stamp_execution_context(
+        &mut execution_request,
+        &crate::config::device::effective_device_type(),
+        None,
+    );
     state.activate_task_heartbeat(&execution_request.task_id)?;
     let response_id = format!("resp_{}", execution_request.subtask_id);
     let mut fields = task_fields(&execution_request.task_id, &execution_request.subtask_id);

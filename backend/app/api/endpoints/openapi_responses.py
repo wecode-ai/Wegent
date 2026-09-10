@@ -62,6 +62,7 @@ from app.services.openapi.output_builder import (
 from app.services.rag.sources import ExternalRefValidationError
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import subtask_store, task_access_store, task_store
+from shared.models.execution import TASK_SOURCE_WEGENT
 from shared.telemetry.decorators import (
     add_span_event,
     set_span_attribute,
@@ -710,6 +711,7 @@ async def _create_non_streaming_response_unified(
             reasoning_config=reasoning_config,
             generation_params=_generation_options(request_body),
             attachment_ids=linked_attachment_ids,
+            task_source=TASK_SOURCE_WEGENT,
         )
         _validate_generation_options_model(request_body, execution_request)
     except ExternalRefValidationError as e:
@@ -1063,6 +1065,7 @@ async def _create_streaming_response_unified(
             reasoning_config=reasoning_config,
             generation_params=_generation_options(request_body),
             attachment_ids=linked_attachment_ids,
+            task_source=TASK_SOURCE_WEGENT,
         )
         _validate_generation_options_model(request_body, execution_request)
     except ExternalRefValidationError as e:

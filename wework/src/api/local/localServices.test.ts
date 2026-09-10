@@ -2330,6 +2330,7 @@ describe('createLocalAppServices', () => {
           prompt: 'stop and use this direction',
           client_user_message_id: 'runtime-interrupt-1',
           new_session: false,
+          task_source: 'wework',
           model_config: expect.objectContaining({
             model_id: 'shared-model',
             codex_catalog_model_id: 'wework-gpt-5.6-sol',
@@ -2339,8 +2340,6 @@ describe('createLocalAppServices', () => {
               'X-Wegent-Model-Type': 'user',
               'X-Wegent-Model-Namespace': 'default',
               'X-Wegent-Model-User-Id': '42',
-              'X-Wegent-Upstream-Header-wecode-executor': 'codex',
-              'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
             },
           }),
         }),
@@ -3496,8 +3495,6 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Type': 'user',
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
-          'X-Wegent-Upstream-Header-wecode-executor': 'codex',
-          'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
         },
         runtime_config: {
           codex: {
@@ -3561,8 +3558,6 @@ describe('createLocalAppServices', () => {
             'X-Wegent-Model-Type': 'user',
             'X-Wegent-Model-Namespace': 'default',
             'X-Wegent-Model-User-Id': '77',
-            'X-Wegent-Upstream-Header-wecode-executor': 'codex',
-            'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
           },
           max_descriptions_per_turn: 8,
           timeout_ms: 45000,
@@ -3612,8 +3607,6 @@ describe('createLocalAppServices', () => {
         'X-Wegent-Model-Type': 'public',
         'X-Wegent-Model-Namespace': 'default',
         'X-Wegent-Model-User-Id': '0',
-        'X-Wegent-Upstream-Header-wecode-executor': 'codex',
-        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
       },
       max_descriptions_per_turn: 8,
       timeout_ms: 45000,
@@ -3737,8 +3730,6 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Type': 'user',
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
-          'X-Wegent-Upstream-Header-wecode-executor': 'codex',
-          'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
         },
         runtime_config: {
           codex: {
@@ -3928,6 +3919,7 @@ describe('createLocalAppServices', () => {
         task_id: 'task-project-automation',
         execution_target_type: 'local',
         device_id: 'device-uuid',
+        task_source: 'unknown',
         new_session: true,
       })
     )

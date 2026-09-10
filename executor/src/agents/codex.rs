@@ -25,7 +25,7 @@ use tokio::{
 
 use crate::{
     agents::{
-        runtime_capabilities,
+        model_attribution, runtime_capabilities,
         task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
@@ -3094,7 +3094,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             configure_codex_router(
                 &mut launch_config,
                 &request.task_id,
-                upstream,
+                attributed_upstream(upstream, request),
                 model.clone(),
                 request_model_switched(request),
                 vision_sidecar_upstream(&request.model_config)?,
@@ -3119,6 +3119,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 &inference_provider,
                 request.model_config.get("default_headers"),
                 project_id.as_deref(),
+                request,
             ));
         }
     } else if let Some(upstream) =
@@ -3141,7 +3142,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         configure_codex_router(
             &mut launch_config,
             &request.task_id,
-            upstream,
+            attributed_upstream(upstream, request),
             model.clone(),
             request_model_switched(request),
             vision_sidecar_upstream(&request.model_config)?,
@@ -3162,7 +3163,13 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 ("payload_auth_present", configured_auth_present.to_string()),
             ],
         );
-        launch_config.model_provider = Some(inference_provider);
+        launch_config.model_provider = Some(inference_provider.clone());
+        launch_config.config_overrides.extend(header_overrides(
+            &inference_provider,
+            request.model_config.get("default_headers"),
+            project_id.as_deref(),
+            request,
+        ));
     }
 
     launch_config
@@ -3249,6 +3256,15 @@ fn configure_codex_router(
         ),
         format!("model_providers.{provider}.wire_api=\"responses\""),
     ]);
+}
+
+fn attributed_upstream(
+    mut upstream: LocalModelProxyUpstream,
+    request: &ExecutionRequest,
+) -> LocalModelProxyUpstream {
+    upstream.default_headers =
+        model_attribution::apply_authoritative_headers(upstream.default_headers, request, "codex");
+    upstream
 }
 
 fn request_model_switched(request: &ExecutionRequest) -> bool {
@@ -3756,30 +3772,14 @@ fn header_overrides(
     model_provider: &str,
     default_headers: Option<&Value>,
     project_id: Option<&str>,
+    request: &ExecutionRequest,
 ) -> Vec<String> {
-    let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        let headers = parse_header_map(default_headers);
-        return if headers.is_empty() {
-            Vec::new()
-        } else {
-            headers
-                .into_iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                        toml_value(&value)
-                    )
-                })
-                .collect()
-        };
-    };
-
     let mut headers = parse_header_map(default_headers);
-    insert_missing_header(&mut headers, "wecode-action", "wegent");
-    insert_missing_header(&mut headers, "wecode-source", "wegent-local");
-    insert_missing_header(&mut headers, "wecode-executor", "codex");
-    insert_header(&mut headers, "wecode-project", project_id);
+    if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
+        insert_missing_header(&mut headers, "wecode-action", "wegent");
+        insert_header(&mut headers, "wecode-project", project_id);
+    }
+    headers = model_attribution::apply_authoritative_headers(headers, request, "codex");
 
     headers
         .into_iter()

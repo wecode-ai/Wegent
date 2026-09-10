@@ -2727,6 +2727,24 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
     )
 
 
+def test_runtime_task_source_marks_project_automation_as_background() -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    direct = RuntimeTaskCreateRequest(
+        schemaVersion=3,
+        deviceId="local-device",
+        runtime="codex",
+        message="Direct work",
+    )
+    automation = direct.model_copy(
+        update={"origin": {"type": "project_automation", "run_id": "run-1"}}
+    )
+
+    assert runtime_work_service._runtime_task_source(direct) == "wework"
+    assert runtime_work_service._runtime_task_source(automation) == "unknown"
+
+
 def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     test_db,
     test_user,
@@ -4902,9 +4920,8 @@ def test_build_runtime_send_execution_request_preserves_selected_model_and_catal
         "X-Wegent-Model-Type": "public",
         "X-Wegent-Model-Namespace": "default",
         "X-Wegent-Model-User-Id": "0",
-        "X-Wegent-Upstream-Header-wecode-executor": "codex",
-        "X-Wegent-Upstream-Header-wecode-source": "wegent-agent",
     }
+    assert execution_request.task_source == "wework"
     assert execution_request.model_config["model_context_window"] == 1048576
     assert (
         execution_request.model_config["codex_catalog_model_id"]

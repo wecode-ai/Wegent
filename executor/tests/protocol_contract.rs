@@ -63,7 +63,8 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
             "inherited_sessions": [{"agent": "CodeX", "threadId": "thread-1"}],
             "workspace_source": "local_path",
             "project_workspace_path": "/tmp/wegent/project",
-            "device_id": "device-1"
+            "device_id": "device-1",
+            "task_source": "wework"
         }
     }))
     .unwrap();
@@ -88,6 +89,8 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
     assert_eq!(execution.workspace_source.as_deref(), Some("local_path"));
     assert_eq!(execution.cwd(), Some("/tmp/wegent/project"));
     assert_eq!(execution.device_id.as_deref(), Some("device-1"));
+    assert_eq!(execution.task_source, "wework");
+    assert!(!execution.extra.contains_key("task_source"));
     assert_eq!(execution.knowledge_base_scopes[0].knowledge_base_id, 9);
     assert!(execution.skip_git_clone);
     assert!(execution.new_session);

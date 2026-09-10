@@ -28,6 +28,9 @@ GIT_AUTH_TRANSPORT_NONE = "none"
 GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN = "encrypted_request_token"
 GIT_AUTH_TRANSPORT_LEGACY_USER_SECRET = "legacy_user_secret"
 GIT_AUTH_TRANSPORT_DEVICE_LOCAL = "device_local"
+TASK_SOURCE_WEGENT = "wegent"
+TASK_SOURCE_WEWORK = "wework"
+TASK_SOURCE_UNKNOWN = "unknown"
 
 
 class EventType(str, Enum):
@@ -214,6 +217,7 @@ class ExecutionRequest:
     executor_namespace: Optional[str] = None
     executor_image: Optional[str] = None  # Docker image for executor container
     executor_type: Optional[str] = None  # Executor dispatch type (e.g., "docker")
+    task_source: str = TASK_SOURCE_UNKNOWN
 
     # === Callback Configuration ===
     callback_url: Optional[str] = None  # Callback URL for executor-manager

@@ -149,7 +149,13 @@ impl RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| format!("automation-{}", automation.id)),
         };
         set_payload_string(&mut payload, "message", &automation.prompt);
-        add_automation_context(&mut payload, &automation.id, &run.id, run.scheduled_for);
+        add_automation_context(
+            &mut payload,
+            &automation.id,
+            &run.id,
+            run.scheduled_for,
+            &run.trigger,
+        );
 
         let result = match automation.conversation_mode {
             ConversationMode::Independent => self.create_task(payload).await,
@@ -263,6 +269,7 @@ fn add_automation_context(
     automation_id: &str,
     run_id: &str,
     scheduled_for: chrono::DateTime<Utc>,
+    trigger: &str,
 ) {
     let Some(object) = payload.as_object_mut() else {
         return;
@@ -281,6 +288,7 @@ fn add_automation_context(
             "automationId": automation_id,
             "runId": run_id,
             "scheduledFor": scheduled_for.to_rfc3339(),
+            "trigger": trigger,
         }),
     );
 }

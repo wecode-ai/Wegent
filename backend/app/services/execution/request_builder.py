@@ -54,6 +54,7 @@ from app.services.user_mcp_service import user_mcp_service
 from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
+from shared.models.execution import TASK_SOURCE_UNKNOWN
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
@@ -174,6 +175,7 @@ class TaskRequestBuilder:
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
         user_generation: Optional[dict[str, Any]] = None,
+        task_source: str = TASK_SOURCE_UNKNOWN,
     ) -> ExecutionRequest:
         """Build ExecutionRequest from database models.
 
@@ -209,6 +211,8 @@ class TaskRequestBuilder:
                 while Chat mode uses the secondary model.
             team_member_prompt: Optional additional prompt from team member
             web_runtime_guidance: Whether to inject Wegent web UI runtime guidance
+            user_generation: Optional user generation configuration
+            task_source: Entry point that triggered this execution
 
         Returns:
             ExecutionRequest ready for dispatch
@@ -568,6 +572,7 @@ class TaskRequestBuilder:
             trace_context=trace_context,
             executor_name=getattr(subtask, "executor_name", None),
             executor_namespace=getattr(subtask, "executor_namespace", None),
+            task_source=task_source,
         )
         logger.info(
             "[TaskRequestBuilder] Execution request attachment diagnostics: "

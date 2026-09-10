@@ -225,12 +225,16 @@ impl DeviceConfig {
 }
 
 pub(crate) fn worktree_persistent_storage_verified() -> bool {
-    let device_type = EFFECTIVE_DEVICE_TYPE
-        .get()
-        .and_then(|device_type| device_type.read().ok().map(|value| value.clone()))
-        .unwrap_or_else(|| env::var("DEVICE_TYPE").unwrap_or_else(|_| default_device_type()));
+    let device_type = effective_device_type();
     let verification = env::var("WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED").ok();
     worktree_persistent_storage_verified_for(&device_type, verification.as_deref())
+}
+
+pub(crate) fn effective_device_type() -> String {
+    EFFECTIVE_DEVICE_TYPE
+        .get()
+        .and_then(|device_type| device_type.read().ok().map(|value| value.clone()))
+        .unwrap_or_else(|| env::var("DEVICE_TYPE").unwrap_or_else(|_| default_device_type()))
 }
 
 fn worktree_persistent_storage_verified_for(device_type: &str, verification: Option<&str>) -> bool {

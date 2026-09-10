@@ -972,7 +972,6 @@ function localVisionSidecarConfig(config: LocalModelConfig): Record<string, unkn
 }
 
 function cloudVisionSidecarConfig(
-  runtime: string,
   modelOptions: Record<string, string> | undefined,
   cloudModelGateway: CloudModelGateway
 ): Record<string, unknown> | null {
@@ -1002,24 +1001,13 @@ function cloudVisionSidecarConfig(
       'X-Wegent-Model-Type': sidecar.modelType,
       'X-Wegent-Model-Namespace': sidecar.namespace,
       'X-Wegent-Model-User-Id': String(sidecar.resourceUserId),
-      'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
-      'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
     },
     max_descriptions_per_turn: 8,
     timeout_ms: 45_000,
   }
 }
 
-function wecodeExecutorForRuntime(runtime: string): string {
-  const normalized = runtime
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
-  return normalized === 'claude' || normalized === 'claudecode' ? 'claudecode' : normalized
-}
-
 function localRuntimeModelConfig(
-  runtime: string,
   requireCodexCatalog: boolean,
   modelName?: string,
   modelType?: string | null,
@@ -1099,7 +1087,7 @@ function localRuntimeModelConfig(
       modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
     const nativeNamespaceTools =
       modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
-    const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
+    const visionSidecar = cloudVisionSidecarConfig(modelOptions, cloudModelGateway)
     const primaryCodexCatalogModelId =
       modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
@@ -1119,8 +1107,6 @@ function localRuntimeModelConfig(
         'X-Wegent-Model-Type': modelType,
         'X-Wegent-Model-Namespace': namespace,
         'X-Wegent-Model-User-Id': resourceUserId,
-        'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
-        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }
@@ -1168,13 +1154,11 @@ function recordNumber(value: unknown): number | null {
 }
 
 function harnessProxyUpstream(
-  runtime: string,
   option: LocalHarnessModelOption,
   cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
   const execution = selectedModelExecutionFields(option.model, option.options)
   const config = localRuntimeModelConfig(
-    runtime,
     false,
     execution.modelId,
     execution.modelType,
@@ -1428,7 +1412,6 @@ function buildLocalRuntimeExecutionRequest(
     (claudeRuntime && !input.modelId
       ? {}
       : localRuntimeModelConfig(
-          input.runtime,
           !claudeRuntime && input.requireLocalCodexCatalog,
           input.modelId,
           input.modelType,
@@ -1516,6 +1499,7 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.origin ? { origin: input.origin } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
+    task_source: input.origin?.type === 'project_automation' ? 'unknown' : 'wework',
     new_session: input.newSession,
     ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
@@ -1755,7 +1739,6 @@ async function createLocalRuntimeTaskPayload(
       ...initialSupervisor,
       modelConfig: applyRuntimeModelOptions(
         localRuntimeModelConfig(
-          'codex',
           requireLocalCodexCatalog,
           initialSupervisor.modelSelection.modelName,
           initialSupervisor.modelSelection.modelType,
@@ -2814,7 +2797,6 @@ export function createRuntimeWorkApiFromIpc(
       }
       const modelConfig = applyRuntimeModelOptions(
         localRuntimeModelConfig(
-          'codex',
           requireLocalCodexCatalog,
           selection.modelName,
           selection.modelType,
@@ -3712,7 +3694,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           'runtime.harness_proxy.register',
           {
             scope: scope?.trim() || `harness:${harnessId}:${crypto.randomUUID()}`,
-            upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
+            upstream: harnessProxyUpstream(option, deps.cloudModelGateway),
           }
         )
         const launch = harnessLaunchThroughMessagesProxy(harnessId, option, registration)

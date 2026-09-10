@@ -102,6 +102,8 @@ impl OpenAIResponsesRequest {
             message_id: get_i64_optional(&metadata, "message_id"),
             executor_name: get_string(&metadata, "executor_name"),
             executor_namespace: get_string(&metadata, "executor_namespace"),
+            task_source: get_string(&metadata, "task_source").unwrap_or_default(),
+            execution_device_type: String::new(),
             backend_url: get_string(&metadata, "backend_url"),
             validation_params: metadata
                 .get("validation_params")
@@ -280,6 +282,7 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "message_id",
     "executor_name",
     "executor_namespace",
+    "task_source",
     "backend_url",
     "validation_params",
     "user_name",

@@ -218,4 +218,6 @@ def _build_request(
         override_model_name=override_model_name,
         force_override=force_override,
         use_secondary_model_for_generation_chat=False,
+        # Generation context is an auxiliary model call, not the task's main turn.
+        task_source="",
     )

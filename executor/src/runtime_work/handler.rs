@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_runtime_approval_policy, model_attribution, select_wework_codex_user_instructions,
+        AgentCommandPlanner, AgentProcessEngine, CodexActiveTurnCallback,
+        CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerTurnOptions,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -546,6 +546,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
+    execution_device_type: String,
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
@@ -751,6 +752,7 @@ impl RuntimeWorkRpcHandler {
         }
         let handler = Self {
             device_id,
+            execution_device_type: "unknown".to_owned(),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
             claude_process_engine: AgentProcessEngine::new(AgentCommandPlanner::from_env()),
@@ -816,6 +818,11 @@ impl RuntimeWorkRpcHandler {
     ) -> Self {
         self.backend_connection = backend_connection;
         self.start_supervisor_scheduler();
+        self
+    }
+
+    pub fn with_execution_device_type(mut self, device_type: impl Into<String>) -> Self {
+        self.execution_device_type = device_type.into();
         self
     }
 

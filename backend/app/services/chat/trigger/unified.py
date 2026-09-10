@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException, status
 
-from app.core.constants import CLIENT_ORIGIN_FRONTEND
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
@@ -45,6 +45,11 @@ from app.services.video_generation_params import apply_video_generation_params
 from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
+)
+from shared.models.execution import (
+    TASK_SOURCE_UNKNOWN,
+    TASK_SOURCE_WEGENT,
+    TASK_SOURCE_WEWORK,
 )
 
 if TYPE_CHECKING:
@@ -72,6 +77,23 @@ SERVICE_TIER_ALIASES = {
     "标准": "default",
     "运行标准": "default",
 }
+
+
+def _task_source_from_payload(payload: Any) -> str:
+    if payload is None:
+        return TASK_SOURCE_UNKNOWN
+    client_origin = getattr(payload, "client_origin", None)
+    if client_origin == CLIENT_ORIGIN_FRONTEND:
+        return TASK_SOURCE_WEGENT
+    if client_origin == CLIENT_ORIGIN_WEWORK:
+        return TASK_SOURCE_WEWORK
+    return TASK_SOURCE_UNKNOWN
+
+
+def _normalize_task_source(task_source: str) -> str:
+    if task_source in (TASK_SOURCE_WEGENT, TASK_SOURCE_WEWORK):
+        return task_source
+    return TASK_SOURCE_UNKNOWN
 
 
 def _apply_image_generation_params(
@@ -580,8 +602,6 @@ def _build_cloud_gateway_model_config(
             "X-Wegent-Model-Type": model_type,
             "X-Wegent-Model-Namespace": namespace,
             "X-Wegent-Model-User-Id": str(resource_user_id),
-            "X-Wegent-Upstream-Header-wecode-executor": "codex",
-            "X-Wegent-Upstream-Header-wecode-source": "wegent-agent",
         },
         "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
     }
@@ -836,6 +856,7 @@ async def build_execution_request(
     attachment_ids: Optional[List[int]] = None,
     include_wework_space_mcp: bool = False,
     web_runtime_guidance: Optional[bool] = None,
+    task_source: Optional[str] = None,
 ):
     """Build ExecutionRequest without dispatching.
 
@@ -864,6 +885,8 @@ async def build_execution_request(
         generation_params: Optional request-scoped image or video generation options
         attachment_ids: Optional attachment IDs in caller-defined material order
         include_wework_space_mcp: Whether to expose the Wework board MCP
+        task_source: Explicit source for direct API entry points; otherwise derived
+            from the current payload
 
     Returns:
         ExecutionRequest ready for dispatch
@@ -1011,6 +1034,11 @@ async def build_execution_request(
             runtime_model_config=runtime_model_config,
             include_wework_space_mcp=include_wework_space_mcp,
             user_generation=user_generation,
+            task_source=(
+                _task_source_from_payload(payload)
+                if task_source is None
+                else _normalize_task_source(task_source)
+            ),
         )
         request.device_id = device_id or request.device_id
         # Task spec is the runtime source of truth. Message-level external

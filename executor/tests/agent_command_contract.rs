@@ -842,7 +842,7 @@ fn claude_project_headers_merge_custom_headers_and_default_headers() {
         prompt: json!("work inside the project"),
         model_config: json!({
             "env": {
-                "ANTHROPIC_CUSTOM_HEADERS": "x-custom-user: test",
+                "ANTHROPIC_CUSTOM_HEADERS": "x-custom-user: test\nWecode-Executor: caller",
                 "DEFAULT_HEADERS": {
                     "wecode-action": "wecode-cli",
                     "wecode-source": "wecode-cli",
@@ -850,6 +850,8 @@ fn claude_project_headers_merge_custom_headers_and_default_headers() {
                 }
             }
         }),
+        task_source: "wework".to_owned(),
+        execution_device_type: "app".to_owned(),
         extra: serde_json::Map::from_iter([("project_id".to_owned(), json!(42))]),
         ..ExecutionRequest::default()
     };
@@ -860,12 +862,13 @@ fn claude_project_headers_merge_custom_headers_and_default_headers() {
 
     assert_eq!(
         spec.envs().get("ANTHROPIC_CUSTOM_HEADERS").unwrap(),
-        "x-custom-user: test\nwecode-action: wecode-cli\nwecode-source: wecode-cli\nx-weibo-downstream: shanghai-intranet\nwecode-executor: claudecode\nwecode-project: 42"
+        "x-custom-user: test\nwecode-action: wecode-cli\nx-weibo-downstream: shanghai-intranet\nwecode-project: 42\nwecode-executor: claudecode\nwecode-source: wegent-app\nwecode-task-source: wework"
     );
     assert_eq!(default_headers["wecode-action"], "wecode-cli");
-    assert_eq!(default_headers["wecode-source"], "wecode-cli");
+    assert_eq!(default_headers["wecode-source"], "wegent-app");
     assert_eq!(default_headers["x-weibo-downstream"], "shanghai-intranet");
     assert_eq!(default_headers["wecode-executor"], "claudecode");
+    assert_eq!(default_headers["wecode-task-source"], "wework");
     assert_eq!(default_headers["wecode-project"], "42");
     assert_eq!(
         spec.envs().get("default_headers"),
@@ -881,6 +884,8 @@ fn claude_non_project_request_includes_local_tracking_headers() {
     let _process_headers = EnvGuard::remove("ANTHROPIC_CUSTOM_HEADERS");
     let request = ExecutionRequest {
         prompt: json!("answer without a project"),
+        task_source: "wegent".to_owned(),
+        execution_device_type: "local".to_owned(),
         ..ExecutionRequest::default()
     };
 
@@ -890,11 +895,12 @@ fn claude_non_project_request_includes_local_tracking_headers() {
 
     assert_eq!(
         spec.envs().get("ANTHROPIC_CUSTOM_HEADERS").unwrap(),
-        "wecode-action: wegent\nwecode-source: wegent-local\nwecode-executor: claudecode"
+        "wecode-action: wegent\nwecode-executor: claudecode\nwecode-source: wegent-local\nwecode-task-source: wegent"
     );
     assert_eq!(default_headers["wecode-action"], "wegent");
     assert_eq!(default_headers["wecode-source"], "wegent-local");
     assert_eq!(default_headers["wecode-executor"], "claudecode");
+    assert_eq!(default_headers["wecode-task-source"], "wegent");
     assert!(default_headers.get("wecode-project").is_none());
 }
 
