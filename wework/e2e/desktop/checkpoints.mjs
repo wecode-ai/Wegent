@@ -3,6 +3,7 @@ export const DESKTOP_CHECKPOINTS = [
   'workspace-tabs',
   'cloud-project-creation',
   'cloud-space-mention',
+  'collaboration-shared-core',
   'priority-filter',
   'telemetry-consent',
   'external-content-import',
