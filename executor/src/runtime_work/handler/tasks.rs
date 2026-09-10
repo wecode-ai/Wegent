@@ -9,6 +9,8 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         request.ephemeral = true;
+        request.task_source.clear();
+        request.execution_device_type.clear();
         let turn = self
             .codex_app_server
             .run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
@@ -48,6 +50,8 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         request.ephemeral = true;
+        request.task_source.clear();
+        request.execution_device_type.clear();
         let result = self
             .codex_app_server
             .run_turn_with_cancel(request.clone(), CodexAppServerTurnOptions::default())

@@ -26,6 +26,19 @@ fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
 }
 
+#[tokio::test]
+async fn event_sender_constructor_applies_device_type_before_background_workers_start() {
+    let (event_tx, _) = broadcast::channel(1);
+    let handler = RuntimeWorkRpcHandler::with_event_sender_and_device_type(
+        "device-1",
+        "/bin/false",
+        event_tx,
+        "app",
+    );
+
+    assert_eq!(handler.execution_device_type, "app");
+}
+
 #[test]
 fn restore_startup_concurrency_defaults_to_two_without_reducing_runtime_capacity() {
     assert_eq!(normalized_restore_startup_concurrency(None, 10), 2);

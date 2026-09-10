@@ -52,6 +52,7 @@ type RuntimeCheckResponse = {
 
 type CapturedModelRequest = {
   url: string
+  headers: Record<string, string | string[] | undefined>
   body: unknown
 }
 
@@ -496,6 +497,11 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+    expectModelAttributionHeaders(secondRequest, {
+      executor: 'claudecode',
+      source: 'wegent-app',
+      taskSource: 'wegent',
+    })
   })
 
   test('device Git project runs without server AES keys on the executor', async ({ request }) => {
@@ -1363,6 +1369,15 @@ test.describe('Agent conversation regression', () => {
       predicate,
       label || `mock model request containing ${predicateOrText}`
     )
+  }
+
+  function expectModelAttributionHeaders(
+    capture: CapturedModelRequest,
+    expected: { executor: string; source: string; taskSource: string }
+  ): void {
+    expect(capture.headers['wecode-executor']).toBe(expected.executor)
+    expect(capture.headers['wecode-source']).toBe(expected.source)
+    expect(capture.headers['wecode-task-source']).toBe(expected.taskSource)
   }
 
   async function loadCapturedModelRequests(

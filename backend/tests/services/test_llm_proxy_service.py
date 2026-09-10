@@ -280,6 +280,8 @@ async def test_proxy_llm_responses_omits_authorization_when_api_key_is_empty(
             "x-wegent-model-user-id": str(test_user.id),
             "authorization": "Bearer wegent-login-token",
             "x-wegent-upstream-header-wecode-executor": "codex",
+            "x-wegent-upstream-header-wecode-source": "wegent-remote",
+            "x-wegent-upstream-header-wecode-task-source": "wework",
             "x-wegent-upstream-header-wecode-action": "custom-action",
         }
     )
@@ -310,9 +312,22 @@ async def test_proxy_llm_responses_omits_authorization_when_api_key_is_empty(
     assert "Authorization" not in sent_request.headers
     assert sent_request.headers["wecode-user"] == test_user.user_name
     assert sent_request.headers["wecode-executor"] == "codex"
+    assert sent_request.headers["wecode-source"] == "wegent-remote"
+    assert sent_request.headers["wecode-task-source"] == "wework"
     assert sent_request.headers["wecode-action"] == "custom-action"
     assert (
         sum(name == "wecode-executor" for name, _ in sent_request.headers.multi_items())
+        == 1
+    )
+    assert (
+        sum(name == "wecode-source" for name, _ in sent_request.headers.multi_items())
+        == 1
+    )
+    assert (
+        sum(
+            name == "wecode-task-source"
+            for name, _ in sent_request.headers.multi_items()
+        )
         == 1
     )
     client_mock.aclose.assert_awaited_once()

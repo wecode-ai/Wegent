@@ -22,7 +22,7 @@ use tokio::{
 };
 
 use crate::{
-    agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
+    agents::{model_attribution, resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
     config::device::{ConnectionConfig, DeviceConfig},
     local::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
@@ -199,10 +199,11 @@ where
         let event_hub = ExecutorEventHub::new(runtime_event_tx.clone());
         event_hub.ensure_started();
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-            RuntimeWorkRpcHandler::with_event_sender(
+            RuntimeWorkRpcHandler::with_event_sender_and_device_type(
                 config.device_id.clone(),
                 resolve_codex_binary(),
                 runtime_event_tx,
+                config.device_type.clone(),
             )
             .with_backend_connection(Arc::new(Mutex::new(
                 connection_snapshot_from_config(&config),
@@ -843,10 +844,11 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
     let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
         Arc::new(Mutex::new(None));
     let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-        RuntimeWorkRpcHandler::with_event_sender(
+        RuntimeWorkRpcHandler::with_event_sender_and_device_type(
             app_ipc_device_id.clone(),
             resolve_codex_binary(),
             runtime_event_tx.clone(),
+            "app",
         )
         .with_backend_connection(backend_connection_snapshot.clone()),
     );
@@ -898,6 +900,7 @@ fn connection_snapshot_from_config(config: &LocalBackendConfig) -> Option<Connec
 }
 
 fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBackendConfig) {
+    model_attribution::stamp_execution_context(request, &config.device_type, None);
     if request
         .backend_url
         .as_deref()

@@ -423,6 +423,150 @@ fn vision_sidecar_thread_start_forwards_selected_reasoning_effort() {
 }
 
 #[test]
+fn direct_provider_headers_use_authoritative_model_attribution() {
+    let request = ExecutionRequest {
+        task_source: "wework".to_owned(),
+        execution_device_type: "remote".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let default_headers = json!({
+        "Wecode-Source": "caller",
+        "wecode-task-source": "caller",
+        "x-custom": "preserved",
+    });
+
+    let overrides = header_overrides("openai", Some(&default_headers), None, &request);
+
+    assert!(overrides
+        .contains(&"model_providers.openai.http_headers.wecode-executor=\"codex\"".to_owned()));
+    assert!(overrides.contains(
+        &"model_providers.openai.http_headers.wecode-source=\"wegent-remote\"".to_owned()
+    ));
+    assert!(overrides
+        .contains(&"model_providers.openai.http_headers.wecode-task-source=\"wework\"".to_owned()));
+    assert!(overrides
+        .contains(&"model_providers.openai.http_headers.x-custom=\"preserved\"".to_owned()));
+    assert!(!overrides.iter().any(|value| value.contains("caller")));
+}
+
+#[test]
+fn local_proxy_upstream_receives_gateway_forwarding_headers() {
+    let request = ExecutionRequest {
+        task_source: "wegent".to_owned(),
+        execution_device_type: "cloud".to_owned(),
+        model_config: json!({
+            "model_id": "gpt-test",
+            "base_url": "https://wegent.example.com/api/runtime-work/llm-responses-proxy",
+            "api_key": "test-key",
+            "api_format": "responses",
+            "default_headers": {
+                "X-Wegent-Model-Type": "public",
+                "X-Wegent-Upstream-Header-wecode-source": "caller"
+            }
+        }),
+        ..ExecutionRequest::default()
+    };
+    let upstream = local_model_proxy::upstream_from_model_config(&request.model_config)
+        .expect("local proxy upstream");
+
+    let upstream = attributed_upstream(upstream, &request);
+
+    assert!(upstream
+        .default_headers
+        .contains(&("wecode-source".to_owned(), "wegent-cloud".to_owned())));
+    assert!(upstream.default_headers.contains(&(
+        "X-Wegent-Upstream-Header-wecode-source".to_owned(),
+        "wegent-cloud".to_owned()
+    )));
+    assert!(upstream.default_headers.contains(&(
+        "X-Wegent-Upstream-Header-wecode-task-source".to_owned(),
+        "wegent".to_owned()
+    )));
+    assert_eq!(
+        upstream
+            .default_headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("wecode-source"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn runtime_local_task_id_stabilizes_local_proxy_attribution_route() {
+    let mut manual = ExecutionRequest {
+        task_id: "manual-execution".to_owned(),
+        task_source: "wework".to_owned(),
+        execution_device_type: "app".to_owned(),
+        model_config: json!({
+            "model_id": "gpt-test",
+            "base_url": "https://wegent.example.com/api/runtime-work/llm-responses-proxy",
+            "api_key": "test-key",
+            "api_format": "responses",
+        }),
+        ..ExecutionRequest::default()
+    };
+    manual.extra.insert(
+        "runtimeLocalTaskId".to_owned(),
+        json!("stable-attribution-thread"),
+    );
+    let mut scheduled = manual.clone();
+    scheduled.task_id = "scheduled-execution".to_owned();
+    scheduled.task_source = "unknown".to_owned();
+
+    let manual_config =
+        build_codex_launch_config(&manual).expect("manual launch config should be built");
+    let scheduled_config =
+        build_codex_launch_config(&scheduled).expect("scheduled launch config should be built");
+    let manual_token = &manual_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("manual route registration")
+        .0;
+    let scheduled_token = &scheduled_config
+        .local_proxy_registration
+        .as_ref()
+        .expect("scheduled route registration")
+        .0;
+
+    assert_eq!(manual_token, scheduled_token);
+    assert!(local_model_proxy::registered_upstream(scheduled_token)
+        .expect("updated scheduled route")
+        .default_headers
+        .contains(&("wecode-task-source".to_owned(), "unknown".to_owned())));
+}
+
+#[test]
+fn vision_sidecar_does_not_inherit_primary_attribution_headers() {
+    let request = ExecutionRequest {
+        task_source: "wework".to_owned(),
+        execution_device_type: "app".to_owned(),
+        model_config: json!({
+            "vision_sidecar": {
+                "enabled": true,
+                "model_id": "vision-model",
+                "request_url": "https://models.example.com/v1/responses",
+                "api_key": "vision-key",
+                "default_headers": {"x-vision": "preserved"}
+            }
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let sidecar = vision_sidecar_upstream(&request.model_config)
+        .expect("valid sidecar")
+        .expect("enabled sidecar");
+
+    assert!(sidecar
+        .default_headers
+        .contains(&("x-vision".to_owned(), "preserved".to_owned())));
+    assert!(!sidecar
+        .default_headers
+        .iter()
+        .any(|(key, _)| key.to_ascii_lowercase().starts_with("wecode-")));
+}
+
+#[test]
 fn initialize_params_does_not_advertise_openai_form_elicitation_extension() {
     let params = initialize_params();
 

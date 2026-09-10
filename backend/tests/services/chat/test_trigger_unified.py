@@ -7,7 +7,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.constants import CLIENT_ORIGIN_FRONTEND
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
 from app.models.subtask_context import ContextStatus, ContextType
 from shared.models import ExecutionRequest
 from shared.models.knowledge import (
@@ -18,6 +18,31 @@ from shared.models.knowledge import (
     SelectedKnowledgeContext,
     SelectedKnowledgeRef,
 )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (SimpleNamespace(client_origin=CLIENT_ORIGIN_FRONTEND), "wegent"),
+        (SimpleNamespace(client_origin=CLIENT_ORIGIN_WEWORK), "wework"),
+        (SimpleNamespace(client_origin="invalid"), "unknown"),
+        (None, "unknown"),
+    ],
+)
+def test_task_source_uses_the_current_trigger(payload, expected) -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    assert trigger_unified._task_source_from_payload(payload) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("wegent", "wegent"), ("wework", "wework"), ("invalid", "unknown")],
+)
+def test_explicit_task_source_is_normalized(value, expected) -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    assert trigger_unified._normalize_task_source(value) == expected
 
 
 def test_apply_image_generation_params_overrides_request_size() -> None:

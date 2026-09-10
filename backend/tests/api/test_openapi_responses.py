@@ -972,7 +972,7 @@ class TestOpenAPIResponsesCreate:
             patch(
                 "app.services.chat.trigger.unified.build_execution_request",
                 new=AsyncMock(return_value=execution_request),
-            ),
+            ) as mock_build_execution_request,
             patch(
                 "app.services.execution.execution_dispatcher.supports_streaming",
                 return_value=False,
@@ -1001,6 +1001,7 @@ class TestOpenAPIResponsesCreate:
             )
 
         assert response.media_type == "text/event-stream"
+        assert mock_build_execution_request.await_args.kwargs["task_source"] == "wegent"
         mock_persist_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -1223,6 +1224,7 @@ class TestOpenAPIResponsesCreate:
         assert mock_build_execution_request.await_args.kwargs["message"] == (
             "follow-up question"
         )
+        assert mock_build_execution_request.await_args.kwargs["task_source"] == "wegent"
 
     @pytest.mark.asyncio
     async def test_non_streaming_build_request_passes_generation_and_attachment_order(

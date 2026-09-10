@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_runtime_approval_policy, model_attribution, select_wework_codex_user_instructions,
+        AgentCommandPlanner, AgentProcessEngine, CodexActiveTurnCallback,
+        CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerTurnOptions,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -546,6 +546,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
+    execution_device_type: String,
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
@@ -751,6 +752,7 @@ impl RuntimeWorkRpcHandler {
         }
         let handler = Self {
             device_id,
+            execution_device_type: "unknown".to_owned(),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
             claude_process_engine: AgentProcessEngine::new(AgentCommandPlanner::from_env()),
@@ -798,8 +800,18 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
+        Self::with_event_sender_and_device_type(device_id, codex_binary, event_tx, "unknown")
+    }
+
+    pub fn with_event_sender_and_device_type(
+        device_id: impl Into<String>,
+        codex_binary: impl Into<String>,
+        event_tx: broadcast::Sender<Value>,
+        execution_device_type: impl Into<String>,
+    ) -> Self {
         let handler = Self {
             event_tx: Some(event_tx),
+            execution_device_type: execution_device_type.into(),
             ..Self::new(device_id, codex_binary)
         };
         if let Some(sender) = handler.event_tx.clone() {

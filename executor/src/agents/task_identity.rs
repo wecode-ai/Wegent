@@ -22,16 +22,20 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "WEWORK_PARENT_TITLE",
 ];
 
-pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
-    let mut env = BTreeMap::new();
-    env.extend(crate::plugin_account_auth::broker::environment());
-    let task_id = request
+pub(super) fn task_identity_id(request: &ExecutionRequest) -> &str {
+    request
         .extra
         .get("runtimeLocalTaskId")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| request.task_id.trim());
+        .unwrap_or_else(|| request.task_id.trim())
+}
+
+pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    env.extend(crate::plugin_account_auth::broker::environment());
+    let task_id = task_identity_id(request);
 
     if let Ok(executable) = std::env::current_exe() {
         env.insert(
@@ -135,6 +139,7 @@ mod tests {
 
         let env = task_identity_env(&request);
 
+        assert_eq!(task_identity_id(&request), "conversation-1");
         assert_eq!(
             env.get("WEGENT_TASK_ID"),
             Some(&"conversation-1".to_owned())

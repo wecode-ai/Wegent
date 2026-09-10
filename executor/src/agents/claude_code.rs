@@ -14,8 +14,8 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
-        runtime_capabilities::resolve_skill, skill_download::skill_download_concurrency,
-        task_identity::task_identity_env,
+        model_attribution, runtime_capabilities::resolve_skill,
+        skill_download::skill_download_concurrency, task_identity::task_identity_env,
     },
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
@@ -617,14 +617,13 @@ fn apply_claude_header_environment(
         runtime_custom_headers.as_str(),
     ]);
 
+    let attribution_headers =
+        model_attribution::authoritative_headers(request, "claudecode").unwrap_or_default();
     let mut default_headers = merge_missing_header_map(
         extract_default_headers(request),
-        vec![
-            ("wecode-action".to_owned(), "wegent".to_owned()),
-            ("wecode-source".to_owned(), "wegent-local".to_owned()),
-            ("wecode-executor".to_owned(), "claudecode".to_owned()),
-        ],
+        vec![("wecode-action".to_owned(), "wegent".to_owned())],
     );
+    default_headers = merge_header_map(default_headers, attribution_headers.clone());
     if let Some(project_id) = project_id(request) {
         default_headers = merge_header_map(
             default_headers,
@@ -639,6 +638,7 @@ fn apply_claude_header_environment(
             .env("DEFAULT_HEADERS", serialized_default_headers.clone())
             .env("default_headers", serialized_default_headers);
         custom_headers = merge_missing_header_map(custom_headers, default_headers);
+        custom_headers = merge_header_map(custom_headers, attribution_headers);
     }
 
     if !custom_headers.is_empty() {

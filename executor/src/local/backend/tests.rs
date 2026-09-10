@@ -150,7 +150,11 @@ async fn remote_backend_runner_starts_session_gateway() {
 #[test]
 fn normalizes_backend_context_for_local_task_mcp() {
     let config = backend_config("local-device");
-    let mut request = ExecutionRequest::default();
+    let mut request = ExecutionRequest {
+        task_source: "invalid".to_owned(),
+        execution_device_type: "caller".to_owned(),
+        ..ExecutionRequest::default()
+    };
 
     normalize_local_task_request(&mut request, &config);
 
@@ -161,6 +165,8 @@ fn normalizes_backend_context_for_local_task_mcp() {
     assert_eq!(request.auth_token.as_deref(), Some("token"));
     assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-token"));
     assert_eq!(request.device_id.as_deref(), Some("local-device"));
+    assert_eq!(request.task_source, "unknown");
+    assert_eq!(request.execution_device_type, "remote");
 }
 
 #[test]

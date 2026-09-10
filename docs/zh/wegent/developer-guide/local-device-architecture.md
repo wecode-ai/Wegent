@@ -393,7 +393,17 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`WEWORK_PARENT_TITLE` 提供当前任务标题，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_RUNTIME_AUTH_TOKEN` 提供本地 Skill 访问 Wegent runtime API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Claude Code 和 Agno 通过子进程环境注入；Codex 通过 thread 级 `shell_environment_policy.set.*` 注入，身份值不会进入共享 app-server 进程环境，避免跨任务泄漏。Wework 连接云端后会通过 `POST /api/users/me/wegent-runtime-token` 获取 runtime token，并按响应的 `expires_in` 提前刷新；断开云端时会移除本地 Codex 配置中的 `WEGENT_RUNTIME_AUTH_TOKEN`。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
 
-项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
+Claude Code 或 Codex 发起主模型推理请求时，executor 会写入以下权威来源标识：
+
+| Header | 值 | 含义 |
+| --- | --- | --- |
+| `wecode-executor` | `claudecode`、`codex` | 实际运行时 |
+| `wecode-source` | `wegent-local`、`wegent-app`、`wegent-remote`、`wegent-cloud`、`wegent-unknown` | 实际执行设备类型 |
+| `wecode-task-source` | `wegent`、`wework`、`unknown` | 本次任务触发入口 |
+
+即时 Wegent Web/API 请求使用 `wegent`，Wework WebSocket、Runtime Work 和 App 本地执行使用 `wework`。没有直接 UI 入口的定时、重试和后台续跑使用 `unknown`，不会从 Task 持久化的 `client_origin` 推断。设备类型以 executor 当前实际注册配置为准；缺失或非法类型映射为 `wegent-unknown`。调用方传入的同名 Header 会被上述权威值覆盖，其他自定义 Header 保留。经过 Backend LLM Proxy 时，executor 同时写入对应的 `X-Wegent-Upstream-Header-*` 转发 Header，由代理恢复为相同的最终上游 Header。
+
+`wecode-action` 保持现有行为。项目模式还会加入 `wecode-project: <project_id>`。Claude Code 会将合并结果同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers`；Codex 会将其写入直连 provider 或本地模型代理的 `http_headers`。视觉 sidecar、Supervisor 辅助模型、Agno 和 Dify 不使用这组主推理来源标识。
 
 ### 聊天任务设备解析与 Claude Code 启动上下文
 

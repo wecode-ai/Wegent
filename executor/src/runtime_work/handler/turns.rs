@@ -25,6 +25,31 @@ const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+fn runtime_turn_task_source(request: &ExecutionRequest, restored: bool) -> &'static str {
+    let supervisor_continuation = request
+        .extra
+        .get("runtime_message_source")
+        .and_then(Value::as_str)
+        == Some("supervisor");
+    let scheduled_automation = request
+        .extra
+        .get("automation_info")
+        .and_then(|value| value.get("trigger"))
+        .and_then(Value::as_str)
+        == Some("scheduled");
+    if restored || supervisor_continuation || scheduled_automation {
+        return model_attribution::TASK_SOURCE_UNKNOWN;
+    }
+    if request
+        .task_source
+        .eq_ignore_ascii_case(model_attribution::TASK_SOURCE_WEWORK)
+    {
+        model_attribution::TASK_SOURCE_WEWORK
+    } else {
+        model_attribution::TASK_SOURCE_UNKNOWN
+    }
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EncryptedRuntimeTurnQueue {
@@ -717,7 +742,18 @@ impl RuntimeWorkRpcHandler {
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
-        turn.request.extra.remove(RESTORED_TURN_MARKER);
+        let restored = turn
+            .request
+            .extra
+            .remove(RESTORED_TURN_MARKER)
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let task_source = runtime_turn_task_source(&turn.request, restored);
+        model_attribution::stamp_execution_context(
+            &mut turn.request,
+            &self.execution_device_type,
+            Some(task_source),
+        );
         let restore_startup = restore_permit.map(RestoreStartupGate::new);
         if is_claude_runtime(&turn.runtime) {
             self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
@@ -1442,6 +1478,33 @@ mod tests {
             resume_thread_id: None,
             initial_thread_goal: None,
         }
+    }
+
+    #[test]
+    fn classifies_runtime_turn_task_sources() {
+        let direct = ExecutionRequest {
+            task_source: "wework".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut supervisor = direct.clone();
+        supervisor.extra.insert(
+            "runtime_message_source".to_owned(),
+            Value::String("supervisor".to_owned()),
+        );
+        let mut scheduled = direct.clone();
+        scheduled.extra.insert(
+            "automation_info".to_owned(),
+            json!({"trigger": "scheduled"}),
+        );
+
+        assert_eq!(runtime_turn_task_source(&direct, false), "wework");
+        assert_eq!(runtime_turn_task_source(&direct, true), "unknown");
+        assert_eq!(runtime_turn_task_source(&supervisor, false), "unknown");
+        assert_eq!(runtime_turn_task_source(&scheduled, false), "unknown");
+        assert_eq!(
+            runtime_turn_task_source(&ExecutionRequest::default(), false),
+            "unknown"
+        );
     }
 
     #[tokio::test]

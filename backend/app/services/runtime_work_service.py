@@ -116,7 +116,11 @@ from app.stores.tasks.transient import (
     build_transient_assistant_subtask,
     build_transient_task,
 )
-from shared.models.execution import ExecutionRequest
+from shared.models.execution import (
+    TASK_SOURCE_UNKNOWN,
+    TASK_SOURCE_WEWORK,
+    ExecutionRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -4082,6 +4086,13 @@ def _runtime_task_title(request: RuntimeTaskCreateRequest) -> str:
     return first_line[:80] or "Untitled runtime task"
 
 
+def _runtime_task_source(request: RuntimeTaskCreateRequest) -> str:
+    origin = request.origin if isinstance(request.origin, dict) else {}
+    if origin.get("type") == "project_automation":
+        return TASK_SOURCE_UNKNOWN
+    return TASK_SOURCE_WEWORK
+
+
 def _build_runtime_execution_request(
     *,
     db: Session,
@@ -4154,6 +4165,7 @@ def _build_team_runtime_execution_request(
         new_session=getattr(request, "new_session", True),
         preload_skills=list(request.additional_skills),
         attachments=_runtime_create_attachment_payloads(db, user_id, request),
+        task_source=_runtime_task_source(request),
     )
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_create_request(execution_request, request)
@@ -4274,6 +4286,7 @@ def _build_direct_wework_runtime_execution_request(
             user_name=user.user_name,
         ),
         runtime_permission_profile=":danger-full-access",
+        task_source=_runtime_task_source(request),
     )
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_create_request(execution_request, request)

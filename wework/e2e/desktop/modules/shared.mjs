@@ -581,6 +581,41 @@ const QUALIFIED_SKILL_MENTION_PROMPT = 'Verify the sent qualified skill mention.
 const QUALIFIED_SKILL_MENTION_COMPLETION_TEXT =
   'WEWORK_DESKTOP_E2E_QUALIFIED_SKILL_MENTION_COMPLETE'
 
+const MODEL_ATTRIBUTION_HEADERS = [
+  ['wecode-executor', 'executor'],
+  ['wecode-source', 'source'],
+  ['wecode-task-source', 'taskSource'],
+]
+
+function assertModelAttributionHeaders(
+  headers,
+  { executor, source, taskSource, forwarded = false }
+) {
+  const prefix = forwarded ? 'x-wegent-upstream-header-' : ''
+  const expected = { executor, source, taskSource }
+  for (const [header, field] of MODEL_ATTRIBUTION_HEADERS) {
+    const name = `${prefix}${header}`
+    assert.equal(
+      headers?.[name],
+      expected[field],
+      `The model request did not carry authoritative ${name}`
+    )
+  }
+}
+
+function assertNoModelAttributionHeaders(headers) {
+  for (const prefix of ['', 'x-wegent-upstream-header-']) {
+    for (const [header] of MODEL_ATTRIBUTION_HEADERS) {
+      const name = `${prefix}${header}`
+      assert.equal(
+        headers?.[name],
+        undefined,
+        `The auxiliary model request unexpectedly carried ${name}`
+      )
+    }
+  }
+}
+
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
   if (index < 0) return null
@@ -1469,6 +1504,8 @@ async function waitForE2EModelLabel(
 
 export {
   assert,
+  assertModelAttributionHeaders,
+  assertNoModelAttributionHeaders,
   randomUUID,
   spawn,
   spawnSync,
