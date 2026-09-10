@@ -8,6 +8,7 @@ import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 const rawArgs = process.argv.slice(2)
 const requestedArgs = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const electronRoot = join(root, 'electron')
 const integrationTestFiles = ['scripts/dev-executor-reload.integration.mjs']
 const nodeTestFiles = discoverNodeTestFiles()
 const requestedIntegrationTests = requestedArgs.filter(argument =>
@@ -16,10 +17,14 @@ const requestedIntegrationTests = requestedArgs.filter(argument =>
 const requestedNodeTests = requestedArgs.filter(argument =>
   nodeTestFiles.includes(normalizeArgumentPath(argument))
 )
+const requestedElectronTests = requestedArgs.filter(argument =>
+  normalizeArgumentPath(argument).startsWith('electron/')
+)
 const vitestArgs = requestedArgs.filter(
   argument =>
     !integrationTestFiles.includes(normalizeArgumentPath(argument)) &&
-    !nodeTestFiles.includes(normalizeArgumentPath(argument))
+    !nodeTestFiles.includes(normalizeArgumentPath(argument)) &&
+    !requestedElectronTests.includes(argument)
 )
 
 if (requestedArgs.length === 0) {
@@ -30,6 +35,17 @@ if (requestedArgs.length === 0) {
 
 if (requestedArgs.length === 0 || vitestArgs.length > 0) {
   run('vitest', ['run', ...vitestArgs])
+}
+
+if (requestedArgs.length === 0) {
+  run('pnpm', ['--dir', 'electron', 'test'])
+} else if (requestedElectronTests.length > 0) {
+  run('pnpm', [
+    '--dir',
+    'electron',
+    'test',
+    ...requestedElectronTests.map(argument => relative(electronRoot, resolve(root, argument))),
+  ])
 }
 
 if (requestedArgs.length === 0) {
