@@ -34,7 +34,8 @@ use crate::{
 };
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
+const DOWNLOAD_ATTEMPTS: usize = 3;
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
@@ -1171,13 +1172,12 @@ async fn download_skill(
         path.push_str(&format!("&task_id={task_id}"));
     }
     let local_hash = installed_skill_hash(&plan.skills_dir, skill_name);
-    let download = get_skill_archive(
+    let download = download_skill_archive_with_retry(
         client,
         &plan.auth_token,
         api_base_url,
         &path,
         local_hash.as_deref(),
-        DOWNLOAD_TIMEOUT,
     )
     .await?;
     match download {
@@ -1250,6 +1250,53 @@ enum SkillArchiveResponse {
         bytes: Vec<u8>,
         content_hash: Option<String>,
     },
+}
+
+async fn download_skill_archive_with_retry(
+    client: &reqwest::Client,
+    auth_token: &str,
+    api_base_url: &str,
+    path: &str,
+    local_hash: Option<&str>,
+) -> Result<SkillArchiveResponse, String> {
+    let mut last_error = String::new();
+    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+        match get_skill_archive(
+            client,
+            auth_token,
+            api_base_url,
+            path,
+            local_hash,
+            DOWNLOAD_TIMEOUT,
+        )
+        .await
+        {
+            Ok(response) => return Ok(response),
+            Err(error) if attempt < DOWNLOAD_ATTEMPTS => {
+                if is_retryable_download_error(&error) {
+                    log_executor_event(
+                        "skill archive download retry",
+                        &[
+                            ("attempt", attempt.to_string()),
+                            ("reason", safe_skill_deployment_reason(&error)),
+                        ],
+                    );
+                    last_error = error;
+                    continue;
+                }
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error)
+}
+
+fn is_retryable_download_error(error: &str) -> bool {
+    error.starts_with("backend download timed out")
+        || error.starts_with("backend download connection failed")
+        || error.starts_with("backend download request failed")
+        || error.starts_with("backend download body read failed")
 }
 
 async fn get_skill_archive(
