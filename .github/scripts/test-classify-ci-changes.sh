@@ -1139,7 +1139,7 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
-  [[ "$wework_desktop_cloud_job" != *"compression-level: 0"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"compression-level: 6"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
   [[ "$wework_desktop_cloud_job" != *".github/scripts/download-actions-artifact.sh"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
@@ -1161,7 +1161,7 @@ if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_
   [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
   [[ "$wework_desktop_core_job" != *"WEWORK_E2E_SCREENSHOTS:"* ]] ||
   [[ "$wework_desktop_core_job" == *"name: Set up Node workspace"* ]] ||
-  [[ "$wework_desktop_core_job" != *"compression-level: 0"* ]]; then
+  [[ "$wework_desktop_core_job" != *"compression-level: 6"* ]]; then
   printf 'Wework Core desktop E2E must use seventeen prebuilt serial shards\n' >&2
   exit 1
 fi
@@ -1244,10 +1244,33 @@ if [[ "$wework_desktop_cloud_job" == *"name: Set up Node workspace"* ]] ||
   exit 1
 fi
 
+managed_components_exclusion='!wework/test-results/desktop-e2e/**/managed-components/**'
+if [[ "$(grep -Fc "$managed_components_exclusion" "$wework_workflow")" -ne 7 ]] ||
+  [[ "$(grep -Fc "$managed_components_exclusion" \
+    "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
+  printf 'Every Wework desktop diagnostics upload must exclude materialized components\n' >&2
+  exit 1
+fi
+
+test_archive_exclusion='!wework/test-results/desktop-e2e/**/*.zip'
+if [[ "$(grep -Fc "$test_archive_exclusion" "$wework_workflow")" -ne 7 ]] ||
+  [[ "$(grep -Fc "$test_archive_exclusion" \
+    "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
+  printf 'Every Wework desktop diagnostics upload must exclude test archives\n' >&2
+  exit 1
+fi
+
+if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 7 ]] ||
+  [[ "$(grep -Fc 'compression-level: 6' \
+    "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
+  printf 'Every Wework desktop diagnostics upload must compress retained evidence\n' >&2
+  exit 1
+fi
+
 for generated_path_exclusion in \
-  '!wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**' \
-  '!wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**' \
-  '!wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/managed-runtimes/**' \
+  '!wework/test-results/desktop-e2e/**/dsh-core/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/harness-apps/instances/**/profiles/**' \
   '!wework/test-results/desktop-e2e/**/harness-runtime/**' \
   '!wework/test-results/desktop-e2e/**/node-runtime/**' \
   '!wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**'; do

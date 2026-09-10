@@ -38,6 +38,7 @@ from app.services.channels.device_selection import (
     DeviceType,
     device_selection_manager,
 )
+from app.services.channels.dingtalk import card as card_module
 from app.services.channels.dingtalk.callback import dingtalk_callback_service
 from app.services.channels.dingtalk.handler import DingTalkChannelHandler
 from app.services.channels.handler import CHANNEL_CONV_TASK_PREFIX, MessageContext
@@ -190,6 +191,9 @@ class DingTalkConversationHarness(DingTalkChannelHandler):
             ),
             source="DingTalk CI E2E private-thinking probe",
         )
+        # Verify the progress stage before completion intentionally supersedes it.
+        active_emitter = dingtalk_callback_service._active_emitters[callback_key]
+        await active_emitter.flush()
         await self._forward_runtime_event(
             local_task_id,
             "response.completed",
@@ -370,7 +374,7 @@ async def run() -> None:
             runtime_subscriptions_key,
         )
     }
-    original_card_class = dingtalk_stream.AIMarkdownCardInstance
+    original_card_class = card_module.DingTalkMarkdownCard
     original_get_channel_manager = channel_manager_module.get_channel_manager
     original_send_runtime_message = runtime_work_service.send_runtime_message
     runtime_requests: list[Any] = []
@@ -383,7 +387,7 @@ async def run() -> None:
             taskId=request.address.local_task_id,
         )
 
-    dingtalk_stream.AIMarkdownCardInstance = FakeAICardInstance
+    card_module.DingTalkMarkdownCard = FakeAICardInstance
     channel_manager_module.get_channel_manager = lambda: SimpleNamespace(
         get_channel=lambda channel_id: (
             SimpleNamespace(_client=handler._dingtalk_client)
@@ -517,7 +521,7 @@ async def run() -> None:
         assert session.mode == IMSessionMode.TASK
         assert session.active_runtime_task == notified_runtime_task
     finally:
-        dingtalk_stream.AIMarkdownCardInstance = original_card_class
+        card_module.DingTalkMarkdownCard = original_card_class
         channel_manager_module.get_channel_manager = original_get_channel_manager
         runtime_work_service.send_runtime_message = original_send_runtime_message
         await _cleanup(
