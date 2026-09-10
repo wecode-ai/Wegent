@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({
         pending: false,
         status: null,
         statusPending: false,
+        statusRefreshing: false,
       }
       const listeners = new Set()
       const publish = patch => {
@@ -34,29 +35,34 @@ window.__ModuleLoader__.load({
             publish({ error: error instanceof Error ? error.message : String(error) })
           }
         },
-        async refreshStatus() {
-          if (snapshot.statusPending) return
-          publish({ statusPending: true })
+        async refreshStatus({ showPending = false } = {}) {
+          if (snapshot.statusRefreshing) return
+          publish({
+            statusRefreshing: true,
+            ...(showPending ? { statusPending: true } : {}),
+          })
           try {
             const status = await backend.request('getStatus', {})
-            publish({ status, statusPending: false })
+            publish({ status, statusPending: false, statusRefreshing: false })
           } catch (error) {
             publish({
               error: error instanceof Error ? error.message : String(error),
               statusPending: false,
+              statusRefreshing: false,
             })
           }
         },
         async retry() {
-          if (snapshot.statusPending) return
-          publish({ error: null, statusPending: true })
+          if (snapshot.statusRefreshing) return
+          publish({ error: null, statusPending: true, statusRefreshing: true })
           try {
             const status = await backend.request('flush', {})
-            publish({ status, statusPending: false })
+            publish({ status, statusPending: false, statusRefreshing: false })
           } catch (error) {
             publish({
               error: error instanceof Error ? error.message : String(error),
               statusPending: false,
+              statusRefreshing: false,
             })
             await this.refreshStatus()
           }
@@ -68,7 +74,7 @@ window.__ModuleLoader__.load({
             await backend.request('setEnabled', { enabled })
             service.configuration.update(CONFIGURATION_ID, { enabled })
             publish({ enabled, pending: false })
-            await this.refreshStatus()
+            await this.refreshStatus({ showPending: true })
           } catch (error) {
             publish({
               error: error instanceof Error ? error.message : String(error),
@@ -217,7 +223,7 @@ window.__ModuleLoader__.load({
                 'button',
                 {
                   'data-testid': 'transcript-sync-retry-button',
-                  disabled: snapshot.statusPending,
+                  disabled: snapshot.statusRefreshing,
                   onClick: () => void store.retry(),
                   style: {
                     alignSelf: 'flex-start',
@@ -225,7 +231,7 @@ window.__ModuleLoader__.load({
                     border: '1px solid rgb(var(--color-border))',
                     borderRadius: '6px',
                     color: 'rgb(var(--color-text-primary))',
-                    cursor: snapshot.statusPending ? 'default' : 'pointer',
+                    cursor: snapshot.statusRefreshing ? 'default' : 'pointer',
                     padding: '6px 10px',
                   },
                   type: 'button',

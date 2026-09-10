@@ -129,6 +129,15 @@ test('registers a default-enabled cloud sync setting and applies changes to the 
   assert.ok(pageRegistration)
   assert.equal(registrations.find(entry => entry.descriptor)?.descriptor.page, 'connections')
   const wrapper = pageRegistration.component({})
+  const statusSnapshots = []
+  const unsubscribeStatus = wrapper.props.store.subscribe(snapshot => {
+    statusSnapshots.push(snapshot)
+  })
+  await wrapper.props.store.refreshStatus()
+  unsubscribeStatus()
+  assert.ok(statusSnapshots.some(snapshot => snapshot.statusRefreshing))
+  assert.ok(statusSnapshots.every(snapshot => !snapshot.statusPending))
+
   const page = wrapper.type(wrapper.props)
   const checkbox = findElement(
     page,

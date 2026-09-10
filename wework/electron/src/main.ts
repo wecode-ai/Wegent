@@ -121,6 +121,7 @@ import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
+  createWeworkSyncDownloadTimeout,
   createWeworkSyncFetchInit,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
@@ -1430,19 +1431,26 @@ async function configureDesktopRuntime(): Promise<void> {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
             const path = normalizeWeworkSyncPath(request.path)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
-            const response = await fetch(
-              `${apiBaseUrl}${path}`,
-              await createWeworkSyncFetchInit(
-                request,
-                `${credential.tokenType} ${credential.accessToken}`
+            const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
+            try {
+              const response = await fetch(
+                `${apiBaseUrl}${path}`,
+                await createWeworkSyncFetchInit(
+                  request,
+                  `${credential.tokenType} ${credential.accessToken}`,
+                  downloadTimeout?.signal
+                )
               )
-            )
-            const body = await readWeworkSyncResponse(
-              response,
-              request.downloadPath,
-              request.downloadSizeBytes
-            )
-            return { status: response.status, body }
+              const body = await readWeworkSyncResponse(
+                response,
+                request.downloadPath,
+                request.downloadSizeBytes,
+                downloadTimeout?.refresh
+              )
+              return { status: response.status, body }
+            } finally {
+              downloadTimeout?.clear()
+            }
           },
         },
         {

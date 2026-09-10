@@ -158,6 +158,10 @@ test('discards every pending turn and route for an orphaned session', async t =>
   assert.equal(outbox.firstForSession('orphaned-session').turnId, 'orphaned-turn-1')
   assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), true)
   assert.equal(outbox.hasPendingTranscript('missing-transcript'), false)
+  const queryPlan = outbox.database
+    .prepare('EXPLAIN QUERY PLAN SELECT 1 FROM pending_turns WHERE transcript_id = ? LIMIT 1')
+    .get('orphaned-transcript')
+  assert.match(queryPlan.detail, /pending_turns_transcript/u)
   assert.equal(outbox.discardSession('orphaned-session'), 2)
   assert.equal(outbox.hasPendingTranscript('orphaned-transcript'), false)
   assert.equal(outbox.count(), 1)

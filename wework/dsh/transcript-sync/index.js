@@ -176,15 +176,15 @@ export class WeworkSync {
     if (this.processing) return this.processing
     const operation = async () => {
       this.lastAttemptAt = new Date().toISOString()
-      if (!this.enabled) return
-      if (!(await this.ensureApiBaseUrl())) return
+      if (!this.enabled) return false
+      if (!(await this.ensureApiBaseUrl())) return false
       const failures = []
       for (const phase of [
         () => this.flushPending(),
         () => this.pullTranscripts(),
         () => this.syncPreferences(),
       ]) {
-        if (!this.enabled) return
+        if (!this.enabled) break
         try {
           await phase()
         } catch (error) {
@@ -195,13 +195,14 @@ export class WeworkSync {
       if (failures.length > 1) {
         throw new AggregateError(failures, 'Wework cloud synchronization phases failed')
       }
+      return this.enabled
     }
     this.processing = operation()
-      .then(result => {
+      .then(completed => {
+        if (!completed) return
         this.failureCount = 0
         this.lastError = null
         this.lastSuccessAt = new Date().toISOString()
-        return result
       })
       .catch(error => {
         this.failureCount += 1

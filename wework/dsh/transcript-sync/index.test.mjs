@@ -465,6 +465,36 @@ test('continues download and preference phases after an upload phase failure', a
   assert.deepEqual(phases, ['upload', 'download', 'preferences'])
 })
 
+test('preserves a failed sync result when synchronization is disabled between phases', async () => {
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-1',
+    outbox: new MemorySyncOutbox(),
+    source: await segmentSource(),
+    state: state(),
+    target: {},
+    desktop: {},
+  })
+  sync.failureCount = 2
+  sync.flushPending = async () => {
+    sync.enabled = false
+    throw new Error('upload failed before disable')
+  }
+  sync.pullTranscripts = async () => {
+    assert.fail('Download must not run after synchronization is disabled')
+  }
+  sync.syncPreferences = async () => {
+    assert.fail('Preferences must not run after synchronization is disabled')
+  }
+
+  await assert.rejects(sync.flush(), /upload failed before disable/u)
+
+  const status = sync.service().status()
+  assert.equal(status.lastError, 'upload failed before disable')
+  assert.equal(status.lastSuccessAt, null)
+  assert.equal(sync.failureCount, 3)
+})
+
 test('clears the previous synchronization error after a successful retry', async () => {
   const sync = new WeworkSync({
     apiBaseUrl: 'https://cloud.example.com/api',

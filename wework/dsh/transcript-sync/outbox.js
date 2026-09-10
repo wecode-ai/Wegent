@@ -35,6 +35,8 @@ export class SqliteSyncOutbox {
       );
       CREATE INDEX IF NOT EXISTS pending_turns_delivery_order
         ON pending_turns (created_at, session_id, local_sequence);
+      CREATE INDEX IF NOT EXISTS pending_turns_transcript
+        ON pending_turns (transcript_id);
     `)
     const pendingColumns = this.database
       .prepare('PRAGMA table_info(pending_turns)')
