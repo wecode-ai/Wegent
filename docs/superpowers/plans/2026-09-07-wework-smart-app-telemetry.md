@@ -1,15 +1,4 @@
----
-sidebar_position: 1
-title: "[已废弃] 智能工作台首版统计实施计划"
-status: superseded
-superseded_by: 2026-09-09-wework-automatic-telemetry.md
----
-
-# [已废弃] 智能工作台首版统计 Implementation Plan
-
-> 本计划已由
-> [Wework 自动统计实施计划](./2026-09-09-wework-automatic-telemetry.md)
-> 取代，不得继续执行。本文仅保留为已经落地的早期实现记录。
+# 智能工作台首版统计 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
