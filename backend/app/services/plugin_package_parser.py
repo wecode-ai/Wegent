@@ -816,14 +816,22 @@ class PluginPackageParser:
                         status_code=400, detail="Invalid plugin accountAuth declaration"
                     ) from None
             seen.add(slug)
-            connectors.append(
-                PluginConnectorComponent(
-                    slug=slug,
-                    authPolicy=auth_policy,
-                    localAuth=local_auth,
-                    accountAuth=account_auth,
+            try:
+                connectors.append(
+                    PluginConnectorComponent(
+                        slug=slug,
+                        displayName=item.get("displayName"),
+                        description=item.get("description"),
+                        authorizationGroup=item.get("authorizationGroup"),
+                        authPolicy=auth_policy,
+                        localAuth=local_auth,
+                        accountAuth=account_auth,
+                    )
                 )
-            )
+            except ValidationError:
+                raise HTTPException(
+                    status_code=400, detail="Invalid plugin connector declaration"
+                ) from None
         return connectors
 
     def _parse_local_auth(self, raw: Any) -> PluginLocalAuthDefinition | None:

@@ -1502,6 +1502,22 @@ describe('CloudTodoWorkspace', () => {
 
   it('loads persisted task output for an in-progress Issue on the board', async () => {
     const workbenchServices = services()
+    const address = { deviceId: 'local-device', taskId: 'runtime-in-progress' }
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'stale-turn',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'stale-turn',
+      itemId: 'stale-assistant',
+      content: '旧的工具输出',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'stale-turn',
+    })
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
       {
         id: 2,
@@ -1576,6 +1592,9 @@ describe('CloudTodoWorkspace', () => {
 
     expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(
       '正在验证修复'
+    )
+    expect(screen.getByTestId('cloud-todo-card-final-response-WEG-1')).not.toHaveTextContent(
+      '旧的工具输出'
     )
     expect(getRuntimeTranscript).toHaveBeenCalledWith(
       expect.objectContaining({

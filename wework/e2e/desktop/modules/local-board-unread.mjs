@@ -7,13 +7,14 @@ export async function verifyLocalBoardUnread(control, taskTabTestId) {
   await control.command('waitFor', '[data-testid="cloud-project-header-title"]', {
     text: '我的任务',
   })
-  await control.command('markElementWithText', '[data-testid^="cloud-todo-card-drop-"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    value: 'local-unread-card',
-  })
-  const cardId = await control.command('getAttribute', '[data-e2e-anchor-id="local-unread-card"]', {
-    value: 'data-testid',
-  })
+  const cardId = await control.command(
+    'markElementWithText',
+    '[data-testid^="cloud-todo-card-drop-"]',
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      value: 'local-unread-card',
+    }
+  )
   assert.ok(cardId.startsWith('cloud-todo-card-drop-'))
   const itemId = cardId.slice('cloud-todo-card-drop-'.length)
   const cardSelector = `[data-testid="${cardId}"]`
