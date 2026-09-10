@@ -139,7 +139,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
         # Batch fetch online info from Redis using mget
         device_ids = [self._resolve_runtime_device_id(d) for d in cloud_devices]
         redis_keys = [self.generate_online_key(user_id, did) for did in device_ids]
-        online_info_map = await cache_manager.mget(redis_keys)
+        online_info_map = await cache_manager.mget_or_raise(redis_keys)
 
         # Build result list
         result = []
