@@ -813,6 +813,27 @@ function focusedViewport(node, viewport, canvasRect, rightPanelInset) {
   }
 }
 
+function nodeWithAbsolutePosition(node, nodesById) {
+  let parentId = node.parentId
+  let x = node.position.x
+  let y = node.position.y
+  const visited = new Set([node.id])
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = nodesById.get(parentId)
+    if (!parent) break
+    x += parent.position.x
+    y += parent.position.y
+    parentId = parent.parentId
+  }
+
+  return {
+    ...node,
+    position: { x, y },
+  }
+}
+
 function selectedCanvasNodeId(selectedNode) {
   if (selectedNode.type === 'trigger') return 'trigger'
   if (selectedNode.type === 'step') return selectedNode.id
@@ -835,6 +856,7 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
   useLayoutEffect(() => {
     const previousIds = previousNodeIds.current
     const priorSelectedId = previousSelectedId.current
+    const nodesById = new Map(nodes.map(node => [node.id, node]))
     const panelOpened = previousRightPanelInset.current === 0 && rightPanelInset > 0
     const addedNode =
       selectedNode.type === 'step' && !previousIds.has(selectedNode.id)
@@ -857,8 +879,14 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
 
     const canvas = canvasRef.current
     if (!canvas) return undefined
+    const absoluteTargetNode = nodeWithAbsolutePosition(targetNode, nodesById)
     void setViewport(
-      focusedViewport(targetNode, getViewport(), canvas.getBoundingClientRect(), rightPanelInset),
+      focusedViewport(
+        absoluteTargetNode,
+        getViewport(),
+        canvas.getBoundingClientRect(),
+        rightPanelInset
+      ),
       { duration: 240 }
     )
     return undefined
@@ -1451,7 +1479,7 @@ export function AutomationWorkflowCanvas({
       >
         <CanvasViewportFocus
           canvasRef={canvasRef}
-          nodes={graph.nodes.filter(node => !node.parentId)}
+          nodes={graph.nodes}
           rightPanelInset={rightPanelInset}
           selectedNode={selectedNode}
         />
