@@ -38,6 +38,7 @@
     "project_chat_cloud_required": "连接云端后可使用动态",
     "project_chat_load_failed": "动态加载失败",
     "project_chat_send_failed": "消息发送失败",
+    "retry_failed": "重试失败",
     "project_chat_close": "关闭问AI",
     "project_chat_loading": "正在加载动态…",
     "project_chat_empty_title": "问AI",
