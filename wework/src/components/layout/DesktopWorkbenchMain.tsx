@@ -1432,6 +1432,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     workspaceTarget,
     workspaceTargetError,
     environmentInfo,
+    conversationSummaryIsGitRepository,
     projectWork: paneProjectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges,
@@ -4290,6 +4291,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workspaceTarget={workspaceTarget}
       workspaceSessionApi={workspaceSessionApi}
       environmentInfo={environmentInfo}
+      conversationSummaryIsGitRepository={conversationSummaryIsGitRepository}
+      conversationMessages={paneMessages}
       environmentInfoPopoverContainer={environmentInfoPopoverContainer}
       environmentInfoVisible={Boolean(currentRuntimeTask)}
       environmentInfoDocked={forceEnvironmentInfoDocked ?? environmentInfoDocked}
@@ -4313,6 +4316,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onGenerateEnvironmentBranch={branchNameApi ? generateBranchName : undefined}
       environmentBranchNameSource={workbenchTitle ?? undefined}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
+      onOpenConversationWorkspaceFile={path => void openWorkspaceFileFromMessage(path)}
       onDeliver={
         experimentalFeaturesEnabled &&
         currentRuntimeTask &&
