@@ -1522,6 +1522,11 @@ async def task_heartbeat(task_id: str, http_request: Request):
 
     if not success:
         logger.warning(f"[TaskAPI] Failed to update heartbeat for task {task_id}")
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to update heartbeat",
+            headers={"Retry-After": "1"},
+        )
 
     return {"status": "ok", "task_id": task_id}
 
