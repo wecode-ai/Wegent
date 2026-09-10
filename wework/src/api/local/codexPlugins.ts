@@ -1,3 +1,4 @@
+import { observeOperation } from '@/telemetry/observeOperation'
 import i18n from '@/i18n'
 import { sha256Hex } from '@/api/fileHash'
 import { getErrorMessage } from '@/lib/error-message'
@@ -3019,59 +3020,61 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       )
     },
     async importPluginPackage(preview, overwrite) {
-      if (!isElectronRuntime()) {
-        throw new Error('Importing a plugin package requires the Wework desktop app')
-      }
-      if (!preview.valid || !preview.name) {
-        throw new Error('The selected plugin package did not pass validation')
-      }
-      const marketplacePath = await resolveWeworkPersonalMarketplacePath()
-      const imported = await requestLocalExecutor<LocalPluginPackageImportResult>(
-        'executor.plugins.import_package',
-        {
-          archivePath: preview.archivePath,
-          marketplacePath,
-          expectedSha256: preview.sha256,
-          overwrite,
+      return observeOperation('plugin.zip_import', async () => {
+        if (!isElectronRuntime()) {
+          throw new Error('Importing a plugin package requires the Wework desktop app')
         }
-      )
-      clearLocalCodexPluginsReadStateCache()
-      try {
-        const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
-          'runtime.codex.plugin.install_local_first',
+        if (!preview.valid || !preview.name) {
+          throw new Error('The selected plugin package did not pass validation')
+        }
+        const marketplacePath = await resolveWeworkPersonalMarketplacePath()
+        const imported = await requestLocalExecutor<LocalPluginPackageImportResult>(
+          'executor.plugins.import_package',
           {
-            marketplacePath: codexMarketplaceManifestSource(marketplacePath),
-            pluginName: imported.pluginName,
+            archivePath: preview.archivePath,
+            marketplacePath,
+            expectedSha256: preview.sha256,
+            overwrite,
           }
         )
-        if (!commit.localCommitted) {
-          throw new Error('Plugin package did not reach its local installation commit')
-        }
-        await requestLocalExecutor('executor.plugins.import_package.finalize', {
-          marketplacePath,
-          rollbackId: imported.rollbackId,
-        }).catch(error => {
-          console.warn('[Wework] failed to clear plugin import backup', error)
-        })
-        return {
-          pluginName: imported.pluginName,
-          displayName: imported.displayName,
-          version: imported.version,
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const commitMayStillBeRunning =
-          /local_plugin_commit_timeout/i.test(message) ||
-          /runtime\.codex\.plugin\.install_local_first timed out/i.test(message)
-        if (!commitMayStillBeRunning) {
-          await requestLocalExecutor('executor.plugins.import_package.rollback', {
+        clearLocalCodexPluginsReadStateCache()
+        try {
+          const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+            'runtime.codex.plugin.install_local_first',
+            {
+              marketplacePath: codexMarketplaceManifestSource(marketplacePath),
+              pluginName: imported.pluginName,
+            }
+          )
+          if (!commit.localCommitted) {
+            throw new Error('Plugin package did not reach its local installation commit')
+          }
+          await requestLocalExecutor('executor.plugins.import_package.finalize', {
             marketplacePath,
             rollbackId: imported.rollbackId,
-          }).catch(() => undefined)
+          }).catch(error => {
+            console.warn('[Wework] failed to clear plugin import backup', error)
+          })
+          return {
+            pluginName: imported.pluginName,
+            displayName: imported.displayName,
+            version: imported.version,
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const commitMayStillBeRunning =
+            /local_plugin_commit_timeout/i.test(message) ||
+            /runtime\.codex\.plugin\.install_local_first timed out/i.test(message)
+          if (!commitMayStillBeRunning) {
+            await requestLocalExecutor('executor.plugins.import_package.rollback', {
+              marketplacePath,
+              rollbackId: imported.rollbackId,
+            }).catch(() => undefined)
+          }
+          clearLocalCodexPluginsReadStateCache()
+          throw new Error(`Plugin package installation failed: ${message}`, { cause: error })
         }
-        clearLocalCodexPluginsReadStateCache()
-        throw new Error(`Plugin package installation failed: ${message}`, { cause: error })
-      }
+      })
     },
     savePluginExample(destinationPath) {
       if (!isElectronRuntime()) {

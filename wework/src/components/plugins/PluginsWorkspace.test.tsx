@@ -57,7 +57,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMock,
 }))
 
-vi.mock('@/telemetry/client', () => telemetryMocks)
+vi.mock('@/telemetry/businessEvents', () => ({ trackPluginEvent: telemetryMocks.track }))
 vi.mock('@/api/cloud/connectorApps', () => ({
   authorizeWegentConnector: vi.fn(),
   listWegentConnectorApps: vi.fn(),
@@ -4436,7 +4436,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
     expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
     await waitFor(() =>
-      expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'local' })
+      expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'cloud' })
     )
   })
 

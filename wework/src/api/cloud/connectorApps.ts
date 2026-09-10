@@ -1,3 +1,5 @@
+import { beginOperation } from '@/telemetry/operationBus'
+import { observeOperation } from '@/telemetry/observeOperation'
 import { createHttpClient } from '@/api/http'
 import type { CloudAuthorizationHandle } from '@/features/cloud-connection/CloudConnectionContext'
 
@@ -125,8 +127,8 @@ export function disconnectWegentConnector(
   token: string,
   slug: string
 ): Promise<null> {
-  return client(apiBaseUrl, token).delete<null>(
-    `/connector-apps/${encodeURIComponent(slug)}/connection`
+  return observeOperation('plugin.disconnect', () =>
+    client(apiBaseUrl, token).delete<null>(`/connector-apps/${encodeURIComponent(slug)}/connection`)
   )
 }
 
@@ -140,28 +142,42 @@ export async function authorizeWegentConnector(
   slug: string,
   openAuthorizationUrl: (url: string) => Promise<CloudAuthorizationHandle | void>
 ): Promise<WegentConnectorConnection> {
-  const session = await createConnectorOAuthSession(apiBaseUrl, token, slug)
-  const authorizationHandle = await openAuthorizationUrl(session.authorize_url)
-  let windowClosed = false
-  void authorizationHandle?.closed?.then(() => {
-    windowClosed = true
-  })
-  const intervalMs = Math.max(500, session.poll_interval_seconds * 1000)
-  while (Date.now() < session.expires_at * 1000) {
-    await delay(intervalMs)
-    const result = await pollConnectorOAuthSession(apiBaseUrl, token, session)
-    if (result.status === 'pending') {
-      if (windowClosed) throw new Error('GitHub 授权窗口已关闭')
-      continue
+  const attempt = beginOperation('plugin.authorize')
+  try {
+    const session = await createConnectorOAuthSession(apiBaseUrl, token, slug)
+    const authorizationHandle = await openAuthorizationUrl(session.authorize_url)
+    let windowClosed = false
+    void authorizationHandle?.closed?.then(() => {
+      windowClosed = true
+    })
+    const intervalMs = Math.max(500, session.poll_interval_seconds * 1000)
+    while (Date.now() < session.expires_at * 1000) {
+      await delay(intervalMs)
+      const result = await pollConnectorOAuthSession(apiBaseUrl, token, session)
+      if (result.status === 'pending') {
+        if (windowClosed) {
+          attempt.cancel()
+          throw new Error('GitHub 授权窗口已关闭')
+        }
+        continue
+      }
+      if (result.status === 'declined') {
+        attempt.cancel()
+        throw new Error('GitHub 授权已取消')
+      }
+      if (result.status === 'failed') {
+        throw new Error(result.error || 'GitHub 授权失败')
+      }
+      if (!result.connection) throw new Error('GitHub 授权状态缺失')
+      await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
+      if (result.connection.status === 'connected') attempt.succeed()
+      else attempt.fail('confirm')
+      notifyConnectorAuthorizationChanged()
+      return result.connection
     }
-    if (result.status === 'declined') throw new Error('GitHub 授权已取消')
-    if (result.status === 'failed') {
-      throw new Error(result.error || 'GitHub 授权失败')
-    }
-    if (!result.connection) throw new Error('GitHub 授权状态缺失')
-    await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
-    notifyConnectorAuthorizationChanged()
-    return result.connection
+    throw new Error('GitHub 授权已超时')
+  } catch (error) {
+    attempt.fail('request')
+    throw error
   }
-  throw new Error('GitHub 授权已超时')
 }

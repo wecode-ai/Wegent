@@ -32,7 +32,7 @@ describe('operation bus', () => {
 
   test('rejects unknown operation keys', () => {
     expect(() => beginOperation('smart_app.remove' as 'smart_app.install')).toThrow(
-      'Unknown Smart App operation: smart_app.remove'
+      'Unknown telemetry operation: smart_app.remove'
     )
   })
 })

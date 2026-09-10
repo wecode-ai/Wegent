@@ -28,6 +28,25 @@ function smartAppFact(name: WeworkTelemetryFact['name']): WeworkTelemetryFact {
 }
 
 describe('telemetry dispatcher', () => {
+  test('strips private plugin properties and internal identity from public observations', () => {
+    const accept = vi.fn()
+    const dispatcher = createTelemetryDispatcher({
+      distribution: 'public',
+      internalSinks: () => [],
+      publicSink: { id: 'public', accept },
+    })
+    dispatcher.publish({
+      name: 'plugin_installed',
+      occurredAt: '2026-09-10',
+      properties: { source: 'local', path: '/private/plugin', plugin_name: 'private' },
+      context: { user: { id: 7, email: 'private@example.invalid', userName: 'private' } },
+    } as WeworkTelemetryFact)
+    expect(accept).toHaveBeenCalledWith({
+      name: 'plugin_installed',
+      properties: { source: 'local' },
+    })
+  })
+
   test('projects public fields and does not forward internal context', async () => {
     const publicSink = vi.fn()
     const internalSink = vi.fn()

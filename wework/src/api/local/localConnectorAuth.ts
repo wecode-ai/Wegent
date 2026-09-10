@@ -1,3 +1,4 @@
+import { observeOperation } from '@/telemetry/observeOperation'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type { PluginLocalAuthDefinition } from '@/types/api'
 
@@ -100,7 +101,11 @@ export function localConnectorAuthCancel(target: LocalConnectorAuthTarget, sessi
 
 export function localConnectorAuthLogout(target: LocalConnectorAuthTarget) {
   okHealthCache.delete(healthCacheKey(target))
-  return callLocalConnectorAuth('logout', target)
+  return observeOperation(
+    'plugin.disconnect',
+    () => callLocalConnectorAuth('logout', target),
+    result => result.status === 'ok'
+  )
 }
 
 export function isLocalConnector(

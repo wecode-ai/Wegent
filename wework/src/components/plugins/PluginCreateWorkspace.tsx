@@ -10,7 +10,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
-import { track } from '@/telemetry/client'
+import { beginOperation } from '@/telemetry/operationBus'
 
 interface PluginCreateWorkspaceProps {
   sidebarCollapsed?: boolean
@@ -156,6 +156,7 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
       value,
     ].join('\n')
 
+    const attempt = beginOperation('plugin.create_request')
     try {
       const sent = await sendCurrentInput(message, {
         forceNewTask: true,
@@ -163,13 +164,13 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
         onError: setSubmitError,
       })
       if (sent) {
-        track('feature_action_completed', { domain: 'plugin', action: 'create' })
+        attempt.succeed()
         navigateTo('/')
       } else {
-        track('operation_failed', { operation: 'plugin_action' })
+        attempt.fail('request')
       }
     } catch (error) {
-      track('operation_failed', { operation: 'plugin_action' })
+      attempt.fail('request')
       setSubmitError(error instanceof Error ? error.message : String(error))
     } finally {
       setIsSubmitting(false)

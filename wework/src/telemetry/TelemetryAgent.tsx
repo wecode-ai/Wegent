@@ -1,3 +1,7 @@
+import type { WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { subscribeBusinessEvents } from './businessEvents'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { stripAppBasePath } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
@@ -10,7 +14,7 @@ import { trackEvent, useTelemetryEnabled } from './client'
 import { getTelemetryConfig } from './config'
 import { createTelemetryDispatcher } from './dispatcher'
 import type {
-  SmartAppTelemetryEvent,
+  DomainTelemetryEvent,
   WeworkTelemetryContext,
   WeworkTelemetryFact,
   WeworkTelemetrySink,
@@ -88,7 +92,7 @@ function routeContext(
 }
 
 function fact(
-  event: SmartAppTelemetryEvent,
+  event: import('./events').AnalyticsEvent,
   context?: WeworkTelemetryContext
 ): WeworkTelemetryFact {
   return {
@@ -98,22 +102,24 @@ function fact(
   }
 }
 
-function operationEvent(result: OperationResult): SmartAppTelemetryEvent {
-  const action = result.key.slice('smart_app.'.length)
-  const name = `smart_app_${action}_${result.outcome}` as SmartAppTelemetryEvent['name']
+function operationEvent(result: OperationResult): DomainTelemetryEvent {
+  const [domain, action] = result.key.split('.')
+  const name = `${domain}_${action}_${result.outcome}` as DomainTelemetryEvent['name']
   return (
     result.outcome === 'failed'
       ? {
           name,
-          properties: { domain: 'smart_app', failure_stage: result.failureStage! as never },
+          properties: { domain, failure_stage: result.failureStage! as never },
         }
-      : { name, properties: { domain: 'smart_app' } }
-  ) as SmartAppTelemetryEvent
+      : { name, properties: { domain } }
+  ) as DomainTelemetryEvent
 }
 
 export function TelemetryAgent() {
   const { isLoading, user } = useAuth()
   const { pathname, search } = useTelemetryLocation()
+  const routes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
+  const feature = routes.find(route => route.path === pathname)?.telemetryFeature
   const distribution = getTelemetryConfig().distribution
   const publicTelemetryEnabled = useTelemetryEnabled()
   const lastRouteKeyRef = useRef<string | null>(null)
@@ -125,6 +131,18 @@ export function TelemetryAgent() {
         publicSink: distribution === 'public' ? { accept: trackEvent, id: 'public' } : null,
       }),
     [distribution]
+  )
+
+  useEffect(
+    () =>
+      subscribeBusinessEvents(event => {
+        dispatcher.publish({
+          ...event,
+          context: userContext(distribution, user),
+          occurredAt: new Date().toISOString(),
+        })
+      }),
+    [dispatcher, distribution, user]
   )
 
   useEffect(() => subscribeDshTelemetrySinks(() => dispatcher.flushInternalSinks()), [dispatcher])
@@ -144,9 +162,18 @@ export function TelemetryAgent() {
   useEffect(() => {
     if (isLoading) return
     const routeKey = `${pathname}${search}`
-    const event = resolveTelemetryRoute(pathname, search)
+    const event =
+      resolveTelemetryRoute(pathname, search) ??
+      (feature === 'plugins' || feature === 'plugin_management'
+        ? {
+            name: 'plugin_center_opened' as const,
+            properties: {
+              surface: feature === 'plugins' ? ('catalog' as const) : ('management' as const),
+            },
+          }
+        : null)
     if (!event) {
-      lastRouteKeyRef.current = routeKey
+      lastRouteKeyRef.current = null
       return
     }
     if (lastRouteKeyRef.current === routeKey) return
@@ -154,7 +181,7 @@ export function TelemetryAgent() {
 
     lastRouteKeyRef.current = routeKey
     dispatcher.publish(fact(event, routeContext(distribution, pathname, user)))
-  }, [dispatcher, distribution, isLoading, pathname, publicTelemetryEnabled, search, user])
+  }, [dispatcher, distribution, feature, isLoading, pathname, publicTelemetryEnabled, search, user])
 
   return null
 }

@@ -1,3 +1,4 @@
+import { observeOperation } from '@/telemetry/observeOperation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { UnlistenFn } from '@/desktop/disposeDesktopListener'
 
@@ -115,25 +116,43 @@ export const harnessAppsApi = {
     description: string
     template: SmartAppTemplate
   }) {
-    return invokeDesktopHost<HarnessAppInstallation>('smartApps.createDirectory', input)
+    return observeOperation(
+      'smart_app.create',
+      () => invokeDesktopHost<HarnessAppInstallation>('smartApps.createDirectory', input),
+      result => result.state === 'installed' || result.state === 'running'
+    )
   },
   linkDirectory(directoryPath: string) {
-    return invokeDesktopHost<HarnessAppInstallation>('smartApps.linkDirectory', { directoryPath })
+    return observeOperation(
+      'smart_app.link',
+      () => invokeDesktopHost<HarnessAppInstallation>('smartApps.linkDirectory', { directoryPath }),
+      result => result.state === 'installed' || result.state === 'running'
+    )
   },
   addPlugin(installationId: string, pluginSpec: string) {
-    return invokeDesktopHost<HarnessAppInstallation>('smartApps.addPlugin', {
-      installationId,
-      pluginSpec,
-    })
+    return observeOperation(
+      'smart_app.add_plugin',
+      () =>
+        invokeDesktopHost<HarnessAppInstallation>('smartApps.addPlugin', {
+          installationId,
+          pluginSpec,
+        }),
+      result => result.state === 'installed' || result.state === 'running'
+    )
   },
   copyToDirectory(
     installationId: string,
     input: { parentPath: string; name: string; displayName: string }
   ) {
-    return invokeDesktopHost<HarnessAppInstallation>('smartApps.copyToDirectory', {
-      installationId,
-      ...input,
-    })
+    return observeOperation(
+      'smart_app.copy',
+      () =>
+        invokeDesktopHost<HarnessAppInstallation>('smartApps.copyToDirectory', {
+          installationId,
+          ...input,
+        }),
+      result => result.state === 'installed' || result.state === 'running'
+    )
   },
   preview(archivePath: string) {
     return invokeDesktopHost<HarnessAppPreview>('smartApps.preview', { archivePath })
@@ -156,9 +175,11 @@ export const harnessAppsApi = {
     })
   },
   async exportToDownloads(installationId: string): Promise<HarnessAppSavedExport> {
-    return invokeDesktopHost<HarnessAppSavedExport>('smartApps.exportToDownloads', {
-      installationId,
-    })
+    return observeOperation('smart_app.export', () =>
+      invokeDesktopHost<HarnessAppSavedExport>('smartApps.exportToDownloads', {
+        installationId,
+      })
+    )
   },
   upload(archivePath: string, uploadUrl: string) {
     return invokeDesktopHost<void>('smartApps.upload', { archivePath, uploadUrl })
@@ -185,27 +206,45 @@ export const harnessAppsApi = {
     contextBaseUrl: string | null = null,
     contextToken: string | null = null
   ) {
-    return invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
-      installationId,
-      modelBaseUrl,
-      contextBaseUrl,
-      contextToken,
-    })
+    return observeOperation(
+      'smart_app.start',
+      () =>
+        invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
+          installationId,
+          modelBaseUrl,
+          contextBaseUrl,
+          contextToken,
+        }),
+      result => result.state === 'running'
+    )
   },
   stop(installationId: string) {
-    return invokeDesktopHost<void>('smartApps.stop', { installationId })
+    return observeOperation('smart_app.stop', () =>
+      invokeDesktopHost<void>('smartApps.stop', { installationId })
+    )
   },
   verify(installationId: string) {
-    return invokeDesktopHost<HarnessAppVerificationReport>('smartApps.verify', { installationId })
+    return observeOperation(
+      'smart_app.verify',
+      () => invokeDesktopHost<HarnessAppVerificationReport>('smartApps.verify', { installationId }),
+      result => result.status === 'passed'
+    )
   },
   update(installationId: string, updates: { modelKey?: string; resident?: boolean }) {
-    return invokeDesktopHost<HarnessAppInstallation>('smartApps.update', {
-      installationId,
-      ...updates,
-    })
+    return observeOperation(
+      'smart_app.configure',
+      () =>
+        invokeDesktopHost<HarnessAppInstallation>('smartApps.update', {
+          installationId,
+          ...updates,
+        }),
+      result => result.state === 'installed' || result.state === 'running'
+    )
   },
   delete(installationId: string, deleteData = false) {
-    return invokeDesktopHost<void>('smartApps.delete', { installationId, deleteData })
+    return observeOperation('smart_app.uninstall', () =>
+      invokeDesktopHost<void>('smartApps.delete', { installationId, deleteData })
+    )
   },
 }
 

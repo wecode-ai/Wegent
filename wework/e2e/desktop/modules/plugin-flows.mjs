@@ -699,6 +699,7 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugin-import-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.awaitTelemetryEvent('plugin_center_opened')
   const importSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     importSnapshot.testIds.includes('plugin-import-select') &&
@@ -738,6 +739,7 @@ async function verifyMarketplacePluginLifecycle({
       })
     )
     const importElapsedMs = Date.now() - importStartedAt
+    await control.awaitTelemetryEvent('plugin_zip_import_succeeded')
     assert.equal(imported.pluginName, 'direct-remote-mcp-plugin')
     assert.ok(
       importElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,

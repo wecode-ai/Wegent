@@ -1,3 +1,5 @@
+import type { AnalyticsEvent } from './events'
+import type { PluginGeneratedEventMap } from './generated/pluginEvents'
 import type { SmartAppGeneratedEventMap } from './generated/smartAppEvents'
 
 export const TELEMETRY_SINK_PROTOCOL = 'telemetry-sink/v1' as const
@@ -8,6 +10,15 @@ export type SmartAppTelemetryEvent = {
     readonly properties: SmartAppGeneratedEventMap[Name]
   }
 }[keyof SmartAppGeneratedEventMap]
+
+export type DomainTelemetryEvent =
+  | SmartAppTelemetryEvent
+  | {
+      [Name in keyof PluginGeneratedEventMap]: {
+        readonly name: Name
+        readonly properties: PluginGeneratedEventMap[Name]
+      }
+    }[keyof PluginGeneratedEventMap]
 
 export interface SmartAppIdentityContext {
   readonly key: string
@@ -27,7 +38,7 @@ export interface WeworkTelemetryContext {
   readonly user?: TelemetryUserContext
 }
 
-export type WeworkTelemetryFact = SmartAppTelemetryEvent & {
+export type WeworkTelemetryFact = AnalyticsEvent & {
   readonly context?: WeworkTelemetryContext
   readonly occurredAt: string
 }

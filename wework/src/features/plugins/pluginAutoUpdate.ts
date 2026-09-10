@@ -1,3 +1,4 @@
+import { beginOperation } from '@/telemetry/operationBus'
 import type {
   PluginAutoUpdateBatchResponse,
   PluginDeviceSyncResponse,
@@ -70,6 +71,29 @@ function hasFailedReleaseGap(item: PluginUpdateState): boolean {
 }
 
 export async function runPluginAutoUpdate({
+  updateBatch,
+  syncDevice,
+  syncWhenNoUpdates = false,
+  onProgress,
+}: PluginAutoUpdateDependencies): Promise<number> {
+  const attempt = beginOperation('plugin.auto_update')
+  try {
+    const count = await runPluginAutoUpdatePass({
+      updateBatch,
+      syncDevice,
+      syncWhenNoUpdates,
+      onProgress,
+    })
+    if (count > 0 || syncWhenNoUpdates) attempt.succeed()
+    else attempt.cancel()
+    return count
+  } catch (error) {
+    attempt.fail('request')
+    throw error
+  }
+}
+
+async function runPluginAutoUpdatePass({
   updateBatch,
   syncDevice,
   syncWhenNoUpdates = false,
