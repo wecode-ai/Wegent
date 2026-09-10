@@ -36,6 +36,7 @@ import {
   applyRequestUserInputResponseToBlock,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
+  requestUserInputResponseText,
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
@@ -118,6 +119,7 @@ import {
   createRuntimeUserMessage,
   type RuntimeUserMessageOptions,
 } from '@/features/workbench/runtimeUserMessage'
+import { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -178,8 +180,7 @@ interface PendingRuntimeGoalState {
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
-export const RUNTIME_RETRY_CONTINUATION_PROMPT =
-  'Continue the unfinished work from the previous turn. Use the existing conversation context and do not repeat work that is already complete.'
+export { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
 const EMPTY_ATTACHMENT_STATE = {
   attachments: [],
   uploadingFiles: new Map(),
@@ -3468,12 +3469,4 @@ function createPendingRuntimeGoal(objective: string): RuntimeGoal {
     createdAt: now,
     updatedAt: now,
   }
-}
-
-function requestUserInputResponseText(response: RequestUserInputResponse): string {
-  const answers = Object.values(response.answers)
-    .flatMap(answer => answer.answers)
-    .map(answer => answer.trim())
-    .filter(Boolean)
-  return answers.length > 0 ? answers.join('\n') : '继续'
 }
