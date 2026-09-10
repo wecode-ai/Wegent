@@ -520,6 +520,19 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
+  test('settles a live turn when its active Goal is explicitly paused', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+    store.turnStarted(address, 'live-turn')
+
+    store.goalStatusReceived(address, 'paused')
+
+    expect(store.getTask(address)?.goalStatus).toBe('paused')
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('recovers a completed task from a confirmed active snapshot without a terminal Goal', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(

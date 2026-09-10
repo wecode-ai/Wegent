@@ -212,7 +212,7 @@ export function reduceRuntimeTaskLifecycle(
         state.goalStatus === 'active' &&
         event.goalStatus !== null &&
         event.goalStatus !== 'active' &&
-        state.turnPhase === 'idle'
+        (event.goalStatus !== 'complete' || state.turnPhase === 'idle')
       return goalJustSettled
         ? {
             ...state,
