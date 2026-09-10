@@ -685,7 +685,11 @@ export function createDesktopScenario({
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
         'The second active device did not restore the shared transcript before diverging'
       )
-      await control.command('click', `[data-testid="runtime-local-task-row-${transcriptId}"]`)
+      const deviceCRestoredTaskRowSelector = `[data-testid="runtime-local-task-row-${transcriptId}"]`
+      await control.command('waitFor', deviceCRestoredTaskRowSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', deviceCRestoredTaskRowSelector)
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: REMOTE_PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -753,7 +757,6 @@ export function createDesktopScenario({
       const [forkTranscriptId, forkTranscript] = forkEntry
       assert.equal(forkTranscript.turns[0].payload.assistantMessage, THIRD_COMPLETION)
       assert.equal(activeTranscript().turns[3].payload.assistantMessage, REMOTE_COMPLETION)
-      assert.equal(sqliteOutboxCount(deviceBOutboxPath), 0)
       await waitFor(
         async () => {
           const index = JSON.parse(
@@ -763,6 +766,11 @@ export function createDesktopScenario({
         },
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
         'The fork and original transcript did not become two independent local conversations'
+      )
+      await waitFor(
+        () => sqliteOutboxCount(deviceBOutboxPath) === 0,
+        uiTimeoutMs,
+        'The acknowledged branch turn was not removed from the outbox'
       )
       await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
         text: '同步正常',
