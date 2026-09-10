@@ -6,6 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 classifier="$script_dir/classify-ci-changes.sh"
 desktop_classifier="$script_dir/classify-wework-desktop-e2e.sh"
+plugin_auth_classifier="$script_dir/classify-plugin-auth-sdk.sh"
 cloud_checkpoint_flows="$repo_root/wework/e2e/desktop/modules/cloud-checkpoint-flows.mjs"
 desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.mjs"
 desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
@@ -76,6 +77,25 @@ assert_invalid_cloud_shards_rejected() {
 
 assert_invalid_desktop_shards_rejected
 assert_invalid_cloud_shards_rejected
+
+assert_plugin_auth_case() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$plugin_auth_classifier" "$@")"
+  if [[ "$output" != "plugin_auth_sdk=$expected" ]]; then
+    printf 'Plugin auth case "%s" failed: %s\n' "$name" "$output" >&2
+    exit 1
+  fi
+}
+
+assert_plugin_auth_case "unrelated Wework change" false \
+  "wework/src/App.tsx"
+assert_plugin_auth_case "native auth source" true \
+  "executor/src/plugin_account_auth/mod.rs"
+assert_plugin_auth_case "explicit full regression" true --all
 
 assert_checkpoint_runtime_failure_rejected() {
   local temp_dir
@@ -896,9 +916,9 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
       exit 1
     fi
   elif ! grep -Fq \
-    "FORCE_ALL: \${{ github.event_name != 'pull_request'" \
+    "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'" \
     "$workflow_path"; then
-    printf '%s must force all E2E outside pull request events\n' \
+    printf '%s must reserve full E2E for scheduled, dispatched, or ci:all runs\n' \
       "$workflow" >&2
     exit 1
   fi
@@ -906,20 +926,41 @@ done
 
 for workflow in test.yml lint.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
-  if ! grep -q "classify-ci-changes.sh --all" "$workflow_path"; then
-    printf '%s must classify every module for merge groups\n' "$workflow" >&2
-    exit 1
-  fi
   if ! grep -q "merge_group:" "$workflow_path"; then
-    printf '%s must run for merge queue groups\n' "$workflow" >&2
+    printf '%s must publish its required summary in merge groups\n' "$workflow" >&2
     exit 1
   fi
-  if ! grep -q "GITHUB_EVENT_NAME.*merge_group\\|github.event_name == 'merge_group'" \
-    "$workflow_path"; then
-    printf '%s must classify every module for merge groups\n' "$workflow" >&2
+  if ! grep -Fq "if: github.event_name != 'merge_group'" "$workflow_path" ||
+    ! grep -Fq "if: github.event_name == 'merge_group'" "$workflow_path" ||
+    ! grep -Fq "name: Confirm E2E-only merge queue" "$workflow_path"; then
+    printf '%s must replace module checks with one summary in merge groups\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -Fq "ci:all" "$workflow_path"; then
+    printf '%s must keep full regression available through ci:all\n' "$workflow" >&2
     exit 1
   fi
 done
+
+plugin_auth_workflow="$script_dir/../workflows/plugin-auth-sdk.yml"
+if workflow_has_top_level_trigger "$plugin_auth_workflow" "push"; then
+  printf 'plugin-auth-sdk.yml must not repeat merge queue validation after entering main\n' >&2
+  exit 1
+fi
+if workflow_has_top_level_trigger "$plugin_auth_workflow" "merge_group"; then
+  printf 'plugin-auth-sdk.yml must not run in the merge queue\n' >&2
+  exit 1
+fi
+plugin_auth_gated_job_count="$(
+  grep -Fc "if: needs.changes.outputs.plugin_auth_sdk == 'true'" \
+    "$plugin_auth_workflow"
+)"
+if ! grep -Fq "ci:all" "$plugin_auth_workflow" ||
+  [[ "$plugin_auth_gated_job_count" -ne 3 ]]; then
+  printf 'plugin-auth-sdk.yml must be path-scoped and full under ci:all\n' >&2
+  exit 1
+fi
 
 assert_workflow_trigger_case "block mapping push trigger" "true" $'on:\n  push:\n  pull_request:'
 assert_workflow_trigger_case "block mapping with on comment" "true" $'on: # workflow triggers\n  push:\n  pull_request:'
