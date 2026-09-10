@@ -252,7 +252,7 @@ and verification in the configured release environment.
 ### Local authorization diagnostic stream
 
 Local authorization commands can emit JSON lines prefixed with
-`WEGENT_PLUGIN_AUTH_DIAGNOSTIC:` on stderr. The Executor consumes them before the
+`WEWORK_PLUGIN_AUTH_DIAGNOSTIC:` on stderr. The Executor consumes them before the
 command exits and records allowlisted fields in the existing `executor.log`,
 which is already included in unified feedback exports. Stdout remains the command
 JSON result; plugins must not write directly to the Executor log file.

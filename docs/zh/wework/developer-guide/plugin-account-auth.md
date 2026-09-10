@@ -233,7 +233,7 @@ pnpm --filter wework e2e:desktop --cloud-only --segment plugin-account-auth
 
 ### 本机授权诊断流
 
-本机授权命令可通过 stderr 输出 `WEGENT_PLUGIN_AUTH_DIAGNOSTIC:` 前缀的 JSON 行。
+本机授权命令可通过 stderr 输出 `WEWORK_PLUGIN_AUTH_DIAGNOSTIC:` 前缀的 JSON 行。
 Executor 在命令退出前持续读取，筛选约定字段后写入现有 `executor.log`，复用统一反馈
 导出。stdout 仍只承载命令 JSON 结果；插件不应直接写 Executor 的日志文件。
 

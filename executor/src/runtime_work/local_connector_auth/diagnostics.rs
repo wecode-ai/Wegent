@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-const PREFIX: &str = "WEGENT_PLUGIN_AUTH_DIAGNOSTIC:";
+const PREFIX: &str = "WEWORK_PLUGIN_AUTH_DIAGNOSTIC:";
 const MAX_LINE: usize = 4096;
 const MAX_EVENTS: usize = 256;
 
