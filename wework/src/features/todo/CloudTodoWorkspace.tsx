@@ -1418,6 +1418,13 @@ export function CloudTodoWorkspace({
     contextKey: string
     itemId: string
   } | null>(null)
+  const openBoardRuntimeTask = useCallback(
+    (address: RuntimeTaskAddress) => {
+      setPinnedBoardPreview(null)
+      return onOpenRuntimeTask?.(address)
+    },
+    [onOpenRuntimeTask]
+  )
   const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
     useState<PendingExecutionConfiguration | null>(null)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
@@ -5367,7 +5374,7 @@ export function CloudTodoWorkspace({
                                       }
                                       onMarkRead={markItemRead}
                                       onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
-                                      onOpenRuntimeTask={onOpenRuntimeTask}
+                                      onOpenRuntimeTask={openBoardRuntimeTask}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}

@@ -58,6 +58,7 @@ export function RequestUserInputCard({
 }: RequestUserInputCardProps) {
   const { t } = useTranslation('chat')
   const formRef = useRef<HTMLFormElement | null>(null)
+  const submitInFlightRef = useRef(false)
   const questions = useMemo(
     () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
     [payload, t]
@@ -85,7 +86,7 @@ export function RequestUserInputCard({
     answersOverride?: Record<string, string>,
     activeQuestionIdOverride?: string | null
   ): Promise<boolean> => {
-    if (isDisabled || questions.length === 0 || !onSubmit) return false
+    if (isDisabled || submitInFlightRef.current || questions.length === 0 || !onSubmit) return false
 
     const effectiveAnswers = answersOverride ?? selectedAnswers
     const answers = responseAnswers(
@@ -93,13 +94,18 @@ export function RequestUserInputCard({
       effectiveAnswers,
       activeQuestionIdOverride ?? activeQuestionId
     )
-    const accepted = await onSubmit({
-      requestId: payload.requestId ?? payload.request_id,
-      itemId: payload.itemId ?? payload.item_id,
-      answers,
-    })
-    if (accepted !== false) setSubmitted(true)
-    return accepted !== false
+    submitInFlightRef.current = true
+    try {
+      const accepted = await onSubmit({
+        requestId: payload.requestId ?? payload.request_id,
+        itemId: payload.itemId ?? payload.item_id,
+        answers,
+      })
+      if (accepted !== false) setSubmitted(true)
+      return accepted !== false
+    } finally {
+      submitInFlightRef.current = false
+    }
   }
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
