@@ -471,6 +471,12 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.fileChanges !== undefined && {
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
           }),
+          ...(payload.output !== undefined && { output: payload.output }),
+          ...(payload.summary !== undefined && { summary: payload.summary }),
+          ...(payload.parentToolUseId !== undefined && {
+            parentToolUseId: payload.parentToolUseId,
+          }),
+          ...(payload.agentStatus !== undefined && { agentStatus: payload.agentStatus }),
           ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
           ...(payload.completedAt !== undefined && { completedAt: payload.completedAt }),
           ...(payload.durationMs !== undefined && { durationMs: payload.durationMs }),
@@ -1053,6 +1059,12 @@ function normalizeProcessingBlock(
     completedAt,
     ...(durationMs !== undefined && { durationMs }),
   }
+  const parentToolUseId =
+    typeof block.parentToolUseId === 'string'
+      ? block.parentToolUseId
+      : typeof block.parent_tool_use_id === 'string'
+        ? block.parent_tool_use_id
+        : undefined
   if (block.type === 'tool') {
     const id =
       typeof block.id === 'string'
@@ -1092,6 +1104,7 @@ function normalizeProcessingBlock(
             ? block.tool_output_original_bytes
             : undefined,
       renderPayload: normalizeToolRenderPayload(block),
+      ...(parentToolUseId && { parentToolUseId }),
       ...timing,
     }
   }
@@ -1110,6 +1123,7 @@ function normalizeProcessingBlock(
         ...(typeof block.revised_prompt === 'string' && { revisedPrompt: block.revised_prompt }),
         ...(typeof block.saved_path === 'string' && { savedPath: block.saved_path }),
       },
+      ...(parentToolUseId && { parentToolUseId }),
       ...timing,
     }
   }
@@ -1134,6 +1148,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
+      ...(parentToolUseId && { parentToolUseId }),
       ...timing,
     }
   }
@@ -1164,6 +1179,7 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
+      ...(parentToolUseId && { parentToolUseId }),
       ...timing,
     }
   }
@@ -1194,6 +1210,72 @@ function normalizeProcessingBlock(
           : typeof block.content_original_chars === 'number'
             ? block.content_original_chars
             : undefined,
+      ...(parentToolUseId && { parentToolUseId }),
+      ...timing,
+    }
+  }
+
+  if (block.type === 'subagent') {
+    const id =
+      typeof block.id === 'string'
+        ? block.id
+        : typeof block.tool_use_id === 'string'
+          ? block.tool_use_id
+          : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
+    const children = Array.isArray(block.children)
+      ? normalizeProcessingBlocks(subtaskId, block.children, timestamp)
+      : undefined
+    return {
+      id,
+      subtaskId,
+      type: 'subagent',
+      toolName:
+        typeof block.toolName === 'string'
+          ? block.toolName
+          : typeof block.tool_name === 'string'
+            ? block.tool_name
+            : undefined,
+      agentType:
+        typeof block.agentType === 'string'
+          ? block.agentType
+          : typeof block.agent_type === 'string'
+            ? block.agent_type
+            : undefined,
+      agentId:
+        typeof block.agentId === 'string'
+          ? block.agentId
+          : typeof block.agent_id === 'string'
+            ? block.agent_id
+            : undefined,
+      agentThreadId:
+        typeof block.agentThreadId === 'string'
+          ? block.agentThreadId
+          : typeof block.agent_thread_id === 'string'
+            ? block.agent_thread_id
+            : undefined,
+      agentPath:
+        typeof block.agentPath === 'string'
+          ? block.agentPath
+          : typeof block.agent_path === 'string'
+            ? block.agent_path
+            : undefined,
+      agentStatus:
+        block.agentStatus === 'running' ||
+        block.agentStatus === 'done' ||
+        block.agentStatus === 'interrupted'
+          ? block.agentStatus
+          : block.agent_status === 'running' ||
+              block.agent_status === 'done' ||
+              block.agent_status === 'interrupted'
+            ? block.agent_status
+            : undefined,
+      title: typeof block.title === 'string' ? block.title : undefined,
+      description: typeof block.description === 'string' ? block.description : undefined,
+      output: typeof block.output === 'string' ? block.output : undefined,
+      summary: typeof block.summary === 'string' ? block.summary : undefined,
+      ...(children?.length && { children }),
+      ...(parentToolUseId && { parentToolUseId }),
       ...timing,
     }
   }
@@ -1208,6 +1290,7 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'file_changes',
       fileChanges,
+      ...(parentToolUseId && { parentToolUseId }),
       ...timing,
     }
   }

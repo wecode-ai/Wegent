@@ -1045,6 +1045,7 @@ describe('DesktopWorkbenchLayout', () => {
     onOpenStandaloneWorkspace?: (...args: unknown[]) => Promise<void> | void
     onOpenRuntimeTask?: (...args: unknown[]) => Promise<void> | void
     onSearchRuntimeWork?: (...args: unknown[]) => Promise<unknown>
+    onLoadRuntimeTranscriptForPane?: WorkbenchContextValue['loadRuntimeTranscriptForPane']
     onCancelRuntimePaneTask?: WorkbenchContextValue['cancelRuntimePaneTask']
     onForkCurrentRuntimeTask?: WorkbenchContextValue['forkCurrentRuntimeTask']
     onListImPrivateSessions?: () => Promise<unknown>
@@ -1320,7 +1321,8 @@ describe('DesktopWorkbenchLayout', () => {
       startNewProjectChat: props.onStartNewProjectChat ?? baseProps.onStartNewProjectChat,
       openRuntimeTask: props.onOpenRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
       searchRuntimeWork: props.onSearchRuntimeWork ?? vi.fn().mockResolvedValue({ items: [] }),
-      loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
+      loadRuntimeTranscriptForPane:
+        props.onLoadRuntimeTranscriptForPane ?? vi.fn().mockResolvedValue({ messages: [] }),
       subscribeRuntimeTaskStream: subscribeRuntimeTaskStreamMock,
       renameRuntimeTask: vi.fn().mockResolvedValue(undefined),
       archiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
@@ -1517,7 +1519,15 @@ describe('DesktopWorkbenchLayout', () => {
     mainWidth,
     withAppearance = false,
     messages,
-  }: { mainWidth?: number; withAppearance?: boolean; messages?: WorkbenchMessage[] } = {}) {
+    currentRuntimeTask = null,
+    onLoadRuntimeTranscriptForPane,
+  }: {
+    mainWidth?: number
+    withAppearance?: boolean
+    messages?: WorkbenchMessage[]
+    currentRuntimeTask?: RuntimeTaskAddress | null
+    onLoadRuntimeTranscriptForPane?: WorkbenchContextValue['loadRuntimeTranscriptForPane']
+  } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
     }
@@ -1527,9 +1537,11 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         messages={messages}
+        onLoadRuntimeTranscriptForPane={onLoadRuntimeTranscriptForPane}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
+          currentRuntimeTask,
         }}
         projectWork={{
           ...baseProps.projectWork,
@@ -2555,7 +2567,7 @@ describe('DesktopWorkbenchLayout', () => {
     selection?.removeAllRanges()
   })
 
-  test('renders subagent status below the top bar without shifting messages', () => {
+  test('does not render subagent status as a permanent environment panel card', () => {
     mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
@@ -2584,9 +2596,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
-    const statusRow = screen.getByTestId('workbench-subagent-status-row')
-    expect(statusRow).toContainElement(screen.getByTestId('subagent-status-toggle-button'))
-    expect(statusRow).toHaveClass('ml-2', 'mt-3', 'w-[300px]')
+    expect(screen.queryByTestId('workbench-subagent-status-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('subagent-status-toggle-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
   })
 
@@ -6464,6 +6475,110 @@ describe('DesktopWorkbenchLayout', () => {
     expect(contentFrame).toHaveStyle({ width: '580px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
+  })
+
+  test('opens subagents from the environment panel and restores the environment view', async () => {
+    const loadRuntimeTranscriptForPane = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          id: 'restored-child-assistant',
+          role: 'assistant',
+          content: 'Loaded from the persisted child thread',
+          status: 'done',
+          createdAt: '2026-09-10T08:00:01.000Z',
+        },
+      ],
+    })
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      currentRuntimeTask: {
+        deviceId: 'workspace-cloud-device',
+        taskId: 'runtime-subagent-panel',
+        workspacePath: '/workspace/project',
+      },
+      onLoadRuntimeTranscriptForPane: loadRuntimeTranscriptForPane,
+      messages: [
+        {
+          id: 'assistant-with-subagent',
+          role: 'assistant',
+          content: '',
+          status: 'done',
+          createdAt: '2026-09-10T08:00:00.000Z',
+          blocks: [
+            {
+              id: 'subagent-thread-1',
+              subtaskId: 'turn-1',
+              type: 'subagent',
+              agentThreadId: 'thread-1',
+              agentType: 'Explorer',
+              description: 'Inspect the runtime event flow',
+              status: 'done',
+              createdAt: 1770000000000,
+              children: [
+                {
+                  id: 'child-text-1',
+                  subtaskId: 'turn-1',
+                  parentToolUseId: 'subagent-thread-1',
+                  type: 'text',
+                  content: 'Tracing child message deltas',
+                  status: 'done',
+                  createdAt: 1770000000100,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-subagents-section')).toHaveTextContent('1 已完成')
+    expect(screen.getByTestId('open-subagents-panel-button')).toHaveAccessibleName(
+      '打开子代理（1）'
+    )
+
+    await userEvent.click(screen.getByTestId('open-subagents-panel-button'))
+
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('subagent-overview-item'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('subagent-conversation-panel')).toHaveTextContent(
+        'Loaded from the persisted child thread'
+      )
+    })
+    expect(loadRuntimeTranscriptForPane).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'runtime-subagent-panel',
+        threadId: 'thread-1',
+      }),
+      { includeFullContent: true }
+    )
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+
+    await userEvent.click(screen.getByTestId('subagent-conversation-back'))
+
+    expect(screen.queryByTestId('subagent-conversation-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('subagent-overview-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('subagent-overview-item')).toHaveTextContent(
+      'Inspect the runtime event flow'
+    )
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(screen.queryByTestId('subagent-overview-panel')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('environment-subagents-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
   })
 
   test('expands the right workspace panel without the composer and restores chat', async () => {

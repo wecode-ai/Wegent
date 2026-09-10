@@ -55,6 +55,14 @@ const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
 const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
+const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
+const SUBAGENT_SEARCH_CALL_ID = 'wework-subagent-tool-search'
+const SUBAGENT_CALL_ID = 'wework-subagent-streaming-panel'
+const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
+const SUBAGENT_CHILD_PROMPT = 'Inspect the child event stream and report the routing result.'
+const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
+const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\nWEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE`
+const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
 const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
 const ORDER_STOP_PARTIAL = 'WEWORK_DESKTOP_E2E_ORDER_STOP_PARTIAL'
 const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
@@ -200,6 +208,18 @@ function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
     ...event,
     item: { ...event.item, namespace },
   }))
+}
+
+function toolSearchCall(callId, argumentsValue) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'tool_search_call',
+      call_id: callId,
+      execution: 'client',
+      arguments: argumentsValue,
+    },
+  }
 }
 
 function reasoningEvents(itemId, text, deltaChunkSize = text.length) {
@@ -416,6 +436,10 @@ function requestContainsTimerPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
 }
 
+function requestContainsSubagentPrompt(body) {
+  return latestModelInputText(body).includes(SUBAGENT_PROMPT)
+}
+
 function latestModelInputText(body) {
   const input = Array.isArray(body.input) ? body.input.at(-1) : body.input
   const message = Array.isArray(body.messages) ? body.messages.at(-1) : null
@@ -435,6 +459,26 @@ function requestContainsToolOutputForCall(body, callId) {
   return (Array.isArray(body.input) ? body.input : []).some(
     item => item?.type === 'function_call_output' && item.call_id === callId
   )
+}
+
+function requestContainsToolSearchOutputForCall(body, callId) {
+  return (Array.isArray(body.input) ? body.input : []).some(
+    item => item?.type === 'tool_search_output' && item.call_id === callId
+  )
+}
+
+function functionCallOutput(body, callId) {
+  return (Array.isArray(body.input) ? body.input : []).find(
+    item => item?.type === 'function_call_output' && item.call_id === callId
+  )?.output
+}
+
+function spawnedAgentId(body) {
+  const output = functionCallOutput(body, SUBAGENT_CALL_ID)
+  const parsed = typeof output === 'string' ? JSON.parse(output) : output
+  const agentId = parsed?.agent_id ?? parsed?.id
+  assert.ok(agentId, `spawn_agent output did not include an agent id: ${JSON.stringify(output)}`)
+  return agentId
 }
 
 async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
@@ -821,6 +865,7 @@ export function createDesktopScenario({
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
   let generatedImageStage = 'initial'
+  let subagentStage = 'initial'
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
@@ -829,12 +874,14 @@ export function createDesktopScenario({
   let releaseResponse
   let releaseScrollButtonAppend
   let releaseStart
+  let releaseSubagentCompletion
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
   let resolveRequest
   let resolveScrollButtonAppendWritten
+  let resolveSubagentPartialWritten
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
   let targetRequest
@@ -867,6 +914,12 @@ export function createDesktopScenario({
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
+  })
+  const subagentCompletionRelease = new Promise(resolve => {
+    releaseSubagentCompletion = resolve
+  })
+  const subagentPartialWritten = new Promise(resolve => {
+    resolveSubagentPartialWritten = resolve
   })
   const toolCompletionRelease = new Promise(resolve => {
     releaseToolCompletion = resolve
@@ -1050,6 +1103,83 @@ export function createDesktopScenario({
     await capture(control, 'streaming-text-17-stopped-turn-order-restored.png')
   }
 
+  const verifySubagentStreamingPanel = async control => {
+    await openNewChatWithE2EModel(control, uiTimeoutMs)
+
+    await control.command('fill', COMPOSER_SELECTOR, { value: SUBAGENT_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', '[data-testid="subagent-activity-chip"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await capture(control, 'streaming-text-subagent-01-inline-activity.png')
+    await control.command('click', '[data-testid="subagent-activity-chip"]')
+    await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await subagentPartialWritten
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: SUBAGENT_CHILD_PARTIAL,
+      timeoutMs: uiTimeoutMs,
+    })
+    await capture(control, 'streaming-text-subagent-02-streaming-conversation.png')
+    releaseSubagentCompletion()
+    await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
+      text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
+      timeoutMs: uiTimeoutMs,
+    })
+    await capture(control, 'streaming-text-subagent-03-completed-conversation.png')
+
+    await control.command('click', '[data-testid="subagent-conversation-back"]')
+    await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      Number(await control.command('getElementCount', '[data-testid="subagent-overview-item"]')),
+      1,
+      'The subagent overview did not retain the streamed child conversation'
+    )
+    assert.equal(
+      (await control.command('getText', '[data-testid="subagent-overview-panel"]')).includes(
+        '正在工作'
+      ),
+      false,
+      'A completed subagent retained the running preview'
+    )
+    await capture(control, 'streaming-text-subagent-04-completed-overview.png')
+
+    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+    await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await capture(control, 'streaming-text-subagent-05-environment-summary.png')
+
+    const readyCountBeforeReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await Promise.race([
+      control.awaitReadyAfter(readyCountBeforeReload),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('The reloaded Wework window did not reconnect')),
+          uiTimeoutMs
+        )
+      ),
+    ])
+    await control.command('waitFor', '[data-testid="environment-subagents-section"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="open-subagents-panel-button"]')
+    await control.command('waitFor', '[data-testid="subagent-overview-panel"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="subagent-overview-item"]')
+    await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
+      text: 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE',
+      timeoutMs: uiTimeoutMs,
+    })
+    await capture(control, 'streaming-text-subagent-06-restored-history.png')
+    await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+  }
+
   return {
     modelProviderAuthToml: '',
     modelProviderConfigToml:
@@ -1090,6 +1220,104 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
+      if (request.headers['x-openai-subagent']) {
+        const stream = streamingEvents(responseId, SUBAGENT_CHILD_COMPLETION, 'final_answer')
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse(stream.start))
+        response.write(sse(textDeltaEvents(stream.itemId, SUBAGENT_CHILD_PARTIAL)))
+        response.flush?.()
+        resolveSubagentPartialWritten()
+        await subagentCompletionRelease
+        response.write(
+          sse(
+            textDeltaEvents(
+              stream.itemId,
+              SUBAGENT_CHILD_COMPLETION.slice(SUBAGENT_CHILD_PARTIAL.length),
+              SUBAGENT_CHILD_PARTIAL.length
+            )
+          )
+        )
+        response.end(sse(stream.finish))
+        return true
+      }
+      if (
+        subagentStage === 'awaiting-wait-output' &&
+        requestContainsToolOutputForCall(body, SUBAGENT_WAIT_CALL_ID)
+      ) {
+        subagentStage = 'complete'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(SUBAGENT_PARENT_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (
+        subagentStage === 'awaiting-spawn-output' &&
+        requestContainsToolOutputForCall(body, SUBAGENT_CALL_ID)
+      ) {
+        const agentId = spawnedAgentId(body)
+        subagentStage = 'awaiting-wait-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...namespacedFunctionCall(SUBAGENT_WAIT_CALL_ID, 'multi_agent_v1', 'wait_agent', {
+              targets: [agentId],
+              timeout_ms: 60_000,
+            }),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (
+        subagentStage === 'awaiting-search-output' &&
+        requestContainsToolSearchOutputForCall(body, SUBAGENT_SEARCH_CALL_ID)
+      ) {
+        const searchOutput = JSON.stringify(body.input)
+        assert.ok(
+          searchOutput.includes('multi_agent_v1') && searchOutput.includes('spawn_agent'),
+          'tool_search did not return multi_agent_v1.spawn_agent'
+        )
+        subagentStage = 'awaiting-spawn-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...namespacedFunctionCall(SUBAGENT_CALL_ID, 'multi_agent_v1', 'spawn_agent', {
+              message: SUBAGENT_CHILD_PROMPT,
+              agent_type: 'explorer',
+            }),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (requestContainsSubagentPrompt(body)) {
+        assert.equal(subagentStage, 'initial', `Unexpected subagent stage: ${subagentStage}`)
+        subagentStage = 'awaiting-search-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            toolSearchCall(SUBAGENT_SEARCH_CALL_ID, {
+              query: 'spawn agent delegate child work',
+              limit: 8,
+            }),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (
         generatedImageStage === 'awaiting-tool-output' &&
         requestContainsToolOutputForCall(body, GENERATED_IMAGE_CALL_ID)
@@ -1399,6 +1627,11 @@ export function createDesktopScenario({
       }
       if (process.env.WEWORK_E2E_LONG_CODE_ONLY === 'true') {
         await verifyLongCodeTerminalBurst(control)
+        active = false
+        return
+      }
+      await verifySubagentStreamingPanel(control)
+      if (process.env.WEWORK_E2E_SUBAGENT_ONLY === 'true') {
         active = false
         return
       }

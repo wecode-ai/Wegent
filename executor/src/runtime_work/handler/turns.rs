@@ -885,6 +885,12 @@ impl RuntimeWorkRpcHandler {
                     );
                     let mut event_request = active_turn_request.clone();
                     event_request.subtask_id = turn_id.clone();
+                    active_turn_handler.register_thread_event_route(
+                        &thread_id,
+                        active_turn_local_task_id.clone(),
+                        event_request.clone(),
+                        true,
+                    );
                     emit_response_event(
                         &active_turn_handler.event_tx,
                         &active_turn_handler.device_id,

@@ -13,7 +13,7 @@ import {
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RequestUserInputResponse } from '@/types/api'
-import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import type { ProcessingBlock, SubagentBlock, ToolBlock } from '@/types/workbench'
 import {
   isAnsweredRequestUserInputBlock,
   isHiddenRequestUserInputBlock,
@@ -47,10 +47,16 @@ import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 import { getDurationText } from './processingDuration'
 import { getFileEditDurationsBySourceBlock, getFileEditDurationsForRows } from './fileEditDurations'
+import { SubagentActivityGroup } from './SubagentBlockItem'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 type ProcessingDisplayItem =
   | ProcessingDisplayRow
+  | {
+      type: 'subagent_group'
+      id: string
+      blocks: SubagentBlock[]
+    }
   | {
       type: 'request_user_input'
       id: string
@@ -81,6 +87,7 @@ interface ToolBlocksDisplayProps {
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onOpenSubagent?: (block: SubagentBlock) => void
 }
 
 export function ToolBlocksDisplay({
@@ -102,6 +109,7 @@ export function ToolBlocksDisplay({
   loadingFullTranscript = false,
   hideRequestUserInputBlocks = false,
   hiddenRequestUserInputIds,
+  onOpenSubagent,
 }: ToolBlocksDisplayProps) {
   const { t } = useTranslation('chat')
   const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
@@ -147,9 +155,27 @@ export function ToolBlocksDisplay({
 
     const flushRegularBlocks = () => {
       if (pendingRegularBlocks.length === 0) return
-      items.push(
-        ...buildProcessingDisplayRows(pendingRegularBlocks, { groupCompletedTools: false })
-      )
+      const rows = buildProcessingDisplayRows(pendingRegularBlocks, { groupCompletedTools: false })
+      let pendingSubagents: SubagentBlock[] = []
+      const flushSubagents = () => {
+        if (pendingSubagents.length === 0) return
+        items.push({
+          type: 'subagent_group',
+          id: `subagents:${pendingSubagents.map(block => block.id).join(':')}`,
+          blocks: pendingSubagents,
+        })
+        pendingSubagents = []
+      }
+
+      rows.forEach(row => {
+        if (row.type === 'block' && row.block.type === 'subagent') {
+          pendingSubagents.push(row.block)
+          return
+        }
+        flushSubagents()
+        items.push(row)
+      })
+      flushSubagents()
       pendingRegularBlocks = []
     }
 
@@ -180,10 +206,12 @@ export function ToolBlocksDisplay({
   const rows = useMemo(
     () =>
       displayItems.filter(
-        (item): item is ProcessingDisplayRow => item.type !== 'request_user_input'
+        (item): item is ProcessingDisplayRow =>
+          item.type !== 'request_user_input' && item.type !== 'subagent_group'
       ),
     [displayItems]
   )
+  const hasSubagentActivity = displayItems.some(item => item.type === 'subagent_group')
   const sourceFileEditDurations = useMemo(
     () => fileEditDurationsBySourceBlock ?? getFileEditDurationsBySourceBlock(blocks),
     [blocks, fileEditDurationsBySourceBlock]
@@ -201,6 +229,7 @@ export function ToolBlocksDisplay({
   const isLockedOpen =
     forceExpanded ||
     !showSummary ||
+    hasSubagentActivity ||
     hasPlanResponse ||
     hasRequestUserInput ||
     hasActiveContextCompaction
@@ -291,7 +320,13 @@ export function ToolBlocksDisplay({
               )
             }
 
-            return item.type === 'activity_group' ? (
+            return item.type === 'subagent_group' ? (
+              <SubagentActivityGroup
+                key={item.id}
+                blocks={item.blocks}
+                onOpenSubagent={onOpenSubagent}
+              />
+            ) : item.type === 'activity_group' ? (
               <ToolActivityGroup
                 key={item.id}
                 row={item}
@@ -325,6 +360,7 @@ export function ToolBlocksDisplay({
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
       stateKey,
+      onOpenSubagent,
     ]
   )
 
@@ -366,6 +402,7 @@ export function ToolBlocksDisplay({
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           fileEditDurations={fileEditDurations}
           stateKey={stateKey}
+          onOpenSubagent={onOpenSubagent}
         />
       ) : null}
     </>
@@ -491,6 +528,7 @@ function LiveProcessingPreview({
   onOpenWorkspaceFile,
   fileEditDurations,
   stateKey,
+  onOpenSubagent,
 }: {
   rows: ProcessingDisplayRow[]
   showThinking: boolean
@@ -498,6 +536,7 @@ function LiveProcessingPreview({
   onOpenWorkspaceFile?: (path: string) => void
   fileEditDurations: FileEditDurationsByBlock
   stateKey?: string
+  onOpenSubagent?: (block: SubagentBlock) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set())
@@ -545,6 +584,7 @@ function LiveProcessingPreview({
             fileEditDurations={fileEditDurations}
             onExpandedChange={updateExpandedRow}
             stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+            onOpenSubagent={onOpenSubagent}
           />
         ))}
         {showThinking ? (
@@ -569,6 +609,7 @@ function LiveProcessingPreviewRow({
   onOpenWorkspaceFile,
   onExpandedChange,
   stateKey,
+  onOpenSubagent,
 }: {
   row: ProcessingDisplayRow
   shimmer: boolean
@@ -578,6 +619,7 @@ function LiveProcessingPreviewRow({
   onOpenWorkspaceFile?: (path: string) => void
   onExpandedChange: (rowId: string, expanded: boolean) => void
   stateKey?: string
+  onOpenSubagent?: (block: SubagentBlock) => void
 }) {
   const handleExpandedChange = useCallback(
     (expanded: boolean) => onExpandedChange(row.id, expanded),
@@ -614,6 +656,10 @@ function LiveProcessingPreviewRow({
         stateKey={stateKey}
       />
     )
+  }
+
+  if (row.block.type === 'subagent') {
+    return <SubagentActivityGroup blocks={[row.block]} onOpenSubagent={onOpenSubagent} />
   }
 
   return (

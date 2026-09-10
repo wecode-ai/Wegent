@@ -273,6 +273,8 @@ pub(crate) struct CodexNotificationEventMapper {
     active_output_item_id: Option<String>,
     agent_message_phases: CodexAgentMessagePhaseTracker,
     subagent_item_ids: BTreeSet<String>,
+    subagent_parent_ids: BTreeMap<String, String>,
+    subagent_text_block_ids: BTreeMap<String, String>,
     root_thread_id: Option<String>,
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
@@ -295,6 +297,12 @@ struct ProcessTextStream {
 const PROCESS_TEXT_UPDATE_MIN_CHARS: usize = 16;
 
 impl CodexNotificationEventMapper {
+    pub(crate) fn observe_root_thread_id(&mut self, thread_id: &str) {
+        if self.root_thread_id.is_none() && !thread_id.trim().is_empty() {
+            self.root_thread_id = Some(thread_id.to_owned());
+        }
+    }
+
     pub(crate) fn map(
         &mut self,
         event_tx: &Option<broadcast::Sender<Value>>,
@@ -313,9 +321,39 @@ impl CodexNotificationEventMapper {
         if codex_notification_resumes_turn(&notification.method) {
             self.clear_reconnecting(&emit_context);
         }
+        if codex_stream_debug_enabled()
+            && notification.method == "item/agentMessage/delta"
+            && stream_thread_id(notification.params).is_some()
+        {
+            log_executor_event(
+                "codex subagent delta classification",
+                &[
+                    (
+                        "root_thread_id",
+                        self.root_thread_id
+                            .clone()
+                            .unwrap_or_else(|| "<none>".to_owned()),
+                    ),
+                    (
+                        "stream_thread_id",
+                        stream_thread_id(notification.params)
+                            .unwrap_or_else(|| "<none>".to_owned()),
+                    ),
+                    (
+                        "is_subagent",
+                        self.is_subagent_delta(notification.params).to_string(),
+                    ),
+                ],
+            );
+        }
         match notification.method.as_str() {
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(notification.params) {
+                    self.emit_subagent_text_delta(
+                        &emit_context,
+                        &notification.method,
+                        notification.params,
+                    );
                     return;
                 }
                 let resolved_phase = self
@@ -333,6 +371,11 @@ impl CodexNotificationEventMapper {
             | "item/reasoningSummary/delta"
             | "item/reasoning/summaryTextDelta" => {
                 if self.is_subagent_delta(notification.params) {
+                    self.emit_subagent_text_delta(
+                        &emit_context,
+                        &notification.method,
+                        notification.params,
+                    );
                     return;
                 }
                 self.emit_text_chunk(
@@ -347,6 +390,7 @@ impl CodexNotificationEventMapper {
                 self.observe_root_thread(notification.params);
                 if self.is_subagent_delta(notification.params) {
                     self.remember_subagent_item(notification.params);
+                    self.emit_subagent_tool_start(&emit_context, notification.params);
                     return;
                 }
                 self.agent_message_phases.observe_item(notification.params);
@@ -438,6 +482,9 @@ impl CodexNotificationEventMapper {
             "item/completed" => {
                 self.observe_root_thread(notification.params);
                 if self.is_subagent_delta(notification.params) {
+                    if !self.emit_subagent_text_completed(&emit_context, notification.params) {
+                        self.emit_tool_done(&emit_context, notification.params);
+                    }
                     self.forget_subagent_item(notification.params);
                     return;
                 }
@@ -798,6 +845,223 @@ impl CodexNotificationEventMapper {
                 }),
             );
         }
+    }
+
+    fn emit_subagent_tool_start(&self, emit_context: &EventEmitContext<'_>, params: &Value) {
+        let Some(parent_tool_use_id) = self.subagent_parent_block_id(params) else {
+            return;
+        };
+        let Some(mut block) = workbench_block_from_notification(
+            params,
+            &emit_context.request.subtask_id,
+            emit_context.device_id,
+            emit_context.request.cwd().unwrap_or_default(),
+            Some("pending"),
+        ) else {
+            return;
+        };
+        if matches!(
+            block.get("type").and_then(Value::as_str),
+            Some("text" | "thinking" | "plan")
+        ) {
+            return;
+        }
+        if let Some(object) = block.as_object_mut() {
+            object.insert(
+                "parent_tool_use_id".to_owned(),
+                Value::String(parent_tool_use_id),
+            );
+        }
+        emit_response_event(
+            emit_context.event_tx,
+            emit_context.device_id,
+            "response.block.created",
+            emit_context.local_task_id,
+            emit_context.request,
+            json!({"block": block}),
+        );
+    }
+
+    fn emit_subagent_text_delta(
+        &mut self,
+        emit_context: &EventEmitContext<'_>,
+        method: &str,
+        params: &Value,
+    ) {
+        let (block_type, process_kind, item_id, delta) =
+            match map_text_chunk(method, params, None, None) {
+                Ok(Some(TextChunkMapping::ProcessDelta {
+                    block_type,
+                    process_kind,
+                    item_id,
+                    delta,
+                })) => (block_type, process_kind, item_id, delta),
+                Ok(Some(_)) => {
+                    if codex_stream_debug_enabled() {
+                        log_dropped_notification(
+                            emit_context.local_task_id,
+                            &emit_context.request.task_id,
+                            &emit_context.request.subtask_id,
+                            method,
+                            params,
+                            "unexpected_subagent_text_mapping",
+                        );
+                    }
+                    return;
+                }
+                Ok(None) => return,
+                Err(reason) => {
+                    if codex_stream_debug_enabled() {
+                        log_dropped_notification(
+                            emit_context.local_task_id,
+                            &emit_context.request.task_id,
+                            &emit_context.request.subtask_id,
+                            method,
+                            params,
+                            reason,
+                        );
+                    }
+                    return;
+                }
+            };
+        let Some(item_id) = item_id.or_else(|| notification_item_id(params)) else {
+            if codex_stream_debug_enabled() {
+                log_dropped_notification(
+                    emit_context.local_task_id,
+                    &emit_context.request.task_id,
+                    &emit_context.request.subtask_id,
+                    method,
+                    params,
+                    "missing_subagent_text_item_id",
+                );
+            }
+            return;
+        };
+        let Some(parent_tool_use_id) = self.subagent_parent_block_id(params) else {
+            if codex_stream_debug_enabled() {
+                log_dropped_notification(
+                    emit_context.local_task_id,
+                    &emit_context.request.task_id,
+                    &emit_context.request.subtask_id,
+                    method,
+                    params,
+                    "missing_subagent_parent",
+                );
+            }
+            return;
+        };
+        let block_id = format!("{parent_tool_use_id}:{item_id}");
+        let already_created = self
+            .subagent_text_block_ids
+            .insert(item_id.clone(), block_id.clone())
+            .is_some();
+        if codex_stream_debug_enabled() {
+            log_executor_event(
+                "codex subagent text delta mapped",
+                &[
+                    ("item_id", item_id.clone()),
+                    ("block_id", block_id.clone()),
+                    ("parent_tool_use_id", parent_tool_use_id.clone()),
+                    ("delta_len", delta.len().to_string()),
+                    ("already_created", already_created.to_string()),
+                ],
+            );
+        }
+        if already_created {
+            emit_response_event(
+                emit_context.event_tx,
+                emit_context.device_id,
+                "response.block.updated",
+                emit_context.local_task_id,
+                emit_context.request,
+                json!({
+                    "block_id": block_id,
+                    "updates": {
+                        "content_delta": delta,
+                        "status": "streaming",
+                    }
+                }),
+            );
+            return;
+        }
+        emit_response_event(
+            emit_context.event_tx,
+            emit_context.device_id,
+            "response.block.created",
+            emit_context.local_task_id,
+            emit_context.request,
+            json!({
+                "block": {
+                    "id": block_id,
+                    "type": block_type,
+                    "process_kind": process_kind,
+                    "process_item_id": item_id,
+                    "parent_tool_use_id": parent_tool_use_id,
+                    "content": delta,
+                    "status": "streaming",
+                    "timestamp": now_ms(),
+                }
+            }),
+        );
+    }
+
+    fn emit_subagent_text_completed(
+        &mut self,
+        emit_context: &EventEmitContext<'_>,
+        params: &Value,
+    ) -> bool {
+        let Ok(Some(TextChunkMapping::ProcessCompleted {
+            block_type,
+            process_kind,
+            item_id,
+            text,
+        })) = map_text_chunk("item/completed", params, None, None)
+        else {
+            return false;
+        };
+        let Some(item_id) = item_id.or_else(|| notification_item_id(params)) else {
+            return false;
+        };
+        let Some(parent_tool_use_id) = self.subagent_parent_block_id(params) else {
+            return false;
+        };
+        if let Some(block_id) = self.subagent_text_block_ids.remove(&item_id) {
+            emit_response_event(
+                emit_context.event_tx,
+                emit_context.device_id,
+                "response.block.updated",
+                emit_context.local_task_id,
+                emit_context.request,
+                json!({
+                    "block_id": block_id,
+                    "updates": {
+                        "content": text,
+                        "status": "done",
+                    }
+                }),
+            );
+            return true;
+        }
+        emit_response_event(
+            emit_context.event_tx,
+            emit_context.device_id,
+            "response.block.created",
+            emit_context.local_task_id,
+            emit_context.request,
+            json!({
+                "block": {
+                    "id": format!("{parent_tool_use_id}:{item_id}"),
+                    "type": block_type,
+                    "process_kind": process_kind,
+                    "process_item_id": item_id,
+                    "parent_tool_use_id": parent_tool_use_id,
+                    "content": text,
+                    "status": "done",
+                    "timestamp": now_ms(),
+                }
+            }),
+        );
+        true
     }
 
     fn emit_process_text_delta(
@@ -1325,14 +1589,31 @@ impl CodexNotificationEventMapper {
 
     fn remember_subagent_item(&mut self, params: &Value) {
         if let Some(item_id) = notification_item_id(params) {
-            self.subagent_item_ids.insert(item_id);
+            self.subagent_item_ids.insert(item_id.clone());
+            if let Some(parent_id) = self.subagent_parent_block_id(params) {
+                self.subagent_parent_ids.insert(item_id, parent_id);
+            }
         }
     }
 
     fn forget_subagent_item(&mut self, params: &Value) {
         if let Some(item_id) = notification_item_id(params) {
             self.subagent_item_ids.remove(&item_id);
+            self.subagent_parent_ids.remove(&item_id);
+            self.subagent_text_block_ids.remove(&item_id);
         }
+    }
+
+    fn subagent_parent_block_id(&self, params: &Value) -> Option<String> {
+        if let Some(item_id) = notification_item_id(params) {
+            if let Some(parent_id) = self.subagent_parent_ids.get(&item_id) {
+                return Some(parent_id.clone());
+            }
+        }
+        stream_thread_id(params)
+            .or_else(|| codex_stream_agent_path(params))
+            .filter(|identity| identity != "/root")
+            .map(|identity| subagent_block_id(&identity))
     }
 
     fn is_subagent_delta(&self, params: &Value) -> bool {
@@ -1972,15 +2253,17 @@ fn emit_subagent_activity(
     let agent_id = agent_thread_id
         .clone()
         .unwrap_or_else(|| agent_path.clone());
+    let agent_name =
+        explicit_subagent_name(params).or_else(|| subagent_name_from_path(&agent_path));
     let mut data = Map::new();
-    data.insert("agent_path".to_owned(), Value::String(agent_path));
+    data.insert("agent_path".to_owned(), Value::String(agent_path.clone()));
     data.insert("agent_id".to_owned(), Value::String(agent_id.clone()));
     data.insert(
         "agent_thread_id".to_owned(),
         agent_thread_id.map(Value::String).unwrap_or(Value::Null),
     );
-    if let Some(agent_name) = explicit_subagent_name(params) {
-        data.insert("agent_name".to_owned(), Value::String(agent_name));
+    if let Some(agent_name) = agent_name.as_ref() {
+        data.insert("agent_name".to_owned(), Value::String(agent_name.clone()));
     }
     data.insert("kind".to_owned(), Value::String(kind.clone()));
     data.insert(
@@ -1999,14 +2282,32 @@ fn emit_subagent_activity(
         request,
         Value::Object(data),
     );
-    emit_subagent_block_update(
-        event_tx,
-        device_id,
-        local_task_id,
-        request,
-        &agent_id,
-        subagent_status(&kind),
-    );
+    if subagent_status(&kind) == "running" {
+        emit_subagent_block_created(
+            event_tx,
+            device_id,
+            local_task_id,
+            request,
+            SubagentBlockCreated {
+                agent_id: &agent_id,
+                agent_path: Some(&agent_path),
+                agent_name: agent_name.as_deref(),
+                tool: &kind,
+                prompt: None,
+                status: "running",
+                timestamp: subagent_occurred_at_ms(params),
+            },
+        );
+    } else {
+        emit_subagent_block_update(
+            event_tx,
+            device_id,
+            local_task_id,
+            request,
+            &agent_id,
+            subagent_status(&kind),
+        );
+    }
 }
 
 fn emit_collab_agent_activity(
@@ -2039,6 +2340,7 @@ fn emit_collab_agent_activity(
             .or_else(|| string_field(item, "status"))
             .unwrap_or_else(|| "running".to_owned());
         let status = collab_agent_status(&collab_status);
+        let prompt = string_field(item, "prompt");
         let mut data = Map::new();
         data.insert(
             "agent_path".to_owned(),
@@ -2074,7 +2376,10 @@ fn emit_collab_agent_activity(
                 request,
                 SubagentBlockCreated {
                     agent_id: &agent_thread_id,
+                    agent_path: None,
+                    agent_name: None,
                     tool: &tool,
+                    prompt: prompt.as_deref(),
                     status,
                     timestamp: subagent_occurred_at_ms(params),
                 },
@@ -2094,7 +2399,10 @@ fn emit_collab_agent_activity(
 
 struct SubagentBlockCreated<'a> {
     agent_id: &'a str,
+    agent_path: Option<&'a str>,
+    agent_name: Option<&'a str>,
     tool: &'a str,
+    prompt: Option<&'a str>,
     status: &'a str,
     timestamp: i64,
 }
@@ -2115,15 +2423,18 @@ fn emit_subagent_block_created(
         json!({
             "block": {
                 "id": subagent_block_id(block.agent_id),
-                "type": "tool",
+                "type": "subagent",
                 "tool_use_id": subagent_block_id(block.agent_id),
                 "tool_name": block.tool,
-                "tool_input": {
-                    "agent_id": block.agent_id,
-                    "agent_thread_id": block.agent_id,
-                },
+                "agent_id": block.agent_id,
+                "agent_thread_id": block.agent_id,
+                "agent_path": block.agent_path,
+                "agent_status": block.status,
+                "title": block.agent_name,
+                "description": block.prompt,
                 "status": block.status,
                 "timestamp": block.timestamp,
+                "children": [],
             }
         }),
     );
@@ -2146,7 +2457,8 @@ fn emit_subagent_block_update(
         json!({
             "block_id": subagent_block_id(agent_id),
             "updates": {
-                "status": status,
+                "status": if status == "interrupted" { "error" } else { status },
+                "agent_status": status,
             }
         }),
     );
@@ -2233,6 +2545,13 @@ fn explicit_subagent_name(params: &Value) -> Option<String> {
                 string_field(item, "agent_name").or_else(|| string_field(item, "agentName"))
             })
         })
+}
+
+fn subagent_name_from_path(agent_path: &str) -> Option<String> {
+    agent_path
+        .rsplit('/')
+        .find(|segment| !segment.trim().is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn subagent_occurred_at_ms(params: &Value) -> i64 {
@@ -3449,8 +3768,8 @@ mod tests {
     }
 
     #[test]
-    fn ignores_subagent_agent_message_deltas() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
+    fn streams_subagent_agent_message_deltas_into_nested_blocks() {
+        let (event_tx, mut event_rx) = broadcast::channel(6);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
@@ -3477,7 +3796,7 @@ mod tests {
             }),
         );
         mapper.map(
-            &Some(event_tx),
+            &Some(event_tx.clone()),
             "device-1",
             "local-1",
             &request,
@@ -3489,13 +3808,53 @@ mod tests {
                 }
             }),
         );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-child",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "agent_path": "/root/worker",
+                        "text": "child output"
+                    }
+                }
+            }),
+        );
 
+        let created = event_rx
+            .try_recv()
+            .expect("child text block should be created");
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(
+            created["payload"]["data"]["block"]["parent_tool_use_id"],
+            "subagent-/root/worker"
+        );
+        assert_eq!(
+            created["payload"]["data"]["block"]["content"],
+            "child output"
+        );
+        assert_eq!(created["payload"]["data"]["block"]["status"], "streaming");
+        let completed = event_rx
+            .try_recv()
+            .expect("child text block should be completed");
+        assert_eq!(completed["event"], "response.block.updated");
+        assert_eq!(
+            completed["payload"]["data"]["updates"]["content"],
+            "child output"
+        );
+        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
         assert!(event_rx.try_recv().is_err());
     }
 
     #[test]
-    fn ignores_cross_thread_agent_message_deltas() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
+    fn separates_cross_thread_agent_activity_from_root_output() {
+        let (event_tx, mut event_rx) = broadcast::channel(6);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
@@ -3605,10 +3964,23 @@ mod tests {
             }),
         );
 
-        let event = event_rx.try_recv().expect("root event should be emitted");
-        assert_eq!(event["event"], "response.output_text.delta");
-        assert_eq!(event["payload"]["data"]["item_id"], "msg-root");
-        assert_eq!(event["payload"]["data"]["delta"], "root");
+        let child_tool = event_rx.try_recv().expect("child tool should be emitted");
+        assert_eq!(child_tool["event"], "response.block.created");
+        assert_eq!(
+            child_tool["payload"]["data"]["block"]["parent_tool_use_id"],
+            "subagent-child-thread"
+        );
+        let child_text = event_rx.try_recv().expect("child text should be emitted");
+        assert_eq!(child_text["event"], "response.block.created");
+        assert_eq!(
+            child_text["payload"]["data"]["block"]["parent_tool_use_id"],
+            "subagent-child-thread"
+        );
+        assert_eq!(child_text["payload"]["data"]["block"]["content"], "child");
+        let root = event_rx.try_recv().expect("root event should be emitted");
+        assert_eq!(root["event"], "response.output_text.delta");
+        assert_eq!(root["payload"]["data"]["item_id"], "msg-root");
+        assert_eq!(root["payload"]["data"]["delta"], "root");
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -4297,6 +4669,37 @@ mod tests {
 
         let event = event_rx.try_recv().expect("event should be emitted");
         assert_eq!(event["payload"]["data"]["agent_name"], "Frontend reviewer");
+    }
+
+    #[test]
+    fn derives_subagent_name_from_agent_path() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "type": "subAgentActivity",
+                        "agentPath": "/root/say_hello",
+                        "agentThreadId": "thread-worker",
+                        "kind": "started"
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["payload"]["data"]["agent_name"], "say_hello");
     }
 
     #[test]
