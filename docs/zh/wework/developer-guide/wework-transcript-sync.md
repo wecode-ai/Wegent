@@ -18,11 +18,12 @@ Backend 使用三张表：
 | `wework_transcript_archives` | 不可变原生 segment 的 sequence、对象 key、SHA-256、大小和格式 |
 | `wework_transcript_turns`    | 每个已完成回合的结构化摘要，沿用旧版本的数据契约              |
 
-正文先在 Executor 中使用 AES-256-GCM 加密，再直接上传到私有
-`wework-transcripts` 对象存储。MySQL 的 `wework_transcript_turns.payload` 会按回合
-保存原有协议中的用户消息、助手最终文本、reasoning 摘要、完成状态和任务 ID，但不保存
-完整工具协议、usage、rollout JSONL 或工作区文件。摘要是一回合一行 JSON，不会把整个
-transcript 持续追加进单个字段；完整数据容量和精确恢复均由分段 tgz 对象承担。
+正文先在 Executor 中使用 AES-256-GCM 加密，再通过已认证的 Backend API 上传。Backend
+负责把密文写入私有 `wework-transcripts` 对象存储；桌面客户端不会获得对象存储地址、
+凭据或预签名 URL。MySQL 的 `wework_transcript_turns.payload` 会按回合保存原有协议中的
+用户消息、助手最终文本、reasoning 摘要、完成状态和任务 ID，但不保存完整工具协议、
+usage、rollout JSONL 或工作区文件。摘要是一回合一行 JSON，不会把整个 transcript 持续
+追加进单个字段；完整数据容量和精确恢复均由分段 tgz 对象承担。
 
 同一 sequence 的 archive 索引、turn 摘要和 transcript head 在一个 MySQL 事务中提交。
 仅当对象元数据与摘要都完全一致时，重复提交才视为幂等；任一侧缺失或不一致都会报冲突，
@@ -37,8 +38,9 @@ sequence 和格式。相同内容重试会得到相同密文，仍可通过 SHA-
 
 每个云端 sequence 恰好对应一个对象：
 
-- 第 1 个 sequence、每第 10 个 sequence 和冲突分支的第 1 个 sequence 是完整加密快照
-  `codex-snapshot.v1.tgz.aes256gcm`。
+- 第 1 个 sequence、每第 10 个 sequence、冲突分支的第 1 个 sequence，以及跨设备恢复
+  后首次继续对话的 sequence，是完整加密快照 `codex-snapshot.v1.tgz.aes256gcm`。恢复
+  会重写本机 thread ID 和工作区路径，因此必须用新快照建立新的可移植字节基线。
 - 其他 sequence 是加密增量 `codex-delta.v1.tgz.aes256gcm`。
 - 每个 segment 同时携带工作区覆盖层，避免只恢复会话却丢失最近文件。
 - 工作区打包会排除 `.git`、`node_modules`、构建产物和常见缓存目录，避免重复上传
@@ -66,7 +68,7 @@ stateDiagram-v2
     LocalReady --> OfflinePending: Backend 不可达
     OfflinePending --> LeaseHeld: 网络恢复
     LeaseHeld --> SegmentBuilt: 生成并加密快照或 rollout 增量
-    SegmentBuilt --> ObjectUploaded: PUT 预签名对象地址
+    SegmentBuilt --> ObjectUploaded: 经 Backend 流式上传密文
     ObjectUploaded --> MetadataCommitted: 同事务提交对象索引、回合摘要和 head
     MetadataCommitted --> LocalReady: 记录 rollout offset、清理 outbox、释放租约
 
@@ -76,7 +78,7 @@ stateDiagram-v2
     BranchSnapshot --> LeaseHeld: 创建确定性 fork transcript
 
     [*] --> RestoreRequired: 本机没有该 transcript 或本机落后
-    RestoreRequired --> Downloading: 选择最近快照和连续增量
+    RestoreRequired --> Downloading: 经 Backend 下载最近快照和连续增量
     Downloading --> Staging: 下载并校验 SHA-256
     Staging --> Bound: 恢复工作区、rollout、thread 元数据和动态工具
     Staging --> RestoreRequired: 任一校验失败，删除 staging
@@ -113,19 +115,18 @@ GitHub CI 的执行前提。
 
 认证前缀为 `/api/wework-transcripts`：
 
-| 方法与路径                                | 用途                                  |
-| ----------------------------------------- | ------------------------------------- |
-| `GET /`                                   | 列出 transcript 和原生 segment 元数据 |
-| `GET /{id}`                               | 读取一个 transcript                   |
-| `GET /{id}/turns`                         | 分页读取结构化回合摘要                |
-| `GET /{id}/encryption-key`                | 获取当前用户的 transcript 加解密密钥  |
-| `POST /{id}/lease`                        | 创建 transcript 或获取写租约          |
-| `PUT /{id}/lease/{token}`                 | 续租                                  |
-| `POST /{id}/lease/release`                | 释放租约                              |
-| `POST /{id}/segments/prepare`             | 校验 sequence 并生成限长预签名 POST   |
-| `POST /{id}/segments`                     | 同事务提交对象索引、回合摘要和 head   |
-| `POST /{id}/archive`                      | 标记 transcript 为 archived           |
-| `GET /{id}/archives/{archiveId}/download` | 生成短期签名下载地址                  |
+| 方法与路径                                | 用途                                    |
+| ----------------------------------------- | --------------------------------------- |
+| `GET /`                                   | 列出 transcript 和原生 segment 元数据   |
+| `GET /{id}`                               | 读取一个 transcript                     |
+| `GET /{id}/turns`                         | 分页读取结构化回合摘要                  |
+| `GET /{id}/encryption-key`                | 获取当前用户的 transcript 加解密密钥    |
+| `POST /{id}/lease`                        | 创建 transcript 或获取写租约            |
+| `PUT /{id}/lease/{token}`                 | 续租                                    |
+| `POST /{id}/lease/release`                | 释放租约                                |
+| `POST /{id}/segments`                     | 接收密文并提交对象索引、回合摘要和 head |
+| `POST /{id}/archive`                      | 标记 transcript 为 archived             |
+| `GET /{id}/archives/{archiveId}/download` | 通过 Backend 流式下载密文               |
 
 对象 key 使用 transcript ID 的 SHA-256 摘要，不暴露原始 transcript 标识。
 
@@ -133,11 +134,10 @@ GitHub CI 的执行前提。
 
 对象存储复用 `ATTACHMENT_S3_*` 连接配置：
 
-| 环境变量                                        | 默认值               | 说明                           |
-| ----------------------------------------------- | -------------------- | ------------------------------ |
-| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | 私有原生会话 segment bucket    |
-| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | 上传/下载签名地址有效期        |
-| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`           | 空                   | 派生每用户密钥的稳定高熵根密钥 |
+| 环境变量                              | 默认值               | 说明                           |
+| ------------------------------------- | -------------------- | ------------------------------ |
+| `WEWORK_TRANSCRIPT_S3_BUCKET`         | `wework-transcripts` | 私有原生会话 segment bucket    |
+| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET` | 空                   | 派生每用户密钥的稳定高熵根密钥 |
 
 本方案直接复用已有的三张 transcript 表，不新增 Alembic migration，也不要求已有部署
 调整数据库结构。对象存储不可用时，segment 不会提交到 MySQL，outbox 继续保留定位

@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import UTC, datetime, timedelta
+import hashlib
+import json
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -11,6 +12,9 @@ from app.models.wework_transcript import (
     WeworkTranscriptArchive,
     WeworkTranscriptTurn,
 )
+
+SEGMENT_BODY = b"x" * 4096
+SEGMENT_SHA256 = hashlib.sha256(SEGMENT_BODY).hexdigest()
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -34,8 +38,8 @@ def _segment(lease, **overrides):
         "fencingToken": lease["fencingToken"],
         "title": "Synced chat",
         "sequence": 1,
-        "sha256": "a" * 64,
-        "sizeBytes": 4096,
+        "sha256": SEGMENT_SHA256,
+        "sizeBytes": len(SEGMENT_BODY),
         "format": "codex-snapshot.v1.tgz.aes256gcm",
         "turnId": "turn-1",
         "summary": {
@@ -49,9 +53,24 @@ def _segment(lease, **overrides):
     }
 
 
-def _segment_integrity(object_key: str, _max_bytes: int) -> tuple[int, str]:
-    digest = object_key.rsplit("-", 1)[-1].split(".", 1)[0]
-    return 4096, digest
+def _upload(
+    test_client,
+    token,
+    request,
+    content: bytes = SEGMENT_BODY,
+    *,
+    normalize_manifest: bool = True,
+):
+    metadata = dict(request)
+    if normalize_manifest:
+        metadata["sha256"] = hashlib.sha256(content).hexdigest()
+        metadata["sizeBytes"] = len(content)
+    return test_client.post(
+        "/api/wework-transcripts/transcript-1/segments",
+        headers=_headers(token),
+        data={"metadata": json.dumps(metadata)},
+        files={"file": ("segment.tgz.aes256gcm", content)},
+    )
 
 
 def test_commits_native_object_metadata_and_structured_summary(
@@ -68,39 +87,20 @@ def test_commits_native_object_metadata_and_structured_summary(
     assert encryption.json()["algorithm"] == "aes-256-gcm"
     assert len(encryption.json()["key"]) == 44
     storage = wework_transcript_service.wework_transcript_storage
+    uploads = []
     monkeypatch.setattr(
         storage,
-        "upload_policy",
-        lambda key, size_bytes: (
-            f"https://storage.example/{key}",
-            {"key": key, "expected-size": str(size_bytes)},
-            datetime.now(UTC) + timedelta(minutes=5),
-        ),
+        "put_stream",
+        lambda key, stream, size: uploads.append((key, stream.read(), size)),
     )
-    monkeypatch.setattr(storage, "integrity", _segment_integrity)
     request = _segment(lease)
-    prepare = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments/prepare",
-        headers=_headers(test_token),
-        json=request,
-    )
-    assert prepare.status_code == 200
-    assert prepare.json()["uploadUrl"].startswith("https://storage.example/")
-    assert prepare.json()["uploadFields"]["expected-size"] == "4096"
-
-    commit = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments",
-        headers=_headers(test_token),
-        json=request,
-    )
+    commit = _upload(test_client, test_token, request)
     assert commit.status_code == 200
     assert commit.json() == {"currentSequence": 1, "appended": 1}
-    retry = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments",
-        headers=_headers(test_token),
-        json=request,
-    )
+    retry = _upload(test_client, test_token, request)
     assert retry.json() == {"currentSequence": 1, "appended": 0}
+    assert uploads[0][1:] == (SEGMENT_BODY, len(SEGMENT_BODY))
+    assert len(uploads) == 1
 
     transcript = test_db.query(WeworkTranscript).one()
     archive = test_db.query(WeworkTranscriptArchive).one()
@@ -109,7 +109,7 @@ def test_commits_native_object_metadata_and_structured_summary(
     assert transcript.archived_through_sequence == 1
     assert archive.from_sequence == 0
     assert archive.size_bytes == 4096
-    assert archive.storage_key.endswith(f"1-snapshot-{'a' * 64}.tgz.aes256gcm")
+    assert archive.storage_key.endswith(f"1-snapshot-{SEGMENT_SHA256}.tgz.aes256gcm")
     assert turn.sequence == 1
     assert turn.turn_id == "turn-1"
     assert turn.payload["assistantMessage"] == "Done"
@@ -132,14 +132,15 @@ def test_rejects_uploaded_segment_with_mismatched_digest(
     lease = _lease(test_client, test_token)
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
-        "integrity",
-        lambda _key, _max_bytes: (4096, "b" * 64),
+        "put_stream",
+        lambda *_args: None,
     )
 
-    response = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments",
-        headers=_headers(test_token),
-        json=_segment(lease),
+    response = _upload(
+        test_client,
+        test_token,
+        _segment(lease, sha256="b" * 64),
+        normalize_manifest=False,
     )
 
     assert response.status_code == 422
@@ -180,7 +181,7 @@ def test_prunes_segments_older_than_previous_snapshot(
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
     deleted_keys: list[str] = []
-    monkeypatch.setattr(storage, "integrity", _segment_integrity)
+    monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
     monkeypatch.setattr(storage, "delete", deleted_keys.append)
 
     for sequence in range(1, 21):
@@ -201,11 +202,7 @@ def test_prunes_segments_older_than_previous_snapshot(
                 else "codex-delta.v1.tgz.aes256gcm"
             ),
         )
-        response = test_client.post(
-            "/api/wework-transcripts/transcript-1/segments",
-            headers=_headers(test_token),
-            json=request,
-        )
+        response = _upload(test_client, test_token, request)
         assert response.status_code == 200
 
     retained_sequences = [
@@ -228,7 +225,7 @@ def test_continues_bounded_pruning_on_delta_commits(
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
     deleted_keys: list[str] = []
-    monkeypatch.setattr(storage, "integrity", _segment_integrity)
+    monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
     monkeypatch.setattr(storage, "delete", deleted_keys.append)
     monkeypatch.setattr(wework_transcript_service, "MAX_SEGMENTS_PRUNED_PER_COMMIT", 2)
 
@@ -236,10 +233,10 @@ def test_continues_bounded_pruning_on_delta_commits(
     for sequence in range(1, 7):
         is_snapshot = sequence in {1, 4, 5}
         deleted_before_commit = len(deleted_keys)
-        response = test_client.post(
-            "/api/wework-transcripts/transcript-1/segments",
-            headers=_headers(test_token),
-            json=_segment(
+        response = _upload(
+            test_client,
+            test_token,
+            _segment(
                 lease,
                 baseSequence=sequence - 1,
                 sequence=sequence,
@@ -274,7 +271,7 @@ def test_pruning_hides_obsolete_metadata_and_retries_object_deletion(
 
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
-    monkeypatch.setattr(storage, "integrity", _segment_integrity)
+    monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
     failures = 1
 
     def delete(_key):
@@ -285,10 +282,10 @@ def test_pruning_hides_obsolete_metadata_and_retries_object_deletion(
 
     monkeypatch.setattr(storage, "delete", delete)
     for sequence in (1, 2, 3):
-        response = test_client.post(
-            "/api/wework-transcripts/transcript-1/segments",
-            headers=_headers(test_token),
-            json=_segment(
+        response = _upload(
+            test_client,
+            test_token,
+            _segment(
                 lease,
                 baseSequence=sequence - 1,
                 sequence=sequence,
@@ -334,17 +331,17 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
 
     lease = _lease(test_client, test_token)
     storage = wework_transcript_service.wework_transcript_storage
-    monkeypatch.setattr(storage, "integrity", _segment_integrity)
+    monkeypatch.setattr(storage, "put_stream", lambda *_args: None)
     monkeypatch.setattr(
         storage,
         "delete",
         lambda _key: (_ for _ in ()).throw(WeworkTranscriptStorageError("defer")),
     )
     for sequence in (1, 2, 3):
-        response = test_client.post(
-            "/api/wework-transcripts/transcript-1/segments",
-            headers=_headers(test_token),
-            json=_segment(
+        response = _upload(
+            test_client,
+            test_token,
+            _segment(
                 lease,
                 baseSequence=sequence - 1,
                 sequence=sequence,
@@ -396,32 +393,33 @@ def test_pruning_hides_metadata_when_database_delete_commit_fails(
     assert test_db.query(WeworkTranscriptArchive).filter_by(id=obsolete.id).count() == 0
 
 
-def test_rejects_stale_sequence_before_upload(test_client, test_token, monkeypatch):
+def test_rejects_conflicting_segment_before_object_storage(
+    test_client, test_token, monkeypatch
+):
     from app.services import wework_transcript_service
 
     lease = _lease(test_client, test_token)
+    uploads = []
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
-        "integrity",
-        _segment_integrity,
+        "put_stream",
+        lambda *args: uploads.append(args),
     )
-    first = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments",
-        headers=_headers(test_token),
-        json=_segment(lease),
-    )
+    first = _upload(test_client, test_token, _segment(lease))
     assert first.status_code == 200
-    stale = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments/prepare",
-        headers=_headers(test_token),
-        json=_segment(
+    assert len(uploads) == 1
+    stale = _upload(
+        test_client,
+        test_token,
+        _segment(
             lease,
             sha256="b" * 64,
             format="codex-delta.v1.tgz.aes256gcm",
         ),
     )
     assert stale.status_code == 409
-    assert stale.json()["detail"]["code"] == "sequence_conflict"
+    assert stale.json()["detail"]["code"] == "segment_conflict"
+    assert len(uploads) == 1
 
 
 def test_rejects_mismatched_summary_for_committed_segment(
@@ -432,21 +430,17 @@ def test_rejects_mismatched_summary_for_committed_segment(
     lease = _lease(test_client, test_token)
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
-        "integrity",
-        _segment_integrity,
+        "put_stream",
+        lambda *_args: None,
     )
     request = _segment(lease)
-    committed = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments",
-        headers=_headers(test_token),
-        json=request,
-    )
+    committed = _upload(test_client, test_token, request)
     assert committed.status_code == 200
 
-    conflict = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments",
-        headers=_headers(test_token),
-        json={
+    conflict = _upload(
+        test_client,
+        test_token,
+        {
             **request,
             "summary": {
                 **request["summary"],
@@ -477,15 +471,11 @@ def test_reports_turn_conflict_when_turn_identity_exists_at_another_sequence(
     test_db.commit()
     monkeypatch.setattr(
         wework_transcript_service.wework_transcript_storage,
-        "integrity",
-        _segment_integrity,
+        "put_stream",
+        lambda *_args: None,
     )
 
-    conflict = test_client.post(
-        "/api/wework-transcripts/transcript-1/segments",
-        headers=_headers(test_token),
-        json=_segment(lease),
-    )
+    conflict = _upload(test_client, test_token, _segment(lease))
 
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "turn_conflict"
@@ -519,7 +509,43 @@ def test_creates_branch_without_copying_parent_objects(
     assert test_db.query(WeworkTranscriptTurn).count() == 0
 
 
-def test_download_uses_presigned_object_url(
+def test_normalizes_stale_future_fork_point_to_parent_head(
+    test_client, test_token, test_db
+):
+    _lease(test_client, test_token)
+    parent = test_db.query(WeworkTranscript).one()
+    parent.current_sequence = 11
+    test_db.commit()
+    request = {
+        "clientId": "client-b",
+        "ttlSeconds": 60,
+        "parentTranscriptId": "transcript-1",
+        "forkedAtSequence": 15,
+    }
+
+    branch = test_client.post(
+        "/api/wework-transcripts/fork-device-b/lease",
+        headers=_headers(test_token),
+        json=request,
+    )
+    retry = test_client.post(
+        "/api/wework-transcripts/fork-device-b/lease",
+        headers=_headers(test_token),
+        json=request,
+    )
+
+    assert branch.status_code == 200
+    assert retry.status_code == 200
+    item = (
+        test_db.query(WeworkTranscript)
+        .filter(WeworkTranscript.transcript_id == "fork-device-b")
+        .one()
+    )
+    assert item.parent_transcript_id == "transcript-1"
+    assert item.forked_at_sequence == 11
+
+
+def test_download_streams_the_object_through_backend(
     test_client, test_token, test_db, monkeypatch
 ):
     from app.api.endpoints import wework_transcripts
@@ -539,12 +565,14 @@ def test_download_uses_presigned_object_url(
     test_db.commit()
     monkeypatch.setattr(
         wework_transcripts.wework_transcript_storage,
-        "download_url",
-        lambda key: f"https://storage.example/{key}",
+        "stream",
+        lambda _key: iter([b"encrypted", b"!!"]),
     )
     response = test_client.get(
         f"/api/wework-transcripts/transcript-1/archives/{archive.id}/download",
         headers=_headers(test_token),
     )
     assert response.status_code == 200
-    assert response.json()["downloadUrl"].startswith("https://storage.example/")
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-length"] == "10"
+    assert response.content == b"encrypted!!"

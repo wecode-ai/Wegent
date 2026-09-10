@@ -19,6 +19,7 @@ core_segments=(
   plugin-development
   project-ai-settings
   model-routing
+  codex-account-login
   permission-modes
   workbench-mode
   computer-use
@@ -63,6 +64,7 @@ core_segments=(
 )
 plugin_segments=(
   core-dsh-ui-plugin-composition
+  plugin-marketplace-lifecycle
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
@@ -144,7 +146,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
-  model-routing,computer-use
+  model-routing,computer-use,codex-account-login
 )
 
 validate_core_shards() {
@@ -304,6 +306,10 @@ classify_wework_path() {
       select_target "cloud:core-task-flow"
       return
       ;;
+    wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs)
+      select_target "core:codex-account-login"
+      return
+      ;;
     # Documentation does not change the packaged desktop application.
     wework/*.md)
       return
@@ -419,6 +425,14 @@ classify_wework_path() {
       wework/src/lib/cloud-authorization-window* | \
       wework/src/extensions/cloud-desktop*)
       select_target "cloud:all"
+      return
+      ;;
+
+    # Native tray placement must survive process exit on macOS.
+    wework/electron/src/host/tray* | \
+      wework/e2e/desktop/scenarios/tray-*)
+      select_target "core:tray-lifecycle"
+      macos_inspector_e2e=true
       return
       ;;
 
@@ -749,6 +763,15 @@ classify_wework_path() {
 
 classify_path() {
   local path="$1"
+
+  case "$path" in
+    sdk/plugin-creator/* | sdk/plugin-auth/* | executor/src/local/plugin_creator.rs | \
+      wework/src/components/plugins/PluginCreateWorkspace* | \
+      wework/e2e/desktop/modules/plugin-flows.mjs)
+      select_target "plugins:plugin-marketplace-lifecycle"
+      select_target "cloud:plugin-workspace-publication"
+      ;;
+  esac
 
   case "$path" in
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createTranscriptTarget, exportExecutorTranscript } from './index.js'
+import { createTranscriptTarget, exportExecutorTranscript, readExecutorTurn } from './index.js'
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
 
@@ -120,4 +120,30 @@ test('routes restore and acknowledgement through native transcript RPCs', async 
       },
     },
   ])
+})
+
+test('distinguishes a deleted task from a missing turn in an existing task', async () => {
+  await assert.rejects(
+    readExecutorTurn(
+      {
+        async request() {
+          return { taskId: 'deleted-task', runtime: 'runtime', workspacePath: '', turns: [] }
+        },
+      },
+      { taskId: 'deleted-task', executorTurnId: 'turn-1' }
+    ),
+    error => error.code === 'transcript_task_missing'
+  )
+
+  await assert.rejects(
+    readExecutorTurn(
+      {
+        async request() {
+          return { taskId: 'active-task', runtime: 'Codex', workspacePath: '/workspace', turns: [] }
+        },
+      },
+      { taskId: 'active-task', executorTurnId: 'turn-1' }
+    ),
+    error => error.code === 'transcript_turn_missing'
+  )
 })

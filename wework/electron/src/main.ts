@@ -71,7 +71,7 @@ import {
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
-import { createTrayBootstrapIcon, createTrayIcon } from './host/tray-icon.js'
+import { createTrayIcon } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
@@ -119,11 +119,14 @@ import {
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
+import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
-  createWeworkSyncRequestSignal,
+  createWeworkSyncDownloadTimeout,
+  createWeworkSyncFetchInit,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
+  readWeworkSyncResponse,
 } from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -1046,7 +1049,6 @@ async function hideMainWindowToBackground(): Promise<void> {
     app.hide()
     await setDockVisible(false)
   }
-  primaryDshLoaded = false
 }
 
 async function closeMainWindowToTray(): Promise<void> {
@@ -1068,10 +1070,10 @@ async function reactivateMainWindow(): Promise<void> {
     app.setActivationPolicy('regular')
   }
   await setDockVisible(true)
-  await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
   target.show()
   target.focus()
+  await loadPrimaryDshView()
 }
 
 function dispatchTrayAction(action: TrayAction): void {
@@ -1092,7 +1094,7 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayBootstrapIcon(nativeImage, iconPath), trayGuid),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -1216,8 +1218,8 @@ async function shutdown(): Promise<void> {
   systemSleep.stop()
   trayNativeStatus?.stop()
   trayNativeStatus = null
-  trayManager?.destroy()
-  trayManager = null
+  // Keep the tray alive until process exit. Explicit destruction removes the
+  // macOS status item's saved position, undoing menu bar manager placement.
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
@@ -1430,25 +1432,26 @@ async function configureDesktopRuntime(): Promise<void> {
             const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
             const path = normalizeWeworkSyncPath(request.path)
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
-            const response = await fetch(`${apiBaseUrl}${path}`, {
-              method: request.method,
-              signal: createWeworkSyncRequestSignal(),
-              headers: {
-                authorization: `${credential.tokenType} ${credential.accessToken}`,
-                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
-              },
-              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-            })
-            const text = await response.text()
-            let body: unknown = null
-            if (text) {
-              try {
-                body = JSON.parse(text)
-              } catch {
-                body = text
-              }
+            const downloadTimeout = request.downloadPath ? createWeworkSyncDownloadTimeout() : null
+            try {
+              const response = await fetch(
+                `${apiBaseUrl}${path}`,
+                await createWeworkSyncFetchInit(
+                  request,
+                  `${credential.tokenType} ${credential.accessToken}`,
+                  downloadTimeout?.signal
+                )
+              )
+              const body = await readWeworkSyncResponse(
+                response,
+                request.downloadPath,
+                request.downloadSizeBytes,
+                downloadTimeout?.refresh
+              )
+              return { status: response.status, body }
+            } finally {
+              downloadTimeout?.clear()
             }
-            return { status: response.status, body }
           },
         },
         {
@@ -1493,9 +1496,13 @@ async function configureDesktopRuntime(): Promise<void> {
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
             trayManager?.setState(state)
+            syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
             void trayNativeStatus?.refresh()
           },
-          traySnapshot: () => trayManager?.snapshot() ?? null,
+          traySnapshot: () => {
+            const snapshot = trayManager?.snapshot()
+            return snapshot ? { ...snapshot, dockBadge: app.dock?.getBadge() ?? null } : null
+          },
           openWorkspace: openWorkspaceWindow,
           popoutWindowSnapshot: () => ({
             exists: Boolean(popoutWindow && !popoutWindow.isDestroyed()),
@@ -1668,7 +1675,7 @@ if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     logStartupStep('electron-ready', 'completed')
     if (process.platform === 'darwin' && app.dock && developmentDockIdentity) {
-      app.dock.setBadge(developmentDockIdentity.badge)
+      syncDockBadge(app.dock, 0, developmentDockIdentity.badge)
       console.info('[development] Dock identity configured', developmentDockIdentity)
     }
     logStartupStep('log-retention-start', 'started')

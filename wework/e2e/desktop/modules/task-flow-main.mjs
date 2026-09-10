@@ -1070,9 +1070,11 @@ async function main() {
     cwd: workspacePath,
   })
 
+  const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
   const desktopScenario = await loadDesktopScenario(
     process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
     {
+      appIdentifier,
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       codexSqliteHome,
@@ -1111,7 +1113,6 @@ async function main() {
     const codexVersion = commandOutput(codexBinary, ['--version'])
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
-    const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
     if (
@@ -2858,10 +2859,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'workspace-mention'
       await control.command('fill', composerSelector, { value: '@auth' })
-      await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
+        text: 'auth.ts',
       })
-      await control.command('click', '[data-testid="workspace-mention-option-0"]')
       await control.command('waitFor', '[data-testid="composer-path-chip-auth-ts"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -3627,7 +3627,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
         {
           text: FILE_PREVIEW_RESTORE_MARKER,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3730,9 +3730,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The first task browser leaked into the second task'
       )
       assert.equal(
-        secondTaskWorkspaceSnapshot.testIds.includes('workspace-markdown-preview'),
+        secondTaskWorkspaceSnapshot.testIds.includes('workspace-file-editor'),
         false,
-        'The first task file preview leaked into the second task'
+        'The first task file editor leaked into the second task'
       )
       assert.equal(
         secondTaskWorkspaceSnapshot.testIds.includes('file-changes-review-panel'),
@@ -3800,7 +3800,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
       await control.command(
         'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
         {
           text: FILE_PREVIEW_RESTORE_MARKER,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

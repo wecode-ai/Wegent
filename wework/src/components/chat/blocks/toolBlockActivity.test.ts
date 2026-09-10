@@ -73,6 +73,11 @@ describe('toolBlockActivity', () => {
     ).toBe(
       String.raw`printf '正在验证运行中卡片' && while [ ! -f "/tmp/board-focus-release" ]; do sleep 0.2; done`
     )
+    expect(
+      unwrapShellCommand(
+        `powershell.exe -NoProfile -Command ${JSON.stringify("Write-Output '正在验证运行中卡片'")}`
+      )
+    ).toBe("Write-Output '正在验证运行中卡片'")
     expect(unwrapShellCommand('pnpm lint')).toBe('pnpm lint')
   })
 

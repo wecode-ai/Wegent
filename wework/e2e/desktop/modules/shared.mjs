@@ -27,6 +27,7 @@ import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
+import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -425,7 +426,10 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'app_version',
   'arch',
   'distinct_id',
+  'domain',
+  'event_schema_version',
   'feature',
+  'failure_stage',
   'locale',
   'os',
   'release_channel',
@@ -528,7 +532,7 @@ const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
 const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
 const VERIFIES_INITIAL_TELEMETRY_CONSENT =
-  !SELECTED_DESKTOP_SEGMENT || SELECTED_DESKTOP_SEGMENT === 'telemetry-consent'
+  shouldAcceptInitialTelemetryConsent(SELECTED_DESKTOP_SEGMENT)
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..', '..')
@@ -1188,12 +1192,18 @@ async function triggerModelReloadUntilCloudFailure(control) {
   )
 }
 
-async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
+async function sendPromptUntilScenarioRequest(
+  control,
+  selector,
+  prompt,
+  scenario,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const scenarioRequest = control.awaitScenarioRequest(scenario)
   await sendPrompt(control, selector, prompt)
   return withTimeout(
     scenarioRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
     `The model service did not receive the ${scenario} request`
   )
 }

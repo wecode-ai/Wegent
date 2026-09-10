@@ -29,6 +29,8 @@ FROM builder-deps AS builder
 ARG APP_VERSION=dev
 
 COPY executor/src /app/executor/src
+COPY sdk/plugin-auth /app/sdk/plugin-auth
+COPY sdk/plugin-creator /app/sdk/plugin-creator
 COPY shared/assets /app/shared/assets
 RUN cd /app/executor \
     && find src -type f -exec touch {} + \

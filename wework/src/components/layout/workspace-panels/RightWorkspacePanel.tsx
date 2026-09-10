@@ -54,6 +54,8 @@ import {
   subscribeComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type { GitPatchAction } from '@/api/environment'
+import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
 import { isEditableShortcutTarget } from '@/lib/keybindings'
 import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
@@ -174,6 +176,7 @@ interface RightWorkspaceReviewState {
   branchName?: string
   targetBranchName?: string
   focusFilePath?: string
+  reviewMode?: DesktopReviewMode
 }
 
 interface RightWorkspacePanelProps {
@@ -248,6 +251,8 @@ interface RightWorkspacePanelProps {
   onCloseTab: (tab: RightWorkspacePanelTab) => void
   onHarnessSessionExit?: (sessionId: string) => void
   onRefreshReview?: () => void
+  onOpenReviewSourceFile?: (path: string, lineStart?: number, lineEnd?: number) => void
+  onApplyReviewPatch?: (action: GitPatchAction, patch: string) => Promise<void>
   onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
   getChatInitialAddress?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
@@ -550,6 +555,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onCloseTab,
   onHarnessSessionExit,
   onRefreshReview,
+  onOpenReviewSourceFile,
+  onApplyReviewPatch,
   onRestoreConversation,
   getChatInitialInput,
   getChatInitialAddress,
@@ -854,8 +861,12 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             branchName={review.branchName}
             targetBranchName={review.targetBranchName}
             focusFilePath={review.focusFilePath}
+            reviewMode={review.reviewMode}
             viewOptions={reviewViewOptions}
             onRefresh={onRefreshReview}
+            onOpenSourceFile={onOpenReviewSourceFile}
+            onApplyPatch={onApplyReviewPatch}
+            onAddCodeComment={onAddCodeComment}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />

@@ -19,13 +19,15 @@ The Backend uses three tables:
 | `wework_transcript_archives` | Immutable native segment sequence, object key, SHA-256, size, and format |
 | `wework_transcript_turns`    | One structured finalized-turn summary using the previous data contract   |
 
-The Executor encrypts bodies with AES-256-GCM before uploading them directly to
-the private `wework-transcripts` object bucket. The
-`wework_transcript_turns.payload` JSON retains the previous protocol's user
-messages, final assistant text, reasoning summary, completion state, and task
-ID, but not the complete tool protocol, usage, rollout JSONL, or workspace
-files. Each turn has its own row instead of appending an entire transcript into
-one field; segmented tgz objects carry full-fidelity capacity and exact restore.
+The Executor encrypts bodies with AES-256-GCM before uploading them through the
+authenticated Backend API. The Backend writes ciphertext to the private
+`wework-transcripts` object bucket; desktop clients never receive object-store
+endpoints, credentials, or presigned URLs. The `wework_transcript_turns.payload`
+JSON retains the previous protocol's user messages, final assistant text,
+reasoning summary, completion state, and task ID, but not the complete tool
+protocol, usage, rollout JSONL, or workspace files. Each turn has its own row
+instead of appending an entire transcript into one field; segmented tgz objects
+carry full-fidelity capacity and exact restore.
 
 The archive index, turn summary, and transcript head for one sequence commit in
 one MySQL transaction. A retry is idempotent only when both object metadata and
@@ -45,8 +47,11 @@ nonce for different plaintext.
 
 Each cloud sequence maps to exactly one object:
 
-- Sequence 1, every tenth sequence, and sequence 1 of a conflict branch are
-  full encrypted `codex-snapshot.v1.tgz.aes256gcm` snapshots.
+- Sequence 1, every tenth sequence, sequence 1 of a conflict branch, and the
+  first continuation after a cross-device restore are full encrypted
+  `codex-snapshot.v1.tgz.aes256gcm` snapshots. Restore rewrites the local thread
+  ID and workspace path, so a new snapshot establishes a portable byte
+  baseline.
 - Other sequences are encrypted `codex-delta.v1.tgz.aes256gcm`
   increments.
 - Every segment also carries a workspace overlay so recent files are not lost.
@@ -80,7 +85,7 @@ stateDiagram-v2
     LocalReady --> OfflinePending: Backend unavailable
     OfflinePending --> LeaseHeld: connection restored
     LeaseHeld --> SegmentBuilt: build and encrypt snapshot or rollout delta
-    SegmentBuilt --> ObjectUploaded: PUT presigned object URL
+    SegmentBuilt --> ObjectUploaded: stream ciphertext through Backend
     ObjectUploaded --> MetadataCommitted: atomically commit object index, summary, and head
     MetadataCommitted --> LocalReady: record rollout offset, clear outbox, release lease
 
@@ -90,7 +95,7 @@ stateDiagram-v2
     BranchSnapshot --> LeaseHeld: create deterministic fork transcript
 
     [*] --> RestoreRequired: transcript missing or behind locally
-    RestoreRequired --> Downloading: select latest snapshot and contiguous deltas
+    RestoreRequired --> Downloading: stream latest snapshot and contiguous deltas through Backend
     Downloading --> Staging: download and verify SHA-256
     Staging --> Bound: restore workspace, rollout, thread metadata, and dynamic tools
     Staging --> RestoreRequired: validation failed; remove staging
@@ -137,19 +142,18 @@ GitHub CI.
 
 The authenticated prefix is `/api/wework-transcripts`:
 
-| Method and path                           | Purpose                                           |
-| ----------------------------------------- | ------------------------------------------------- |
-| `GET /`                                   | List transcripts and native segment metadata      |
-| `GET /{id}`                               | Read one transcript                               |
-| `GET /{id}/turns`                         | Page through structured finalized-turn summaries  |
-| `GET /{id}/encryption-key`                | Obtain the current user's transcript cipher key   |
-| `POST /{id}/lease`                        | Create a transcript or acquire its writer lease   |
-| `PUT /{id}/lease/{token}`                 | Renew a lease                                     |
-| `POST /{id}/lease/release`                | Release a lease                                   |
-| `POST /{id}/segments/prepare`             | Validate sequence and create a size-bounded POST  |
-| `POST /{id}/segments`                     | Atomically commit object index, summary, and head |
-| `POST /{id}/archive`                      | Mark a transcript archived                        |
-| `GET /{id}/archives/{archiveId}/download` | Create a short-lived signed download URL          |
+| Method and path                           | Purpose                                            |
+| ----------------------------------------- | -------------------------------------------------- |
+| `GET /`                                   | List transcripts and native segment metadata       |
+| `GET /{id}`                               | Read one transcript                                |
+| `GET /{id}/turns`                         | Page through structured finalized-turn summaries   |
+| `GET /{id}/encryption-key`                | Obtain the current user's transcript cipher key    |
+| `POST /{id}/lease`                        | Create a transcript or acquire its writer lease    |
+| `PUT /{id}/lease/{token}`                 | Renew a lease                                      |
+| `POST /{id}/lease/release`                | Release a lease                                    |
+| `POST /{id}/segments`                     | Receive ciphertext and commit index, summary, head |
+| `POST /{id}/archive`                      | Mark a transcript archived                         |
+| `GET /{id}/archives/{archiveId}/download` | Stream ciphertext through the Backend              |
 
 Object keys contain a SHA-256 digest of the transcript ID rather than the raw
 identifier.
@@ -158,11 +162,10 @@ identifier.
 
 Object storage reuses the `ATTACHMENT_S3_*` connection settings:
 
-| Environment variable                            | Default              | Purpose                                    |
-| ----------------------------------------------- | -------------------- | ------------------------------------------ |
-| `WEWORK_TRANSCRIPT_S3_BUCKET`                   | `wework-transcripts` | Private native transcript segment bucket   |
-| `WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS` | `900`                | Upload/download signed URL lifetime        |
-| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET`           | empty                | Stable high-entropy root for per-user keys |
+| Environment variable                  | Default              | Purpose                                    |
+| ------------------------------------- | -------------------- | ------------------------------------------ |
+| `WEWORK_TRANSCRIPT_S3_BUCKET`         | `wework-transcripts` | Private native transcript segment bucket   |
+| `WEWORK_TRANSCRIPT_ENCRYPTION_SECRET` | empty                | Stable high-entropy root for per-user keys |
 
 This design reuses the existing three transcript tables. It adds no Alembic
 migration and requires no schema change for existing deployments. If object
