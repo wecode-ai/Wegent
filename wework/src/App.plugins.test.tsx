@@ -2,6 +2,9 @@ import { useEffect } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { EditorState } from 'prosemirror-state'
+import { EditorView } from 'prosemirror-view'
+import { composerSchema } from '@/components/chat/composer/composerProseMirrorModel'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
 import {
   RuntimeTaskLifecycleProvider,
@@ -21,6 +24,10 @@ import { telemetryFeatureForLocation } from './telemetry/routes'
 import App from './App'
 
 const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
+
+vi.hoisted(() => {
+  Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' })
+})
 
 vi.mock('@/telemetry/client', async importOriginal => ({
   ...(await importOriginal<typeof import('@/telemetry/client')>()),
@@ -1168,6 +1175,52 @@ describe('App plugins route', () => {
     expect(
       telemetryMocks.track.mock.calls.filter(([event]) => event === 'feature_opened')
     ).toHaveLength(openedFeatureCount)
+  })
+
+  test('dispatches application shortcuts from the focused conversation composer', async () => {
+    window.history.pushState({}, '', '/')
+    renderApp()
+    await screen.findByTestId('app-shell')
+    const composer = document.createElement('textarea')
+    composer.dataset.testid = 'chat-message-input'
+    composer.value = 'Unsent draft'
+    document.body.appendChild(composer)
+    composer.focus()
+
+    try {
+      expect(
+        fireEvent.keyDown(composer, {
+          key: ',',
+          code: 'Comma',
+          metaKey: true,
+        })
+      ).toBe(false)
+      await waitFor(() => expect(window.location.pathname).toBe('/settings'))
+      expect(composer.value).toBe('Unsent draft')
+    } finally {
+      composer.remove()
+    }
+  })
+
+  test('handles the sidebar shortcut before ProseMirror suppresses native bold', async () => {
+    window.history.pushState({}, '', '/plugins')
+    renderApp()
+    await screen.findByTestId('plugins-workspace')
+    const editor = new EditorView(document.body, {
+      state: EditorState.create({ schema: composerSchema }),
+      attributes: { 'data-testid': 'chat-message-input' },
+    })
+    Object.defineProperty(editor.dom, 'isContentEditable', { value: true })
+    editor.focus()
+
+    try {
+      fireEvent.keyDown(editor.dom, { key: 'b', code: 'KeyB', keyCode: 66, metaKey: true })
+
+      expect(await screen.findByTestId('auxiliary-expand-sidebar-button')).toBeInTheDocument()
+      expect(editor.state.doc.textContent).toBe('')
+    } finally {
+      editor.destroy()
+    }
   })
 
   test('does not dispatch application shortcuts from editable targets', async () => {
