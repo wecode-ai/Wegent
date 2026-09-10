@@ -899,6 +899,73 @@ async fn app_ipc_reconciles_runtime_status_at_task_service_boundaries() {
 }
 
 #[tokio::test]
+async fn app_ipc_preserves_task_binding_model_selection() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Bound Model",
+                "project_key": "MODEL",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {"title": "Preserve the session model"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    let binding = server
+        .dispatch(
+            "todos.bind",
+            json!({
+                "project_id": project["id"],
+                "item_id": task["id"],
+                "task": {
+                    "deviceId": "local-device",
+                    "taskId": "runtime-model-1",
+                    "taskTitle": "Preserve the session model",
+                    "modelSelection": {
+                        "modelName": "gpt-5.6-sol",
+                        "modelType": "public",
+                        "options": {"reasoning": "high"}
+                    }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(binding["modelSelection"]["modelName"], "gpt-5.6-sol");
+    let bindings = server
+        .dispatch("todos.bindings.batch", json!({"task_ids": [task["id"]]}))
+        .await
+        .unwrap();
+    assert_eq!(
+        bindings[0]["modelSelection"],
+        json!({
+            "modelName": "gpt-5.6-sol",
+            "modelType": "public",
+            "options": {"reasoning": "high"}
+        })
+    );
+}
+
+#[tokio::test]
 async fn app_ipc_stores_project_files_attachments_and_deliveries_locally() {
     let _lock = env_lock().await;
     let executor_home = tempfile::tempdir().unwrap();

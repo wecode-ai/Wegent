@@ -1272,6 +1272,11 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-3')).toBeInTheDocument()
     expect(localStorage.getItem('wework-board-focus-execution:v1:1:backend:11')).toBeNull()
 
+    expect(await screen.findByTestId('cloud-todo-card-goal-WEG-1-2')).toHaveAttribute(
+      'title',
+      expect.stringContaining('验证看板悬浮预览始终展示当前会话目标和最新进展')
+    )
+
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-1')).toHaveTextContent(

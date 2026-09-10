@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { CloudLoopItem } from '@/api/deliveries'
@@ -91,6 +91,10 @@ const snapshot: TaskChangeRequestSnapshot = {
 }
 
 describe('CloudTodoBoardCard', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   beforeEach(async () => {
     await installDshUiTestContributions(
       {
@@ -392,6 +396,8 @@ describe('CloudTodoBoardCard', () => {
       />
     )
 
+    expect(screen.queryByTestId(/cloud-todo-card-goal-/)).not.toBeInTheDocument()
+
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
 
     await new Promise(resolve => window.setTimeout(resolve, 500))
@@ -503,6 +509,88 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
   })
 
+  it('marks an unread task as read after its conversation preview stays open for 3 seconds', async () => {
+    vi.useFakeTimers()
+    const onMarkRead = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, is_unread: true }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: false,
+            finalResponsePreview: '已完成',
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        onMarkRead={onMarkRead}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+    await act(async () => vi.advanceTimersByTime(450))
+    expect(screen.getByTestId('cloud-todo-card-progress-popup-WEG-85')).toBeInTheDocument()
+
+    await act(async () => vi.advanceTimersByTime(2999))
+    expect(onMarkRead).not.toHaveBeenCalled()
+
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(onMarkRead).toHaveBeenCalledOnce()
+    expect(onMarkRead).toHaveBeenCalledWith(expect.objectContaining({ id: 'WEG-85' }))
+  })
+
+  it('keeps an unread task unread when its conversation preview closes before 3 seconds', async () => {
+    vi.useFakeTimers()
+    const onMarkRead = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, is_unread: true }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: false,
+            finalResponsePreview: '已完成',
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        onMarkRead={onMarkRead}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-WEG-85')
+    fireEvent.mouseEnter(card)
+    await act(async () => vi.advanceTimersByTime(450))
+    await act(async () => vi.advanceTimersByTime(2000))
+
+    fireEvent.mouseLeave(card)
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-85')).not.toBeInTheDocument()
+
+    await act(async () => vi.advanceTimersByTime(1000))
+    expect(onMarkRead).not.toHaveBeenCalled()
+  })
+
   it('shows the current conversation goal and pins the same hover preview', async () => {
     const onClick = vi.fn()
     const onPreviewPinnedChange = vi.fn()
@@ -539,6 +627,14 @@ describe('CloudTodoBoardCard', () => {
           showDate: false,
         }}
       />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-goal-WEG-85-85')).toHaveAttribute(
+      'title',
+      expect.stringContaining('让用户在看板悬浮态快速理解当前会话正在完成什么')
+    )
+    expect(screen.getByTestId('cloud-todo-card-goal-WEG-85-85')).not.toHaveTextContent(
+      '让用户在看板悬浮态快速理解当前会话正在完成什么'
     )
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
