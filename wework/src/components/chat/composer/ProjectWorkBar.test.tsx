@@ -676,6 +676,34 @@ describe('ProjectWorkBar', () => {
     })
   })
 
+  test('keeps constrained desktop project options inside the popover surface', async () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={runtimeWork}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const menu = screen.getByTestId('project-work-menu')
+    expect(menu).toHaveClass('overflow-hidden', 'bg-popover')
+    expect(menu.firstElementChild).toHaveClass('flex', 'min-h-0', 'flex-1', 'flex-col')
+    expect(screen.getByTestId('project-options-list')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+  })
+
   test('resolves the selected workspace within the current project before showing remote state', () => {
     const localDevice: DeviceInfo = {
       ...device,
