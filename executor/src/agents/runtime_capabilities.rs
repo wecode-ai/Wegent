@@ -1252,6 +1252,11 @@ enum SkillArchiveResponse {
     },
 }
 
+/// Download a skill archive with bounded retries for transient failures.
+///
+/// Transient errors (timeouts, connection failures, aborted body reads) are
+/// retried up to [`DOWNLOAD_ATTEMPTS`] times; each retry is logged with a
+/// sanitized reason. Non-retryable errors fail immediately.
 async fn download_skill_archive_with_retry(
     client: &reqwest::Client,
     auth_token: &str,
