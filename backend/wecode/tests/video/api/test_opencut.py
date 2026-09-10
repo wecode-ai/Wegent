@@ -215,9 +215,13 @@ def test_storycut_bundle_contains_timeline_media_and_overlay_tracks(
         "image",
         "music",
     ]
-    assert all(item["url"].startswith("https://") for item in bundle["media"])
+    assert all(
+        item["url"].startswith("/api/storycut/media-proxy?") for item in bundle["media"]
+    )
     image_media = bundle["media"][0]
-    assert image_media["url"] == "https://wx1.sinaimg.cn/large/image-1.jpg"
+    assert parse_qs(urlsplit(image_media["url"]).query)["url"] == [
+        "https://wx1.sinaimg.cn/large/image-1.jpg"
+    ]
     assert image_media["metadata"]["storycut"]["browserSafeSource"] == (
         image_media["url"]
     )
@@ -325,7 +329,9 @@ def test_storycut_bundle_keeps_https_wegent_image_source(monkeypatch) -> None:
     assert storycut["sourceUrl"] == source
 
 
-def test_storycut_bundle_uses_direct_https_for_weibo_video(monkeypatch) -> None:
+def test_storycut_bundle_uses_opencut_proxy_and_preserves_original_video(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         "wecode.video.api.opencut.settings.FRONTEND_URL",
         "http://10.2.3.4:8400",
@@ -352,10 +358,43 @@ def test_storycut_bundle_uses_direct_https_for_weibo_video(monkeypatch) -> None:
     )
 
     video = bundle["media"][0]
-    assert video["url"] == "https://f.video.weibocdn.com/video-1.mp4"
-    assert video["metadata"]["originalSourceUrl"] == video["url"]
+    assert urlsplit(video["url"]).path == "/api/storycut/media-proxy"
+    assert parse_qs(urlsplit(video["url"]).query)["url"] == [
+        "https://f.video.weibocdn.com/video-1.mp4"
+    ]
+    assert (
+        video["metadata"]["originalSourceUrl"]
+        == "https://f.video.weibocdn.com/video-1.mp4"
+    )
     assert video["metadata"]["storycut"]["browserSafeSource"] == video["url"]
     assert "proxySource" not in video["metadata"]["storycut"]
+
+
+def test_source_audio_imports_as_audio_not_video(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "wecode.video.api.opencut.settings.FRONTEND_URL", "http://localhost:3030"
+    )
+    bundle = build_storycut_bundle(
+        timeline={
+            "task_id": "timeline-audio",
+            "source_audio_tracks": [
+                {
+                    "clip_id": "source-1",
+                    "kind": "source_audio",
+                    "path": "https://podcast.video.weibocdn.com/audio.mp3",
+                    "source_window": {"start": 0, "end": 5000},
+                    "timeline_window": {"start": 0, "end": 5000},
+                }
+            ],
+        },
+        session_id="133",
+        uid="employee",
+        token="test-token",
+    )
+    media = bundle["media"][0]
+    assert media["mediaType"] == "audio"
+    assert media["metadata"]["media_type"] == "audio"
+    assert bundle["keyframes"][0]["data"]["type"] == "audio"
 
 
 def test_storycut_save_payload_maps_edits_back_to_aigc_tracks() -> None:

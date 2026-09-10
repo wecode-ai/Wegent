@@ -97,13 +97,15 @@ describe('MaterialTimelinePanel', () => {
     )
     expect(await screen.findByTestId('material-timeline-opencut-frame')).toHaveAttribute(
       'src',
-      'https://timeline-cut.weibo.com/storycut/import?embed=wegent'
+      'https://timeline-cut.weibo.com/storycut/import?embed=wegent&controlMode=host-v1&hostActions=save%2Csave-and-render%2Cclose'
     )
 
     act(() => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: 'https://timeline-cut.weibo.com',
+          source: (screen.getByTestId('material-timeline-opencut-frame') as HTMLIFrameElement)
+            .contentWindow,
           data: { type: 'storycut:opencut-saved' },
         })
       )
@@ -116,6 +118,8 @@ describe('MaterialTimelinePanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: 'https://timeline-cut.weibo.com',
+          source: (screen.getByTestId('material-timeline-opencut-frame') as HTMLIFrameElement)
+            .contentWindow,
           data: { type: 'storycut:opencut-close' },
         })
       )
@@ -140,6 +144,8 @@ describe('MaterialTimelinePanel', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: 'https://timeline-cut.weibo.com',
+          source: (screen.getByTestId('material-timeline-opencut-frame') as HTMLIFrameElement)
+            .contentWindow,
           data: { type: 'storycut:opencut-close' },
         })
       )

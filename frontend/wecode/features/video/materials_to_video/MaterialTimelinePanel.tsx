@@ -22,6 +22,7 @@ import { milliseconds, timelineTracks, updateTrack } from './utils'
 interface MaterialTimelinePanelProps {
   sessionId: string
   onContinue?: (buttonName?: string) => void
+  onRender?: () => void | Promise<void>
   autoOpenOpenCut?: boolean
   onOpenCutClose?: () => void
 }
@@ -70,6 +71,7 @@ function trackSource(track: TimelineTrack): string {
 export function MaterialTimelinePanel({
   sessionId,
   onContinue,
+  onRender,
   autoOpenOpenCut,
   onOpenCutClose,
 }: MaterialTimelinePanelProps) {
@@ -388,6 +390,7 @@ export function MaterialTimelinePanel({
           sessionId={sessionId}
           artifactId={record.task_id}
           onSaved={() => void load(false)}
+          onRender={onRender}
           autoOpen={autoOpenOpenCut}
           onDialogClose={autoOpenOpenCut ? onOpenCutClose : undefined}
         />

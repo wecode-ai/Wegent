@@ -309,7 +309,9 @@ def _browser_media_source(
     if kind in {"image", "video", *DIRECT_AUDIO_KINDS}:
         for source in (public_source, original_source):
             if _is_direct_media_source(source):
-                return _https_media_source(source)
+                # Load through OpenCut's same-origin media endpoint so CDN
+                # referrer/CORS policies do not prevent browser decoding.
+                return _opencut_resource_proxy_url(_https_media_source(source))
     return public_source
 
 
@@ -353,10 +355,13 @@ def _media_item(
     timeline_window = _time_window(item)
     duration = source_window["duration"] or timeline_window["duration"] or 3000
     size = item.get("size") if isinstance(item.get("size"), list) else []
+    media_type = {"bgm": "music", "source_audio": "audio"}.get(kind, kind)
+    if media_type not in {"image", "video", "mg", "music", "voiceover", "audio"}:
+        media_type = "video"
     metadata: dict[str, Any] = {
         "name": str(item.get("clip_id") or item.get("media_id") or media_id),
         "duration": duration / 1000,
-        "media_type": kind,
+        "media_type": media_type,
         "url": browser_source,
         "originalSourceUrl": browser_safe_original_source,
         "storycut": {
@@ -372,9 +377,6 @@ def _media_item(
         metadata["storycut"]["proxySourceUrl"] = public_source
     if len(size) >= 2:
         metadata.update({"width": size[0], "height": size[1]})
-    media_type = "music" if kind == "bgm" else kind
-    if media_type not in {"image", "video", "mg", "music", "voiceover", "audio"}:
-        media_type = "video"
     return (
         {
             "id": media_id,
