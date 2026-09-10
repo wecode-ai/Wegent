@@ -46,7 +46,7 @@ export interface RequestUserInputPayload {
 interface RequestUserInputCardProps {
   payload: RequestUserInputPayload
   disabled?: boolean
-  onSubmit?: (response: RequestUserInputResponse) => void
+  onSubmit?: (response: RequestUserInputResponse) => boolean | void | Promise<boolean | void>
   onIgnore?: () => void
 }
 
@@ -81,11 +81,11 @@ export function RequestUserInputCard({
     formRef.current?.focus({ preventScroll: true })
   }, [])
 
-  const handleSubmit = (
+  const handleSubmit = async (
     answersOverride?: Record<string, string>,
     activeQuestionIdOverride?: string | null
-  ) => {
-    if (isDisabled || questions.length === 0) return
+  ): Promise<boolean> => {
+    if (isDisabled || questions.length === 0 || !onSubmit) return false
 
     const effectiveAnswers = answersOverride ?? selectedAnswers
     const answers = responseAnswers(
@@ -93,17 +93,18 @@ export function RequestUserInputCard({
       effectiveAnswers,
       activeQuestionIdOverride ?? activeQuestionId
     )
-    setSubmitted(true)
-    onSubmit?.({
+    const accepted = await onSubmit({
       requestId: payload.requestId ?? payload.request_id,
       itemId: payload.itemId ?? payload.item_id,
       answers,
     })
+    if (accepted !== false) setSubmitted(true)
+    return accepted !== false
   }
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    handleSubmit()
+    void handleSubmit()
   }
 
   const selectOption = (
@@ -118,7 +119,7 @@ export function RequestUserInputCard({
     setActiveQuestionId(question.id)
     setSelectedAnswers(nextAnswers)
     if (shouldSubmitOnOptionSelect(question, option, questions)) {
-      handleSubmit(nextAnswers, question.id)
+      void handleSubmit(nextAnswers, question.id)
     }
   }
 
@@ -143,7 +144,7 @@ export function RequestUserInputCard({
 
     event.preventDefault()
     event.stopPropagation()
-    handleSubmit()
+    void handleSubmit()
   }
 
   const actionControls = (
@@ -151,7 +152,7 @@ export function RequestUserInputCard({
       <button
         type="button"
         data-testid="request-user-input-ignore-button"
-        disabled={isDisabled}
+        disabled={isDisabled || !onIgnore}
         onClick={onIgnore}
         className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
       >
@@ -163,8 +164,8 @@ export function RequestUserInputCard({
       <button
         type="button"
         data-testid="request-user-input-submit-button"
-        disabled={isDisabled || questions.length === 0}
-        onClick={() => handleSubmit()}
+        disabled={isDisabled || questions.length === 0 || !onSubmit}
+        onClick={() => void handleSubmit()}
         className="inline-flex h-11 min-w-[68px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
       >
         {t('request_user_input.submit')}

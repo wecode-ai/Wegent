@@ -5367,6 +5367,7 @@ export function CloudTodoWorkspace({
                                       }
                                       onMarkRead={markItemRead}
                                       onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
+                                      onOpenRuntimeTask={onOpenRuntimeTask}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}

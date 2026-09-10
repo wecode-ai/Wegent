@@ -41,7 +41,7 @@ const MOONSHOT_OVERRIDE_ISSUE_TITLE = 'Issue 临时云端 Moonshot 覆盖本地 
 const MOONSHOT_OVERRIDE_FOLLOW_UP =
   'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP: verify immutable task model routing.'
 const MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION =
-  'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP_COMPLETE'
+  'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP_COMPLETE\n\n[打开任务文件](README.md)'
 const CLOUD_MODEL_UPSTREAM_ID = 'desktop-e2e-public-upstream-model'
 
 const PROJECT = {
@@ -1434,6 +1434,13 @@ export function createDesktopScenario({
       routedFollowUp?.model,
       CLOUD_MODEL_UPSTREAM_ID,
       'The board popup follow-up used the global default instead of the task model'
+    )
+    assert.equal(
+      await control.command('getAttribute', boardWorkspaceTabSelector, {
+        value: 'aria-selected',
+      }),
+      'true',
+      'A locally handled board-popup message unexpectedly left the project-space tab'
     )
     try {
       await control.command('press', 'body', { key: 'Escape' })
