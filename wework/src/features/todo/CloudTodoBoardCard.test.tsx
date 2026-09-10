@@ -27,6 +27,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral,
     collapseComposerWhenIdle,
     runtimeContext,
+    initialScrollPosition,
   }: {
     initialAddress: {
       deviceId: string
@@ -37,6 +38,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral: boolean
     collapseComposerWhenIdle: boolean
     runtimeContext?: { cloudProjectId?: string }
+    initialScrollPosition?: 'restore' | 'latest'
   }) => (
     <section
       data-testid={testId}
@@ -46,6 +48,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-collapse-composer={String(collapseComposerWhenIdle)}
       data-cloud-project-id={runtimeContext?.cloudProjectId}
       data-model-name={initialAddress.runtimeHandle?.modelSelection?.modelName}
+      data-initial-scroll-position={initialScrollPosition}
     >
       Shared task conversation
     </section>
@@ -437,6 +440,28 @@ describe('CloudTodoBoardCard', () => {
     expect(card).not.toHaveClass('border-focus/30', 'bg-focus/10')
   })
 
+  it('keeps the card geometry stable while hovered', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-drop-WEG-85')
+    expect(card).toHaveClass('transition-shadow', 'hover:shadow-md')
+    expect(card).not.toHaveClass('hover:-translate-y-px')
+  })
+
   it('mounts the shared task conversation in the hover preview', async () => {
     render(
       <CloudTodoBoardCard
@@ -475,6 +500,55 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-send-ephemeral', 'false')
     expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
     expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
+    expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
+  })
+
+  it('shows the current conversation goal and pins the same hover preview', async () => {
+    const onClick = vi.fn()
+    const onPreviewPinnedChange = vi.fn()
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: true,
+            runtimeGoalLoaded: true,
+            runtimeGoal: {
+              threadId: 'thread-85',
+              objective: '让用户在看板悬浮态快速理解当前会话正在完成什么',
+              status: 'active',
+              tokenBudget: null,
+              tokensUsed: 1200,
+              timeUsedSeconds: 90,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          },
+        ]}
+        onClick={onClick}
+        onArchive={vi.fn()}
+        onPreviewPinnedChange={onPreviewPinnedChange}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+
+    expect(await screen.findByTestId('cloud-todo-card-popup-goal-WEG-85-85')).toHaveTextContent(
+      '让用户在看板悬浮态快速理解当前会话正在完成什么'
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-card-progress-pin-WEG-85'))
+    expect(onPreviewPinnedChange).toHaveBeenCalledWith(true)
+    expect(onClick).not.toHaveBeenCalled()
   })
 
   it('forwards the bound task model to the shared hover conversation', async () => {
@@ -558,6 +632,10 @@ describe('CloudTodoBoardCard', () => {
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
     expect(popup).toHaveClass('w-[480px]', 'overflow-x-hidden')
     expect(popup).toHaveAttribute('role', 'dialog')
+    expect(screen.getByTestId('cloud-todo-card-progress-title-WEG-85')).toHaveTextContent(
+      'Keep the pull request popup visible'
+    )
+    expect(popup).not.toHaveTextContent('当前任务进展')
     expect(popup).toHaveTextContent('Fix the board popup')
     expect(popup).toHaveTextContent('Verify the hover behavior')
 

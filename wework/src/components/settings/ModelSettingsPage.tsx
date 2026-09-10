@@ -22,6 +22,11 @@ import {
   saveLocalCodexModelCatalogOverride,
   type CodexModelCatalogOverride,
 } from '@/api/local/codexOfficialModels'
+import {
+  cancelLocalCodexLogin,
+  hasLocalCodexAccount,
+  startLocalCodexLogin,
+} from '@/api/local/codexAuth'
 import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { createModelApi } from '@/api/models'
 import { createUserApi } from '@/api/users'
@@ -68,6 +73,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
+import { openExternalUrl } from '@/lib/external-links'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import { track } from '@/telemetry/client'
 import type { UnifiedModel } from '@/types/api'
@@ -144,24 +150,30 @@ function LocalCodexModelRow({
   status,
   loading,
   error,
-  onRefresh,
+  loginState,
+  loginError,
+  onLogin,
+  onCancelLogin,
 }: {
   status: LocalRuntimeAuthStatus | null
   loading: boolean
   error: string | null
-  onRefresh: () => void
+  loginState: 'idle' | 'starting' | 'waiting' | 'cancelling'
+  loginError: string | null
+  onLogin: () => void
+  onCancelLogin: () => void
 }) {
   const { t } = useTranslation('common')
   const exists = status?.exists === true
   return (
     <div
       data-testid="local-codex-model-row"
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-3"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5"
     >
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-text-primary">
-            {t('workbench.local_codex_model_title', '当前设备认证')}
+            {t('workbench.local_codex_model_title', 'Codex 账号')}
           </h3>
           <span
             data-testid="local-codex-model-status-pill"
@@ -169,42 +181,72 @@ function LocalCodexModelRow({
               exists ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
             }`}
           >
-            {exists
-              ? t('workbench.runtime_config_configured', '已配置')
-              : t('workbench.runtime_config_not_configured', '未配置')}
+            {loading
+              ? t('workbench.local_codex_account_checking', '检查中')
+              : exists
+                ? t('workbench.local_codex_account_signed_in', '已登录')
+                : t('workbench.local_codex_account_signed_out', '未登录')}
           </span>
         </div>
-        <div className="mt-1 break-all text-xs leading-5 text-text-secondary">
-          {t('workbench.local_codex_auth_path_value', {
-            defaultValue: '本机 {{path}}',
-            path: status?.targetPath ?? 'auth.json',
-          })}
-          {formatRuntimeDate(status?.updatedAt) && (
-            <span className="ml-2">
-              {t('workbench.runtime_config_updated_at', '更新时间')}:{' '}
-              {formatRuntimeDate(status?.updatedAt)}
-            </span>
-          )}
-        </div>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
-          <ShieldCheck className="h-3.5 w-3.5" />
-          {status?.sha256
-            ? `SHA-256 ${shortDigest(status.sha256)}`
-            : t('workbench.local_codex_auth_no_digest', '没有可显示的摘要')}
+        <div className="mt-1 text-xs leading-5 text-text-secondary">
+          {loading
+            ? t('workbench.local_codex_account_checking_description', '正在检查账号状态...')
+            : loginState === 'waiting' || loginState === 'cancelling'
+              ? t(
+                  'workbench.local_codex_login_waiting',
+                  '请在浏览器中完成登录，完成后这里会自动更新。'
+                )
+              : exists
+                ? t(
+                    'workbench.local_codex_account_signed_in_description',
+                    '当前设备已可使用 Codex。'
+                  )
+                : t(
+                    'workbench.local_codex_account_signed_out_description',
+                    '登录 ChatGPT 账号以在 Wework 中使用 Codex。'
+                  )}
         </div>
         {error && <div className="mt-1 text-xs text-red-500">{error}</div>}
+        {loginError && (
+          <div data-testid="local-codex-login-error" className="mt-1 text-xs text-red-500">
+            {loginError}
+          </div>
+        )}
       </div>
-      <button
-        type="button"
-        data-testid="local-codex-auth-refresh-button"
-        onClick={onRefresh}
-        disabled={loading}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-        aria-label={t('workbench.runtime_config_refresh', '刷新')}
-        title={t('workbench.runtime_config_refresh', '刷新')}
-      >
-        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-      </button>
+      {!loading && (
+        <div className="flex items-center gap-2">
+          {!exists &&
+            (loginState === 'waiting' || loginState === 'cancelling' ? (
+              <button
+                type="button"
+                data-testid="local-codex-login-cancel-button"
+                onClick={onCancelLogin}
+                disabled={loginState === 'cancelling'}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loginState === 'cancelling' && (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                )}
+                {t('workbench.local_codex_login_cancel', '取消登录')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="local-codex-login-button"
+                onClick={onLogin}
+                disabled={loginState === 'starting'}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loginState === 'starting' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                {loginState === 'starting'
+                  ? t('workbench.local_codex_login_opening', '正在打开...')
+                  : t('workbench.local_codex_login_action', '登录')}
+              </button>
+            ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -2565,7 +2607,10 @@ function DisconnectedCloudCodexSyncSection({
   status,
   loading,
   error,
-  onRefresh,
+  loginState,
+  loginError,
+  onLogin,
+  onCancelLogin,
   codexOfficialModels,
   codexOfficialLoading,
   codexOfficialError,
@@ -2575,7 +2620,10 @@ function DisconnectedCloudCodexSyncSection({
   status: LocalRuntimeAuthStatus | null
   loading: boolean
   error: string | null
-  onRefresh: () => void
+  loginState: 'idle' | 'starting' | 'waiting' | 'cancelling'
+  loginError: string | null
+  onLogin: () => void
+  onCancelLogin: () => void
   codexOfficialModels: CodexOfficialModelList | null
   codexOfficialLoading: boolean
   codexOfficialError: string | null
@@ -2595,7 +2643,15 @@ function DisconnectedCloudCodexSyncSection({
       </CodexSettingsGroup>
 
       <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
-        <LocalCodexModelRow status={status} loading={loading} error={error} onRefresh={onRefresh} />
+        <LocalCodexModelRow
+          status={status}
+          loading={loading}
+          error={error}
+          loginState={loginState}
+          loginError={loginError}
+          onLogin={onLogin}
+          onCancelLogin={onCancelLogin}
+        />
 
         <div
           data-testid="runtime-config-shared-auth-unavailable"
@@ -2751,6 +2807,12 @@ export function ModelSettingsPage({
   const [localAuthStatus, setLocalAuthStatus] = useState<LocalRuntimeAuthStatus | null>(null)
   const [localAuthLoading, setLocalAuthLoading] = useState(true)
   const [localAuthError, setLocalAuthError] = useState<string | null>(null)
+  const [localLoginState, setLocalLoginState] = useState<
+    'idle' | 'starting' | 'waiting' | 'cancelling'
+  >('idle')
+  const [localLoginError, setLocalLoginError] = useState<string | null>(null)
+  const localLoginIdRef = useRef<string | null>(null)
+  const localLoginGenerationRef = useRef(0)
   const [codexOfficialModels, setCodexOfficialModels] = useState<CodexOfficialModelList | null>(
     null
   )
@@ -2797,6 +2859,93 @@ export function ModelSettingsPage({
   useEffect(() => {
     void Promise.resolve().then(loadLocalAuthStatus)
   }, [loadLocalAuthStatus])
+
+  useEffect(
+    () => () => {
+      localLoginGenerationRef.current += 1
+      const loginId = localLoginIdRef.current
+      localLoginIdRef.current = null
+      if (loginId) {
+        void cancelLocalCodexLogin(loginId)
+      }
+    },
+    []
+  )
+
+  const handleLocalCodexLogin = async () => {
+    if (localLoginState !== 'idle') return
+    const generation = localLoginGenerationRef.current + 1
+    localLoginGenerationRef.current = generation
+    setLocalLoginState('starting')
+    setLocalLoginError(null)
+    try {
+      const login = await startLocalCodexLogin()
+      if (localLoginGenerationRef.current !== generation) {
+        void cancelLocalCodexLogin(login.loginId)
+        return
+      }
+      localLoginIdRef.current = login.loginId
+      const opened = await openExternalUrl(login.authUrl, { target: 'system' })
+      if (!opened) {
+        throw new Error(t('workbench.local_codex_login_open_failed', '无法打开 Codex 登录页面'))
+      }
+      setLocalLoginState('waiting')
+      const deadline = Date.now() + 5 * 60 * 1000
+      while (localLoginGenerationRef.current === generation) {
+        const hasAccount = await hasLocalCodexAccount()
+        if (localLoginGenerationRef.current !== generation) return
+        if (hasAccount) {
+          localLoginIdRef.current = null
+          setLocalLoginState('idle')
+          await loadLocalAuthStatus()
+          return
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(t('workbench.local_codex_login_timeout', 'Codex 登录已超时，请重试'))
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
+      }
+    } catch (loginError) {
+      if (localLoginGenerationRef.current !== generation) return
+      const loginId = localLoginIdRef.current
+      localLoginIdRef.current = null
+      if (loginId) {
+        try {
+          await cancelLocalCodexLogin(loginId)
+        } catch {
+          // Preserve the primary login error.
+        }
+      }
+      setLocalLoginState('idle')
+      setLocalLoginError(
+        getErrorMessage(
+          loginError,
+          t('workbench.local_codex_login_failed', 'Codex 登录失败，请重试')
+        )
+      )
+    }
+  }
+
+  const handleCancelLocalCodexLogin = async () => {
+    const loginId = localLoginIdRef.current
+    if (!loginId || localLoginState !== 'waiting') return
+    localLoginGenerationRef.current += 1
+    localLoginIdRef.current = null
+    setLocalLoginState('cancelling')
+    setLocalLoginError(null)
+    try {
+      await cancelLocalCodexLogin(loginId)
+    } catch (cancelError) {
+      setLocalLoginError(
+        getErrorMessage(
+          cancelError,
+          t('workbench.local_codex_login_cancel_failed', '取消 Codex 登录失败')
+        )
+      )
+    } finally {
+      setLocalLoginState('idle')
+    }
+  }
 
   const loadCodexOfficialModels = useCallback(async () => {
     setCodexOfficialLoading(true)
@@ -2977,7 +3126,10 @@ export function ModelSettingsPage({
               status={localAuthStatus}
               loading={localAuthLoading}
               error={localAuthError}
-              onRefresh={() => void loadLocalAuthStatus()}
+              loginState={localLoginState}
+              loginError={localLoginError}
+              onLogin={() => void handleLocalCodexLogin()}
+              onCancelLogin={() => void handleCancelLocalCodexLogin()}
               codexOfficialModels={codexOfficialModels}
               codexOfficialLoading={codexOfficialLoading}
               codexOfficialError={codexOfficialError}
@@ -3041,7 +3193,10 @@ export function ModelSettingsPage({
                   status={localAuthStatus}
                   loading={localAuthLoading}
                   error={localAuthError}
-                  onRefresh={() => void loadLocalAuthStatus()}
+                  loginState={localLoginState}
+                  loginError={localLoginError}
+                  onLogin={() => void handleLocalCodexLogin()}
+                  onCancelLogin={() => void handleCancelLocalCodexLogin()}
                 />
 
                 <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-background px-4 py-3">

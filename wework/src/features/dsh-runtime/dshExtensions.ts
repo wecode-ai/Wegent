@@ -2,6 +2,8 @@ import type {
   WeworkCommandDefinition,
   WeworkCommandHandler,
   WeworkComposerReferenceContribution,
+  WeworkConversationReference,
+  WeworkConversationSnapshot,
   WeworkContextPrimitive,
   WeworkExtensionHost,
   WeworkKeybindingContribution,
@@ -15,12 +17,23 @@ import type { KeybindingCommand } from '@/lib/keybindings'
 
 declare global {
   interface Window {
+    __WEWORK_DSH_APP_BRIDGE__?: {
+      bindConversationController(controller: DshConversationController): () => void
+    }
     __WEWORK_DSH_EXTENSIONS__?: WeworkExtensionHost
   }
 }
 
+interface DshConversationController {
+  getTranscript(reference: WeworkConversationReference): Promise<WeworkConversationSnapshot>
+}
+
 export function getDshExtensionHost(): WeworkExtensionHost | null {
   return window.__WEWORK_DSH_EXTENSIONS__ ?? null
+}
+
+export function bindDshConversationController(controller: DshConversationController): () => void {
+  return window.__WEWORK_DSH_APP_BRIDGE__?.bindConversationController(controller) ?? (() => {})
 }
 
 export function registerDshCommand(

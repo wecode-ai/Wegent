@@ -1,4 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { createWriteStream, openAsBlob } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { SqliteSyncOutbox } from './outbox.js'
@@ -13,6 +17,9 @@ export const inject = [
 ]
 
 const PACKAGE_NAME = '@wegent/dsh-transcript-sync'
+const SNAPSHOT_INTERVAL = 10
+const MAX_ENCRYPTED_SEGMENT_BYTES = 256 * 1024 * 1024 + 33
+const OBJECT_TRANSFER_TIMEOUT_MS = 10 * 60 * 1000
 const PREFERENCES_UNIT = 'portable_preferences'
 const PREFERENCES_FIELDS = [
   'appearanceMode',
@@ -190,7 +197,7 @@ export class WeworkSync {
   async flushPending() {
     let pending
     while (this.enabled && (pending = this.outbox.first())) {
-      const turn = await this.source.read(pending)
+      const turn = pending
       const lease = await this.request(
         `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/lease`,
         'POST',
@@ -206,36 +213,46 @@ export class WeworkSync {
             : {}),
         }
       )
-      if (lease.currentSequence < turn.baseSequence) {
-        throw new Error('Cloud transcript sequence moved behind the local causal base')
-      }
       if (lease.currentSequence !== turn.baseSequence) {
-        const delivered = await this.reconcilePendingTurn(turn)
+        const delivered = await this.reconcilePendingSegment(turn)
         await this.releaseLease(turn, lease)
         if (delivered) {
-          await this.acknowledgeNativeTurn(turn)
+          await this.acknowledgeNativeTurn(delivered)
           this.outbox.acknowledge(turn)
-        } else {
-          this.forkPendingTurn(turn)
+          continue
         }
+        this.forkPendingTurn(turn)
         continue
       }
+      const snapshot = turn.cloudSequence === 1 || turn.cloudSequence % SNAPSHOT_INTERVAL === 0
+      const encryption = await this.transcriptEncryption(turn.transcriptId)
+      let segment
+      let released = false
       try {
-        await this.appendPendingTurn(turn, lease)
+        segment = await this.source.read(turn, {
+          baseSequence: turn.cloudSequence - 1,
+          sequence: turn.cloudSequence,
+          snapshot,
+          encryptionKey: encryption.key,
+        })
+        await this.uploadPendingSegment(turn, segment, lease)
       } catch (error) {
-        if (!isSequenceConflict(error)) throw error
-        const delivered = await this.reconcilePendingTurn(turn)
         await this.releaseLease(turn, lease)
-        if (delivered) {
-          await this.acknowledgeNativeTurn(turn)
-          this.outbox.acknowledge(turn)
-        } else {
+        released = true
+        if (isSequenceConflict(error)) {
           this.forkPendingTurn(turn)
+          continue
         }
-        continue
+        throw error
+      } finally {
+        if (segment?.path) {
+          await unlink(segment.path).catch(error => {
+            if (error?.code !== 'ENOENT') throw error
+          })
+        }
       }
-      await this.releaseLease(turn, lease)
-      await this.acknowledgeNativeTurn(turn)
+      if (!released) await this.releaseLease(turn, lease)
+      await this.acknowledgeNativeTurn({ ...turn, rolloutEnd: segment.rolloutEnd })
       this.outbox.acknowledge(turn)
     }
   }
@@ -250,38 +267,87 @@ export class WeworkSync {
     await this.state.save()
   }
 
-  appendPendingTurn(turn, lease) {
-    return this.request(
-      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/turns`,
+  async uploadPendingSegment(turn, segment, lease) {
+    const descriptor = {
+      clientId: this.clientId,
+      baseSequence: turn.cloudSequence - 1,
+      fencingToken: lease.fencingToken,
+      title: turn.title || '',
+      sequence: turn.cloudSequence,
+      sha256: segment.sha256,
+      sizeBytes: segment.sizeBytes,
+      format: segment.format,
+    }
+    const prepared = await this.request(
+      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/segments/prepare`,
+      'POST',
+      descriptor
+    )
+    const uploadBody = new FormData()
+    for (const [name, value] of Object.entries(prepared.uploadFields)) {
+      uploadBody.append(name, value)
+    }
+    uploadBody.append(
+      'file',
+      await openAsBlob(segment.path, { type: 'application/octet-stream' }),
+      'segment.tgz.aes256gcm'
+    )
+    const response = await fetch(prepared.uploadUrl, {
+      method: 'POST',
+      body: uploadBody,
+      signal: AbortSignal.timeout(OBJECT_TRANSFER_TIMEOUT_MS),
+    })
+    if (!response.ok) {
+      throw new Error(`Transcript object upload failed (${response.status})`)
+    }
+    await this.request(
+      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/segments`,
       'POST',
       {
-        clientId: this.clientId,
-        baseSequence: turn.cloudSequence - 1,
-        fencingToken: lease.fencingToken,
-        title: turn.title || '',
-        turns: [
-          {
-            turnId: turn.turnId,
-            sequence: turn.cloudSequence,
-            payload: pendingTurnPayload(turn),
-          },
-        ],
+        ...descriptor,
+        turnId: turn.turnId,
+        summary: segmentSummary(turn, segment),
       }
     )
   }
 
-  async reconcilePendingTurn(turn) {
-    const response = await this.request(
-      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/turns?after=${turn.baseSequence}&limit=500`
+  async reconcilePendingSegment(turn) {
+    const encodedTranscriptId = encodeURIComponent(turn.transcriptId)
+    const [transcript, summaries] = await Promise.all([
+      this.request(`/wework-transcripts/${encodedTranscriptId}`),
+      this.request(
+        `/wework-transcripts/${encodedTranscriptId}/turns?after=${turn.cloudSequence - 1}&limit=1`
+      ),
+    ])
+    const existing = transcript.archives?.find(archive => archive.toSequence === turn.cloudSequence)
+    const existingSummary = summaries.turns?.find(
+      candidate => candidate.sequence === turn.cloudSequence
     )
-    const existing = response.turns?.find(candidate => candidate.turnId === turn.turnId)
-    if (existing) {
-      if (stableJson(existing.payload) !== stableJson(pendingTurnPayload(turn))) {
-        throw new Error('Cloud transcript turn identity has conflicting content')
+    if (!existing || !existingSummary) return null
+    const encryption = await this.transcriptEncryption(turn.transcriptId)
+    const snapshot = turn.cloudSequence === 1 || turn.cloudSequence % SNAPSHOT_INTERVAL === 0
+    const segment = await this.source.read(turn, {
+      baseSequence: turn.cloudSequence - 1,
+      sequence: turn.cloudSequence,
+      snapshot,
+      encryptionKey: encryption.key,
+    })
+    try {
+      if (
+        existing?.sha256 === segment.sha256 &&
+        existing?.format === segment.format &&
+        existing?.sizeBytes === segment.sizeBytes &&
+        existingSummary?.turnId === turn.turnId &&
+        stableJson(existingSummary.payload) === stableJson(segmentSummary(turn, segment))
+      ) {
+        return { ...turn, rolloutEnd: segment.rolloutEnd }
       }
-      return true
+      return null
+    } finally {
+      await unlink(segment.path).catch(error => {
+        if (error?.code !== 'ENOENT') throw error
+      })
     }
-    return false
   }
 
   releaseLease(turn, lease) {
@@ -293,6 +359,20 @@ export class WeworkSync {
         fencingToken: lease.fencingToken,
       }
     )
+  }
+
+  async transcriptEncryption(transcriptId) {
+    const encryption = await this.request(
+      `/wework-transcripts/${encodeURIComponent(transcriptId)}/encryption-key`
+    )
+    if (
+      encryption?.algorithm !== 'aes-256-gcm' ||
+      typeof encryption?.key !== 'string' ||
+      !encryption.key
+    ) {
+      throw new Error('Backend returned an unsupported transcript encryption key')
+    }
+    return encryption
   }
 
   forkPendingTurn(turn) {
@@ -316,48 +396,49 @@ export class WeworkSync {
       const targetStatus = await this.target.status(transcript)
       if (!targetStatus?.available) continue
       let after = targetStatus.importedThrough ?? 0
-      const downloadedArchiveIds = new Set(
-        (transcript.archives ?? [])
-          .filter(archive => archive.toSequence <= after)
-          .map(archive => archive.id)
-      )
-      for (const archive of transcript.archives ?? []) {
-        if (!this.enabled) return
-        if (downloadedArchiveIds.has(archive.id)) continue
-        if (archive.toSequence <= after) {
-          downloadedArchiveIds.add(archive.id)
-          continue
+      if (after < transcript.currentSequence) {
+        const archives = restorableSegments(transcript.archives ?? [], transcript.currentSequence)
+        if (archives.length) {
+          const encryption = await this.transcriptEncryption(transcript.transcriptId)
+          const directory = await mkdtemp(join(tmpdir(), 'wework-transcript-'))
+          try {
+            const segments = []
+            for (const archive of archives) {
+              if (!this.enabled) return
+              if (
+                !Number.isInteger(archive.sizeBytes) ||
+                archive.sizeBytes < 1 ||
+                archive.sizeBytes > MAX_ENCRYPTED_SEGMENT_BYTES
+              ) {
+                throw new Error('Transcript archive has an invalid encrypted size')
+              }
+              const download = await this.request(
+                `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/download`
+              )
+              const path = join(directory, `${archive.toSequence}.tgz.aes256gcm`)
+              await downloadFile(download.downloadUrl, path)
+              segments.push({
+                path,
+                sha256: archive.sha256,
+                sequence: archive.toSequence,
+                format: archive.format,
+              })
+            }
+            const imported = await this.target.restore(transcript, segments, {
+              encryptionKey: encryption.key,
+            })
+            if (imported?.available) after = imported.importedThrough
+          } finally {
+            await rm(directory, { recursive: true, force: true })
+          }
         }
-        let archiveAfter = archive.fromSequence - 1
-        while (archiveAfter < archive.toSequence) {
-          if (!this.enabled) return
-          const page = await this.request(
-            `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/turns?after=${archiveAfter}&limit=1000`
-          )
-          if (!page.turns?.length) break
-          const imported = await this.target.import(transcript, page.turns)
-          if (!imported?.available) break
-          archiveAfter = imported.importedThrough
-          after = Math.max(after, archiveAfter)
-          if (!page.hasMore) break
-        }
-        if (archiveAfter >= archive.toSequence) downloadedArchiveIds.add(archive.id)
-      }
-      while (after < transcript.currentSequence) {
-        if (!this.enabled) return
-        const page = await this.request(
-          `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/turns?after=${after}&limit=500`
-        )
-        if (!page.turns?.length) break
-        const imported = await this.target.import(transcript, page.turns)
-        if (!imported?.available) break
-        after = imported.importedThrough
-        if (!page.hasMore) break
       }
       this.state.value.transcripts[transcript.transcriptId] = {
         ...transcript,
         downloadedThrough: after,
-        downloadedArchiveIds: [...downloadedArchiveIds],
+        downloadedArchiveIds: (transcript.archives ?? [])
+          .filter(archive => archive.toSequence <= after)
+          .map(archive => archive.id),
       }
     }
     await this.state.save()
@@ -559,13 +640,52 @@ function stableJson(value) {
   return JSON.stringify(value)
 }
 
-function pendingTurnPayload(turn) {
-  return { ...turn.payload, taskId: turn.taskId }
+function segmentSummary(turn, segment) {
+  return {
+    ...segment.summary,
+    taskId: turn.taskId,
+  }
 }
 
 function isSequenceConflict(error) {
   return (
     error instanceof SyncRequestError &&
-    (error.code === 'sequence_conflict' || error.code === 'turn_conflict')
+    ['sequence_conflict', 'segment_conflict', 'turn_conflict'].includes(error.code)
   )
+}
+
+function restorableSegments(archives, currentSequence) {
+  const ordered = archives
+    .filter(archive => archive.toSequence <= currentSequence)
+    .sort((left, right) => left.toSequence - right.toSequence)
+  const snapshotIndex = ordered.findLastIndex(archive => archive.format?.includes('snapshot'))
+  if (snapshotIndex < 0) return []
+  const selected = ordered.slice(snapshotIndex)
+  let expected = selected[0].toSequence
+  for (const archive of selected) {
+    if (archive.toSequence !== expected) return []
+    expected += 1
+  }
+  return selected.at(-1)?.toSequence === currentSequence ? selected : []
+}
+
+async function downloadFile(url, path) {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(OBJECT_TRANSFER_TIMEOUT_MS),
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(`Transcript object download failed (${response.status})`)
+  }
+  let downloadedBytes = 0
+  const limit = new Transform({
+    transform(chunk, _encoding, callback) {
+      downloadedBytes += chunk.length
+      if (downloadedBytes > MAX_ENCRYPTED_SEGMENT_BYTES) {
+        callback(new Error('Transcript object exceeds the encrypted size limit'))
+        return
+      }
+      callback(null, chunk)
+    },
+  })
+  await pipeline(Readable.fromWeb(response.body), limit, createWriteStream(path, { mode: 0o600 }))
 }

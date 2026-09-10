@@ -350,6 +350,7 @@ window.__ModuleLoader__.load({
           (() => window.document?.documentElement?.lang || window.navigator?.language || 'en')
       )
       let activeComposer = null
+      let activeConversationController = null
 
       const assertActive = () => {
         if (!active) throw new Error('Wework extension runtime is disposed')
@@ -379,6 +380,16 @@ window.__ModuleLoader__.load({
         ['accept'],
         notifyTelemetrySinks
       )
+      const saveDialog = options.saveDialog
+      const dialog = Object.freeze({
+        save(dialogOptions = {}) {
+          assertActive()
+          if (typeof saveDialog !== 'function') {
+            throw new Error('Wework save dialog is unavailable')
+          }
+          return saveDialog(dialogOptions)
+        },
+      })
 
       const service = Object.freeze({
         backend: Object.freeze({
@@ -558,6 +569,14 @@ window.__ModuleLoader__.load({
               return () => listeners.delete(listener)
             },
           }),
+        }),
+        conversations: Object.freeze({
+          getTranscript(reference) {
+            if (!activeConversationController) {
+              throw new Error('No active Wework conversation controller')
+            }
+            return activeConversationController.getTranscript(reference)
+          },
         }),
         contributions,
         chat: Object.freeze({
@@ -743,7 +762,18 @@ window.__ModuleLoader__.load({
 
       return {
         service,
+        bindConversationController(controller) {
+          assertActive()
+          if (!controller || typeof controller.getTranscript !== 'function') {
+            throw new Error('Conversation controller must provide getTranscript')
+          }
+          activeConversationController = controller
+          return () => {
+            if (activeConversationController === controller) activeConversationController = null
+          }
+        },
         host: Object.freeze({
+          dialog,
           getRevision: () => revision,
           subscribe(listener) {
             assertActive()
@@ -754,6 +784,7 @@ window.__ModuleLoader__.load({
           backend: service.backend,
           chat: service.chat,
           composer: service.composer,
+          conversations: service.conversations,
           contributions: service.contributions,
           context: service.context,
           environments: service.environments,
@@ -772,6 +803,7 @@ window.__ModuleLoader__.load({
           listeners.clear()
           commandHandlers.clear()
           activeComposer = null
+          activeConversationController = null
           commands.clear()
           composerReferences.clear()
           contributions.clear()
@@ -893,6 +925,10 @@ window.__ModuleLoader__.load({
     ) {
       const slotRuntime =
         providedSlotRuntime ?? createSlotRuntime(context, extensionRuntime.service.contributions)
+      const appBridge = Object.freeze({
+        bindConversationController: controller =>
+          extensionRuntime.bindConversationController(controller),
+      })
       return function WeworkRoot({ renderSlot, renderSlotChain }) {
         const containerRef = useRef(null)
         const [error, setError] = useState(null)
@@ -904,6 +940,7 @@ window.__ModuleLoader__.load({
           slotRuntime.setInvalidateRoot(() => setRevision(value => value + 1))
           hostWindow.__WEWORK_DSH_UI__ = slotRuntime
           hostWindow.__WEWORK_DSH_EXTENSIONS__ = extensionRuntime.host
+          hostWindow.__WEWORK_DSH_APP_BRIDGE__ = appBridge
           const unsubscribeContributions = extensionRuntime.host.subscribe(() => {
             for (const slotName of Object.keys(SLOT_DECLARATIONS)) slotRuntime.refresh(slotName)
           })
@@ -946,6 +983,9 @@ window.__ModuleLoader__.load({
             }
             if (hostWindow.__WEWORK_DSH_EXTENSIONS__ === extensionRuntime.host) {
               delete hostWindow.__WEWORK_DSH_EXTENSIONS__
+            }
+            if (hostWindow.__WEWORK_DSH_APP_BRIDGE__ === appBridge) {
+              delete hostWindow.__WEWORK_DSH_APP_BRIDGE__
             }
             unmount()
           }
@@ -993,6 +1033,7 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       const extensionRuntime = createExtensionRuntime({
+        saveDialog: options => ctx.weworkDesktop.dialog.save(options),
         secureStorage: ctx.weworkDesktop?.secureStorage,
         storage: window.localStorage ?? createMemoryStorage(),
       })

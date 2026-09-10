@@ -137,6 +137,7 @@ import {
   subscribeDshExtensions,
 } from '@/features/dsh-runtime/dshExtensions'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
 import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
 import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
@@ -694,10 +695,12 @@ export default function App() {
       {content}
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
-      <DshSlotSurface
-        className="pointer-events-none fixed inset-0 z-system-popover"
-        slot={WEWORK_DSH_SLOTS.shellOverlay}
-      />
+      <div className="pointer-events-none fixed inset-0 z-system-popover">
+        <DshContributionSlotSurface
+          attachedClassName="contents"
+          slot={WEWORK_DSH_SLOTS.shellOverlay}
+        />
+      </div>
     </>
   )
 }

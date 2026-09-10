@@ -1079,6 +1079,20 @@ jobs:
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           pnpm --filter wework e2e:desktop:memory
 
+      - name: Set up macOS Inspector backend runtime
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Install macOS Inspector backend dependencies
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        run: |
+          brew install redis libmagic
+          redis-server --version
+          uv sync --project backend --frozen
+          uv run --project backend python -c "import magic; assert magic.from_buffer(b'Wework E2E', mime=True) == 'text/plain'"
+
       - name: Run Wework desktop macOS Inspector E2E
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
         env:
@@ -1087,7 +1101,7 @@ jobs:
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
+          pnpm --filter wework e2e:desktop -- --parallel-segments browser-toolbar-actions,tray-lifecycle
 
       - name: Run Wework desktop macOS browser annotation overlay E2E
         if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')

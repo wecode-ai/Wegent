@@ -60,10 +60,13 @@ describe('HarnessSettingsPage', () => {
         version: '1.0.0',
       },
     ])
-    updateAppPreferencesMock.mockImplementation(async patch => ({
-      ...defaultAppPreferences,
-      ...patch,
-    }))
+    updateAppPreferencesMock.mockImplementation(async patch => {
+      currentAppPreferences = {
+        ...currentAppPreferences,
+        ...patch,
+      }
+      return currentAppPreferences
+    })
   })
 
   test('detects and saves OpenCode and Claude Code launch settings', async () => {

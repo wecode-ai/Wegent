@@ -4,6 +4,7 @@ import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
 import { rm } from 'node:fs/promises'
+import { createServer } from 'node:http'
 
 import {
   CLOUD_DEVICE_ID,
@@ -625,7 +626,7 @@ class RealCloudEnvironment {
         throw new Error(`Cloud runtime task ${address.taskId} settled as ${task.status}`)
       }
       const active =
-        task?.running === true || ['creating', 'queued', 'active', 'running'].includes(task?.status)
+        task?.running === true || ['creating', 'queued', 'running'].includes(task?.status)
       if (task?.workspacePath === address.workspacePath && !active) return task
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
@@ -800,6 +801,33 @@ class RealCloudEnvironment {
       ])
       return JSON.parse(serialized)
     })
+  }
+
+  revokeTerminalSession(sessionId) {
+    assert.match(
+      sessionId,
+      /^[A-Za-z0-9:_-]+$/u,
+      'The terminal session ID is not safe for the Redis fixture'
+    )
+    const subscriberCount = Number(
+      commandOutput('redis-cli', [
+        '-p',
+        String(this.redisPort),
+        '--raw',
+        'EVAL',
+        "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); return redis.call('PUBLISH', ARGV[3], ARGV[4])",
+        '1',
+        `terminal_session:${sessionId}`,
+        '{"revoked":true}',
+        '3600',
+        'terminal_session:invalidations',
+        `revoke|${sessionId}`,
+      ])
+    )
+    assert.ok(
+      Number.isInteger(subscriberCount) && subscriberCount >= 1,
+      'The Backend did not observe the terminal-session revocation'
+    )
   }
 
   async restartCloudExecutor() {

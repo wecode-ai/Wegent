@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
+import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 
 import {
   createCheckpointTaskFixture,
@@ -1069,11 +1070,14 @@ async function main() {
     cwd: workspacePath,
   })
 
+  const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
   const desktopScenario = await loadDesktopScenario(
     process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
     {
+      appIdentifier,
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
+      codexSqliteHome,
       executorHome,
       electronUserDataDirectory,
       homePath,
@@ -1109,7 +1113,6 @@ async function main() {
     const codexVersion = commandOutput(codexBinary, ['--version'])
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
-    const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
     if (
@@ -1133,6 +1136,7 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
+        databasePath: cloudEnvironment.databasePath,
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
       })
     } else {
@@ -1279,10 +1283,11 @@ async function main() {
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments()
+    let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
         cwd: weworkDir,
-        env: appEnvironment,
+        env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
@@ -1299,7 +1304,8 @@ async function main() {
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
-      const desktopDeviceIdPath = join(resultDir, 'electron-user-data', 'desktop-device-id')
+      const previousUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const desktopDeviceIdPath = join(previousUserDataDirectory, 'desktop-device-id')
       const desktopDeviceIdBeforeRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
       assert.match(
         desktopDeviceIdBeforeRestart,
@@ -1309,18 +1315,49 @@ async function main() {
       const readyCountBeforeRestart = control.readyCount
       await stopDesktopAppProcess(app)
       await beforeStart?.()
+      if (typeof options === 'object' && options?.appEnvironmentOverrides) {
+        activeAppEnvironment = {
+          ...activeAppEnvironment,
+          ...options.appEnvironmentOverrides,
+        }
+      }
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
-      const desktopDeviceIdAfterRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
-      assert.equal(
+      const nextUserDataDirectory = activeAppEnvironment.WEWORK_USER_DATA_DIR
+      const nextDeviceIdPath = join(nextUserDataDirectory, 'desktop-device-id')
+      const desktopDeviceIdAfterRestart = (await readFile(nextDeviceIdPath, 'utf8')).trim()
+      assert.match(
         desktopDeviceIdAfterRestart,
-        desktopDeviceIdBeforeRestart,
-        'Restarting Wework changed the persisted Electron device identity'
+        /^electron-/,
+        'Wework did not persist a valid Electron device identity after restart'
       )
+      if (options?.expectNewDeviceIdentity === true) {
+        assert.notEqual(
+          nextUserDataDirectory,
+          previousUserDataDirectory,
+          'Simulated device switch reused the previous Electron user data directory'
+        )
+        assert.notEqual(
+          desktopDeviceIdAfterRestart,
+          desktopDeviceIdBeforeRestart,
+          'Simulated device switch reused the previous Electron device identity'
+        )
+      } else {
+        assert.equal(
+          nextUserDataDirectory,
+          previousUserDataDirectory,
+          'Restarting Wework unexpectedly changed the Electron user data directory'
+        )
+        assert.equal(
+          desktopDeviceIdAfterRestart,
+          desktopDeviceIdBeforeRestart,
+          'Restarting Wework changed the persisted Electron device identity'
+        )
+      }
       return app
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
@@ -1464,6 +1501,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'project-event-sources') {
+      phase = 'project-event-sources-scenario'
+      assert.ok(
+        desktopScenario,
+        'The project-event-sources checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop project-event-sources checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -2543,6 +2596,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
+        await verifyLocalBoardUnread(control, associatedTaskTabTestId)
         phase = 'project-space-default-issue-context-enriched'
         await enrichTrackedDefaultIssueTitle(
           control,
@@ -3574,7 +3628,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
         {
           text: FILE_PREVIEW_RESTORE_MARKER,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3677,9 +3731,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The first task browser leaked into the second task'
       )
       assert.equal(
-        secondTaskWorkspaceSnapshot.testIds.includes('workspace-markdown-preview'),
+        secondTaskWorkspaceSnapshot.testIds.includes('workspace-file-editor'),
         false,
-        'The first task file preview leaked into the second task'
+        'The first task file editor leaked into the second task'
       )
       assert.equal(
         secondTaskWorkspaceSnapshot.testIds.includes('file-changes-review-panel'),
@@ -3747,7 +3801,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', '[data-testid="right-workspace-file-tab"]')
       await control.command(
         'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-file-editor"] .cm-content`,
         {
           text: FILE_PREVIEW_RESTORE_MARKER,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

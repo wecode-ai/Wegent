@@ -161,6 +161,39 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
 }
 
 #[tokio::test]
+async fn runner_backs_off_when_connection_drops_before_a_stable_heartbeat() {
+    let transport = ScriptedTransport::with_call_results(vec![
+        Ok(json!({"success": true})),
+        Ok(json!({"success": true})),
+    ])
+    .with_emit_results(vec![
+        Ok(()),
+        Err("heartbeat timeout 1".to_owned()),
+        Err("heartbeat timeout 2".to_owned()),
+        Ok(()),
+    ]);
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(5);
+    config.heartbeat_timeout = Duration::from_millis(1);
+    config.reconnect_delay = Duration::from_millis(40);
+    config.reconnect_delay_max = Duration::from_millis(80);
+    let runner = LocalBackendRunner::new(config, transport.clone()).without_session_gateway();
+    let task = tokio::spawn(runner.run_forever());
+
+    transport.wait_for_connects(1).await;
+    let first_connection_observed_at = Instant::now();
+    transport.wait_for_connects(2).await;
+    let reconnect_elapsed = first_connection_observed_at.elapsed();
+    task.abort();
+    let _ = task.await;
+
+    assert!(
+        reconnect_elapsed >= Duration::from_millis(35),
+        "expected unstable reconnect backoff, got {reconnect_elapsed:?}"
+    );
+}
+
+#[tokio::test]
 async fn large_runtime_rpc_does_not_pause_device_heartbeats() {
     let transport = ScriptedTransport::default();
     let mut config = local_backend_config();

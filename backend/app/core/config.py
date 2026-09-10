@@ -133,6 +133,15 @@ class Settings(BaseSettings):
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
 
+    # Database connection pool configuration. Each Backend or Celery process owns
+    # its own pool, so deployment capacity must account for every process.
+    DB_POOL_SIZE: int = Field(default=20, ge=1)
+    DB_MAX_OVERFLOW: int = Field(default=40, ge=0)
+    DB_ASYNC_POOL_SIZE: int = Field(default=10, ge=1)
+    DB_ASYNC_MAX_OVERFLOW: int = Field(default=20, ge=0)
+    DB_POOL_TIMEOUT: int = Field(default=30, ge=1)
+    DB_POOL_RECYCLE: int = Field(default=3600, ge=1)
+
     # Executor configuration
     EXECUTOR_DELETE_TASK_URL: str = (
         "http://localhost:8001/executor-manager/executor/delete"
@@ -160,6 +169,7 @@ class Settings(BaseSettings):
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
+    WEWORK_TRANSCRIPT_ENCRYPTION_SECRET: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
     WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     WEWORK_REFRESH_TOKEN_EXPIRE_MINUTES: int = 365 * 24 * 60
@@ -308,6 +318,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
     RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
+    RATE_LIMIT_MCP_IDENTITY: str = (
+        "60/minute"  # GET /api/external/mcp-identity/userinfo
+    )
 
     # External knowledge MCP configuration
     # Disabled by default because this endpoint is intended for trusted integrations.

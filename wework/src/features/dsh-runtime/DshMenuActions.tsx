@@ -6,6 +6,7 @@ import { executeDshCommand } from './dshExtensions'
 import { useDshMenuCommands } from './useDshMenuCommands'
 
 interface DshMenuActionsProps {
+  args?: unknown
   buttonClassName?: string
   className?: string
   disabled?: boolean
@@ -14,6 +15,7 @@ interface DshMenuActionsProps {
 }
 
 export function DshMenuActions({
+  args,
   buttonClassName,
   className,
   disabled = false,
@@ -39,7 +41,7 @@ export function DshMenuActions({
             )}
             aria-label={action.title}
             onClick={() => {
-              void executeDshCommand(action.command, undefined, {
+              void executeDshCommand(action.command, args, {
                 menuId: action.id,
                 menuLocation: location,
                 source: 'menu',
