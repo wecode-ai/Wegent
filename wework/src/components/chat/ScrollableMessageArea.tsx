@@ -1249,23 +1249,22 @@ function ScrollableMessagePaneContent({
   )
 
   /**
-   * Undoes the part of a layout change that moved the content under the reader.
+   * Undoes the part of a layout change that moved the text under the reader.
    *
-   * A bottom-origin scroller keeps its distance from the start of the content while the content
-   * height changes, so every layout change adds its height delta to the reader's distance from the
-   * bottom. Which part of that is a real move of the text they are reading depends on *where* the
-   * content changed: a row above the viewport carries the rendered rows with it, while a row below
-   * only grows the length of the history behind the reader.
+   * A bottom-origin scroller can react to a content height change in two opposite ways, depending on
+   * where the content changed: a row above the viewport is applied to the reader's distance from the
+   * bottom as a drag, while a change below the viewport that nothing underneath can absorb keeps the
+   * offset and pushes the history up instead — the virtualizer's streaming spacer owns that second
+   * case, so by the time this runs it has already been given back.
    *
-   * Comparing the three deltas measured against the last sample separates the two cases exactly,
-   * and cancels the reader's own scrolling out of all of them:
+   * Comparing the three deltas measured against the last sample separates the remaining case from
+   * the reader's own scrolling exactly, because a reader-only scroll cancels out of all of them:
    *
    *   dragAboveViewport = ΔdistanceFromBottom - ΔcontentHeight - ΔanchorOffset
    *
-   * `ΔanchorOffset` is the only DOM measurement: it is how far the text the reader was looking at
-   * actually moved. A reader-only scroll contributes the same amount to the distance and to the
-   * anchor, so it cancels; a re-measured row above the viewport leaves the anchor short of the
-   * height delta and is the amount that has to be given back.
+   * `ΔanchorOffset` is the only DOM measurement: how far the text the reader was looking at actually
+   * moved. A re-measured row above the viewport leaves the anchor short of the other two deltas by
+   * exactly the amount that has to be given back.
    */
   const restoreReaderPositionFromLayout = useCallback(() => {
     const scroller = activeScrollRefRef.current.current
