@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 
 import { resolveDownloadsDirectory } from './downloads-directory.js'
@@ -20,8 +21,9 @@ describe('resolveDownloadsDirectory', () => {
       return '/Users/test'
     })
     const onKnownFolderFailure = vi.fn()
+    const fallbackPath = join('/Users/test', 'Downloads')
 
-    expect(resolveDownloadsDirectory(getPath, onKnownFolderFailure)).toBe('/Users/test/Downloads')
-    expect(onKnownFolderFailure).toHaveBeenCalledWith(knownFolderError, '/Users/test/Downloads')
+    expect(resolveDownloadsDirectory(getPath, onKnownFolderFailure)).toBe(fallbackPath)
+    expect(onKnownFolderFailure).toHaveBeenCalledWith(knownFolderError, fallbackPath)
   })
 })
