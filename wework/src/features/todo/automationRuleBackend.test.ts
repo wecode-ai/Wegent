@@ -384,6 +384,67 @@ describe('automationRuleBackend', () => {
     })
   })
 
+  test('keeps a single automatic node inside the automation assignment contract', () => {
+    const rule = uiRule()
+
+    const input = automationInputFromUi(rule, 7)
+    const workflow = input.eventConfig.runtime_workflow_definition as {
+      nodes: Array<{ execution_config: WorkflowExecutionConfig | null }>
+    }
+    const flow = input.eventConfig.wework_flow as {
+      graph: { nodes: Array<{ model: string; executionDeviceId: string | null }> }
+    }
+
+    // A manual rule resolves its Runtime from the profile or the bound robot, so the
+    // assignment must never carry an execution target; the node keeps the choice.
+    expect(input).toMatchObject({
+      assignmentMode: 'manual',
+      roleSource: 'generic',
+      agentId: null,
+      model: null,
+      executionEnvironment: null,
+      executionDeviceId: null,
+    })
+    expect(flow.graph.nodes).toHaveLength(1)
+    expect(flow.graph.nodes[0]).toMatchObject({
+      model: 'codex-runtime',
+      executionDeviceId: 'device-1',
+    })
+    expect(workflow.nodes[1]?.execution_config).toMatchObject({
+      model: 'codex-runtime',
+      execution_device_id: 'device-1',
+    })
+  })
+
+  test('binds a single automatic node to its robot instead of an execution target', () => {
+    const rule = uiRule()
+    rule.steps[0] = {
+      ...rule.steps[0],
+      executionConfig: {
+        agent_id: 'agent-1',
+        runtime_profile_id: null,
+        execution_device_id: 'device-1',
+        model: 'codex-runtime',
+        model_type: 'runtime',
+        model_options: { reasoning: 'high' },
+        workspace_binding: { type: 'standalone' },
+      },
+    }
+
+    const input = automationInputFromUi(rule, 7)
+
+    expect(input).toMatchObject({
+      assignmentMode: 'manual',
+      roleSource: 'agent',
+      agentId: 'agent-1',
+      runtimeSource: 'agent_default',
+      runtimeProfileId: null,
+      model: null,
+      executionEnvironment: null,
+      executionDeviceId: null,
+    })
+  })
+
   test('uses a standalone conversation when scheduled automation has no project workspace', () => {
     const rule = uiRule()
     rule.trigger = {

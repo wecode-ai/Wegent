@@ -1267,9 +1267,12 @@ export function automationInputFromUi(
     managerType: isAiDynamicWorkflow ? 'custom' : null,
     agentId: directAgentId,
     wegentTeamId: null,
-    model: directAgentId ? null : (directConfig?.model ?? null),
-    executionEnvironment: directAgentId ? null : (directStep?.executionEnvironment ?? null),
-    executionDeviceId: directAgentId ? null : (directConfig?.execution_device_id ?? null),
+    // The execution target never travels on the assignment: a bound robot owns it,
+    // otherwise the workflow node in `eventConfig` owns it. The backend rejects a
+    // top-level model/environment/device for manual and AI-managed assignments alike.
+    model: null,
+    executionEnvironment: null,
+    executionDeviceId: null,
     roleSource: directAgentId ? 'agent' : 'generic',
     runtimeSource: directAgentId
       ? 'agent_default'

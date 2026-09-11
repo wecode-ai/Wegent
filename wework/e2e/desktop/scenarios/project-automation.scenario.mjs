@@ -290,6 +290,19 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
 }
 
+// Mirror of the backend assignment contract: the operator's model/device choice lives on
+// the workflow node, so a top-level execution target makes the real API answer 422.
+function automationAssignmentViolation(payload) {
+  const executionTarget = [
+    payload.model ?? null,
+    payload.executionEnvironment ?? null,
+    payload.executionDeviceId ?? null,
+  ]
+  return executionTarget.some(value => value !== null)
+    ? 'The automation assignment carried a top-level execution target'
+    : null
+}
+
 async function requestJson(baseUrl, authToken, pathname, options = {}) {
   const { useApiKey = false, ...fetchOptions } = options
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -424,6 +437,7 @@ export function createDesktopScenario({
     ...createHistoricalRuns(),
   ]
   const createdPayloads = []
+  const updatedPayloads = []
   let archivedAgentPayload = null
   let createdAgentPayload = null
   let agents = [AGENT]
@@ -3397,6 +3411,11 @@ export function createDesktopScenario({
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/automations`
       ) {
         const createdPayload = await readJson(request)
+        const assignmentViolation = automationAssignmentViolation(createdPayload)
+        if (assignmentViolation) {
+          json(response, 422, { detail: assignmentViolation })
+          return true
+        }
         createdPayloads.push(createdPayload)
         const created = {
           ...RULE,
@@ -3415,6 +3434,32 @@ export function createDesktopScenario({
         rules.push(created)
         json(response, 201, created)
         return true
+      }
+      const automationMatch = url.pathname.match(
+        new RegExp(`^/api/v1/cloud-projects/${PROJECT_ID}/automations/([^/]+)$`)
+      )
+      if (request.method === 'PATCH' && automationMatch) {
+        const existingIndex = rules.findIndex(rule => rule.id === automationMatch[1])
+        // Automations owned by the real backend keep flowing there; the stub only
+        // answers for the rules it created itself.
+        if (existingIndex >= 0) {
+          const updatedPayload = await readJson(request)
+          const assignmentViolation = automationAssignmentViolation(updatedPayload)
+          if (assignmentViolation) {
+            json(response, 422, { detail: assignmentViolation })
+            return true
+          }
+          updatedPayloads.push({ id: automationMatch[1], ...updatedPayload })
+          const updated = {
+            ...rules[existingIndex],
+            ...updatedPayload,
+            id: automationMatch[1],
+            version: (rules[existingIndex].version ?? 1) + 1,
+          }
+          rules[existingIndex] = updated
+          json(response, 200, updated)
+          return true
+        }
       }
       const runsMatch = url.pathname.match(
         new RegExp(`^/api/v1/cloud-projects/${PROJECT_ID}/automations/([^/]+)/runs$`)
@@ -4773,6 +4818,82 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+
+      // A single automatic node must save: the node owns the execution target, and the
+      // assignment payload has to stay inside the backend contract.
+      await control.command('click', '[data-testid="automation-create-rule"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="automation-editor-name"]')
+      await control.command('fill', '[data-testid="automation-editor-name-input"]', {
+        value: '单节点自动执行',
+      })
+      await control.command('press', '[data-testid="automation-editor-name-input"]', {
+        key: 'Enter',
+      })
+      await control.command('fill', '[data-testid="automation-rule-description"]', {
+        value: '验证只有一个自动执行节点的规则可以保存。',
+      })
+      await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+      await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
+      await control.command('fill', '[data-testid^="execution-node-name-"]', {
+        value: '单节点执行',
+      })
+      await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
+        value: '执行单节点任务。',
+      })
+      await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+        text: '已保存',
+        timeoutMs: uiTimeoutMs,
+      })
+      const singleNodeAutomation = createdPayloads.find(
+        payload => payload.name === '单节点自动执行'
+      )
+      assert.ok(singleNodeAutomation, 'The single-node automation was not saved')
+      assert.equal(singleNodeAutomation.assignmentMode, 'manual')
+      assert.equal(singleNodeAutomation.roleSource, 'generic')
+      assert.equal(singleNodeAutomation.model, null)
+      assert.equal(singleNodeAutomation.executionEnvironment, null)
+      assert.equal(singleNodeAutomation.executionDeviceId, null)
+      const singleNodeGraph = singleNodeAutomation.eventConfig.wework_flow.graph.nodes
+      assert.equal(singleNodeGraph.length, 1)
+      assert.ok(
+        singleNodeAutomation.eventConfig.runtime_workflow_definition.nodes.some(
+          node => node.id === singleNodeGraph[0].id
+        ),
+        'The single node was not persisted into the runtime workflow definition'
+      )
+      // Editing an existing single-node rule must save as well: the update path shares
+      // the assignment contract with the create path.
+      await control.command('fill', '[data-testid="automation-rule-description"]', {
+        value: '编辑已有的单节点自动执行规则。',
+      })
+      await waitForValue(
+        () => Promise.resolve(updatedPayloads.length),
+        count => count >= 1,
+        'Editing the single-node automation did not reach the cloud API',
+        uiTimeoutMs
+      )
+      const updatedSingleNodeAutomation = updatedPayloads[updatedPayloads.length - 1]
+      assert.equal(updatedSingleNodeAutomation.model, null)
+      assert.equal(updatedSingleNodeAutomation.executionEnvironment, null)
+      assert.equal(updatedSingleNodeAutomation.executionDeviceId, null)
+      await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+        text: '已保存',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'project-automation-single-node.png')
+      await control.command('click', '[data-testid="automation-editor-back"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-create-rule"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+
       await control.command('click', '[data-testid="automation-create-rule"]', {
         visible: true,
       })

@@ -90,6 +90,50 @@ def test_manual_assignment_rejects_manager_configuration() -> None:
         )
 
 
+@pytest.mark.parametrize("role_source", ["agent", "generic"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("model", "codex-runtime"),
+        ("executionEnvironment", "local"),
+        ("executionDeviceId", "device-1"),
+    ],
+)
+def test_manual_assignment_rejects_a_top_level_execution_target(
+    role_source: str, field: str, value: str
+) -> None:
+    """An execution target never travels on a manual assignment.
+
+    Wework stores the operator's model/device choice on the workflow node, so the
+    assignment contract must stay empty and reject the field outright.
+    """
+
+    with pytest.raises(ValidationError, match="requires AI management"):
+        ProjectAutomationCreate.model_validate(
+            {
+                **_base_create(),
+                "assignmentMode": "manual",
+                "roleSource": role_source,
+                "agentId": "agent-1" if role_source == "agent" else None,
+                field: value,
+            }
+        )
+
+
+def test_ai_managed_custom_rejects_a_top_level_execution_target() -> None:
+    with pytest.raises(ValidationError, match="custom managers use a Runtime profile"):
+        ProjectAutomationCreate.model_validate(
+            {
+                **_base_create(),
+                "assignmentMode": "ai_managed",
+                "managerType": "custom",
+                "runtimeSource": "fixed_profile",
+                "runtimeProfileId": "runtime-1",
+                "model": "codex-runtime",
+            }
+        )
+
+
 def test_partial_update_does_not_require_assignment_configuration() -> None:
     update = ProjectAutomationUpdate.model_validate({"version": 2, "enabled": False})
 
