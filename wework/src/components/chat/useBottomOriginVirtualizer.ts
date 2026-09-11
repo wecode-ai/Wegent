@@ -129,7 +129,7 @@ export function useBottomOriginVirtualizer<
         if (!element) return false
         const offset = getVirtualizerOffset(instance, element)
         const streamingRow = bottomOriginAppendOnlyItemKeys?.has(item.key) === true
-        if (element && element.scrollTop < -0.5 && Math.abs(delta) >= 0.5) {
+        if (element.scrollTop < -0.5 && Math.abs(delta) >= 0.5) {
           scrollDiag(
             `ITEM-SIZE key=${String(item.key)} start=${Math.round(item.start)} end=${Math.round(item.start + (item.size ?? 0))} delta=${Math.round(delta)} streaming=${streamingRow} offset=${Math.round(offset)} client=${element.clientHeight} scrollTop=${Math.round(element.scrollTop)}`,
             true
@@ -137,9 +137,13 @@ export function useBottomOriginVirtualizer<
         }
         if (element.scrollTop >= -0.5 || delta === 0) return false
         if (streamingRow && delta > 0 && item.start < offset) {
-          // The streaming row grew past the viewport top while the reader is parked in the
-          // history above it. Grow its spacer with the row so the offset can be shifted
-          // without the scroller clamping.
+          // The streaming row grew past the viewport top while the reader is parked in the history
+          // above it. Only the rendered rows move with a layout change — and the streaming row is
+          // the last one, so nothing underneath it absorbs the growth: its extra height pushes the
+          // whole history up under the reader. Grow its spacer with the row so the offset can be
+          // shifted without the scroller clamping, and shift it back.
+          // Scroll-owning code in `ScrollableMessageArea` measures every other layout change from
+          // the text the reader is looking at, so this is the only case handled here.
           const itemElement = instance.elementsCache.get(item.key)
           const listElement = itemElement?.parentElement
           if (listElement instanceof HTMLElement) {
@@ -152,10 +156,9 @@ export function useBottomOriginVirtualizer<
           return false
         }
 
-        // The scroller keeps the distance from the start of the content while the content height
-        // changes, so a re-measured row can move the rendered rows with it. The scroll owner
-        // corrects that from the viewport anchor once the layout lands, which measures the move
-        // that actually happened instead of predicting it from `delta`.
+        // A re-measured row above the viewport carries the rendered rows with it. The scroll owner
+        // corrects that once the layout lands, measuring the move that actually happened from the
+        // text the reader is looking at instead of predicting anything from `delta` here.
         return false
       }
     : shouldAdjustScrollPositionOnItemSizeChange

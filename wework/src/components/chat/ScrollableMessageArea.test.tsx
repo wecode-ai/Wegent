@@ -48,6 +48,146 @@ function mockScrollRelativeRect(
   })
 }
 
+interface ReaderLayoutModel {
+  /** Records the current position as the sample a layout change is measured against. */
+  sample: () => void
+  /**
+   * Applies one layout change the way Chromium does to the desktop chat scroller, which the desktop
+   * e2e and the scroll diagnostics both pin down:
+   *
+   * - a row above the viewport re-measures: the scroller applies the height delta to the reader's
+   *   distance from the bottom, and the rendered rows below the row move with the text;
+   * - the streaming row below the viewport grows: the offset is left alone and the extra height
+   *   pushes the whole history up under the reader (`desktop e2e: the selected text drifted by the
+   *   same amount the content grew`), which the virtualizer's streaming spacer compensates.
+   *
+   * The plain reader scroll and any content shift are carried in the same numbers, which is what
+   * lets the scroll owner tell them apart.
+   */
+  apply: (change: {
+    aboveViewportShrinkPx?: number
+    belowViewportGrowthPx?: number
+    readerScrollPx?: number
+  }) => void
+}
+
+interface AnchorHarness {
+  scroller: HTMLDivElement
+  anchor: HTMLElement
+  model: ReaderLayoutModel
+  flushResizeObservers: () => void
+  dispose: () => void
+}
+
+function createAnchorHarness(): AnchorHarness {
+  const resizeCallbacks: ResizeObserverCallback[] = []
+  const originalResizeObserver = globalThis.ResizeObserver
+  const CLIENT_HEIGHT = 200
+  const SCROLLER_TOP = 100
+  const HARNESS_MESSAGE_ID = 'anchor-harness-message'
+  const HARNESS_TEXT = '锚点会话里正在阅读的长消息'
+
+  vi.stubGlobal(
+    'ResizeObserver',
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+  )
+
+  const externalScrollRef = createRef<HTMLDivElement>()
+  render(
+    <div ref={externalScrollRef}>
+      <ScrollableMessageArea
+        conversationKey="anchor-harness"
+        externalScrollRef={externalScrollRef}
+        messages={[
+          {
+            id: HARNESS_MESSAGE_ID,
+            role: 'assistant',
+            content: HARNESS_TEXT,
+            status: 'done',
+            createdAt: '2026-09-11T00:00:00.000Z',
+          },
+        ]}
+      />
+    </div>
+  )
+
+  const scroller = externalScrollRef.current!
+  const anchor = screen.getByText(HARNESS_TEXT).closest('[data-scroll-anchor]')!
+  const layout = {
+    contentHeightPx: 10_000,
+    distanceFromBottomPx: 4_000,
+    anchorContentTopPx: 5_850,
+  }
+  Object.defineProperty(scroller, 'clientHeight', { value: CLIENT_HEIGHT, configurable: true })
+  Object.defineProperty(scroller, 'scrollHeight', {
+    configurable: true,
+    get: () => layout.contentHeightPx,
+  })
+  Object.defineProperty(scroller, 'scrollTop', {
+    value: -layout.distanceFromBottomPx,
+    writable: true,
+    configurable: true,
+  })
+  scroller.scrollTo = vi.fn((options: ScrollToOptions) => {
+    scroller.scrollTop = Number(options.top ?? 0)
+  }) as unknown as HTMLDivElement['scrollTo']
+  mockRect(scroller, SCROLLER_TOP, SCROLLER_TOP + CLIENT_HEIGHT)
+  anchor.getBoundingClientRect = vi.fn(() => {
+    const top =
+      SCROLLER_TOP +
+      layout.anchorContentTopPx -
+      (layout.contentHeightPx - CLIENT_HEIGHT + scroller.scrollTop)
+    return {
+      top,
+      bottom: top + 40,
+      left: 0,
+      right: 320,
+      width: 320,
+      height: 40,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect
+  })
+
+  return {
+    scroller,
+    anchor,
+    model: {
+      sample: () => {
+        fireEvent.wheel(scroller, { deltaY: -120 })
+        fireEvent.scroll(scroller)
+      },
+      apply: change => {
+        const shrink = change.aboveViewportShrinkPx ?? 0
+        const grow = change.belowViewportGrowthPx ?? 0
+        const readerScroll = change.readerScrollPx ?? 0
+        const heightDelta = -shrink + grow
+        layout.contentHeightPx += heightDelta
+        layout.distanceFromBottomPx += readerScroll + (shrink > 0 ? heightDelta : 0)
+        layout.anchorContentTopPx -= shrink
+        scroller.scrollTop = -layout.distanceFromBottomPx
+      },
+    },
+    flushResizeObservers: () => {
+      act(() => {
+        resizeCallbacks.forEach(callback =>
+          callback([] as ResizeObserverEntry[], {} as ResizeObserver)
+        )
+      })
+    },
+    dispose: () => {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    },
+  }
+}
+
 function flushScheduledTimers() {
   act(() => {
     vi.runOnlyPendingTimers()
@@ -479,147 +619,86 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('restores the reader position when a remeasure unmounts the anchor row', () => {
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    const originalResizeObserver = globalThis.ResizeObserver
-
-    class ResizeObserverMock {
-      constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback)
-      }
-
-      observe = vi.fn()
-      disconnect = vi.fn()
-    }
-
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
-
+  test('keeps the reader own scrolling while a row above the viewport is re-measured', () => {
+    const harness = createAnchorHarness()
     try {
-      render(
-        <ScrollableMessageArea
-          conversationKey="anchor-unmounted"
-          messages={[
-            {
-              id: 'anchor-unmounted-message',
-              role: 'assistant',
-              content: '被卸载掉的长消息',
-              status: 'done',
-              createdAt: '2026-05-29T00:00:00.000Z',
-            },
-          ]}
-        />
-      )
+      const { scroller, model } = harness
+      model.sample()
 
-      const scroller = screen.getByTestId('chat-message-scroll-area')
-      const anchor = screen.getByText('被卸载掉的长消息').closest('[data-scroll-anchor]')!
-      Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
-      Object.defineProperty(scroller, 'scrollHeight', { value: 2_000, configurable: true })
-      Object.defineProperty(scroller, 'scrollTop', {
-        value: 300,
-        writable: true,
-        configurable: true,
-      })
-      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
-        scroller.scrollTop = Number(top)
-      })
-      mockRect(scroller, 100, 300)
-      mockScrollRelativeRect(anchor, scroller, 450, 40)
-
-      // The reader scrolls up twice at a stable height, so the second report records where they
-      // put themselves.
-      scroller.scrollTop = 300
-      fireEvent.wheel(scroller, { deltaY: -120 })
+      // The reader scrolls 120px up into the history while a row 300px above the viewport is
+      // re-measured shorter: the scroller moves the reader's distance from the bottom by the
+      // height delta, and the row above carries the text under them with it.
+      model.apply({ readerScrollPx: 120, aboveViewportShrinkPx: 300 })
       fireEvent.scroll(scroller)
-      scroller.scrollTop = 250
-      fireEvent.wheel(scroller, { deltaY: -120 })
-      fireEvent.scroll(scroller)
+      harness.flushResizeObservers()
 
-      // A re-measured row drags the scroller to the very bottom and unmounts the anchor row, so
-      // the anchor itself can no longer be found.
-      anchor.closest('[data-message-id]')?.remove()
-      scroller.scrollTop = 1_800
-      act(() => {
-        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-      })
-
-      // The reader is back on the text they were reading, not on the bottom the drag left them.
-      expect(scroller.scrollTop).toBe(250)
+      // The 300px drag is given back and the 120px the reader scrolled is kept.
+      expect(scroller.scrollTop).toBe(-4_120)
     } finally {
-      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+      harness.dispose()
     }
   })
 
-  test('keeps a visible text anchor fixed when paused content remeasures', () => {
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    const originalResizeObserver = globalThis.ResizeObserver
-
-    class ResizeObserverMock {
-      constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback)
-      }
-
-      observe = vi.fn()
-      disconnect = vi.fn()
-    }
-
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
-
+  test('leaves the viewport alone when only the streaming response below it grows', () => {
+    const harness = createAnchorHarness()
     try {
-      render(
-        <ScrollableMessageArea
-          conversationKey="width-reflow"
-          messages={[
-            {
-              id: 'width-reflow-message',
-              role: 'assistant',
-              content: '正在阅读的长消息',
-              status: 'done',
-              createdAt: '2026-05-29T00:00:00.000Z',
-            },
-          ]}
-        />
-      )
+      const { scroller, model } = harness
+      model.sample()
 
-      const scroller = screen.getByTestId('chat-message-scroll-area')
-      const anchor = screen.getByText('正在阅读的长消息').closest('[data-scroll-anchor]')!
-      Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
-      Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
-      Object.defineProperty(scroller, 'scrollTop', {
-        value: 300,
-        writable: true,
-        configurable: true,
-      })
-      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
-        scroller.scrollTop = Number(top)
-      })
-      mockRect(scroller, 100, 300)
-      mockScrollRelativeRect(anchor, scroller, 450, 40)
-
-      scroller.scrollTop = 1000
+      // A streaming response grows 400px below the viewport, which pushes the history up under the
+      // reader. The offset is left alone (the virtualizer's streaming spacer owns that case, see
+      // the desktop e2e) and nothing is written back here.
+      model.apply({ belowViewportGrowthPx: 400 })
       fireEvent.scroll(scroller)
-      scroller.scrollTop = 300
-      scroller.scrollTop = 1000
-      fireEvent.scroll(scroller)
-      scroller.scrollTop = 300
-      fireEvent.wheel(scroller, { deltaY: -80 })
-      fireEvent.scroll(scroller)
-      ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
-
-      Object.defineProperty(scroller, 'scrollHeight', { value: 1440, configurable: true })
-      mockScrollRelativeRect(anchor, scroller, 690, 40)
-      act(() => {
-        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-      })
+      harness.flushResizeObservers()
 
       expect(scroller.scrollTo).not.toHaveBeenCalled()
-      expect(scroller.scrollTop).toBe(540)
-      expect(anchor.getBoundingClientRect().top).toBe(150)
+      expect(scroller.scrollTop).toBe(-4_000)
     } finally {
-      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+      harness.dispose()
     }
   })
 
-  test('keeps the paused anchor baseline when a re-measure drags the scroller first', () => {
+  test('keeps the reader own scrolling while the streaming response below it grows', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { scroller, model } = harness
+      model.sample()
+
+      // Scrolling through a response that keeps streaming: every frame changes the content height,
+      // so the reader's own scrolling arrives in the same frame as the layout change. The scroll
+      // owner must not turn that into a correction that puts them back where they already were.
+      model.apply({ readerScrollPx: 120, belowViewportGrowthPx: 400 })
+      fireEvent.scroll(scroller)
+      harness.flushResizeObservers()
+
+      expect(scroller.scrollTo).not.toHaveBeenCalled()
+      expect(scroller.scrollTop).toBe(-4_120)
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  test('does not guess a correction when the sampled text is no longer on screen', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { scroller, anchor, model } = harness
+      model.sample()
+
+      anchor.closest('[data-message-id]')?.remove()
+      model.apply({ aboveViewportShrinkPx: 300 })
+      harness.flushResizeObservers()
+
+      // Nothing from the sample can be measured any more, so the layout change stays unattributed
+      // instead of being guessed at; the next sample is taken from where the reader is now.
+      expect(scroller.scrollTo).not.toHaveBeenCalled()
+      expect(scroller.scrollTop).toBe(-3_700)
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  test('keeps the reader own scrolling when a width reflow re-lays out a top-origin list', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
 
@@ -637,212 +716,72 @@ describe('ScrollableMessageArea', () => {
     try {
       render(
         <ScrollableMessageArea
-          conversationKey="remeasure-drag"
+          conversationKey="top-origin-width-reflow"
           messages={[
             {
-              id: 'remeasure-drag-message',
+              id: 'top-origin-width-reflow-message',
               role: 'assistant',
-              content: '重新测量时正在阅读的长消息',
+              content: '调整宽度后仍在阅读的段落',
               status: 'done',
-              createdAt: '2026-05-29T00:00:00.000Z',
+              createdAt: '2026-08-30T00:00:00.000Z',
             },
           ]}
         />
       )
 
       const scroller = screen.getByTestId('chat-message-scroll-area')
-      const anchor = screen.getByText('重新测量时正在阅读的长消息').closest('[data-scroll-anchor]')!
+      const anchor = screen.getByText('调整宽度后仍在阅读的段落').closest('[data-scroll-anchor]')!
+      let contentHeight = 2_000
+      let anchorContentTop = 1_220
       Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
-      Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+      Object.defineProperty(scroller, 'scrollHeight', {
+        configurable: true,
+        get: () => contentHeight,
+      })
       Object.defineProperty(scroller, 'scrollTop', {
-        value: 300,
+        value: 1_000,
         writable: true,
         configurable: true,
       })
+      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+        scroller.scrollTop = Math.min(Number(top), contentHeight - scroller.clientHeight)
+      })
       mockRect(scroller, 100, 300)
-      mockScrollRelativeRect(anchor, scroller, 450, 40)
-
-      fireEvent.wheel(scroller)
-      fireEvent.scroll(scroller)
-
-      // A re-measured row shortens the content above the reader. The browser drags the viewport
-      // toward the bottom and reports a scroll event before the ResizeObserver callback runs;
-      // that event must not re-baseline the anchor onto the already-dragged position.
-      Object.defineProperty(scroller, 'scrollHeight', { value: 1440, configurable: true })
-      mockScrollRelativeRect(anchor, scroller, 690, 40)
-      scroller.scrollTop = 400
-      fireEvent.wheel(scroller, { deltaY: -80 })
-      fireEvent.scroll(scroller)
-      act(() => {
-        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      anchor.getBoundingClientRect = vi.fn(() => {
+        const top = anchorContentTop - scroller.scrollTop
+        return {
+          top,
+          bottom: top + 40,
+          left: 0,
+          right: 320,
+          width: 320,
+          height: 40,
+          x: 0,
+          y: top,
+          toJSON: () => ({}),
+        } as DOMRect
       })
 
-      expect(scroller.scrollTop).toBe(540)
-      expect(anchor.getBoundingClientRect().top).toBe(150)
+      // The reader scrolls 120px up, then a width change reflows the list 300px shorter above them.
+      scroller.scrollTop = 1_000
+      fireEvent.wheel(scroller, { deltaY: -120 })
+      fireEvent.scroll(scroller)
+      scroller.scrollTop = 880
+      fireEvent.scroll(scroller)
+      contentHeight = 1_700
+      anchorContentTop = 920
+      act(() => {
+        resizeCallbacks.forEach(callback =>
+          callback([] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
+        )
+      })
+
+      // The reflow no longer moves the text the reader was reading, and their own 120px scroll is
+      // still there: the paragraph sits 120px lower on screen than before they scrolled.
+      expect(anchor.getBoundingClientRect().top).toBe(340)
     } finally {
       vi.stubGlobal('ResizeObserver', originalResizeObserver)
     }
-  })
-
-  test('keeps the user anchor when a width reflow clamps the scroller before resize observation', () => {
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    vi.stubGlobal(
-      'ResizeObserver',
-      class ResizeObserverMock {
-        constructor(callback: ResizeObserverCallback) {
-          resizeCallbacks.push(callback)
-        }
-        observe() {}
-        disconnect() {}
-      }
-    )
-
-    render(
-      <ScrollableMessageArea
-        conversationKey="width-reflow-clamp"
-        messages={[
-          {
-            id: 'width-reflow-clamp-message',
-            role: 'assistant',
-            content: '关闭文件面板后仍在阅读的段落',
-            status: 'done',
-            createdAt: '2026-08-30T00:00:00.000Z',
-          },
-        ]}
-      />
-    )
-
-    const scroller = screen.getByTestId('chat-message-scroll-area')
-    const anchor = screen.getByText('关闭文件面板后仍在阅读的段落').closest('[data-scroll-anchor]')!
-    let scrollHeight = 2_000
-    let anchorTopAtScrollZero = 1_300
-    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
-    Object.defineProperty(scroller, 'scrollHeight', {
-      configurable: true,
-      get: () => scrollHeight,
-    })
-    Object.defineProperty(scroller, 'scrollTop', {
-      value: 1_800,
-      writable: true,
-      configurable: true,
-    })
-    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
-      scroller.scrollTop = Math.min(Number(top), scrollHeight - scroller.clientHeight)
-    })
-    mockRect(scroller, 100, 300)
-    anchor.getBoundingClientRect = vi.fn(() => {
-      const top = anchorTopAtScrollZero - scroller.scrollTop
-      return {
-        top,
-        bottom: top + 40,
-        left: 0,
-        right: 320,
-        width: 320,
-        height: 40,
-        x: 0,
-        y: top,
-        toJSON: () => ({}),
-      } as DOMRect
-    })
-
-    fireEvent.scroll(scroller)
-    scroller.scrollTop = 1_200
-    fireEvent.wheel(scroller, { deltaY: -80 })
-    fireEvent.scroll(scroller)
-
-    scrollHeight = 1_300
-    anchorTopAtScrollZero = 500
-    scroller.scrollTop = 1_100
-    fireEvent.scroll(scroller)
-    act(() => {
-      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-    })
-
-    expect(scroller.scrollTop).toBe(400)
-    expect(anchor.getBoundingClientRect().top).toBe(100)
-  })
-
-  test('keeps a bottom-origin user anchor when width reflow clamps toward zero', () => {
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    vi.stubGlobal(
-      'ResizeObserver',
-      class ResizeObserverMock {
-        constructor(callback: ResizeObserverCallback) {
-          resizeCallbacks.push(callback)
-        }
-        observe() {}
-        disconnect() {}
-      }
-    )
-
-    const externalScrollRef = createRef<HTMLDivElement>()
-    render(
-      <div ref={externalScrollRef}>
-        <ScrollableMessageArea
-          conversationKey="bottom-origin-width-reflow-clamp"
-          externalScrollRef={externalScrollRef}
-          messages={[
-            {
-              id: 'bottom-origin-width-reflow-clamp-message',
-              role: 'assistant',
-              content: '关闭文件面板后仍在阅读的段落',
-              status: 'done',
-              createdAt: '2026-08-31T00:00:00.000Z',
-            },
-          ]}
-        />
-      </div>
-    )
-
-    const scroller = externalScrollRef.current!
-    const anchor = screen.getByText('关闭文件面板后仍在阅读的段落').closest('[data-scroll-anchor]')!
-    let scrollHeight = 2_000
-    let anchorContentTop = 1_200
-    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
-    Object.defineProperty(scroller, 'scrollHeight', {
-      configurable: true,
-      get: () => scrollHeight,
-    })
-    Object.defineProperty(scroller, 'scrollTop', {
-      value: -600,
-      writable: true,
-      configurable: true,
-    })
-    mockRect(scroller, 100, 300)
-    anchor.getBoundingClientRect = vi.fn(() => {
-      const contentScrollTop = scrollHeight - scroller.clientHeight + scroller.scrollTop
-      const top = 100 + anchorContentTop - contentScrollTop
-      return {
-        top,
-        bottom: top + 40,
-        left: 0,
-        right: 320,
-        width: 320,
-        height: 40,
-        x: 0,
-        y: top,
-        toJSON: () => ({}),
-      } as DOMRect
-    })
-
-    fireEvent.wheel(scroller, { deltaY: -80 })
-    fireEvent.scroll(scroller)
-
-    scrollHeight = 10_000
-    anchorContentTop = 9_100
-    scroller.scrollTop = 0
-    fireEvent.scroll(scroller)
-
-    scrollHeight = 1_300
-    anchorContentTop = 400
-    scroller.scrollTop = 0
-    fireEvent.scroll(scroller)
-    act(() => {
-      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-    })
-
-    expect(scroller.scrollTop).toBe(-700)
-    expect(anchor.getBoundingClientRect().top).toBe(100)
   })
 
   test('keeps the first visible text line fixed when width changes reflow a paragraph', () => {

@@ -177,7 +177,9 @@ describe('MessageList desktop virtualization', () => {
       | undefined
 
     // The viewport top sits at 9_640: a 10_000px conversation with a 200px viewport, parked
-    // 160px above the bottom.
+    // 160px above the bottom. The streaming row is the last one, so nothing under it absorbs its
+    // growth: its spacer grows with it and the offset is shifted back by the same amount, or the
+    // text the reader selected scrolls away while the response streams.
     scrollElement.scrollTop = -160
     expect(
       shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_500, size: 400 }, 40, instance)
@@ -185,17 +187,16 @@ describe('MessageList desktop virtualization', () => {
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
-    // A row that ends above the viewport top carries the visible rows with it, so the reader's
-    // text already stays put. The offset itself is left alone here: the component restores the
-    // recorded reader position once the layout lands.
+    // A re-measured row that ends above the viewport top is left to the scroll owner, which
+    // measures the layout it actually got instead of predicting anything from `delta`.
     expect(
       shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000, size: 100 }, 40, instance)
     ).toBe(false)
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
-    // A row that reaches past the viewport top only changes the height under the viewport, which
-    // the scroller keeps stable on its own; the offset must not be touched for it either.
+    // A row that reaches past the viewport top and is not the streaming row only changes the
+    // height under the viewport, which the scroll owner accounts for; nothing is written here.
     expect(
       shouldAdjustScrollPosition?.({ key: 'user-18', start: 9_700, size: 100 }, -60, instance)
     ).toBe(false)

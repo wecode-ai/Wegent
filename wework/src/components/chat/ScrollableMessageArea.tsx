@@ -57,6 +57,9 @@ interface UserViewportAnchor {
   anchorIndex: number
   offsetFromScrollerTop: number
   textOffset: number | null
+  /** Distance from the bottom and content height the anchor offset belongs to. */
+  distanceFromBottomPx: number
+  contentHeightPx: number
 }
 
 interface PendingLayoutScrollPosition {
@@ -311,15 +314,9 @@ function ScrollableMessagePaneContent({
   const userScrollIntentRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
   const userViewportAnchorHeightRef = useRef<number | null>(null)
-  // Where the reader put themselves, sampled only while the layout is stable, so a re-measured row
-  // that unmounts the anchor row cannot take the reading position with it.
-  const readerDistanceFromBottomRef = useRef<number | null>(null)
-  const readerPositionHeightRef = useRef<number | null>(null)
   const clearUserViewportAnchor = useCallback(() => {
     userViewportAnchorRef.current = null
     userViewportAnchorHeightRef.current = null
-    readerDistanceFromBottomRef.current = null
-    readerPositionHeightRef.current = null
   }, [])
   const lastScrollPositionRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
@@ -1221,34 +1218,56 @@ function ScrollableMessagePaneContent({
     }
   }, [scrollStateFrameSignature, updateScrollState])
 
-  const captureUserViewportAnchor = useCallback((options: { force?: boolean } = {}) => {
-    const scroller = activeScrollRefRef.current.current
-    const content = contentRef.current
-    if (!scroller || !content) return
-    const anchor = createUserViewportAnchor(scroller, content)
-    // A transient layout state can leave nothing on screen right after a re-measured row moved
-    // the viewport; that must not erase the position the reader last chose.
-    if (!anchor) return
-    const height = scroller.scrollHeight
-    if (
-      !options.force &&
-      userViewportAnchorHeightRef.current !== null &&
-      userViewportAnchorHeightRef.current !== height
-    ) {
-      // The content changed size in this same frame, so this anchor already describes the
-      // position a re-measured row produced. Keep the older baseline: it is what lets
-      // `restoreUserViewportAnchor` see how far that row dragged the viewport.
-      scrollDiag(
-        `CAPTURE-ANCHOR skip (height changed ${Math.round(userViewportAnchorHeightRef.current)} -> ${Math.round(height)})`
-      )
-      return
-    }
-    userViewportAnchorRef.current = anchor
-    userViewportAnchorHeightRef.current = height
-    scrollDiag(`CAPTURE-ANCHOR ${anchor.messageId} scrollTop=${Math.round(scroller.scrollTop)}`)
-  }, [])
+  const captureUserViewportAnchor = useCallback(
+    (options: { force?: boolean } = {}) => {
+      const scroller = activeScrollRefRef.current.current
+      const content = contentRef.current
+      if (!scroller || !content) return
+      const anchor = createUserViewportAnchor(scroller, content, bottomOrigin)
+      // A transient layout state can leave nothing on screen right after a re-measured row moved
+      // the viewport; that must not erase the position the reader last chose.
+      if (!anchor) return
+      const height = scroller.scrollHeight
+      if (
+        !options.force &&
+        userViewportAnchorHeightRef.current !== null &&
+        userViewportAnchorHeightRef.current !== height
+      ) {
+        // The content changed size in this same frame, so this anchor already describes the
+        // position a re-measured row produced. Keep the older baseline: it is what lets
+        // `restoreReaderPositionFromLayout` see how far that row dragged the viewport.
+        scrollDiag(
+          `CAPTURE-ANCHOR skip (height changed ${Math.round(userViewportAnchorHeightRef.current)} -> ${Math.round(height)})`
+        )
+        return
+      }
+      userViewportAnchorRef.current = anchor
+      userViewportAnchorHeightRef.current = height
+      scrollDiag(`CAPTURE-ANCHOR ${anchor.messageId} scrollTop=${Math.round(scroller.scrollTop)}`)
+    },
+    [bottomOrigin]
+  )
 
-  const restoreUserViewportAnchor = useCallback(() => {
+  /**
+   * Undoes the part of a layout change that moved the content under the reader.
+   *
+   * A bottom-origin scroller keeps its distance from the start of the content while the content
+   * height changes, so every layout change adds its height delta to the reader's distance from the
+   * bottom. Which part of that is a real move of the text they are reading depends on *where* the
+   * content changed: a row above the viewport carries the rendered rows with it, while a row below
+   * only grows the length of the history behind the reader.
+   *
+   * Comparing the three deltas measured against the last sample separates the two cases exactly,
+   * and cancels the reader's own scrolling out of all of them:
+   *
+   *   dragAboveViewport = ΔdistanceFromBottom - ΔcontentHeight - ΔanchorOffset
+   *
+   * `ΔanchorOffset` is the only DOM measurement: it is how far the text the reader was looking at
+   * actually moved. A reader-only scroll contributes the same amount to the distance and to the
+   * anchor, so it cancels; a re-measured row above the viewport leaves the anchor short of the
+   * height delta and is the amount that has to be given back.
+   */
+  const restoreReaderPositionFromLayout = useCallback(() => {
     const scroller = activeScrollRefRef.current.current
     const content = contentRef.current
     const anchor = userViewportAnchorRef.current
@@ -1259,21 +1278,10 @@ function ScrollableMessagePaneContent({
 
     const anchorElement = findUserViewportAnchor(content, anchor)
     if (!anchorElement) {
-      // The anchor row is gone, so the only thing left to restore is where the reader had put
-      // themselves: a re-measured row above the viewport can otherwise drag them to the bottom.
-      userViewportAnchorHeightRef.current = scroller.scrollHeight
-      const readerDistance = readerDistanceFromBottomRef.current
-      const currentDistance = getDistanceFromBottom(scroller, bottomOrigin)
-      if (readerDistance === null || Math.abs(currentDistance - readerDistance) < 1) {
-        scrollDiag(`ANCHOR skip (message not mounted: ${anchor.messageId})`, true)
-        return
-      }
-      scrollDiag(
-        `ANCHOR-FALLBACK d ${Math.round(currentDistance)} -> ${Math.round(readerDistance)} (${anchor.messageId} unmounted)`,
-        true
-      )
-      setDistanceFromBottom(scroller, readerDistance, 'auto', bottomOrigin)
-      lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
+      // Nothing on screen from the last sample can be measured, so this layout change cannot be
+      // attributed. Re-sample instead of guessing: a guessed correction is what pulls a reader who
+      // is scrolling during a streaming response back to where they already were.
+      scrollDiag(`ANCHOR skip (message not mounted: ${anchor.messageId})`, true)
       captureUserViewportAnchor({ force: true })
       return
     }
@@ -1282,21 +1290,33 @@ function ScrollableMessagePaneContent({
         ? anchorElement.getBoundingClientRect()
         : (getTextOffsetRect(anchorElement, anchor.textOffset) ??
           anchorElement.getBoundingClientRect())
-    const offsetFromScrollerTop = anchorRect.top - scroller.getBoundingClientRect().top
-    const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
-    // This layout change is now accounted for, so a later capture may re-baseline again.
-    userViewportAnchorHeightRef.current = scroller.scrollHeight
-    if (Math.abs(offsetDelta) < 0.5) {
-      scrollDiag(`ANCHOR skip (delta~0: ${Math.round(offsetDelta)})`)
+
+    const distanceFromBottom = getDistanceFromBottom(scroller, bottomOrigin)
+    const contentHeight = scroller.scrollHeight
+    const anchorOffset = anchorRect.top - scroller.getBoundingClientRect().top
+    const dragAboveViewport =
+      distanceFromBottom -
+      anchor.distanceFromBottomPx -
+      (contentHeight - anchor.contentHeightPx) -
+      (anchorOffset - anchor.offsetFromScrollerTop)
+    // The layout change is accounted for from here on, whatever it turned out to be.
+    captureUserViewportAnchor({ force: true })
+    if (Math.abs(dragAboveViewport) < 1) {
+      scrollDiag(`ANCHOR skip (delta~0: ${Math.round(dragAboveViewport)})`)
       return
     }
     scrollDiag(
-      `ANCHOR-RESTORE delta=${Math.round(offsetDelta)} d_before=${Math.round(getDistanceFromBottom(scroller, bottomOrigin))}`,
+      `ANCHOR-RESTORE drag=${Math.round(dragAboveViewport)} d_before=${Math.round(distanceFromBottom)}`,
       true
     )
-    scroller.scrollTop += offsetDelta
+    setDistanceFromBottom(
+      scroller,
+      Math.max(0, distanceFromBottom + dragAboveViewport),
+      'auto',
+      bottomOrigin
+    )
     lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
-    // The reader is settled again where this capture was taken, so the next layout change has to
+    // The reader is settled again where this sample was taken, so the next layout change has to
     // measure from here rather than from a baseline that already includes this correction.
     captureUserViewportAnchor({ force: true })
   }, [bottomOrigin, captureUserViewportAnchor])
@@ -1333,7 +1353,7 @@ function ScrollableMessagePaneContent({
       // The reader owns the viewport, so measure what this layout did to the row they were reading
       // and put it back. Measuring the DOM after the layout lands keeps the text still without
       // predicting how far a re-measured row moved it.
-      restoreUserViewportAnchor()
+      restoreReaderPositionFromLayout()
       return
     }
 
@@ -1372,7 +1392,7 @@ function ScrollableMessagePaneContent({
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
     restorePendingLayoutScrollPosition,
-    restoreUserViewportAnchor,
+    restoreReaderPositionFromLayout,
     scrollToBottom,
     setScrollToBottom,
     streamingFollowActive,
@@ -1449,20 +1469,6 @@ function ScrollableMessagePaneContent({
       const el = activeScrollRefRef.current.current
       // TEMP-DIAG (WORK-447): the scroller ref can be attached after the first layout commit.
       if (el) installScrollPositionTracer(el)
-      if (el) {
-        // Remember where the reader put themselves, but only from a report whose content height
-        // matches the previous one: a scroll event that lands together with a re-measured row
-        // already carries that row's drag and would poison the recorded position.
-        const height = el.scrollHeight
-        if (
-          userInitiated &&
-          userScrollPausedAutoFollowRef.current &&
-          readerPositionHeightRef.current === height
-        ) {
-          readerDistanceFromBottomRef.current = getDistanceFromBottom(el, bottomOrigin)
-        }
-        readerPositionHeightRef.current = height
-      }
       scrollDiag(
         `SCROLL user=${userInitiated} d=${el ? Math.round(getDistanceFromBottom(el, bottomOrigin)) : -1} h=${el ? Math.round(el.scrollHeight) : -1} paused=${userScrollPausedAutoFollowRef.current} top=${el ? describeViewportTop(contentRef.current, el) : 'none'}`
       )
@@ -1726,7 +1732,8 @@ function getInitialDistanceFromBottomPx(key: string | null): number {
 
 function createUserViewportAnchor(
   scroller: HTMLElement,
-  content: HTMLElement
+  content: HTMLElement,
+  bottomOrigin: boolean
 ): UserViewportAnchor | null {
   const scrollerRect = scroller.getBoundingClientRect()
   const visibleAnchor = Array.from(
@@ -1751,6 +1758,8 @@ function createUserViewportAnchor(
     offsetFromScrollerTop:
       (textPosition?.rect.top ?? visibleAnchor.getBoundingClientRect().top) - scrollerRect.top,
     textOffset: textPosition?.offset ?? null,
+    distanceFromBottomPx: getDistanceFromBottom(scroller, bottomOrigin),
+    contentHeightPx: scroller.scrollHeight,
   }
 }
 
