@@ -432,6 +432,8 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       modelOptions: {
         collaborationMode: 'default',
         weworkCloudModelNamespace: 'default',
+        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelNativeToolSearch: 'true',
         weworkCloudModelResourceUserId: '0',
         weworkCloudModelUpstreamApiFormat: 'openai-responses',
         reasoningEffort: 'medium',
