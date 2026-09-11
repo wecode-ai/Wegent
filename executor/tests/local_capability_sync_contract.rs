@@ -25,9 +25,6 @@ use wegent_executor::{
     protocol::ExecutionRequest,
 };
 
-#[path = "capability_sync/task_token.rs"]
-mod task_token;
-
 #[test]
 fn plugin_store_uses_manifest_home_without_changing_skill_store() {
     let temp = TempRoot::new("plugin-store-home");

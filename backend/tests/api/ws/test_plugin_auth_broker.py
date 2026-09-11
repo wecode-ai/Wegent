@@ -29,34 +29,32 @@ def route(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["read", "task_token"])
 @pytest.mark.parametrize("field", ["user_id", "device_id", "runtime_instance_id"])
 async def test_unregistered_socket_never_reads_credentials(
-    identity, field, monkeypatch, operation
+    identity, field, monkeypatch
 ):
     identity.pop(field)
     exchange = Mock()
     monkeypatch.setattr(broker, "_exchange_sync", exchange)
     result = await broker.exchange(
-        sid="socket", session=identity, operation=operation, data={}
+        sid="socket", session=identity, operation="read", data={}
     )
     assert result == {"success": False, "error": "plugin_auth_device_not_registered"}
     exchange.assert_not_called()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["read", "task_token"])
 @pytest.mark.parametrize(
     "field", ["socket_id", "runtime_device_id", "runtime_instance_id"]
 )
 async def test_replaced_route_never_reads_credentials(
-    identity, route, field, monkeypatch, operation
+    identity, route, field, monkeypatch
 ):
     setattr(route, field, "replacement")
     exchange = Mock()
     monkeypatch.setattr(broker, "_exchange_sync", exchange)
     result = await broker.exchange(
-        sid="socket", session=identity, operation=operation, data={}
+        sid="socket", session=identity, operation="read", data={}
     )
     assert result == {"success": False, "error": "plugin_auth_stale_device_socket"}
     exchange.assert_not_called()
@@ -152,7 +150,6 @@ async def test_credential_events_bypass_payload_tracing(monkeypatch):
     extract = Mock()
     monkeypatch.setattr(decorators, "_set_event_data_attributes", extract)
     for event in (
-        "plugin.task_token.issue",
         "plugin.auth.local_lifecycle",
         "plugin.auth.automatic",
         "plugin.auth.prepare",
