@@ -700,12 +700,21 @@ fn append_workspace_directory(
 pub(crate) async fn prepare_workspace_paths(
     workspace: &Path,
 ) -> Result<Option<Vec<PathBuf>>, String> {
-    if git_marker(workspace).is_none() {
+    let Some(git_marker) = git_marker(workspace) else {
         return Ok(None);
-    }
+    };
+    let safe_directory = git_marker
+        .parent()
+        .ok_or_else(|| "workspace repository marker has no parent directory".to_owned())?;
+    let safe_directory_config = format!("safe.directory={}", safe_directory.to_string_lossy());
     let environment = env::vars().collect();
     let probe = run_git_capture(
-        &["rev-parse".to_owned(), "--is-inside-work-tree".to_owned()],
+        &[
+            "-c".to_owned(),
+            safe_directory_config.clone(),
+            "rev-parse".to_owned(),
+            "--is-inside-work-tree".to_owned(),
+        ],
         Some(workspace),
         &environment,
         WORKSPACE_GIT_TIMEOUT,
@@ -721,6 +730,8 @@ pub(crate) async fn prepare_workspace_paths(
     }
     let output = run_git_capture(
         &[
+            "-c".to_owned(),
+            safe_directory_config,
             "ls-files".to_owned(),
             "--cached".to_owned(),
             "--others".to_owned(),
@@ -1359,6 +1370,46 @@ mod tests {
             .expect_err("broken Git metadata must not fall back to unfiltered traversal");
 
         assert!(error.contains("failed to inspect workspace repository"));
+    }
+
+    #[tokio::test]
+    async fn workspace_packaging_respects_an_ancestor_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = root.path().join("repository");
+        let workspace = repository.join("workspace");
+        fs::create_dir_all(workspace.join("generated")).unwrap();
+        fs::write(repository.join(".gitignore"), "workspace/generated/\n").unwrap();
+        fs::write(workspace.join("source.txt"), "source\n").unwrap();
+        fs::File::create(workspace.join("generated/oversized"))
+            .unwrap()
+            .set_len(MAX_WORKSPACE_FILE_BYTES + 1)
+            .unwrap();
+        assert_git(&repository, &["init"]);
+        assert_git(&repository, &["config", "user.name", "Wegent Test"]);
+        assert_git(&repository, &["config", "user.email", "test@wegent.local"]);
+        assert_git(&repository, &["add", ".gitignore", "workspace/source.txt"]);
+        assert_git(&repository, &["commit", "-m", "base"]);
+
+        let archive_path = root.path().join("workspace.tgz");
+        let output = fs::File::create(&archive_path).unwrap();
+        let encoder = GzEncoder::new(output, Compression::default());
+        let mut archive = Builder::new(encoder);
+        let paths = prepare_workspace_paths(&workspace).await.unwrap().unwrap();
+        append_workspace(&mut archive, &workspace, Some(&paths), None).unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let input = fs::File::open(archive_path).unwrap();
+        let mut restored = Archive::new(GzDecoder::new(input));
+        let paths = restored
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap().path().unwrap().to_path_buf())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&PathBuf::from("workspace/source.txt")));
+        assert!(!paths
+            .iter()
+            .any(|path| path.ends_with("workspace/generated/oversized")));
     }
 
     #[test]
