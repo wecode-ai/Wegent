@@ -26,26 +26,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import jwt
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-class RuntimeTaskIdentity(BaseModel):
-    """Device-owned runtime task address; independent of a process or turn."""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    device_id: str = Field(min_length=1, max_length=255)
-    task_id: str = Field(min_length=1, max_length=255)
-
-
 class TaskTokenData(BaseModel):
     """Data contained in a task token."""
-
-    model_config = ConfigDict(strict=True)
 
     task_id: int
     subtask_id: int
@@ -63,7 +52,6 @@ class TaskTokenInfo:
     user_id: int
     user_name: str
     expire_at: Optional[int] = None
-    runtime_task: Optional[RuntimeTaskIdentity] = None
 
 
 def create_task_token(
@@ -72,8 +60,6 @@ def create_task_token(
     user_id: int,
     user_name: str,
     expires_delta_minutes: int = 1440,  # 24 hours
-    *,
-    runtime_task: Optional[RuntimeTaskIdentity] = None,
 ) -> str:
     """Create a task token for executor and MCP Server authentication.
 
@@ -100,10 +86,6 @@ def create_task_token(
         "exp": expire,
         "type": "task_token",
     }
-    if runtime_task is not None:
-        if task_id != 0 or subtask_id != 0:
-            raise ValueError("Runtime and CRD task identities cannot be combined")
-        payload["runtime_task"] = runtime_task.model_dump()
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return token
 
@@ -127,19 +109,12 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
             logger.warning("Invalid token type: expected task_token")
             return None
 
-        identity = TaskTokenData.model_validate(payload)
-        runtime_task = None
-        if "runtime_task" in payload:
-            runtime_task = RuntimeTaskIdentity.model_validate(payload["runtime_task"])
-            if payload["task_id"] != 0 or payload["subtask_id"] != 0:
-                return None
         return TaskTokenInfo(
-            task_id=identity.task_id,
-            subtask_id=identity.subtask_id,
-            user_id=identity.user_id,
-            user_name=identity.user_name,
+            task_id=payload["task_id"],
+            subtask_id=payload["subtask_id"],
+            user_id=payload["user_id"],
+            user_name=payload["user_name"],
             expire_at=payload.get("exp"),
-            runtime_task=runtime_task,
         )
     except jwt.ExpiredSignatureError:
         logger.warning("Task token has expired")
@@ -149,9 +124,6 @@ def verify_task_token(token: str) -> Optional[TaskTokenInfo]:
         return None
     except KeyError as e:
         logger.warning(f"Missing required field in task token: {e}")
-        return None
-    except (ValidationError, TypeError, ValueError):
-        logger.warning("Invalid task token identity")
         return None
 
 

@@ -61,6 +61,7 @@ export interface WorkbenchSubagentBlock<
   TFileChanges = unknown
 > extends BaseWorkbenchProcessingBlock {
   type: 'subagent'
+  anchorBlockId?: string
   toolName?: string
   agentType?: string
   agentId?: string
@@ -763,6 +764,7 @@ export function projectWorkbenchSubagentActivity<TFileChanges>(
     const status = projectedSubagentStatus(block, waitBlocks, agentId)
     projected.push({
       id: explicit?.id ?? `subagent-${identity}`,
+      anchorBlockId: block.id,
       subtaskId: block.subtaskId,
       type: 'subagent',
       toolName: block.toolName,

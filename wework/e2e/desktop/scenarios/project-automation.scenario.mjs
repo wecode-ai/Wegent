@@ -1504,8 +1504,8 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'project-automation-board-hover-running-stop-ready.png')
       await control.command('pointerDown', moonshotPopupPause)
+      await captureScreenshot(control, 'project-automation-board-hover-running-stop-ready.png')
       await control.command('click', moonshotPopupPause, { visible: true })
       const moonshotPopupStoppedNotice = `${moonshotPopupConversation} [data-testid="assistant-stopped-notice"]`
       await control.command('waitFor', moonshotPopupStoppedNotice, {
@@ -2221,14 +2221,14 @@ export function createDesktopScenario({
       timeoutMs: uiTimeoutMs,
     })
     const executionNodeSelector = '[data-testid^="execution-node-step-"]'
-    await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
-      visible: true,
-    })
     await control.command('waitFor', executionNodeSelector, {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
     await control.command('click', executionNodeSelector, {
+      visible: true,
+    })
+    await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
       visible: true,
     })
     await control.command('hover', executionNodeSelector, {

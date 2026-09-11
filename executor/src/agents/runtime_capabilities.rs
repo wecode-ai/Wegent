@@ -326,7 +326,7 @@ fn apply_attachment_prompt_updates(
 pub async fn prepare_claude_runtime(
     request: &ExecutionRequest,
     mut spec: CommandSpec,
-) -> Result<(CommandSpec, crate::plugin_task_token::PreparedMcps), String> {
+) -> Result<CommandSpec, String> {
     let task_dir = spec
         .current_dir()
         .cloned()
@@ -359,9 +359,7 @@ pub async fn prepare_claude_runtime(
         .unwrap_or_else(|| config_dir.join("skills"));
     deploy_request_skills(request, &skills_dir).await?;
 
-    let mut plugin_mcps = crate::plugin_task_token::prepare(request, &config_dir, true).await?;
-    let mut global_mcps = load_global_mcp_records();
-    global_mcps.extend(plugin_mcps.servers.clone());
+    let global_mcps = load_global_mcp_records();
     log_runtime_event(
         request,
         "claude mcp input summary",
@@ -379,9 +377,9 @@ pub async fn prepare_claude_runtime(
     );
     let claude_options = extract_claude_options(request, &global_mcps);
     if !claude_options.mcp_servers.is_empty() {
+        let mcp_config_path = config_dir.join("mcp.json");
         let content = json!({"mcpServers": claude_options.mcp_servers});
-        let mcp_config_path = plugin_mcps.write_claude_config(&config_dir, &content)?;
-        {
+        if write_json_file(&mcp_config_path, &content).is_ok() {
             spec = spec
                 .arg("--mcp-config")
                 .arg(mcp_config_path.display().to_string())
@@ -406,7 +404,7 @@ pub async fn prepare_claude_runtime(
         }
     }
 
-    Ok((spec, plugin_mcps))
+    Ok(spec)
 }
 
 pub async fn prepare_codex_runtime(request: &ExecutionRequest) {

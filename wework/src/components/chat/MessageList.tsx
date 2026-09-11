@@ -2533,6 +2533,14 @@ function getOrderedRuntimeDisplaySegments(
   if (!items?.length) return []
 
   const blocksById = new Map(displayBlocks.map(block => [block.id, block]))
+  const subagentsByAnchorId = new Map(
+    displayBlocks.flatMap(block =>
+      block.type === 'subagent' && block.anchorBlockId
+        ? [[block.anchorBlockId, block] as const]
+        : []
+    )
+  )
+  const renderedAnchoredSubagentIds = new Set<string>()
   const segments: RuntimeDisplaySegment[] = []
 
   items.forEach(item => {
@@ -2547,8 +2555,12 @@ function getOrderedRuntimeDisplaySegments(
       return
     }
 
-    const block = blocksById.get(item.id)
+    const block = subagentsByAnchorId.get(item.id) ?? blocksById.get(item.id)
     if (!block) return
+    if (block.type === 'subagent' && block.anchorBlockId) {
+      if (renderedAnchoredSubagentIds.has(block.id)) return
+      renderedAnchoredSubagentIds.add(block.id)
+    }
     const previous = segments.at(-1)
     if (previous?.kind === 'processing') {
       previous.blocks.push(block)
