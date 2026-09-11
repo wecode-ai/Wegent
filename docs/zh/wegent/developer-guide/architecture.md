@@ -397,6 +397,8 @@ Codex transcript 分页必须保持严格的页边界。本地 runtime handle �
 
 Codex 运行时在 `executor/src/agents/codex/` 下按职责拆分：`home` 管理隔离的 Codex Home、认证链接和配置归一化，`interaction` 路由用户输入与 MCP 交互响应，`run_state` 将 app-server 事件归约为轮次结果，`diagnostics` 负责日志裁剪与敏感输出摘要，`tests` 保存模块级回归测试。`codex.rs` 保留对外 API、共享 app-server 生命周期和轮次编排。新增行为应进入对应职责模块，避免把配置、协议状态和诊断逻辑重新耦合到编排层。
 
+Codex 的 hook 插件默认只从实时轮次流收到 `PostToolUse` 事件，因此子代理线程写入的文件、以及 executor 未在监听期间（离线、重启、插件被禁用）发生的改动都不会到达插件。executor 因此额外提供持久化的 rollout 投递：插件在 `plugin.json` 的 `subscriptions` 里声明 `codex_rollout` 后，它的 `PostToolUse` 钩子改由观察者投递。观察者增量读取隔离 Codex Home 下 `sessions/` 与 `archived_sessions/` 的 rollout，按文件逐条投递，子代理线程沿 `parent_thread_id` 上溯到任务线程，使其写入归到同一个任务。投递以「Codex 调用 id + 规范化文件路径」去重：同一次编辑被父子会话镜像只投递一次，同一文件被反复编辑则逐次投递。启动前已存在的 rollout 从文件末尾起读，运行中新建的从 `session_meta` 之后起读；未订阅的插件保持实时派发，没有任何订阅者时观察者不扫描。待投递记录与读取游标在同一事务内落到 SQLite，钩子投递失败按退避重试。
+
 Codex agent message 的实时文本必须按显式 phase 分类：只有 `final` 或 `final_answer` 才能进入最终回答，`analysis`、`commentary` 以及缺失 phase 的文本都先进入 processing。缺失 phase 的文本可能出现在工具调用前后，不能因为默认值而触发 Wework 的 final-processing 折叠；轮次结束时，executor 使用明确的 final 文本，若模型始终没有发送 phase，则使用最后一段未标 phase 的文本作为终态回答。转录恢复沿用同一规则，并根据后续是否存在工具或其他过程项判断未标文本属于 processing 还是 final。
 
 Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Electron 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。

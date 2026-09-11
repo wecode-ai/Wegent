@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  createCodexRolloutRecovery,
+  ROLLOUT_CHAT_PROMPT,
+} from '../modules/codex-rollout-recovery.mjs'
+import { createSingleRootLocalProject, join, selectE2EModel } from '../modules/shared.mjs'
 
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -10,10 +14,12 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const PROMPTS = {
   quiet: 'WEWORK_E2E_CODEX_NOTIFICATION_QUIET',
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY',
+  rollout: ROLLOUT_CHAT_PROMPT,
 }
 const COMPLETIONS = {
   quiet: 'WEWORK_E2E_CODEX_NOTIFICATION_QUIET_COMPLETE',
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY_COMPLETE',
+  rollout: 'WEWORK_E2E_CODEX_ROLLOUT_CHAT_COMPLETE',
 }
 const NOISE_DELTA_COUNT = 2200
 const BURST_RENDER_TIMEOUT_MS = 30_000
@@ -184,7 +190,18 @@ async function waitForUnreadBadge(control, count, timeoutMs) {
   assert.fail(`Expected ${count} unread tasks and matching Dock badge: ${JSON.stringify(latest)}`)
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  homePath,
+  workspacePath,
+  executorHome,
+}) {
+  const rollout = createCodexRolloutRecovery({
+    chatWorkspacePath: join(homePath, 'Documents', 'Codex'),
+    executorHome,
+    uiTimeoutMs,
+  })
   let active = false
   const requests = []
   const streams = new Map()
@@ -217,7 +234,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   }
 
   return {
+    setRestartDesktopApp(value) {
+      rollout.setRestartDesktopApp(value)
+    },
+
     async handleHttp(request, response, url) {
+      if (await rollout.handleHttp(request, response, url)) return true
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
@@ -227,6 +249,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS).find(candidate => requestText.includes(candidate))
       if (!prompt) return false
+      // The rollout recovery chat only needs a completed turn; its transcript
+      // plays no part in the notification isolation assertions.
+      if (prompt === PROMPTS.rollout) {
+        requests.push(prompt)
+        const id = `wework-codex-rollout-${requests.length}`
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        for (const event of [...streamStart(id), ...streamFinish(id, COMPLETIONS.rollout)]) {
+          response.write(sse(event))
+        }
+        response.end()
+        return true
+      }
       if (streams.has(prompt)) {
         const message = `Received duplicate notification isolation request for ${prompt}`
         response.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8' })
@@ -343,6 +382,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await waitForUnreadBadge(control, 0, uiTimeoutMs)
 
       await captureScreenshot(control, 'codex-notification-isolation-complete.png', 'body')
+      await rollout.verify(control)
       active = false
     },
 
@@ -353,6 +393,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         emitted,
         noiseDeltaCount: NOISE_DELTA_COUNT,
         requests,
+        rollout: rollout.diagnostics(),
         streamCount: streams.size,
       }
     },

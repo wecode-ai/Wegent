@@ -9,3 +9,4 @@ pub mod matcher;
 pub mod model;
 pub mod pre_execute;
 pub mod registry;
+pub mod rollout;
