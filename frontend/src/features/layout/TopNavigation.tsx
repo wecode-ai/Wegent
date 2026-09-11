@@ -85,6 +85,7 @@ export default function TopNavigation({
               height={isMobile ? 20 : 24}
               className="object-container"
               priority
+              unoptimized
             />
             {!isMobile && <span className="text-lg font-semibold text-text-primary">Wegent</span>}
           </div>

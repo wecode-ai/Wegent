@@ -16,16 +16,17 @@ import {
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
   getRuntimeConversationCacheStats,
-  getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationMessagesForLogicalAddress,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  getRuntimeConversationTurns,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
+  replaceRuntimeConversationSnapshot,
   markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
   subscribeRuntimeConversation,
@@ -38,6 +39,7 @@ import {
   takeInterruptedRuntimeConversationGuidance,
   restoreOptimisticallyInterruptedRuntimeConversation,
 } from './runtimeConversationCache'
+import { getLatestRuntimeLiveActivityFromTurns } from './runtimeThinking'
 
 const address = {
   deviceId: 'device-1',
@@ -118,7 +120,120 @@ describe('runtimeConversationCache', () => {
       subtaskId: 'turn-1',
     })
 
-    expect(getRuntimeConversationLiveActivitySnapshot(address)).toBe('')
+    expect(getLatestRuntimeLiveActivityFromTurns(getRuntimeConversationTurns(address))).toEqual({
+      active: false,
+      thinking: '',
+      processText: '',
+      tools: [],
+    })
+  })
+
+  test('replaces stale terminal turns with an authoritative idle snapshot', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'stale-turn',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'stale-turn',
+      itemId: 'stale-assistant',
+      content: 'stale output',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'stale-turn',
+    })
+
+    replaceRuntimeConversationSnapshot(address, [
+      {
+        id: 'server-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'server-assistant',
+            type: 'assistant_text',
+            content: 'authoritative output',
+            createdAt: '2026-09-11T00:00:00Z',
+          },
+        ],
+      },
+    ])
+
+    expect(getRuntimeConversationTurns(address)).toEqual([
+      expect.objectContaining({
+        id: 'server-turn',
+        items: [expect.objectContaining({ content: 'authoritative output' })],
+      }),
+    ])
+  })
+
+  test('evicts an unobserved terminal conversation after the idle ttl', () => {
+    vi.useFakeTimers()
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-1',
+    })
+
+    vi.advanceTimersByTime(5 * 60 * 1000 - 1)
+    expect(getRuntimeConversationCacheStats().messageEntries).toBe(1)
+
+    vi.advanceTimersByTime(1)
+    expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
+    vi.useRealTimers()
+  })
+
+  test('keeps a terminal conversation while a view is subscribed', () => {
+    vi.useFakeTimers()
+    const unsubscribe = subscribeRuntimeConversation(address, () => undefined)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-1',
+    })
+
+    vi.advanceTimersByTime(5 * 60 * 1000)
+    expect(getRuntimeConversationCacheStats().messageEntries).toBe(1)
+
+    unsubscribe()
+    vi.advanceTimersByTime(5 * 60 * 1000)
+    expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
+    vi.useRealTimers()
+  })
+
+  test('expires a terminal conversation observed only by a board summary', () => {
+    vi.useFakeTimers()
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener, {
+      retainWhileSubscribed: false,
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-1',
+    })
+    listener.mockClear()
+
+    vi.advanceTimersByTime(5 * 60 * 1000)
+
+    expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
+    expect(getRuntimeConversationTurns(address)).toEqual([])
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+    vi.useRealTimers()
   })
 
   test('keeps a replacement hydration active when the older request resolves later', () => {
@@ -141,9 +256,9 @@ describe('runtimeConversationCache', () => {
     abortRuntimeConversationHydration(address, olderToken)
     completeRuntimeConversationHydration(address, replacementToken, [])
 
-    expect(getRuntimeConversationLiveActivitySnapshot(address)).toContain(
-      'replacement request activity'
-    )
+    expect(
+      getLatestRuntimeLiveActivityFromTurns(getRuntimeConversationTurns(address)).thinking
+    ).toBe('replacement request activity')
   })
 
   test('reconciles buffered completion with the canonical hydration snapshot', () => {

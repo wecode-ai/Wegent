@@ -29,19 +29,19 @@ import { getInputField } from '@/components/chat/blocks/toolBlockKinds'
 import { Tooltip } from '@/components/ui/tooltip'
 import { HoverCard } from '@/components/ui/hover-card'
 import {
-  getRuntimeConversationLiveActivitySnapshot,
-  getRuntimeConversationMessages,
+  getRuntimeConversationTurns,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
-  runtimeLiveActivityFromSnapshot,
+  EMPTY_RUNTIME_LIVE_ACTIVITY,
+  getLatestRuntimeLiveActivityFromTurns,
   type RuntimeLiveActivity,
   type RuntimeLiveToolActivity,
 } from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ModelSelectionConfig, RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { RuntimeConversationTurn } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
 import {
@@ -50,12 +50,8 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
-import {
-  finalAssistantMessagesText,
-  latestResponseLine,
-  latestAssistantMessage,
-} from './runtimeTaskResponsePreview'
 import { priorityBadgeClasses } from './todoShared'
+import { getRuntimeTaskResponsePreview } from './runtimeTaskResponsePreview'
 import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import { getCurrentWorkflowNode, workflowNodeStatusLabel } from './workflowStagePresentation'
 
@@ -69,6 +65,7 @@ export interface BoardCardDisplaySettings {
 export type BoardCardProgressDisplay = 'compact' | 'focused'
 
 const MARK_READ_PREVIEW_DELAY_MS = 3000
+const EMPTY_RUNTIME_CONVERSATION_TURNS: RuntimeConversationTurn[] = []
 
 const priorityLabels: Record<CloudLoopItem['priority'], string> = {
   none: '普通',
@@ -300,7 +297,6 @@ export interface CloudTodoBoardTaskBinding {
   workflow_node_id?: string | null
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
-  finalResponsePreview?: string | null
   modelSelection?: ModelSelectionConfig | null
   runtimeGoal?: RuntimeGoal | null
   runtimeGoalLoaded?: boolean
@@ -660,19 +656,14 @@ function RuntimeTaskProgressSummary({
     }),
     [binding.device_id, binding.modelSelection, binding.task_id]
   )
-  const activityAddress = active ? taskAddress : null
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
     void onLoadRuntimeGoal(taskAddress)
   }, [binding.runtimeGoalLoaded, onLoadRuntimeGoal, taskAddress])
-  const activity = useRuntimeTaskActivity(activityAddress)
-  const liveMessage = useRuntimeTaskLatestAssistantMessage(activity.active ? taskAddress : null)
-  const cachedFinalResponse = useRuntimeTaskFinalResponse(
-    item.status === 'in_review' && !activity.active ? taskAddress : null
+  const { activity, responsePreview } = useRuntimeTaskProjection(
+    compact ? taskAddress : null,
+    active
   )
-  const finalResponseText = binding.finalResponsePreview ?? cachedFinalResponse
-  const responseText = activity.active ? liveMessage?.content?.trim() || null : finalResponseText
-  const responsePreview = responseText ? latestResponseLine(responseText) : null
   const taskTitle = binding.task_title || binding.task_id
   const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
 
@@ -930,55 +921,37 @@ function RuntimeTaskToolActivity({
   )
 }
 
-function useRuntimeTaskActivity(address: RuntimeTaskAddress | null): RuntimeLiveActivity {
+function useRuntimeTaskProjection(
+  address: RuntimeTaskAddress | null,
+  active: boolean
+): {
+  activity: RuntimeLiveActivity
+  responsePreview: string | null
+} {
   const subscribe = useCallback(
     (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
-    [address]
-  )
-  const getSnapshot = useCallback(
-    () => (address ? getRuntimeConversationLiveActivitySnapshot(address) : ''),
-    [address]
-  )
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-
-  return useMemo(() => runtimeLiveActivityFromSnapshot(snapshot), [snapshot])
-}
-
-function useRuntimeTaskFinalResponse(address: RuntimeTaskAddress | null): string | null {
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
-    [address]
-  )
-  const getSnapshot = useCallback(
-    () => (address ? finalAssistantMessagesText(getRuntimeConversationMessages(address)) : null),
-    [address]
-  )
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-}
-
-function useRuntimeTaskLatestAssistantMessage(
-  address: RuntimeTaskAddress | null
-): WorkbenchMessage | null {
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
-    [address]
-  )
-  const getSnapshot = useCallback(
-    () =>
       address
-        ? JSON.stringify(latestAssistantMessage(getRuntimeConversationMessages(address)))
-        : '',
+        ? subscribeRuntimeConversation(address, listener, {
+            retainWhileSubscribed: false,
+          })
+        : () => undefined,
     [address]
   )
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-
-  return useMemo(
-    () => (snapshot ? (JSON.parse(snapshot) as WorkbenchMessage | null) : null),
-    [snapshot]
+  const getSnapshot = useCallback(
+    () => (address ? getRuntimeConversationTurns(address) : EMPTY_RUNTIME_CONVERSATION_TURNS),
+    [address]
   )
+  const turns = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  return useMemo(() => {
+    const activity = active
+      ? getLatestRuntimeLiveActivityFromTurns(turns)
+      : EMPTY_RUNTIME_LIVE_ACTIVITY
+    return {
+      activity,
+      responsePreview: getRuntimeTaskResponsePreview(turns, active) || null,
+    }
+  }, [active, turns])
 }
 
 function runtimeToolActivityText(

@@ -1,4 +1,8 @@
 import type { LocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type {
+  LocalModelApiFormat,
+  LocalModelCodexToolCompatibility,
+} from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Plus, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
@@ -239,12 +243,18 @@ function StructuredListEditor({
 export function CustomModelCapabilitiesForm({
   entry,
   contextWindow,
+  apiFormat,
+  codexToolCompatibility,
   onContextWindowChange,
+  onCodexToolCompatibilityChange,
   onChange,
 }: {
   entry: LocalModelCatalogEntry
   contextWindow: string
+  apiFormat?: LocalModelApiFormat
+  codexToolCompatibility?: LocalModelCodexToolCompatibility
   onContextWindowChange: (value: string) => void
+  onCodexToolCompatibilityChange?: (value: LocalModelCodexToolCompatibility) => void
   onChange: (entry: LocalModelCatalogEntry) => void
 }) {
   const { t } = useTranslation('common')
@@ -556,6 +566,44 @@ export function CustomModelCapabilitiesForm({
                   <div className="grid gap-4">
                     {advancedSection === 'capabilities' && (
                       <div className="grid gap-3 sm:grid-cols-2">
+                        {apiFormat === 'openai-responses' &&
+                          codexToolCompatibility &&
+                          onCodexToolCompatibilityChange && (
+                            <Field
+                              label={t(
+                                'workbench.local_model_codex_tool_compatibility_label',
+                                'Codex 工具协议兼容性'
+                              )}
+                              hint={t(
+                                'workbench.local_model_codex_tool_compatibility_hint',
+                                '完整兼容 Codex 工具协议时直接透传；仅支持标准 Responses function calling 时由 Wework 转换。'
+                              )}
+                            >
+                              <select
+                                data-testid="local-model-codex-tool-compatibility-select"
+                                value={codexToolCompatibility}
+                                onChange={event =>
+                                  onCodexToolCompatibilityChange(
+                                    event.target.value as LocalModelCodexToolCompatibility
+                                  )
+                                }
+                                className={FIELD_CLASS}
+                              >
+                                <option value="native">
+                                  {t(
+                                    'workbench.local_model_codex_tool_compatibility_native',
+                                    '原生兼容（推荐）'
+                                  )}
+                                </option>
+                                <option value="standard">
+                                  {t(
+                                    'workbench.local_model_codex_tool_compatibility_standard',
+                                    '仅兼容标准 Responses'
+                                  )}
+                                </option>
+                              </select>
+                            </Field>
+                          )}
                         <Field
                           label={t('workbench.local_model_field_reasoning_summary', '推理摘要参数')}
                         >
@@ -682,7 +730,13 @@ export function CustomModelCapabilitiesForm({
                             <option value="text_and_image">text_and_image</option>
                           </select>
                         </Field>
-                        <Field label={t('workbench.local_model_field_search_tool', '搜索工具')}>
+                        <Field
+                          label={t('workbench.local_model_field_search_tool', '按需工具搜索')}
+                          hint={t(
+                            'workbench.local_model_field_search_tool_hint',
+                            '允许 Codex 先搜索再加载 MCP 工具，减少首次请求的工具数量。'
+                          )}
+                        >
                           <BooleanSelect
                             testId="local-model-search-tool-select"
                             value={entry.supports_search_tool === true}

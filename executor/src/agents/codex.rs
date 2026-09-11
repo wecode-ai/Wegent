@@ -3539,6 +3539,7 @@ fn configured_codex_provider(
         .filter(|value| !value.is_empty())
         .unwrap_or("openai-responses")
         .to_owned();
+    let native_by_default = api_format == "openai-responses";
     let convert_custom_tools = api_format != "openai-responses"
         || provider_config
             .get("tool_profile")
@@ -3549,12 +3550,12 @@ fn configured_codex_provider(
         .get("native_tool_search")
         .or_else(|| provider_config.get("nativeToolSearch"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(native_by_default);
     let native_namespace_tools = provider_config
         .get("native_namespace_tools")
         .or_else(|| provider_config.get("nativeNamespaceTools"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(native_by_default);
     let request_path = match api_format.as_str() {
         "openai-chat-completions" => "/chat/completions",
         "anthropic-messages" => "/messages",

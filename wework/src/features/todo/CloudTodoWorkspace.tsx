@@ -89,7 +89,11 @@ import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import {
+  reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationSnapshot,
+  runtimeConversationKey,
+} from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
   getChangeRequestMonitor,
@@ -105,7 +109,9 @@ import {
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
 import {
+  isRuntimePaneTranscriptConfirmedIdle,
   isRuntimeTaskExecutionRunning,
+  projectRuntimePaneTranscript,
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
@@ -168,8 +174,8 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
-import { finalAssistantTranscriptText } from './runtimeTaskResponsePreview'
 import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
@@ -1562,20 +1568,12 @@ export function CloudTodoWorkspace({
   const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
     LocatedLoopItem[] | null
   >(null)
-  const [runtimeConversationPreviews, setRuntimeConversationPreviews] = useState<
-    Record<
-      string,
-      {
-        signature: string
-        text: string | null
-      }
-    >
-  >({})
   const [runtimeGoalsByAddress, setRuntimeGoalsByAddress] = useState<
     Record<string, RuntimeGoal | null>
   >({})
   const runtimeConversationRequestsRef = useRef(new Set<string>())
   const runtimeConversationLatestSignatureRef = useRef(new Map<string, string>())
+  const runtimeConversationLoadedSignatureRef = useRef(new Map<string, string>())
   const runtimeGoalRequestsRef = useRef(new Set<string>())
   useEffect(() => {
     if (projectMenuId === null) return
@@ -1802,7 +1800,6 @@ export function CloudTodoWorkspace({
               taskId: binding.task_id,
             })
             const runtimeTask = runtimeTaskByAddress.get(addressKey)
-            const preview = runtimeConversationPreviews[addressKey]
             const runtimeGoalLoaded = Object.prototype.hasOwnProperty.call(
               runtimeGoalsByAddress,
               addressKey
@@ -1819,20 +1816,13 @@ export function CloudTodoWorkspace({
               changeRequestTarget: runtimeTask
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
                 : null,
-              finalResponsePreview: preview?.text ?? null,
               runtimeGoal: runtimeGoalsByAddress[addressKey] ?? null,
               runtimeGoalLoaded,
             }
           }),
         ])
       ),
-    [
-      itemTaskBindings,
-      runtimeConversationPreviews,
-      runtimeGoalsByAddress,
-      runtimeTaskByAddress,
-      runtimeTaskRunningByAddress,
-    ]
+    [itemTaskBindings, runtimeGoalsByAddress, runtimeTaskByAddress, runtimeTaskRunningByAddress]
   )
   const loadBoardTaskRuntimeGoal = useCallback(
     async (address: RuntimeTaskAddress): Promise<void> => {
@@ -3195,6 +3185,7 @@ export function CloudTodoWorkspace({
       return
     }
     for (const item of items) {
+      if (item.status !== 'in_review' && !isLoopItemExecutionActive(item)) continue
       for (const binding of itemTaskBindings[item.id] ?? []) {
         const addressKey = runtimeConversationKey({
           deviceId: binding.device_id,
@@ -3207,7 +3198,7 @@ export function CloudTodoWorkspace({
           task?.status ?? '',
           task?.turnStatus ?? '',
         ].join(':')
-        if (runtimeConversationPreviews[addressKey]?.signature === signature) continue
+        if (runtimeConversationLoadedSignatureRef.current.get(addressKey) === signature) continue
         const requestKey = `${addressKey}:${signature}`
         if (runtimeConversationRequestsRef.current.has(requestKey)) continue
         runtimeConversationRequestsRef.current.add(requestKey)
@@ -3220,20 +3211,30 @@ export function CloudTodoWorkspace({
             threadId: task?.threadId,
             workspacePath: task?.workspacePath,
             runtimeHandle: task?.runtimeHandle,
-            limit: 50,
+            limit: 20,
           })
           .then(transcript => {
             if (runtimeConversationLatestSignatureRef.current.get(addressKey) !== signature) {
               return
             }
-            const text = finalAssistantTranscriptText(transcript)
-            setRuntimeConversationPreviews(current => ({
-              ...current,
-              [addressKey]: {
-                signature,
-                text,
-              },
-            }))
+            const projectedTranscript = projectRuntimePaneTranscript(transcript)
+            const address = {
+              deviceId: binding.device_id,
+              taskId: binding.task_id,
+              runtime: task?.runtime,
+              threadId: task?.threadId,
+              workspacePath: task?.workspacePath,
+              runtimeHandle: task?.runtimeHandle,
+            }
+            if (
+              projectedTranscript.fullContent === true &&
+              isRuntimePaneTranscriptConfirmedIdle(projectedTranscript)
+            ) {
+              replaceRuntimeConversationSnapshot(address, projectedTranscript.turns)
+            } else {
+              reconcileRuntimeConversationSnapshot(address, projectedTranscript.turns)
+            }
+            runtimeConversationLoadedSignatureRef.current.set(addressKey, signature)
           })
           .catch(error => {
             console.warn('[Wework project board] failed to preload task conversation', {
@@ -3246,13 +3247,6 @@ export function CloudTodoWorkspace({
             if (runtimeConversationLatestSignatureRef.current.get(addressKey) !== signature) {
               return
             }
-            setRuntimeConversationPreviews(current => ({
-              ...current,
-              [addressKey]: {
-                signature,
-                text: null,
-              },
-            }))
           })
           .finally(() => {
             runtimeConversationRequestsRef.current.delete(requestKey)
@@ -3263,7 +3257,6 @@ export function CloudTodoWorkspace({
     itemTaskBindings,
     itemTaskBindingsProjectKey,
     items,
-    runtimeConversationPreviews,
     runtimeTasksByKey,
     selectedProjectKey,
     services.runtimeWorkApi,
