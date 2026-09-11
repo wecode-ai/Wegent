@@ -207,8 +207,13 @@ export function reduceRuntimeTaskLifecycle(
           }
         : state
 
-    case 'goal_status_received':
-      return event.goalStatus !== null && event.goalStatus !== 'active'
+    case 'goal_status_received': {
+      const goalJustSettled =
+        state.goalStatus === 'active' &&
+        event.goalStatus !== null &&
+        event.goalStatus !== 'active' &&
+        (event.goalStatus !== 'complete' || state.turnPhase === 'idle')
+      return goalJustSettled
         ? {
             ...state,
             executionPhase: 'idle',
@@ -221,6 +226,7 @@ export function reduceRuntimeTaskLifecycle(
             ...state,
             goalStatus: event.goalStatus,
           }
+    }
 
     case 'marked_read':
       return state.unread ? { ...state, unread: false } : state

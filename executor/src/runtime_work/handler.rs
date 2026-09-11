@@ -25,8 +25,8 @@ use crate::{
     agents::{
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -111,6 +111,7 @@ impl RestoreStartupGate {
 mod archives;
 mod automation_rpc;
 mod claude_turns;
+mod codex_accounts;
 mod codex_config;
 mod collection;
 mod fork_transfer;
@@ -934,6 +935,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.auth.read" => self.read_codex_account().await,
+            "runtime.codex.accounts.list" => self.list_codex_accounts().await,
+            "runtime.codex.accounts.switch" => self.switch_codex_account(payload).await,
             "runtime.codex.auth.login.start" => self.start_codex_login().await,
             "runtime.codex.auth.login.cancel" => self.cancel_codex_login(payload).await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,

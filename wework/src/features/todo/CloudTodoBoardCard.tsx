@@ -316,6 +316,7 @@ interface CloudTodoBoardCardProps {
   onPreviewPinnedChange?: (pinned: boolean) => void
   onMarkRead?: (item: CloudLoopItem) => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   display: BoardCardDisplaySettings
   processingStatus: boolean
   agentNames?: Record<string, string>
@@ -340,6 +341,7 @@ export function CloudTodoBoardCard({
   onPreviewPinnedChange,
   onMarkRead,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
   display,
   processingStatus,
   agentNames,
@@ -568,6 +570,7 @@ export function CloudTodoBoardCard({
           pinned={previewPinned}
           onPin={() => onPreviewPinnedChange?.(true)}
           onLoadRuntimeGoal={onLoadRuntimeGoal}
+          onOpenRuntimeTask={onOpenRuntimeTask}
         />
       }
     >
@@ -633,6 +636,7 @@ function RuntimeTaskProgressSummary({
   repairingChangeRequest,
   onContinueChangeRequestRepair,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
@@ -643,6 +647,7 @@ function RuntimeTaskProgressSummary({
   repairingChangeRequest: boolean
   onContinueChangeRequestRepair?: () => Promise<void>
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const taskAddress = useMemo<RuntimeTaskAddress>(
@@ -741,6 +746,7 @@ function RuntimeTaskProgressSummary({
             scrollOrigin="bottom"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}
             placeholder={t('workbench.task_activity_inline_placeholder')}
+            onOpenRuntimeTask={onOpenRuntimeTask}
           />
         </div>
       ) : responsePreview ? (
@@ -809,6 +815,7 @@ function RuntimeTaskProgressPopup({
   pinned,
   onPin,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
   bindings: CloudTodoBoardTaskBinding[]
@@ -818,6 +825,7 @@ function RuntimeTaskProgressPopup({
   pinned: boolean
   onPin: () => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const visibleBindings = focusedBindingId
@@ -878,6 +886,7 @@ function RuntimeTaskProgressPopup({
                 changeRequestSnapshot={null}
                 repairingChangeRequest={false}
                 onLoadRuntimeGoal={onLoadRuntimeGoal}
+                onOpenRuntimeTask={onOpenRuntimeTask}
               />
             </div>
           ))}

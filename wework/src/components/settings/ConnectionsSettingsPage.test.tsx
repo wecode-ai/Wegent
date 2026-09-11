@@ -11,8 +11,9 @@ import {
 } from '@/api/local/codexOfficialModels'
 import {
   cancelLocalCodexLogin,
-  hasLocalCodexAccount,
+  listLocalCodexAccounts,
   startLocalCodexLogin,
+  switchLocalCodexAccount,
 } from '@/api/local/codexAuth'
 import { getLocalCodexAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { createUserApi } from '@/api/users'
@@ -99,7 +100,8 @@ vi.mock('@/api/local/runtimeAuthStatus', () => ({
 
 vi.mock('@/api/local/codexAuth', () => ({
   startLocalCodexLogin: vi.fn(),
-  hasLocalCodexAccount: vi.fn(),
+  listLocalCodexAccounts: vi.fn(),
+  switchLocalCodexAccount: vi.fn(),
   cancelLocalCodexLogin: vi.fn(),
 }))
 
@@ -148,7 +150,8 @@ const saveLocalCodexModelCatalogOverrideMock = vi.mocked(saveLocalCodexModelCata
 const deleteLocalCodexModelCatalogOverrideMock = vi.mocked(deleteLocalCodexModelCatalogOverride)
 const getLocalCodexAuthStatusMock = vi.mocked(getLocalCodexAuthStatus)
 const startLocalCodexLoginMock = vi.mocked(startLocalCodexLogin)
-const hasLocalCodexAccountMock = vi.mocked(hasLocalCodexAccount)
+const listLocalCodexAccountsMock = vi.mocked(listLocalCodexAccounts)
+const switchLocalCodexAccountMock = vi.mocked(switchLocalCodexAccount)
 const cancelLocalCodexLoginMock = vi.mocked(cancelLocalCodexLogin)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
@@ -256,7 +259,40 @@ describe('ConnectionsSettingsPage', () => {
       loginId: 'login-1',
       authUrl: 'https://chatgpt.com/auth',
     })
-    hasLocalCodexAccountMock.mockResolvedValue(true)
+    listLocalCodexAccountsMock.mockResolvedValue({
+      activeAccountId: 'account-1',
+      accounts: [
+        {
+          id: 'account-1',
+          accountType: 'chatgpt',
+          email: 'one@example.com',
+          planType: 'pro',
+          createdAt: 1,
+          lastUsedAt: 1,
+        },
+      ],
+    })
+    switchLocalCodexAccountMock.mockResolvedValue({
+      activeAccountId: 'account-2',
+      accounts: [
+        {
+          id: 'account-1',
+          accountType: 'chatgpt',
+          email: 'one@example.com',
+          planType: 'pro',
+          createdAt: 1,
+          lastUsedAt: 1,
+        },
+        {
+          id: 'account-2',
+          accountType: 'chatgpt',
+          email: 'two@example.com',
+          planType: 'plus',
+          createdAt: 2,
+          lastUsedAt: 3,
+        },
+      ],
+    })
     cancelLocalCodexLoginMock.mockResolvedValue(undefined)
     localStorage.clear()
     delete window.__WEWORK_RUNTIME_CONFIG__
@@ -662,6 +698,24 @@ describe('ConnectionsSettingsPage', () => {
 
   test('signs in to Codex when this computer has no reusable Codex App auth', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
+    listLocalCodexAccountsMock
+      .mockResolvedValueOnce({
+        activeAccountId: null,
+        accounts: [],
+      })
+      .mockResolvedValue({
+        activeAccountId: 'account-1',
+        accounts: [
+          {
+            id: 'account-1',
+            accountType: 'chatgpt',
+            email: 'one@example.com',
+            planType: 'pro',
+            createdAt: 1,
+            lastUsedAt: 2,
+          },
+        ],
+      })
     getLocalCodexAuthStatusMock
       .mockResolvedValueOnce({
         runtime: 'codex',
@@ -702,8 +756,9 @@ describe('ConnectionsSettingsPage', () => {
     await waitFor(() =>
       expect(screen.getByTestId('local-codex-model-status-pill')).toHaveTextContent('已登录')
     )
-    expect(hasLocalCodexAccountMock).toHaveBeenCalledOnce()
-    expect(screen.queryByTestId('local-codex-login-button')).not.toBeInTheDocument()
+    expect(listLocalCodexAccountsMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('local-codex-login-button')).toHaveTextContent('添加账号')
+    expect(screen.getByTestId('local-codex-account-list')).toHaveTextContent('one@example.com')
   })
 
   test('cancels the Codex login session when the browser cannot be opened', async () => {
@@ -728,7 +783,40 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('local-codex-login-error')).toHaveTextContent(
       '无法打开 Codex 登录页面'
     )
-    expect(hasLocalCodexAccountMock).not.toHaveBeenCalled()
+    expect(cancelLocalCodexLoginMock).toHaveBeenCalledWith('login-1')
+  })
+
+  test('switches the active Codex auth without changing conversation sessions', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    listLocalCodexAccountsMock.mockResolvedValue({
+      activeAccountId: 'account-1',
+      accounts: [
+        {
+          id: 'account-1',
+          accountType: 'chatgpt',
+          email: 'one@example.com',
+          planType: 'pro',
+          createdAt: 1,
+          lastUsedAt: 1,
+        },
+        {
+          id: 'account-2',
+          accountType: 'chatgpt',
+          email: 'two@example.com',
+          planType: 'plus',
+          createdAt: 2,
+          lastUsedAt: 2,
+        },
+      ],
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await userEvent.click(await screen.findByTestId('local-codex-account-switch-account-2'))
+
+    await waitFor(() => expect(switchLocalCodexAccountMock).toHaveBeenCalledWith('account-2'))
+    expect(screen.getByTestId('local-codex-account-account-2')).toHaveTextContent('当前账号')
   })
 
   test('imports shared auth from the selected device and explains a missing source file', async () => {

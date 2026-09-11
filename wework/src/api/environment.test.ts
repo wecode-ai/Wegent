@@ -36,11 +36,22 @@ describe('parseGitShortStat', () => {
   })
 
   test('detects a non-git workspace without depending on localized stderr', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: false,
-      stdout: '',
-      error: 'Command failed',
-      stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_is_worktree') {
+        return Promise.resolve({
+          success: true,
+          exit_code: 0,
+          stdout: 'false\n',
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        exit_code: 128,
+        stdout: '',
+        error: 'Command failed',
+        stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+      })
     })
 
     const info = await loadProjectEnvironment(

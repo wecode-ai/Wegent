@@ -43,6 +43,82 @@ def test_parse_message_preserves_dingtalk_message_id() -> None:
     assert context.proactive_recipient_id == "staff-a"
 
 
+@pytest.mark.parametrize(
+    ("callback_data", "expected_reply_id"),
+    [
+        (
+            {
+                "text": {
+                    "content": "quoted reply",
+                    "isReplyMsg": True,
+                    "repliedMsg": {"msgId": "quoted-message-id"},
+                },
+                "originalProcessQueryKey": "notification-query-key",
+            },
+            "notification-query-key",
+        ),
+        (
+            {
+                "text": {
+                    "content": "quoted reply",
+                    "isReplyMsg": True,
+                    "repliedMsg": {"msgId": "quoted-message-id"},
+                },
+            },
+            "quoted-message-id",
+        ),
+    ],
+)
+def test_parse_message_preserves_dingtalk_quote_reference(
+    callback_data: dict,
+    expected_reply_id: str,
+) -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    message = SimpleNamespace(
+        text=SimpleNamespace(content="quoted reply"),
+        message_type="text",
+        sender_id="staff-a",
+        sender_nick="Alice",
+        sender_staff_id="staff-a",
+        sender_corp_id="corp-a",
+        chatbot_user_id="bot-a",
+        at_users=[],
+        conversation_id="conv-private",
+        conversation_type="1",
+        is_in_at_list=False,
+        _wegent_callback_data=callback_data,
+    )
+
+    context = handler.parse_message(message)
+
+    assert context.extra_data["reply_to_message_id"] == expected_reply_id
+
+
+def test_parse_message_does_not_mark_plain_text_as_quote() -> None:
+    handler = DingTalkChannelHandler(channel_id=77)
+    message = SimpleNamespace(
+        text=SimpleNamespace(content="plain text"),
+        message_type="text",
+        sender_id="staff-a",
+        sender_nick="Alice",
+        sender_staff_id="staff-a",
+        sender_corp_id="corp-a",
+        chatbot_user_id="bot-a",
+        at_users=[],
+        conversation_id="conv-private",
+        conversation_type="1",
+        is_in_at_list=False,
+        _wegent_callback_data={
+            "msgId": "plain-message-id",
+            "text": {"content": "plain text"},
+        },
+    )
+
+    context = handler.parse_message(message)
+
+    assert "reply_to_message_id" not in context.extra_data
+
+
 def _message_context() -> MessageContext:
     return MessageContext(
         content="你好",

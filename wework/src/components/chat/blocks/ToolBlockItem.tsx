@@ -278,13 +278,15 @@ function PlanBlockItem({
   if (!block.content.trim()) return null
 
   const isStreaming = block.status !== 'done' && block.status !== 'error'
-  const openPlan = () => {
-    onOpenAssistantPlan?.({
-      blockId: block.id,
-      subtaskId: String(block.subtaskId),
-      content: block.content,
-    })
-  }
+  const openPlan = onOpenAssistantPlan
+    ? () => {
+        onOpenAssistantPlan({
+          blockId: block.id,
+          subtaskId: String(block.subtaskId),
+          content: block.content,
+        })
+      }
+    : undefined
 
   return (
     <div data-processing-block-id={block.id}>

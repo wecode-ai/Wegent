@@ -692,6 +692,7 @@ fn append_workspace_snapshot(
     snapshot: &WorkspaceSnapshot,
 ) -> Result<(), String> {
     let mut command = Command::new("git");
+    crate::local::native_git::clear_local_git_env(&mut command);
     command
         .arg("--git-dir")
         .arg(&snapshot.git_common_dir)
@@ -1119,15 +1120,30 @@ mod tests {
 
     use super::*;
 
-    fn environment_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
-
-    fn git_test_command() -> Command {
+    fn git(path: &Path, args: &[&str]) -> std::process::Output {
         let mut command = Command::new("git");
         crate::local::native_git::clear_local_git_env(&mut command);
         command
+            .current_dir(path)
+            .args(args)
+            .output()
+            .expect("git should start")
+    }
+
+    fn assert_git(path: &Path, args: &[&str]) {
+        let output = git(path, args);
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn environment_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
 
     #[test]
@@ -1141,33 +1157,20 @@ mod tests {
             vec!["config", "user.name", "Wegent Test"],
             vec!["config", "user.email", "test@wegent.local"],
         ] {
-            assert!(git_test_command()
-                .current_dir(&source)
-                .args(args)
-                .status()
-                .unwrap()
-                .success());
+            assert_git(&source, &args);
         }
         fs::write(source.join("tracked.txt"), "base\n").unwrap();
-        assert!(git_test_command()
-            .current_dir(&source)
-            .args(["add", "."])
-            .status()
-            .unwrap()
-            .success());
-        assert!(git_test_command()
-            .current_dir(&source)
-            .args(["commit", "-m", "base"])
-            .status()
-            .unwrap()
-            .success());
-        assert!(git_test_command()
-            .current_dir(&source)
-            .args(["worktree", "add", "--detach"])
-            .arg(&workspace)
-            .status()
-            .unwrap()
-            .success());
+        assert_git(&source, &["add", "."]);
+        assert_git(&source, &["commit", "-m", "base"]);
+        assert_git(
+            &source,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                workspace.to_str().expect("temporary path must be UTF-8"),
+            ],
+        );
         fs::write(workspace.join("tracked.txt"), "snapshot content\n").unwrap();
         fs::create_dir_all(workspace.join("node_modules/package")).unwrap();
         fs::write(
@@ -1175,36 +1178,21 @@ mod tests {
             "ignored\n",
         )
         .unwrap();
-        assert!(git_test_command()
-            .current_dir(&workspace)
-            .args(["add", "-f", "."])
-            .status()
+        assert_git(&workspace, &["add", "-f", "."]);
+        assert_git(&workspace, &["commit", "-m", "snapshot"]);
+        let reference = String::from_utf8(git(&workspace, &["rev-parse", "HEAD"]).stdout)
             .unwrap()
-            .success());
-        assert!(git_test_command()
-            .current_dir(&workspace)
-            .args(["commit", "-m", "snapshot"])
-            .status()
-            .unwrap()
-            .success());
-        let reference = String::from_utf8(
-            git_test_command()
-                .current_dir(&workspace)
-                .args(["rev-parse", "HEAD"])
-                .output()
-                .unwrap()
-                .stdout,
-        )
-        .unwrap()
-        .trim()
-        .to_owned();
-        assert!(git_test_command()
-            .current_dir(&source)
-            .args(["worktree", "remove", "--force"])
-            .arg(&workspace)
-            .status()
-            .unwrap()
-            .success());
+            .trim()
+            .to_owned();
+        assert_git(
+            &source,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                workspace.to_str().expect("temporary path must be UTF-8"),
+            ],
+        );
 
         let archive_path = root.path().join("workspace.tgz");
         let output = fs::File::create(&archive_path).unwrap();
