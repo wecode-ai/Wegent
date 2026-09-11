@@ -8,6 +8,7 @@ use std::{
     io::{Cursor, Read, Write},
     path::{Component, Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 use aes_gcm::{
@@ -30,6 +31,7 @@ use tar::{Archive, Builder};
 use uuid::Uuid;
 
 use crate::agents::{executor_home, wework_codex_home};
+use crate::local::native_git::run_git_capture;
 
 const STATE_DB_FILENAME: &str = "state_5.sqlite";
 const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
@@ -43,6 +45,8 @@ const MAX_ENCRYPTED_SEGMENT_BYTES: u64 =
     MAX_PLAINTEXT_SEGMENT_BYTES + ENCRYPTED_HEADER_BYTES as u64 + AES_GCM_TAG_BYTES;
 const MAX_WORKSPACE_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_WORKSPACE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_WORKSPACE_PATH_LIST_BYTES: usize = 16 * 1024 * 1024;
+const WORKSPACE_GIT_TIMEOUT: Duration = Duration::from_secs(10);
 const MANIFEST_PATH: &str = "manifest.json";
 const ROLLOUT_PATH: &str = "rollout.jsonl";
 const WORKSPACE_PREFIX: &str = "workspace";
@@ -88,6 +92,7 @@ pub(crate) struct ExportRequest {
     pub task_id: String,
     pub title: String,
     pub workspace_path: PathBuf,
+    pub workspace_paths: Option<Vec<PathBuf>>,
     pub workspace_snapshot: Option<WorkspaceSnapshot>,
     pub thread_id: String,
     pub sequence: u64,
@@ -205,6 +210,7 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         append_workspace(
             &mut archive,
             &request.workspace_path,
+            request.workspace_paths.as_deref(),
             request.workspace_snapshot.as_ref(),
         )?;
         archive
@@ -627,10 +633,14 @@ fn append_bytes(
 fn append_workspace(
     archive: &mut Builder<GzEncoder<fs::File>>,
     workspace: &Path,
+    workspace_paths: Option<&[PathBuf]>,
     snapshot: Option<&WorkspaceSnapshot>,
 ) -> Result<(), String> {
     if workspace.is_dir() {
-        return append_workspace_directory(archive, workspace);
+        return match workspace_paths {
+            Some(paths) => append_workspace_paths(archive, workspace, paths),
+            None => append_workspace_directory(archive, workspace),
+        };
     }
     let snapshot =
         snapshot.ok_or_else(|| format!("workspace does not exist: {}", workspace.display()))?;
@@ -641,9 +651,6 @@ fn append_workspace_directory(
     archive: &mut Builder<GzEncoder<fs::File>>,
     workspace: &Path,
 ) -> Result<(), String> {
-    if let Some(paths) = git_workspace_paths(workspace)? {
-        return append_workspace_paths(archive, workspace, paths);
-    }
     let mut total_bytes = 0_u64;
     for entry in WalkBuilder::new(workspace)
         .hidden(false)
@@ -690,36 +697,56 @@ fn append_workspace_directory(
     Ok(())
 }
 
-fn git_workspace_paths(workspace: &Path) -> Result<Option<Vec<PathBuf>>, String> {
-    let mut probe = Command::new("git");
-    crate::local::native_git::clear_local_git_env(&mut probe);
-    let probe = probe
-        .current_dir(workspace)
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-        .map_err(|error| format!("failed to inspect workspace repository: {error}"))?;
-    if !probe.status.success() || String::from_utf8_lossy(&probe.stdout).trim() != "true" {
+pub(crate) async fn prepare_workspace_paths(
+    workspace: &Path,
+) -> Result<Option<Vec<PathBuf>>, String> {
+    if git_marker(workspace).is_none() {
         return Ok(None);
     }
-
-    let mut command = Command::new("git");
-    crate::local::native_git::clear_local_git_env(&mut command);
-    let output = command
-        .current_dir(workspace)
-        .args([
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ])
-        .output()
-        .map_err(|error| format!("failed to list workspace repository files: {error}"))?;
-    if !output.status.success() {
+    let environment = env::vars().collect();
+    let probe = run_git_capture(
+        &["rev-parse".to_owned(), "--is-inside-work-tree".to_owned()],
+        Some(workspace),
+        &environment,
+        WORKSPACE_GIT_TIMEOUT,
+        1024,
+    )
+    .await
+    .map_err(|error| format!("failed to inspect workspace repository: {}", error.message))?;
+    if !probe.success || String::from_utf8_lossy(&probe.stdout).trim() != "true" {
+        return Err(format!(
+            "failed to inspect workspace repository: {}",
+            probe.stderr.trim()
+        ));
+    }
+    let output = run_git_capture(
+        &[
+            "ls-files".to_owned(),
+            "--cached".to_owned(),
+            "--others".to_owned(),
+            "--exclude-standard".to_owned(),
+            "-z".to_owned(),
+        ],
+        Some(workspace),
+        &environment,
+        WORKSPACE_GIT_TIMEOUT,
+        MAX_WORKSPACE_PATH_LIST_BYTES,
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "failed to list workspace repository files: {}",
+            error.message
+        )
+    })?;
+    if !output.success {
         return Err(format!(
             "failed to list workspace repository files: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            output.stderr.trim()
         ));
+    }
+    if output.truncated {
+        return Err("workspace repository file list is too large to synchronize".to_owned());
     }
     output
         .stdout
@@ -728,6 +755,12 @@ fn git_workspace_paths(workspace: &Path) -> Result<Option<Vec<PathBuf>>, String>
         .map(git_path)
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
+}
+
+fn git_marker(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .map(|ancestor| ancestor.join(".git"))
+        .find(|marker| marker.exists())
 }
 
 fn git_path(bytes: &[u8]) -> Result<PathBuf, String> {
@@ -749,18 +782,14 @@ fn git_path(bytes: &[u8]) -> Result<PathBuf, String> {
 fn append_workspace_paths(
     archive: &mut Builder<GzEncoder<fs::File>>,
     workspace: &Path,
-    paths: Vec<PathBuf>,
+    paths: &[PathBuf],
 ) -> Result<(), String> {
     let mut total_bytes = 0_u64;
     for relative in paths {
-        if unsafe_path(&relative)
-            || relative
-                .components()
-                .any(|part| EXCLUDED_NAMES.contains(&part.as_os_str().to_string_lossy().as_ref()))
-        {
+        if unsafe_path(relative) {
             continue;
         }
-        let path = workspace.join(&relative);
+        let path = workspace.join(relative);
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -771,9 +800,9 @@ fn append_workspace_paths(
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             continue;
         }
-        validate_workspace_member_size(&relative, metadata.len(), &mut total_bytes)?;
+        validate_workspace_member_size(relative, metadata.len(), &mut total_bytes)?;
         archive
-            .append_path_with_name(&path, Path::new(WORKSPACE_PREFIX).join(&relative))
+            .append_path_with_name(&path, Path::new(WORKSPACE_PREFIX).join(relative))
             .map_err(|error| format!("failed to append workspace member: {error}"))?;
     }
     Ok(())
@@ -1238,16 +1267,22 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
     }
 
-    #[test]
-    fn workspace_packaging_excludes_gitignored_generated_files() {
+    #[tokio::test]
+    async fn workspace_packaging_excludes_gitignored_generated_files() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source");
         let workspace = root.path().join("workspace");
         let generated = source.join("wework/electron/resources/codex");
         fs::create_dir_all(&generated).unwrap();
+        fs::create_dir_all(source.join("node_modules")).unwrap();
         fs::write(source.join("wework/electron/.gitignore"), "resources/\n").unwrap();
         fs::write(source.join("source.txt"), "source\n").unwrap();
         fs::write(generated.join("tracked.txt"), "tracked\n").unwrap();
+        fs::write(
+            source.join("node_modules/tracked.txt"),
+            "tracked dependency\n",
+        )
+        .unwrap();
         assert_git(&source, &["init"]);
         assert_git(&source, &["config", "user.name", "Wegent Test"]);
         assert_git(&source, &["config", "user.email", "test@wegent.local"]);
@@ -1257,7 +1292,12 @@ mod tests {
         );
         assert_git(
             &source,
-            &["add", "-f", "wework/electron/resources/codex/tracked.txt"],
+            &[
+                "add",
+                "-f",
+                "node_modules/tracked.txt",
+                "wework/electron/resources/codex/tracked.txt",
+            ],
         );
         assert_git(&source, &["commit", "-m", "base"]);
         assert_git(
@@ -1279,7 +1319,8 @@ mod tests {
         let output = fs::File::create(&archive_path).unwrap();
         let encoder = GzEncoder::new(output, Compression::default());
         let mut archive = Builder::new(encoder);
-        append_workspace_directory(&mut archive, &workspace).unwrap();
+        let paths = prepare_workspace_paths(&workspace).await.unwrap().unwrap();
+        append_workspace(&mut archive, &workspace, Some(&paths), None).unwrap();
         archive.into_inner().unwrap().finish().unwrap();
 
         let input = fs::File::open(archive_path).unwrap();
@@ -1291,6 +1332,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(paths.contains(&PathBuf::from("workspace/source.txt")));
+        assert!(paths.contains(&PathBuf::from("workspace/node_modules/tracked.txt")));
         assert!(paths.contains(&PathBuf::from("workspace/wework/electron/.gitignore")));
         assert!(paths.contains(&PathBuf::from(
             "workspace/wework/electron/resources/codex/tracked.txt"
@@ -1298,6 +1340,25 @@ mod tests {
         assert!(!paths
             .iter()
             .any(|path| path.ends_with("wework/electron/resources/codex/codex")));
+    }
+
+    #[tokio::test]
+    async fn workspace_path_preparation_rejects_broken_git_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(workspace.join("generated")).unwrap();
+        fs::write(workspace.join(".git"), "gitdir: missing\n").unwrap();
+        fs::write(workspace.join(".gitignore"), "generated/\n").unwrap();
+        fs::File::create(workspace.join("generated/oversized"))
+            .unwrap()
+            .set_len(MAX_WORKSPACE_FILE_BYTES + 1)
+            .unwrap();
+
+        let error = prepare_workspace_paths(&workspace)
+            .await
+            .expect_err("broken Git metadata must not fall back to unfiltered traversal");
+
+        assert!(error.contains("failed to inspect workspace repository"));
     }
 
     #[test]
@@ -1355,6 +1416,7 @@ mod tests {
         append_workspace(
             &mut archive,
             &workspace,
+            None,
             Some(&WorkspaceSnapshot {
                 git_common_dir: source.join(".git"),
                 reference,
@@ -1459,6 +1521,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: workspace.clone(),
+            workspace_paths: None,
             workspace_snapshot: None,
             thread_id: thread_id.to_owned(),
             sequence: 1,
@@ -1473,6 +1536,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: workspace.clone(),
+            workspace_paths: None,
             workspace_snapshot: None,
             thread_id: thread_id.to_owned(),
             sequence: 1,
@@ -1505,6 +1569,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: workspace.clone(),
+            workspace_paths: None,
             workspace_snapshot: None,
             thread_id: thread_id.to_owned(),
             sequence: 2,
@@ -1586,6 +1651,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             title: "Task".to_owned(),
             workspace_path: restored.workspace_path.clone(),
+            workspace_paths: None,
             workspace_snapshot: None,
             thread_id: restored.thread_id.clone(),
             sequence: 3,
