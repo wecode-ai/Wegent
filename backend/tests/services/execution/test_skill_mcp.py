@@ -28,3 +28,34 @@ def test_skill_mcp_config_cannot_override_resolved_name() -> None:
             "url": "https://example.test/mcp",
         }
     ]
+
+
+def test_deferred_skill_keeps_mcp_servers_detached() -> None:
+    servers = extract_skill_mcp_servers(
+        [
+            {
+                "name": "dingtalk-ai-table",
+                "mcp_deferred": True,
+                "mcpServers": {
+                    "dingtalk-ai-table": {
+                        "url": "https://mcp-gw.example.com/server/table",
+                    }
+                },
+            },
+            {
+                "name": "activated-skill",
+                "mcpServers": {
+                    "activated-skill": {
+                        "url": "https://mcp.example.com/server/activated",
+                    }
+                },
+            },
+        ]
+    )
+
+    assert servers == [
+        {
+            "name": "activated-skill",
+            "url": "https://mcp.example.com/server/activated",
+        }
+    ]
