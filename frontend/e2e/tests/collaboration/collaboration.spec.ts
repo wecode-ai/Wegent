@@ -90,6 +90,7 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('cloud-todo-detail-status').selectOption('pending')
     await page.getByTestId('cloud-todo-save').click()
     await page.getByTestId('cloud-todo-detail-close').click()
+    await expect(page).toHaveURL(new RegExp(`/collaboration/${encodeURIComponent(projectId)}$`))
     await expect(page.getByTestId('cloud-todo-column-pending')).toContainText(
       `${issueTitle} updated`
     )
