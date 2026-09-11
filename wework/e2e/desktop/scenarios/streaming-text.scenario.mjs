@@ -1630,8 +1630,8 @@ export function createDesktopScenario({
         active = false
         return
       }
-      await verifySubagentStreamingPanel(control)
       if (process.env.WEWORK_E2E_SUBAGENT_ONLY === 'true') {
+        await verifySubagentStreamingPanel(control)
         active = false
         return
       }
@@ -2482,6 +2482,7 @@ export function createDesktopScenario({
       await capture(control, 'streaming-text-17-response-completed.png')
 
       await verifyStoppedTurnOrder(control)
+      await verifySubagentStreamingPanel(control)
       active = false
     },
 
