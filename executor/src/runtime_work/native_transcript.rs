@@ -641,6 +641,9 @@ fn append_workspace_directory(
     archive: &mut Builder<GzEncoder<fs::File>>,
     workspace: &Path,
 ) -> Result<(), String> {
+    if let Some(paths) = git_workspace_paths(workspace)? {
+        return append_workspace_paths(archive, workspace, paths);
+    }
     let mut total_bytes = 0_u64;
     for entry in WalkBuilder::new(workspace)
         .hidden(false)
@@ -682,6 +685,95 @@ fn append_workspace_directory(
         }
         archive
             .append_path_with_name(path, Path::new(WORKSPACE_PREFIX).join(relative))
+            .map_err(|error| format!("failed to append workspace member: {error}"))?;
+    }
+    Ok(())
+}
+
+fn git_workspace_paths(workspace: &Path) -> Result<Option<Vec<PathBuf>>, String> {
+    let mut probe = Command::new("git");
+    crate::local::native_git::clear_local_git_env(&mut probe);
+    let probe = probe
+        .current_dir(workspace)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map_err(|error| format!("failed to inspect workspace repository: {error}"))?;
+    if !probe.status.success() || String::from_utf8_lossy(&probe.stdout).trim() != "true" {
+        return Ok(None);
+    }
+
+    let mut command = Command::new("git");
+    crate::local::native_git::clear_local_git_env(&mut command);
+    let output = command
+        .current_dir(workspace)
+        .args([
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+        .output()
+        .map_err(|error| format!("failed to list workspace repository files: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "failed to list workspace repository files: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(git_path)
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn git_path(bytes: &[u8]) -> Result<PathBuf, String> {
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
+    }
+    #[cfg(not(unix))]
+    {
+        String::from_utf8(bytes.to_vec())
+            .map(PathBuf::from)
+            .map_err(|_| "workspace repository contains a non-UTF-8 path".to_owned())
+    }
+}
+
+fn append_workspace_paths(
+    archive: &mut Builder<GzEncoder<fs::File>>,
+    workspace: &Path,
+    paths: Vec<PathBuf>,
+) -> Result<(), String> {
+    let mut total_bytes = 0_u64;
+    for relative in paths {
+        if unsafe_path(&relative)
+            || relative
+                .components()
+                .any(|part| EXCLUDED_NAMES.contains(&part.as_os_str().to_string_lossy().as_ref()))
+        {
+            continue;
+        }
+        let path = workspace.join(&relative);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!("failed to inspect workspace member: {error}"));
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            continue;
+        }
+        validate_workspace_member_size(&relative, metadata.len(), &mut total_bytes)?;
+        archive
+            .append_path_with_name(&path, Path::new(WORKSPACE_PREFIX).join(&relative))
             .map_err(|error| format!("failed to append workspace member: {error}"))?;
     }
     Ok(())
@@ -1144,6 +1236,68 @@ mod tests {
     fn environment_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    #[test]
+    fn workspace_packaging_excludes_gitignored_generated_files() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let workspace = root.path().join("workspace");
+        let generated = source.join("wework/electron/resources/codex");
+        fs::create_dir_all(&generated).unwrap();
+        fs::write(source.join("wework/electron/.gitignore"), "resources/\n").unwrap();
+        fs::write(source.join("source.txt"), "source\n").unwrap();
+        fs::write(generated.join("tracked.txt"), "tracked\n").unwrap();
+        assert_git(&source, &["init"]);
+        assert_git(&source, &["config", "user.name", "Wegent Test"]);
+        assert_git(&source, &["config", "user.email", "test@wegent.local"]);
+        assert_git(
+            &source,
+            &["add", "source.txt", "wework/electron/.gitignore"],
+        );
+        assert_git(
+            &source,
+            &["add", "-f", "wework/electron/resources/codex/tracked.txt"],
+        );
+        assert_git(&source, &["commit", "-m", "base"]);
+        assert_git(
+            &source,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                workspace.to_str().expect("temporary path must be UTF-8"),
+            ],
+        );
+        assert!(workspace.join(".git").is_file());
+        fs::File::create(workspace.join("wework/electron/resources/codex/codex"))
+            .unwrap()
+            .set_len(MAX_WORKSPACE_FILE_BYTES + 1)
+            .unwrap();
+
+        let archive_path = root.path().join("workspace.tgz");
+        let output = fs::File::create(&archive_path).unwrap();
+        let encoder = GzEncoder::new(output, Compression::default());
+        let mut archive = Builder::new(encoder);
+        append_workspace_directory(&mut archive, &workspace).unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let input = fs::File::open(archive_path).unwrap();
+        let mut restored = Archive::new(GzDecoder::new(input));
+        let paths = restored
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap().path().unwrap().to_path_buf())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&PathBuf::from("workspace/source.txt")));
+        assert!(paths.contains(&PathBuf::from("workspace/wework/electron/.gitignore")));
+        assert!(paths.contains(&PathBuf::from(
+            "workspace/wework/electron/resources/codex/tracked.txt"
+        )));
+        assert!(!paths
+            .iter()
+            .any(|path| path.ends_with("wework/electron/resources/codex/codex")));
     }
 
     #[test]
