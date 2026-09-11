@@ -18,6 +18,7 @@ export interface LocalModelConfig {
   modelId: string
   baseUrl: string
   apiFormat: LocalModelApiFormat
+  codexToolCompatibility?: LocalModelCodexToolCompatibility
   toolProfile: LocalModelToolProfile
   requestPath?: string
   apiKey?: string
@@ -43,6 +44,8 @@ export type LocalModelWebSearchMode = 'disabled' | 'cached' | 'live'
 
 export type LocalModelToolProfile = 'custom' | 'function' | 'shell'
 
+export type LocalModelCodexToolCompatibility = 'native' | 'standard'
+
 export interface SaveLocalModelConfigInput {
   id?: string | null
   providerProfileId?: string | null
@@ -51,6 +54,7 @@ export interface SaveLocalModelConfigInput {
   modelId: string
   baseUrl: string
   apiFormat?: LocalModelApiFormat | null
+  codexToolCompatibility?: LocalModelCodexToolCompatibility | null
   toolProfile?: LocalModelToolProfile | null
   requestPath?: string | null
   apiKey?: string | null
@@ -92,6 +96,14 @@ export function normalizeLocalModelApiFormat(value?: string | null): LocalModelA
   return value === 'openai-chat-completions' || value === 'anthropic-messages'
     ? value
     : 'openai-responses'
+}
+
+export function normalizeLocalModelCodexToolCompatibility(
+  value: string | null | undefined,
+  apiFormat: LocalModelApiFormat
+): LocalModelCodexToolCompatibility {
+  if (apiFormat !== 'openai-responses') return 'standard'
+  return value === 'standard' ? 'standard' : 'native'
 }
 
 export function defaultLocalModelToolProfile(
@@ -144,6 +156,9 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       record.apiFormat === 'openai-responses' ||
       record.apiFormat === 'openai-chat-completions' ||
       record.apiFormat === 'anthropic-messages') &&
+    (record.codexToolCompatibility === undefined ||
+      record.codexToolCompatibility === 'native' ||
+      record.codexToolCompatibility === 'standard') &&
     (record.toolProfile === undefined ||
       record.toolProfile === 'custom' ||
       record.toolProfile === 'function' ||
@@ -239,6 +254,10 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     modelId: legacyConfig.modelId,
     baseUrl: legacyConfig.baseUrl,
     apiFormat,
+    codexToolCompatibility: normalizeLocalModelCodexToolCompatibility(
+      legacyConfig.codexToolCompatibility,
+      apiFormat
+    ),
     toolProfile: migrateDeepSeekResponses
       ? 'custom'
       : normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
@@ -451,11 +470,18 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const group = normalizeLocalModelGroup(input.group)
   const apiKey = input.apiKey?.trim() || undefined
   const contextWindow = normalizeLocalModelContextWindow(input.contextWindow)
-  const toolProfile = normalizeLocalModelToolProfile(input.toolProfile, apiFormat)
-  validateLocalModelToolProfile(toolProfile, apiFormat)
   const id = input.id?.trim() || createLocalModelConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
+  const toolProfile = normalizeLocalModelToolProfile(
+    input.toolProfile ?? previous?.toolProfile,
+    apiFormat
+  )
+  const codexToolCompatibility = normalizeLocalModelCodexToolCompatibility(
+    input.codexToolCompatibility ?? previous?.codexToolCompatibility,
+    apiFormat
+  )
+  validateLocalModelToolProfile(toolProfile, apiFormat)
   const isCustomProvider =
     (input.providerProfileId ?? previous?.providerProfileId ?? 'custom') === 'custom'
   const catalogEntry =
@@ -518,6 +544,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     modelId,
     baseUrl,
     apiFormat,
+    codexToolCompatibility,
     toolProfile,
     requestPath,
     apiKey,

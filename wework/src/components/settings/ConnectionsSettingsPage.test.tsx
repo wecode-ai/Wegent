@@ -1028,6 +1028,11 @@ describe('ConnectionsSettingsPage', () => {
     expect(within(defaultReasoningSelect).queryByRole('option', { name: 'high' })).toBeNull()
     await userEvent.selectOptions(defaultReasoningSelect, 'high')
     await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-toggle'))
+    expect(screen.getByTestId('local-model-codex-tool-compatibility-select')).toHaveValue('native')
+    await userEvent.selectOptions(
+      screen.getByTestId('local-model-codex-tool-compatibility-select'),
+      'standard'
+    )
     await userEvent.click(screen.getByTestId('local-model-advanced-section-metadata'))
     await userEvent.type(screen.getByTestId('local-model-speed-tiers-input'), 'fast')
     await userEvent.click(screen.getByTestId('local-model-speed-tiers-add'))
@@ -1061,6 +1066,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(stored[0]).toMatchObject({
       modelId: 'custom-coder',
       codexCatalogModelId: expect.stringMatching(/^wework-custom-/),
+      codexToolCompatibility: 'standard',
       catalogReady: true,
       imageGenerationEnabled: true,
     })

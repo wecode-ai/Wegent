@@ -7733,6 +7733,8 @@ describe('WorkbenchProvider runtime tasks', () => {
             weworkCloudModelNamespace: 'default',
             weworkCloudModelResourceUserId: '1',
             weworkCloudModelUpstreamApiFormat: 'openai-responses',
+            weworkCloudModelNativeToolSearch: 'true',
+            weworkCloudModelNativeNamespaceTools: 'true',
           },
         },
       })

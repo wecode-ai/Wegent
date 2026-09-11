@@ -800,22 +800,12 @@ fn responses_tools(
             tool.clone()
         });
     }
+    if bridge_tool_search {
+        for tool in &mut converted {
+            remove_defer_loading(tool);
+        }
+    }
     converted
-}
-
-fn sanitize_defer_loading_tools_for_responses(body: &mut Value) {
-    let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
-        return;
-    };
-    if tools
-        .iter()
-        .any(|tool| tool.get("type").and_then(Value::as_str) == Some("tool_search"))
-    {
-        return;
-    }
-    for tool in tools {
-        remove_defer_loading(tool);
-    }
 }
 
 fn remove_defer_loading(tool: &mut Value) {
@@ -896,7 +886,6 @@ pub(super) fn responses_to_responses(
             ));
         }
     }
-    sanitize_defer_loading_tools_for_responses(&mut result);
 
     if let Some(input) = result.get("input") {
         result["input"] = convert_responses_input_items(
@@ -4326,11 +4315,21 @@ mod tests {
                 "name": "multi_agent_v1__spawn_agent",
                 "parameters": {"type": "object"},
                 "defer_loading": true
+            }, {
+                "type": "namespace",
+                "name": "github",
+                "defer_loading": true,
+                "tools": [{
+                    "type": "function",
+                    "name": "create_issue",
+                    "parameters": {"type": "object"},
+                    "defer_loading": true
+                }]
             }]
         });
 
         let (converted, _) =
-            responses_to_responses(&input, false, false, false).expect("request should convert");
+            responses_to_responses(&input, false, false, true).expect("request should convert");
 
         assert_eq!(converted["tools"][0]["type"], "function");
         assert_eq!(
@@ -4354,6 +4353,10 @@ mod tests {
             false
         );
         assert!(converted["tools"][1].get("defer_loading").is_none());
+        assert!(converted["tools"][2].get("defer_loading").is_none());
+        assert!(converted["tools"][2]["tools"][0]
+            .get("defer_loading")
+            .is_none());
     }
 
     #[test]
