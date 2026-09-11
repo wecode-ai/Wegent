@@ -1,0 +1,416 @@
+{
+  "schemaVersion": 1,
+  "domain": "plugin",
+  "owner": "wework/plugins",
+  "routes": [],
+  "operations": [
+    {
+      "key": "plugin.create_request",
+      "action": "create_request",
+      "name": {
+        "zh-CN": "提交插件创建任务",
+        "en": "Submit plugin creation task"
+      },
+      "description": {
+        "zh-CN": "提交插件创建任务的确认结果",
+        "en": "Confirmed result of: Submit plugin creation task"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.publish_request",
+      "action": "publish_request",
+      "name": {
+        "zh-CN": "提交插件发布申请",
+        "en": "Submit plugin publication request"
+      },
+      "description": {
+        "zh-CN": "提交插件发布申请的确认结果",
+        "en": "Confirmed result of: Submit plugin publication request"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.publish_revision",
+      "action": "publish_revision",
+      "name": {
+        "zh-CN": "提交插件发布修订",
+        "en": "Submit plugin publication revision"
+      },
+      "description": {
+        "zh-CN": "提交插件发布修订的确认结果",
+        "en": "Confirmed result of: Submit plugin publication revision"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.publish",
+      "action": "publish",
+      "name": {
+        "zh-CN": "发布个人插件",
+        "en": "Publish personal plugin"
+      },
+      "description": {
+        "zh-CN": "发布个人插件的确认结果",
+        "en": "Confirmed result of: Publish personal plugin"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.withdraw",
+      "action": "withdraw",
+      "name": {
+        "zh-CN": "撤回插件发布申请",
+        "en": "Withdraw plugin publication request"
+      },
+      "description": {
+        "zh-CN": "撤回插件发布申请的确认结果",
+        "en": "Confirmed result of: Withdraw plugin publication request"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.share",
+      "action": "share",
+      "name": {
+        "zh-CN": "保存插件分享",
+        "en": "Save plugin sharing"
+      },
+      "description": {
+        "zh-CN": "保存插件分享的确认结果",
+        "en": "Confirmed result of: Save plugin sharing"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.copy",
+      "action": "copy",
+      "name": {
+        "zh-CN": "复制插件到本机",
+        "en": "Copy plugin locally"
+      },
+      "description": {
+        "zh-CN": "复制插件到本机的确认结果",
+        "en": "Confirmed result of: Copy plugin locally"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.zip_import",
+      "action": "zip_import",
+      "name": {
+        "zh-CN": "导入插件 ZIP",
+        "en": "Import plugin ZIP"
+      },
+      "description": {
+        "zh-CN": "导入插件 ZIP的确认结果",
+        "en": "Confirmed result of: Import plugin ZIP"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.delete",
+      "action": "delete",
+      "name": {
+        "zh-CN": "删除插件",
+        "en": "Delete plugin"
+      },
+      "description": {
+        "zh-CN": "删除插件的确认结果",
+        "en": "Confirmed result of: Delete plugin"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.update_policy",
+      "action": "update_policy",
+      "name": {
+        "zh-CN": "保存插件更新策略",
+        "en": "Save plugin update policy"
+      },
+      "description": {
+        "zh-CN": "保存插件更新策略的确认结果",
+        "en": "Confirmed result of: Save plugin update policy"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.auto_update",
+      "action": "auto_update",
+      "name": {
+        "zh-CN": "完成插件自动更新批次",
+        "en": "Complete plugin automatic update pass"
+      },
+      "description": {
+        "zh-CN": "完成插件自动更新批次的确认结果",
+        "en": "Confirmed result of: Complete plugin automatic update pass"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.authorize",
+      "action": "authorize",
+      "name": {
+        "zh-CN": "完成插件连接认证",
+        "en": "Complete plugin connector authorization"
+      },
+      "description": {
+        "zh-CN": "完成插件连接认证的确认结果",
+        "en": "Confirmed result of: Complete plugin connector authorization"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.disconnect",
+      "action": "disconnect",
+      "name": {
+        "zh-CN": "断开插件连接",
+        "en": "Disconnect plugin connector"
+      },
+      "description": {
+        "zh-CN": "断开插件连接的确认结果",
+        "en": "Confirmed result of: Disconnect plugin connector"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.trial",
+      "action": "trial",
+      "name": {
+        "zh-CN": "带入插件试用示例",
+        "en": "Prepare plugin trial example"
+      },
+      "description": {
+        "zh-CN": "带入插件试用示例的确认结果",
+        "en": "Confirmed result of: Prepare plugin trial example"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.install_request",
+      "action": "install_request",
+      "name": {
+        "zh-CN": "受理插件安装请求",
+        "en": "Accept plugin installation request"
+      },
+      "description": {
+        "zh-CN": "受理插件安装请求",
+        "en": "Accept plugin installation request"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.device_install",
+      "action": "device_install",
+      "name": {
+        "zh-CN": "确认设备插件安装结果",
+        "en": "Confirm device plugin installation"
+      },
+      "description": {
+        "zh-CN": "确认设备插件安装结果",
+        "en": "Confirm device plugin installation"
+      },
+      "failureStages": ["request", "confirm"],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["plugin"]
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "key": "plugin.plugin_center_opened",
+      "eventName": "plugin_center_opened",
+      "name": {
+        "zh-CN": "打开插件中心",
+        "en": "Open plugin center"
+      },
+      "description": {
+        "zh-CN": "打开插件中心",
+        "en": "Open plugin center"
+      },
+      "publicProperties": [
+        {
+          "name": "surface",
+          "type": "enum",
+          "values": ["catalog", "management"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.plugin_installed",
+      "eventName": "plugin_installed",
+      "name": {
+        "zh-CN": "确认插件已安装",
+        "en": "Confirmed plugin installed"
+      },
+      "description": {
+        "zh-CN": "确认插件已安装",
+        "en": "Confirmed plugin installed"
+      },
+      "publicProperties": [
+        {
+          "name": "source",
+          "type": "enum",
+          "values": ["local", "cloud", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.plugin_uninstalled",
+      "eventName": "plugin_uninstalled",
+      "name": {
+        "zh-CN": "确认插件卸载",
+        "en": "Confirmed plugin uninstalled"
+      },
+      "description": {
+        "zh-CN": "确认插件卸载",
+        "en": "Confirmed plugin uninstalled"
+      },
+      "publicProperties": [
+        {
+          "name": "source",
+          "type": "enum",
+          "values": ["local", "cloud", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "plugin.plugin_enabled_changed",
+      "eventName": "plugin_enabled_changed",
+      "name": {
+        "zh-CN": "确认插件启停设置",
+        "en": "Confirmed plugin enablement change"
+      },
+      "description": {
+        "zh-CN": "确认插件启停设置",
+        "en": "Confirmed plugin enablement change"
+      },
+      "publicProperties": [
+        {
+          "name": "enabled",
+          "type": "enum",
+          "values": [true, false]
+        },
+        {
+          "name": "scope",
+          "type": "enum",
+          "values": ["plugin", "component"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": ["local", "cloud", "unknown"]
+        }
+      ]
+    }
+  ]
+}

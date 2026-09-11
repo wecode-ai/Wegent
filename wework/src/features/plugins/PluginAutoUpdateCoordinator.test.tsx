@@ -83,7 +83,7 @@ vi.mock('@/features/idle-tasks/idleTaskScheduler', () => ({
     return vi.fn()
   }),
 }))
-vi.mock('@/telemetry/client', () => ({ track: mocks.track }))
+vi.mock('@/telemetry/businessEvents', () => ({ trackPluginEvent: mocks.track }))
 
 function emit(event: string, payload?: unknown) {
   for (const handler of mocks.handlers.get(event) ?? []) handler(payload)

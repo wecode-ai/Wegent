@@ -389,6 +389,7 @@ export function createHybridWorkbenchServices(
   let rememberedCloudModels: UnifiedModel[] = []
   let cloudModelsLoaded = false
   let cloudModelsRequest: Promise<void> | null = null
+  let cloudModelsRefreshRequested = false
   const rememberedCloudSearch = new Map<string, RuntimeWorkSearchResponse>()
   const cloudSearchRequests = new Map<string, Promise<void>>()
   const rememberedCloudArchives = new Map<string, ArchivedConversationsListResponse>()
@@ -410,7 +411,12 @@ export function createHybridWorkbenchServices(
     rememberedCloudDevicesRevision = revision
   }
   const loadCloudModelsInBackground = () => {
-    if (cloudModelsLoaded || cloudModelsRequest) return
+    if (cloudModelsLoaded) return
+    if (cloudModelsRequest) {
+      cloudModelsRefreshRequested = true
+      return
+    }
+    cloudModelsRefreshRequested = false
     cloudModelsRequest = Promise.resolve()
       .then(() => cloudServices.modelApi.listModels())
       .then(response => {
@@ -428,6 +434,8 @@ export function createHybridWorkbenchServices(
       })
       .finally(() => {
         cloudModelsRequest = null
+        // Preserve a refresh that arrived before the failed request settled.
+        if (!cloudModelsLoaded && cloudModelsRefreshRequested) loadCloudModelsInBackground()
       })
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {

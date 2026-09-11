@@ -1599,6 +1599,30 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Removing an imported workbench left its card visible in My'
       )
       await captureScreenshot(control, 'harness-apps-15a-local-removal-semantics.png', 'body')
+      for (const eventName of [
+        'smart_app_start_succeeded',
+        'smart_app_stop_succeeded',
+        'smart_app_export_succeeded',
+        'smart_app_share_succeeded',
+        'smart_app_uninstall_succeeded',
+      ]) {
+        const request = await control.awaitTelemetryEvent(eventName)
+        const event = telemetryEvents(request.payload).find(item => item.event === eventName)
+        assert.equal(event?.properties.domain, 'smart_app')
+        for (const privateKey of [
+          'smart_app_name',
+          'smart_app_id',
+          'file_path',
+          'email',
+          'error_message',
+        ]) {
+          assert.equal(
+            privateKey in event.properties,
+            false,
+            `Private property leaked: ${privateKey}`
+          )
+        }
+      }
 
       await verifySmartAppMarketplaceIdentity({
         control,

@@ -1,3 +1,4 @@
+import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type {
   PluginAutoUpdateBatchResponse,
@@ -63,6 +64,29 @@ describe('runPluginAutoUpdate', () => {
     expect(syncDevice).toHaveBeenCalledTimes(3)
     expect(onProgress).toHaveBeenLastCalledWith({ updatedCount: 12, remainingCount: 0 })
   })
+
+  test.each(['request', 'confirm'] as const)(
+    'classifies auto-update %s failures at the matching boundary',
+    async stage => {
+      const events: OperationResult[] = []
+      const stop = subscribeOperationResults(event => events.push(event))
+      try {
+        const failure = new Error('sync request failed')
+        const syncDevice =
+          stage === 'request'
+            ? vi.fn().mockRejectedValue(failure)
+            : vi.fn().mockResolvedValue(sync(false))
+        await expect(
+          runPluginAutoUpdate({ updateBatch: vi.fn().mockResolvedValue(batch(1, 0)), syncDevice })
+        ).rejects.toThrow(stage === 'request' ? failure : 'sync failed')
+        expect(events).toEqual([
+          { key: 'plugin.auto_update', outcome: 'failed', failureStage: stage },
+        ])
+      } finally {
+        stop()
+      }
+    }
+  )
 
   test('stops after a failed device sync and leaves later batches untouched', async () => {
     const updateBatch = vi.fn(async () => batch(5, 5))
