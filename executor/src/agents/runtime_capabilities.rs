@@ -39,11 +39,12 @@ const REQUIRED_SKILL_DOWNLOAD_POLICY: SkillDownloadPolicy = SkillDownloadPolicy 
     timeout: DOWNLOAD_TIMEOUT,
     attempts: 3,
 };
-/// Optional Skills keep the timeout that predates the required-Skill retries:
-/// their failure degrades to on-demand loading instead of ending the turn, so a
-/// stalled download must not hold the turn for the required budget.
+/// Optional Skills share the per-attempt timeout — slow networks can still
+/// deliver a usable archive — but take fewer attempts: their failure degrades
+/// to on-demand loading instead of ending the turn, so a stalled download must
+/// not walk the full required retry policy.
 const OPTIONAL_SKILL_DOWNLOAD_POLICY: SkillDownloadPolicy = SkillDownloadPolicy {
-    timeout: Duration::from_secs(60),
+    timeout: DOWNLOAD_TIMEOUT,
     attempts: 2,
 };
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
