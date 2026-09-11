@@ -233,9 +233,10 @@ class ProjectChatService:
 
             team = runnable_wegent_team(db, user_id, request.wegent_team_id)
             if project.workspace_id is not None:
-                workspace_service.require_agent_authorized(
+                workspace_service.ensure_accessible_agent_authorized(
                     db,
                     workspace_id=int(project.workspace_id),
+                    user_id=user_id,
                     team_id=int(team.id),
                 )
         elif request.default_runtime_profile_id:
@@ -357,9 +358,10 @@ class ProjectChatService:
             team = runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
             project = db.get(CloudProject, project_id)
             if project is not None and project.workspace_id is not None:
-                workspace_service.require_agent_authorized(
+                workspace_service.ensure_accessible_agent_authorized(
                     db,
                     workspace_id=int(project.workspace_id),
+                    user_id=user_id,
                     team_id=int(team.id),
                 )
             row.device_id = None

@@ -32,7 +32,7 @@ from app.models.project import Project
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.models.workspace import WorkspaceExecutionEnvironment
+from app.models.workspace import WorkspaceAgentBinding, WorkspaceExecutionEnvironment
 from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
@@ -1875,6 +1875,80 @@ def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
         .filter(
             WorkspaceExecutionEnvironment.workspace_id == int(project["workspace_id"]),
             WorkspaceExecutionEnvironment.device_id == device.id,
+        )
+        .count()
+        == 1
+    )
+
+
+def test_cloud_project_wegent_agent_authorizes_accessible_team_once(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    team = _create_runnable_wegent_team(
+        test_db,
+        user_id=test_user.id,
+        prefix="personal-agent",
+    )
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "personalagent", "name": "Personal Agent"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    agent_payload = {
+        "name": "Wegent Agent",
+        "runtime": "wegent",
+        "wegentTeamId": team.id,
+    }
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json=agent_payload,
+    )
+    assert created.status_code == 201, created.text
+    agent = created.json()
+    assert agent["wegentTeamId"] == team.id
+
+    bindings = (
+        test_db.query(WorkspaceAgentBinding)
+        .filter(
+            WorkspaceAgentBinding.workspace_id == int(project["workspace_id"]),
+            WorkspaceAgentBinding.team_id == team.id,
+        )
+        .all()
+    )
+    assert len(bindings) == 1
+    assert bindings[0].owner_type == "human"
+    assert bindings[0].owner_user_id == test_user.id
+    assert bindings[0].added_by_user_id == test_user.id
+
+    created_again = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={**agent_payload, "name": "Second Wegent Agent"},
+    )
+    assert created_again.status_code == 201, created_again.text
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": agent["version"],
+            "wegentTeamId": team.id,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["wegentTeamId"] == team.id
+    assert (
+        test_db.query(WorkspaceAgentBinding)
+        .filter(
+            WorkspaceAgentBinding.workspace_id == int(project["workspace_id"]),
+            WorkspaceAgentBinding.team_id == team.id,
         )
         .count()
         == 1

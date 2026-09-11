@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.workspace import WorkspaceAgentBinding
+from app.models.workspace import Workspace, WorkspaceAgentBinding
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceAgentCreate, WorkspaceAgentUpdate
 from app.services.share import team_share_service
@@ -46,19 +46,63 @@ class WorkspaceAgentService:
         workspace_id: int,
         team_id: int,
     ) -> WorkspaceAgentBinding:
-        binding = (
-            db.query(WorkspaceAgentBinding)
-            .filter(
-                WorkspaceAgentBinding.workspace_id == workspace_id,
-                WorkspaceAgentBinding.team_id == team_id,
-            )
-            .first()
+        binding = _authorized_agent(
+            db,
+            workspace_id=workspace_id,
+            team_id=team_id,
         )
         if binding is None:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Agent is not authorized in this Workspace",
             )
+        return binding
+
+    def ensure_accessible_agent_authorized(
+        self,
+        db: Session,
+        *,
+        workspace_id: int,
+        user_id: int,
+        team_id: int,
+    ) -> WorkspaceAgentBinding:
+        """Authorize a selected accessible Team for the current Workspace."""
+        existing = _authorized_agent(
+            db,
+            workspace_id=workspace_id,
+            team_id=team_id,
+        )
+        if existing is not None:
+            return existing
+
+        require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
+        team = team_share_service.get_resource(db, team_id, user_id)
+        if team is None or team.kind != "Team" or not team.is_active:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Agent is not available to this user",
+            )
+
+        db.query(Workspace.id).filter(
+            Workspace.id == workspace_id
+        ).with_for_update().one()
+        existing = _authorized_agent(
+            db,
+            workspace_id=workspace_id,
+            team_id=team_id,
+        )
+        if existing is not None:
+            return existing
+
+        binding = WorkspaceAgentBinding(
+            workspace_id=workspace_id,
+            team_id=team.id,
+            owner_type="human",
+            owner_user_id=team.user_id,
+            added_by_user_id=user_id,
+        )
+        db.add(binding)
+        db.flush()
         return binding
 
     def add_agent(
@@ -154,3 +198,19 @@ def _get_agent_binding(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace Agent not found")
     return row
+
+
+def _authorized_agent(
+    db: Session,
+    *,
+    workspace_id: int,
+    team_id: int,
+) -> WorkspaceAgentBinding | None:
+    return (
+        db.query(WorkspaceAgentBinding)
+        .filter(
+            WorkspaceAgentBinding.workspace_id == workspace_id,
+            WorkspaceAgentBinding.team_id == team_id,
+        )
+        .first()
+    )
