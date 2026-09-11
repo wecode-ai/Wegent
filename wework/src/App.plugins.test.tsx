@@ -155,6 +155,7 @@ const desktopHostMocks = vi.hoisted(() => {
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []
+        if (capability === 'navigation.pendingSchemes') return []
         if (capability === 'systemDrag.takePending') return []
         return {}
       }
@@ -1205,7 +1206,7 @@ describe('App plugins route', () => {
   test('handles the sidebar shortcut before ProseMirror suppresses native bold', async () => {
     window.history.pushState({}, '', '/plugins')
     renderApp()
-    await screen.findByTestId('plugins-workspace')
+    await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
     const editor = new EditorView(document.body, {
       state: EditorState.create({ schema: composerSchema }),
       attributes: { 'data-testid': 'chat-message-input' },

@@ -42,11 +42,13 @@ window.__ModuleLoader__.load({
           },
         },
         {
-          slot: 'wework.environment.section',
+          slot: 'wework.conversation.summary',
           descriptor: {
-            id: 'git-change-request',
+            id: 'git-summary',
             module: 'plugins/wework-ui-git-environment-section.js',
             order: 50,
+            requiredHostServices: ['wework.environment'],
+            when: { key: 'workspace.isGitRepository', notEquals: false },
           },
         },
         {

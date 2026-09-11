@@ -507,6 +507,43 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('emits subagent block detail updates', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'subagent-thread-1',
+          updates: {
+            summary: 'Completed inspection',
+            output: 'Found the root cause',
+            parent_tool_use_id: 'subagent-parent',
+            agent_status: 'interrupted',
+            status: 'done',
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'subagent-thread-1',
+      summary: 'Completed inspection',
+      output: 'Found the root cause',
+      parentToolUseId: 'subagent-parent',
+      agentStatus: 'interrupted',
+      status: 'done',
+    })
+  })
+
   test('restores a missing block from a block update snapshot before applying updates', () => {
     const calls: string[] = []
     const onBlockCreated = vi.fn(() => calls.push('created'))

@@ -482,6 +482,57 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
   })
 
+  test('keeps an explicit continuation running when a completed Goal snapshot arrives late', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_321_634_000,
+          goalStatus: 'complete',
+        })
+      )
+    )
+    store.goalStatusReceived(address, 'complete')
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'continuation-turn')
+
+    store.goalStatusReceived(address, 'complete')
+
+    expect(store.getTask(address)?.goalStatus).toBe('complete')
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('streaming')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
+  test('keeps a live turn running when its active Goal reaches a terminal status', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+    store.turnStarted(address, 'live-turn')
+
+    store.goalStatusReceived(address, 'complete')
+
+    expect(store.getTask(address)?.goalStatus).toBe('complete')
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('streaming')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
+  test('settles a live turn when its active Goal is explicitly paused', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+    store.turnStarted(address, 'live-turn')
+
+    store.goalStatusReceived(address, 'paused')
+
+    expect(store.getTask(address)?.goalStatus).toBe('paused')
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('recovers a completed task from a confirmed active snapshot without a terminal Goal', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(

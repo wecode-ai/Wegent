@@ -197,6 +197,16 @@ describe('BrowserAnnotationController', () => {
     expect(controller.state(LABEL).originalView).toBe(true)
     expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 2)
     controller.stop(LABEL)
+    expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 2)
+    const stopRenderRequestId = (
+      sent.at(-1)?.payload as {
+        renderRequestId?: number
+      }
+    ).renderRequestId
+    controller.handleRuntimeEvent(7, {
+      type: 'runtime-rendered',
+      renderRequestId: stopRenderRequestId,
+    })
     expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 3)
   })
 

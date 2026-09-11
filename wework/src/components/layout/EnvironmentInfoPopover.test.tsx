@@ -13,16 +13,26 @@ describe('EnvironmentInfoPopover', () => {
   beforeEach(async () => {
     await installDshUiTestContributions(
       {
-        [WEWORK_DSH_SLOTS.environmentSection]: [
+        [WEWORK_DSH_SLOTS.conversationSummary]: [
           {
-            id: 'git-change-request',
+            id: 'git-summary',
             module: 'plugins/wework-ui-git-environment-section.js',
+            requiredHostServices: ['wework.environment'],
+            when: { key: 'workspace.isGitRepository', equals: true },
+          },
+          {
+            id: 'outputs-summary',
+            module: 'plugins/wework-ui-outputs-conversation-summary.js',
+            requiredHostServices: ['wework.conversation.outputs'],
+            when: { key: 'workspace.isGitRepository', equals: false },
           },
         ],
       },
       {
         'plugins/wework-ui-git-environment-section.js': () =>
           import('../../../dsh/ui-git/src/environment-section'),
+        'plugins/wework-ui-outputs-conversation-summary.js': () =>
+          import('../../../dsh/ui-outputs/src/conversation-summary'),
       }
     )
   })
@@ -67,6 +77,54 @@ describe('EnvironmentInfoPopover', () => {
     expect(popover).toHaveTextContent('10.201.3.200 已离线，恢复在线后可继续对话')
     expect(popover).not.toHaveTextContent('executor-offline:')
     expect(popover).not.toHaveTextContent('9562a3b4-61a3-4217-9655-0341b231eb06')
+  })
+
+  test('shows host-provided outputs instead of Git environment content for a non-Git task', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: false,
+          executionDeviceId: 'local-device',
+          workspacePath: '/workspace/non-git-task',
+        }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'local-device',
+            name: 'Local Executor',
+            status: 'online',
+            is_default: true,
+            device_type: 'local',
+          },
+        ]}
+        messages={[
+          {
+            id: 'assistant-output',
+            role: 'assistant',
+            content: '已生成 [report.md](/workspace/report.md)',
+            status: 'done',
+            createdAt: '2026-09-10T08:00:00Z',
+          },
+        ]}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('conversation-output-summary')).toHaveTextContent('输出内容')
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('non-git-task')
+    expect(screen.getByTestId('environment-device-name')).toHaveTextContent('Local Executor')
+    expect(screen.getByTestId('conversation-output-list')).toHaveTextContent('report.md')
+    expect(screen.getByTestId('environment-device-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('environment-git-section')).not.toBeInTheDocument()
   })
 
   test('shows the task executor instead of the workspace access device', () => {
@@ -718,7 +776,7 @@ describe('EnvironmentInfoPopover', () => {
     window.__WEWORK_DSH_UI__ = {
       ...defaultRuntime!,
       getEntries: slot =>
-        slot === 'wework.environment.section'
+        slot === 'wework.conversation.summary'
           ? []
           : (defaultRuntime?.getEntries(slot as never) ?? []),
     }

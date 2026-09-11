@@ -312,12 +312,50 @@ impl RuntimeWorkRpcHandler {
             .thread_event_routes
             .lock()
             .expect("thread event route lock should not be poisoned");
-        let Some(route) = routes.get_mut(&thread_id) else {
+        let Some(route) = routes.get(&thread_id) else {
             debug_unrouted_codex_notification(&message, "missing_route");
             return;
         };
-        if self.is_active_local_task(&route.local_task_id) {
-            let Some(active_turn) = self.active_codex_turn(&route.local_task_id) else {
+        let local_task_id = route.local_task_id.clone();
+        let route_request = route.request.clone();
+        let event_mapper = route.event_mapper.clone();
+        let route_active = route.active;
+        let route_nested = route.nested;
+        if route_nested && codex_stream_debug_enabled() {
+            let notification = codex_notification(&message);
+            log_executor_event(
+                "runtime work routes nested notification",
+                &[
+                    ("thread_id", thread_id.clone()),
+                    ("method", notification.method),
+                    (
+                        "item_type",
+                        item_type(&notification_item(notification.params)),
+                    ),
+                    (
+                        "item_id",
+                        notification_item(notification.params)
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<none>")
+                            .to_owned(),
+                    ),
+                ],
+            );
+        }
+        for child_thread_id in codex_spawned_child_thread_ids(&message) {
+            routes
+                .entry(child_thread_id)
+                .or_insert_with(|| RuntimeThreadEventRoute {
+                    local_task_id: local_task_id.clone(),
+                    request: route_request.clone(),
+                    event_mapper: event_mapper.clone(),
+                    active: route_active,
+                    nested: true,
+                });
+        }
+        if self.is_active_local_task(&local_task_id) {
+            let Some(active_turn) = self.active_codex_turn(&local_task_id) else {
                 return;
             };
             let Some(notification_turn_id) = notification_turn_id.as_deref() else {
@@ -336,10 +374,12 @@ impl RuntimeWorkRpcHandler {
             );
         }
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
-            self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
+            self.register_codex_thread_workspace_root(&started_thread_id, &route_request);
         }
-        let mut event_request = route.request.clone();
-        if !is_context_compaction_request(&event_request) {
+        drop(routes);
+
+        let mut event_request = route_request;
+        if !route_nested && !is_context_compaction_request(&event_request) {
             if let Some(turn_id) = notification_turn_id {
                 if event_request.subtask_id != turn_id {
                     event_request.subtask_id = turn_id;
@@ -348,13 +388,16 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         }
-        route.event_mapper.map(
-            &self.event_tx,
-            &self.device_id,
-            &route.local_task_id,
-            &event_request,
-            message,
-        );
+        event_mapper
+            .lock()
+            .expect("thread event mapper lock should not be poisoned")
+            .map(
+                &self.event_tx,
+                &self.device_id,
+                &local_task_id,
+                &event_request,
+                message,
+            );
     }
 
     pub(super) fn register_thread_event_route(
@@ -384,12 +427,24 @@ impl RuntimeWorkRpcHandler {
         let mut route = existing.unwrap_or_else(|| {
             RuntimeThreadEventRoute::new(local_task_id.clone(), request.clone(), active)
         });
+        let preserve_active_turn_request = route.active
+            && !active
+            && !is_context_compaction_request(&route.request)
+            && is_context_compaction_request(&request);
         if active {
-            route.event_mapper = CodexNotificationEventMapper::default();
+            route.event_mapper = Arc::new(Mutex::new(CodexNotificationEventMapper::default()));
         }
+        route
+            .event_mapper
+            .lock()
+            .expect("thread event mapper lock should not be poisoned")
+            .observe_root_thread_id(thread_id);
         route.local_task_id = local_task_id;
-        route.request = request;
+        if !preserve_active_turn_request {
+            route.request = request;
+        }
         route.active = route.active || active;
+        route.nested = false;
         routes.insert(thread_id.to_owned(), route);
     }
 
@@ -496,9 +551,15 @@ impl RuntimeWorkRpcHandler {
         if pending_route_ids.next().is_some() {
             return false;
         }
-        let Some(route) = routes.remove(&pending_route_id) else {
+        let Some(mut route) = routes.remove(&pending_route_id) else {
             return false;
         };
+        route
+            .event_mapper
+            .lock()
+            .expect("thread event mapper lock should not be poisoned")
+            .observe_root_thread_id(thread_id);
+        route.nested = false;
         let local_task_id = route.local_task_id.clone();
         routes.insert(thread_id.to_owned(), route);
         drop(routes);
@@ -566,6 +627,33 @@ impl RuntimeWorkRpcHandler {
             }
         }
     }
+}
+
+fn codex_spawned_child_thread_ids(message: &Value) -> Vec<String> {
+    let params = message.get("params").unwrap_or(message);
+    let item = params.get("item").unwrap_or(params);
+    if item_type(item) != "collabagenttoolcall"
+        || string_field(item, "tool").as_deref() != Some("spawnAgent")
+    {
+        return Vec::new();
+    }
+
+    let mut thread_ids = Vec::new();
+    if let Some(receiver_ids) = item.get("receiverThreadIds").and_then(Value::as_array) {
+        for thread_id in receiver_ids.iter().filter_map(Value::as_str) {
+            if !thread_id.trim().is_empty() && !thread_ids.iter().any(|value| value == thread_id) {
+                thread_ids.push(thread_id.to_owned());
+            }
+        }
+    }
+    if let Some(agent_states) = item.get("agentsStates").and_then(Value::as_object) {
+        for thread_id in agent_states.keys() {
+            if !thread_id.trim().is_empty() && !thread_ids.iter().any(|value| value == thread_id) {
+                thread_ids.push(thread_id.to_owned());
+            }
+        }
+    }
+    thread_ids
 }
 
 fn merge_codex_turn_items(turn: &mut Value, active_items: Vec<Value>) {

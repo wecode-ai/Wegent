@@ -36,6 +36,35 @@ describe('runtime task lifecycle automation', () => {
     dispose()
   })
 
+  test('applies Goal status snapshots to the global store', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeTask(address, {
+      taskId: address.taskId,
+      workspacePath: '/tmp/workspace',
+      title: 'Goal task',
+      runtime: 'codex',
+      running: true,
+      goalStatus: 'active',
+    })
+    store.turnStarted(address, 'live-turn')
+    const dispose = registerRuntimeTaskLifecycleAutomation(store)
+
+    window.dispatchEvent(
+      new CustomEvent('wework:e2e:runtime-task-lifecycle', {
+        detail: {
+          address,
+          type: 'goal_status_received',
+          goalStatus: 'complete',
+        },
+      })
+    )
+
+    expect(store.getTask(address)?.goalStatus).toBe('complete')
+    expect(store.getTask(address)?.execution.running).toBe(true)
+    expect(store.getTask(address)?.turn.phase).toBe('streaming')
+    dispose()
+  })
+
   test('stops applying lifecycle events after disposal', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.executorSettled(address)

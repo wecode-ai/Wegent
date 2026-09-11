@@ -24,11 +24,14 @@ const MODIFIERS: Record<string, 'shift' | 'control' | 'alt' | 'meta'> = {
   Meta: 'meta',
 }
 
+export type E2EKeyPhase = 'press' | 'down' | 'up'
+
 export async function sendE2EKey(
   contents: WebContents,
   key: string,
   focusWindow: () => void | Promise<void>,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  phase: E2EKeyPhase = 'press'
 ) {
   if (!environment.WEWORK_E2E_CONTROL_URL || environment.VITE_WEWORK_E2E !== 'true') {
     throw new HostCapabilityError('e2e_control_required', 'An isolated E2E controller is required')
@@ -45,13 +48,17 @@ export async function sendE2EKey(
   const modifiers: KeyboardInputEvent['modifiers'] = parts.map(part => MODIFIERS[part])
   await focusWindow()
   contents.focus()
-  contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+  if (phase !== 'up') {
+    contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+  }
   // Chromium activates native buttons on Enter's character event.
   const character =
     mainKey === 'Space' ? ' ' : mainKey === 'Enter' ? '\r' : mainKey.length === 1 ? mainKey : null
-  if (character && parts.every(part => part === 'Shift')) {
+  if (phase === 'press' && character && parts.every(part => part === 'Shift')) {
     contents.sendInputEvent({ type: 'char', keyCode: character, modifiers })
   }
-  contents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
-  return { backend: 'electron-send-input-event', key }
+  if (phase !== 'down') {
+    contents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+  }
+  return { backend: 'electron-send-input-event', key, phase }
 }

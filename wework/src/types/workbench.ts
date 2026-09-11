@@ -24,6 +24,7 @@ import type {
   WorkbenchFileChangesBlock,
   WorkbenchPlanBlock,
   WorkbenchProcessingBlock,
+  WorkbenchSubagentBlock,
   WorkbenchThinkingBlock,
   WorkbenchTextBlock,
   WorkbenchToolBlock,
@@ -45,6 +46,8 @@ export type ThinkingBlock = WorkbenchThinkingBlock
 export type TextBlock = WorkbenchTextBlock
 
 export type PlanBlock = WorkbenchPlanBlock
+
+export type SubagentBlock = WorkbenchSubagentBlock<TurnFileChangesSummary>
 
 export type FileChangesBlock = WorkbenchFileChangesBlock<TurnFileChangesSummary>
 
