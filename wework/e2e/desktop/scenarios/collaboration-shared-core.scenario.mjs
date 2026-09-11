@@ -294,12 +294,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', scoped('[data-testid="ai-chat-panel"]'), {
+        await control.command('waitFor', scoped('[data-testid="work-item-new-task-chat-panel"]'), {
           timeoutMs: uiTimeoutMs,
         })
         await control.command(
           'waitFor',
-          scoped('[data-testid="ai-chat-panel"] [data-testid="chat-message-input"]'),
+          scoped(
+            '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
+          ),
           {
             timeoutMs: uiTimeoutMs,
           }
@@ -314,7 +316,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await capture(control, 'collaboration-shared-core-05-local-task-bridge.png')
 
         const taskComposer = scoped(
-          '[data-testid="ai-chat-panel"] [data-testid="chat-message-input"]'
+          '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
         )
         await control.command('fill', taskComposer, { value: TASK_PROMPT })
         await control.command('press', taskComposer, { key: 'Enter' })
