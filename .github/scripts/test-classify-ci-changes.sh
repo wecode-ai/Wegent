@@ -97,6 +97,26 @@ assert_plugin_auth_case "native auth source" true \
   "executor/src/plugin_account_auth/mod.rs"
 assert_plugin_auth_case "explicit full regression" true --all
 
+assert_desktop_case() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
+  if ! grep -Fq "$expected" "$output"; then
+    printf 'Desktop case "%s" failed:\n%s\n' "$name" "$output" >&2
+    exit 1
+  fi
+}
+
+assert_desktop_case "plugin capabilities owns Skills and MCP workspace" \
+  'wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}' \
+  "wework/src/components/plugins/capabilities/SkillsPanel.tsx"
+assert_desktop_case "plugin capabilities owns plugin workspace" \
+  'wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}' \
+  "wework/src/components/plugins/PluginsWorkspace.tsx"
+
 assert_checkpoint_runtime_failure_rejected() {
   local temp_dir
   temp_dir="$(mktemp -d)"

@@ -307,8 +307,11 @@ classify_wework_path() {
       select_target "cloud:core-task-flow"
       return
       ;;
-    wework/e2e/desktop/scenarios/plugin-capabilities.scenario.mjs)
+    wework/src/components/plugins/capabilities/* | \
+      wework/src/components/plugins/PluginsWorkspace* | \
+      wework/e2e/desktop/scenarios/plugin-capabilities.scenario.mjs)
       select_target "core:plugin-capabilities"
+      return
       ;;
     wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs)
       select_target "core:codex-account-login"
