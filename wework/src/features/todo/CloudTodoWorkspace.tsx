@@ -2143,7 +2143,9 @@ export function CloudTodoWorkspace({
     focusStorageKey: focusExecutionColumnsKey,
     items: boardItems,
     onCurrentParentIdChange: setBoardParentId,
-    onMove: performStandardBoardMove,
+    onMove: async (item, column, beforeItemId, mutation) => {
+      await performStandardBoardMove(item, column, beforeItemId, mutation)
+    },
     personalGroupStorageKey: personalGroupKey,
   })
   const {

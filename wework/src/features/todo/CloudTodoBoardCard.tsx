@@ -241,7 +241,7 @@ function CloudTodoWorkflowStage({
 }
 
 export interface CloudTodoBoardTaskBinding {
-  id: number
+  id: string | number
   device_id: string
   task_id: string
   task_title: string | null
@@ -301,7 +301,7 @@ export function CloudTodoBoardCard({
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<number | null>(null)
+  const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<string | number | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const editable = canEditProjectSpaceIssue(item)
   const itemRef = useRef(item)
@@ -727,7 +727,7 @@ function RuntimeTaskGoalSummary({
   compact,
 }: {
   itemId: string
-  bindingId: number
+  bindingId: string | number
   objective: string
   compact: boolean
 }) {
@@ -774,9 +774,9 @@ function RuntimeTaskProgressPopup({
 }: {
   item: CloudLoopItem
   bindings: CloudTodoBoardTaskBinding[]
-  activeBindingId: number | null
-  focusedBindingId: number | null
-  onFocusBinding: (bindingId: number | null) => void
+  activeBindingId: string | number | null
+  focusedBindingId: string | number | null
+  onFocusBinding: (bindingId: string | number | null) => void
   pinned: boolean
   onPin: () => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
