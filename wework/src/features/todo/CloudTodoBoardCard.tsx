@@ -949,7 +949,7 @@ function useRuntimeTaskProjection(
       : EMPTY_RUNTIME_LIVE_ACTIVITY
     return {
       activity,
-      responsePreview: getRuntimeTaskResponsePreview(turns, activity.active) || null,
+      responsePreview: getRuntimeTaskResponsePreview(turns, active) || null,
     }
   }, [active, turns])
 }

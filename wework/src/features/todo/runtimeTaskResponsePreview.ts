@@ -7,6 +7,8 @@ export function getRuntimeTaskResponsePreview(
   for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = turns[turnIndex]
     if (!turn) continue
+    const activeTurn = active && (turn.status === 'pending' || turn.status === 'streaming')
+    if (activeTurn && turn.items.length === 0) return ''
     let segmentEnd = turn.items.length
     while (segmentEnd > 0) {
       const previousUserIndex = turn.items.findLastIndex(
@@ -14,12 +16,9 @@ export function getRuntimeTaskResponsePreview(
       )
       const segmentStart = previousUserIndex + 1
       const assistantLine = latestAssistantTextLine(turn.items, segmentStart, segmentEnd)
-      const hasBlocks = segmentHasBlocks(turn.items, segmentStart, segmentEnd)
-      if (active && (assistantLine || hasBlocks)) return assistantLine
-      if (!active) {
-        const blockLine = latestTextBlockLine(turn.items, segmentStart, segmentEnd)
-        if (assistantLine || blockLine) return assistantLine || blockLine
-      }
+      if (activeTurn) return assistantLine
+      const blockLine = active ? '' : latestTextBlockLine(turn.items, segmentStart, segmentEnd)
+      if (assistantLine || blockLine) return assistantLine || blockLine
       segmentEnd = previousUserIndex
     }
   }
@@ -47,22 +46,13 @@ function latestTextBlockLine(
 ): string {
   for (let index = end - 1; index >= start; index -= 1) {
     const item = items[index]
-    if (item?.type !== 'block' || item.block.type !== 'text') continue
+    if (item?.type !== 'block' || item.block.type !== 'text' || item.block.status !== 'done') {
+      continue
+    }
     const line = latestNonEmptyLine(item.block.content)
     if (line) return line
   }
   return ''
-}
-
-function segmentHasBlocks(
-  items: RuntimeConversationTurn['items'],
-  start: number,
-  end: number
-): boolean {
-  for (let index = end - 1; index >= start; index -= 1) {
-    if (items[index]?.type === 'block') return true
-  }
-  return false
 }
 
 function latestNonEmptyLine(value: string): string {

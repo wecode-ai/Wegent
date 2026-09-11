@@ -538,6 +538,43 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-scroll-origin', 'bottom')
   })
 
+  it('does not show an older response while a new task turn is starting', () => {
+    seedAssistantResponse('older completed response')
+    applyRuntimeConversationAction(
+      { deviceId: 'local', taskId: 'task-85' },
+      {
+        type: 'assistant_started',
+        taskId: 'task-85',
+        subtaskId: 'turn-new',
+      }
+    )
+
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, status: 'in_progress' }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: false,
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.queryByText('older completed response')).not.toBeInTheDocument()
+  })
+
   it('marks an unread task as read after its conversation preview stays open for 3 seconds', async () => {
     vi.useFakeTimers()
     const onMarkRead = vi.fn()

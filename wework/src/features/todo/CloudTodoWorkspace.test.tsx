@@ -19,6 +19,8 @@ import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifec
 import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationTurns,
+  reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskCreateRequest, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
@@ -1535,6 +1537,7 @@ describe('CloudTodoWorkspace', () => {
       workspacePath: '/tmp/wegent',
       runtime: 'codex' as const,
       running: false,
+      fullContent: true,
       messages: [
         {
           id: 'user-output',
@@ -1565,6 +1568,7 @@ describe('CloudTodoWorkspace', () => {
       ],
     }))
     workbenchServices.runtimeWorkApi = {
+      ...workbenchServices.runtimeWorkApi,
       getRuntimeTranscript,
     } as WorkbenchServices['runtimeWorkApi']
 
@@ -1621,6 +1625,109 @@ describe('CloudTodoWorkspace', () => {
     const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(conversation).toHaveAttribute('data-device-id', 'local-device')
     expect(conversation).toHaveAttribute('data-task-id', 'runtime-in-progress')
+  })
+
+  it('preserves older cached turns when the board preload transcript is bounded', async () => {
+    const workbenchServices = services()
+    const address = { deviceId: 'local-device', taskId: 'runtime-bounded' }
+    reconcileRuntimeConversationSnapshot(address, [
+      {
+        id: 'older-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'older-assistant',
+            type: 'assistant_text',
+            content: 'older cached response',
+            createdAt: '2026-08-22T00:02:00Z',
+          },
+        ],
+      },
+    ])
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
+      {
+        id: 2,
+        loop_item_id: item.id,
+        task_user_id: 1,
+        device_id: 'local-device',
+        task_id: 'runtime-bounded',
+        task_title: '保留完整会话',
+        backend_task_id: null,
+        linked_at: '2026-08-23T00:01:00Z',
+      },
+    ])
+    const getRuntimeTranscript = vi.fn(async request => ({
+      taskId: request.taskId,
+      workspacePath: '/tmp/wegent',
+      runtime: 'codex' as const,
+      running: false,
+      fullContent: false,
+      hasMoreBefore: true,
+      beforeCursor: 'older-cursor',
+      messages: [],
+      turns: [
+        {
+          id: 'newer-turn',
+          status: 'done',
+          items: [
+            {
+              id: 'newer-assistant',
+              type: 'assistant_text' as const,
+              content: 'newer bounded response',
+              createdAt: '2026-08-23T00:02:00Z',
+            },
+          ],
+        },
+      ],
+    }))
+    workbenchServices.runtimeWorkApi = {
+      getRuntimeTranscript,
+      getRuntimeGoal: vi.fn(async () => ({ accepted: false })),
+    } as WorkbenchServices['runtimeWorkApi']
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        runtimeWork={{
+          projects: [
+            {
+              project: { id: project.id, name: project.name },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'local-device',
+                  available: true,
+                  workspacePath: '/tmp/wegent',
+                  tasks: [
+                    {
+                      taskId: 'runtime-bounded',
+                      workspacePath: '/tmp/wegent',
+                      title: '保留完整会话',
+                      runtime: 'codex',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        }}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(
+        'newer bounded response'
+      )
+    )
+    expect(getRuntimeConversationTurns(address).map(turn => turn.id)).toEqual([
+      'older-turn',
+      'newer-turn',
+    ])
   })
 
   it('reports the concrete project name for the active document tab', async () => {

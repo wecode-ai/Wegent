@@ -3226,7 +3226,10 @@ export function CloudTodoWorkspace({
               workspacePath: task?.workspacePath,
               runtimeHandle: task?.runtimeHandle,
             }
-            if (isRuntimePaneTranscriptConfirmedIdle(projectedTranscript)) {
+            if (
+              projectedTranscript.fullContent === true &&
+              isRuntimePaneTranscriptConfirmedIdle(projectedTranscript)
+            ) {
               replaceRuntimeConversationSnapshot(address, projectedTranscript.turns)
             } else {
               reconcileRuntimeConversationSnapshot(address, projectedTranscript.turns)
