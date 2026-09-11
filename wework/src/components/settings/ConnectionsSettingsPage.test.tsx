@@ -221,6 +221,7 @@ describe('ConnectionsSettingsPage', () => {
     createDockerRemoteDeviceCommand: vi.fn(),
     renameDevice: vi.fn(),
     restartCloudDevice: vi.fn(),
+    upgradeDevice: vi.fn(),
     deleteCloudDevice: vi.fn(),
     deleteDevice: vi.fn(),
     getMetrics: vi.fn(),
@@ -1772,7 +1773,9 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test('keeps uncommon cloud device actions in a compact more menu with confirmation', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.getAllDevices
+      .mockResolvedValueOnce([cloudDevice({ status: 'offline' })])
+      .mockResolvedValue([cloudDevice()])
     api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
     api.deleteCloudDevice.mockResolvedValue({ message: 'deleted' })
 
@@ -1801,6 +1804,8 @@ describe('ConnectionsSettingsPage', () => {
     expect(restartConfirmButton).toHaveClass('bg-text-primary', 'text-background')
     await userEvent.click(restartConfirmButton)
 
+    await screen.findByText('设备已重新在线。')
+
     await userEvent.click(moreButton)
     await userEvent.click(screen.getByTestId('connection-delete-menu-item-device-1'))
     expect(api.deleteCloudDevice).not.toHaveBeenCalled()
@@ -1808,6 +1813,89 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
+  })
+
+  test('warns about active work and disables sessions while a cloud device restarts', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice({ slot_used: 1 })])
+    api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-restart-menu-item-device-1'))
+
+    expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent('当前有任务运行')
+    expect(screen.getByTestId('confirm-restart-device-dialog')).toHaveTextContent(
+      '终端、IDE 和桌面不可用'
+    )
+
+    await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
+
+    const notice = await screen.findByTestId('connection-device-restart-status-device-1')
+    expect(notice).toHaveTextContent('设备将短暂离线')
+    expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-code-server-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
+    expect(
+      within(screen.getByTestId('connection-device-device-1')).getByText('重启中')
+    ).toBeVisible()
+  })
+
+  test('shows a retryable inline error without presenting the device as offline', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.restartCloudDevice.mockRejectedValue(new Error('restart rejected'))
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-restart-menu-item-device-1'))
+    await userEvent.click(screen.getByTestId('confirm-restart-device-button'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('restart rejected')
+    expect(screen.getByTestId('connection-device-restart-retry-device-1')).toBeEnabled()
+    expect(within(screen.getByTestId('connection-device-device-1')).getByText('在线')).toBeVisible()
+  })
+
+  test('upgrades an available cloud device through the restart-aligned flow', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        executor_version: '1.8.5',
+        latest_version: '1.9.0',
+        slot_used: 1,
+        update_available: true,
+      }),
+    ])
+    api.upgradeDevice.mockResolvedValue({ success: true, message: 'upgrade sent' })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByText('有新版本')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-upgrade-menu-item-device-1'))
+
+    const dialog = screen.getByTestId('confirm-upgrade-device-dialog')
+    expect(dialog).toHaveTextContent('当前有任务运行')
+    expect(dialog).toHaveTextContent('v1.8.5')
+    expect(dialog).toHaveTextContent('v1.9.0')
+    expect(api.upgradeDevice).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('confirm-upgrade-device-button'))
+
+    expect(api.upgradeDevice).toHaveBeenCalledWith('device-1', {
+      auto_confirm: true,
+      force_stop_tasks: true,
+    })
+    expect(
+      await screen.findByTestId('connection-device-upgrade-status-device-1')
+    ).toHaveTextContent('设备将短暂离线')
+    expect(screen.getByTestId('connection-terminal-button-device-1')).toBeDisabled()
+    expect(screen.getByTestId('connection-more-button-device-1')).toBeDisabled()
+    expect(
+      within(screen.getByTestId('connection-device-device-1')).getByText('升级中')
+    ).toBeVisible()
   })
 
   test('keeps connection settings open after the cloud desktop extension opens', async () => {
