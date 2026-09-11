@@ -1436,7 +1436,7 @@ function MessageTextAttachment({
   const attachmentPath = openableAttachmentPath(attachment)
   const clickable = Boolean(attachmentPath)
   const className =
-    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
+    'inline-flex h-9 max-w-[min(360px,100%)] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
   const content = (
     <>
       <FileText
