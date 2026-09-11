@@ -239,12 +239,17 @@ Run Execution Workspace
 关系为：
 
 ```text
-Run 1 ── 1 BackendBinding ── 1 LocalTask ── 1 Codex Thread
-                                      └── N Turns
+Run 1 ── 1 BackendBinding
+                 N ── 1 LocalTask ── 1 Codex Thread
+                                         └── N Turns
 ```
 
 重试默认创建新 Run。是否继续原 LocalTask/Codex Thread，由明确的恢复策略决定并
-记录为 `resumed_from_run_id`，不能仅通过路径、标题或最近线程猜测。
+记录为 `resumed_from_run_id`，不能仅通过路径、标题或最近线程猜测。恢复创建的
+Run 始终建立自己的 BackendBinding；该绑定可以指向之前的 LocalTask 和 Codex
+Thread，因此一个 LocalTask 可以在不同时期对应多个 BackendBinding。恢复后的事件
+归属新 Run 及其 BackendBinding，按该绑定的事件序号单调递增，并且只更新新 Run；
+旧 Run、旧绑定及其事件保持为不可变历史。
 
 ## 两类本地工作
 
@@ -319,11 +324,18 @@ Run 使用统一状态：
 
 ```text
 pending_approval
+→ waiting_runtime
 → queued
 → claimed
-→ preparing
 → running
-→ completed | failed | cancelled
+→ completed | failed
+
+claimed | running
+→ cancel_requested
+→ cancelled
+
+pending_approval | waiting_runtime | queued
+→ cancelled
 ```
 
 LocalTask、Codex thread 和 turn 的状态通过投影器更新 Run，不能直接由前端推断。

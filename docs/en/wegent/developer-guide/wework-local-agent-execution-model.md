@@ -260,14 +260,20 @@ They must not share one identifier:
 Their relationship is:
 
 ```text
-Run 1 ── 1 BackendBinding ── 1 LocalTask ── 1 Codex Thread
-                                      └── N Turns
+Run 1 ── 1 BackendBinding
+                 N ── 1 LocalTask ── 1 Codex Thread
+                                         └── N Turns
 ```
 
 A retry creates a new Run by default. Continuing the previous LocalTask or
 Codex Thread requires an explicit recovery policy and a
 `resumed_from_run_id`; paths, titles, or recent-thread heuristics cannot select
-the session.
+the session. A resumed Run always creates its own BackendBinding; it may point
+to the previous LocalTask and Codex Thread, so one LocalTask may have multiple
+BackendBindings over time. Events emitted after the resume belong to the new
+Run and its BackendBinding, use that binding's monotonic event sequence, and
+update only the new Run. The previous Run, its binding, and its events remain
+immutable history.
 
 ## Two forms of local work
 
@@ -349,11 +355,18 @@ Run uses common states:
 
 ```text
 pending_approval
+→ waiting_runtime
 → queued
 → claimed
-→ preparing
 → running
-→ completed | failed | cancelled
+→ completed | failed
+
+claimed | running
+→ cancel_requested
+→ cancelled
+
+pending_approval | waiting_runtime | queued
+→ cancelled
 ```
 
 LocalTask, Codex thread, and turn states update Run through a projector and

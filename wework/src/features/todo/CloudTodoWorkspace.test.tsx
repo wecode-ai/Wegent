@@ -843,6 +843,46 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
   })
 
+  it('shows authoritative assignment target names in the project Issue table', async () => {
+    const workbenchServices = services()
+    const listAssignments = vi.fn(async () => [
+      {
+        id: 'assignment-1',
+        issue_id: item.id,
+        target_type: 'agent' as const,
+        target_id: 'agent-1',
+        target_name: 'Codex 产品工程师',
+        workflow_step: 'implementation',
+        comment_id: null,
+        created_by_user_id: 1,
+        created_by_user_name: 'local',
+        status: 'active' as const,
+        created_at: '2026-09-11T00:00:00Z',
+        updated_at: '2026-09-11T00:00:00Z',
+      },
+    ])
+    workbenchServices.sharedWorkspaceApi!.assignments!.list = listAssignments
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectRef={{
+          projectStore: 'backend',
+          projectId: String(project.id),
+        }}
+      />
+    )
+
+    await screen.findByTestId('cloud-project-header')
+    await userEvent.click(screen.getByTestId('cloud-project-table-view'))
+
+    expect(await screen.findByTestId('collaboration-issue-table')).toHaveTextContent(
+      'Codex 产品工程师'
+    )
+    expect(listAssignments).toHaveBeenCalledWith(item.id)
+  })
+
   it('loads Git-backed boards by column and fetches details only after opening a card', async () => {
     const workbenchServices = services()
     const githubProject = {

@@ -146,6 +146,9 @@ function CollaborationPlatformNavigation({
   workspace: CollaborationWorkspace | null;
   projects: CollaborationProject[];
 }) {
+  const canManageWorkspace =
+    workspace?.access_role === "Owner" ||
+    workspace?.access_role === "Maintainer";
   const workspaceNav: Array<{
     id: CollaborationWorkspaceView;
     label: string;
@@ -155,8 +158,10 @@ function CollaborationPlatformNavigation({
     { id: "members", label: messages.members },
     { id: "agents", label: messages.agents },
     { id: "execution-environments", label: messages.environments },
-    { id: "settings", label: messages.settings },
   ];
+  if (canManageWorkspace) {
+    workspaceNav.push({ id: "settings", label: messages.settings });
+  }
   return (
     <aside
       className="collaboration-platform-sidebar"
@@ -688,6 +693,9 @@ export function CollaborationPlatformApp({
     );
   } else {
     const workspace = state.workspace;
+    const canManageWorkspace =
+      workspace.access_role === "Owner" ||
+      workspace.access_role === "Maintainer";
     const createProjectAction = (
       <button
         type="button"
@@ -698,7 +706,7 @@ export function CollaborationPlatformApp({
         ＋ {messages.createProject}
       </button>
     );
-    if (host.location.workspaceView === "settings") {
+    if (host.location.workspaceView === "settings" && canManageWorkspace) {
       content = (
         <div className="collaboration-platform-page">
           <PageHeader title={messages.settings} subtitle={workspace.name} />

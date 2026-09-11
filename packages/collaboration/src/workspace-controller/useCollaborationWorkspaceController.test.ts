@@ -309,6 +309,26 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
+  it("treats an empty assignments API response as authoritative", async () => {
+    const legacyAssignedIssue = {
+      ...issue,
+      assignee_user_id: 7,
+      assignee_name: "旧负责人",
+    };
+    const api = createApi();
+    api.issues.get = vi.fn().mockResolvedValue(legacyAssignedIssue);
+    api.assignments = {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+    };
+    const { commands } = createController(api);
+
+    await commands.loadSelectedIssue(issue.id);
+
+    expect(api.assignments.list).toHaveBeenCalledWith(issue.id);
+    expect(state.assignments).toEqual([]);
+  });
+
   it("owns create, update and archive mutations for projects and issues", async () => {
     state = {
       ...state,

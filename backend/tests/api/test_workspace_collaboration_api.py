@@ -17,6 +17,10 @@ from app.models.issue_assignment import IssueAssignment
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.models.workspace import WorkspaceExecutionEnvironment
+from app.services.workspaces.execution_environments import (
+    WorkspaceExecutionEnvironmentService,
+)
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -429,6 +433,88 @@ def test_issue_actions_are_authorized_independently(
     ).json()["items"]
     assert str(reporter.id) not in {row["target_id"] for row in remaining}
     assert str(test_user.id) in {row["target_id"] for row in remaining}
+
+
+def test_project_maintainer_cannot_expand_workspace_membership(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    workspace, project, _, maintainer_token = _workspace_project_with_maintainer(
+        test_client,
+        test_db,
+        test_token,
+    )
+    target, _ = _user(test_db, f"project-member-{uuid.uuid4().hex[:8]}")
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(maintainer_token),
+        json={"user_id": target.id, "role": "Reporter"},
+    )
+
+    assert response.status_code == 403
+    workspace_members = test_client.get(
+        f"/api/v1/workspaces/{workspace['id']}/members",
+        headers=_auth(test_token),
+    )
+    assert workspace_members.status_code == 200
+    assert target.id not in {
+        member["user_id"] for member in workspace_members.json()["items"]
+    }
+
+
+def test_personal_execution_environment_uses_owned_device_identity(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    workspace = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"同名执行环境 {uuid.uuid4().hex[:6]}"},
+    ).json()
+    other_user, _ = _user(test_db, f"device-owner-{uuid.uuid4().hex[:8]}")
+    shared_name = f"duplicate-device-{uuid.uuid4().hex[:8]}"
+    owner_device = Kind(
+        kind="Device",
+        name=shared_name,
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    other_device = Kind(
+        kind="Device",
+        name=shared_name,
+        namespace="default",
+        user_id=other_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add_all([owner_device, other_device])
+    test_db.flush()
+    test_db.add(
+        WorkspaceExecutionEnvironment(
+            workspace_id=workspace["id"],
+            device_id=other_device.id,
+            owner_type="human",
+            owner_user_id=other_user.id,
+            added_by_user_id=test_user.id,
+        )
+    )
+    test_db.commit()
+
+    binding = WorkspaceExecutionEnvironmentService().ensure_owned_execution_environment_authorized(
+        test_db,
+        workspace_id=workspace["id"],
+        user_id=test_user.id,
+        execution_device_id=shared_name,
+    )
+
+    assert binding.device_id == owner_device.id
+    assert binding.device_id != other_device.id
 
 
 def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(

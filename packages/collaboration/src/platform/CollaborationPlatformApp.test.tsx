@@ -158,6 +158,14 @@ function emptyAsync<T>(value: T) {
   return vi.fn(async () => value);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function createApi({
   initialWorkspaces = [workspace],
   initialProjects = [project],
@@ -671,6 +679,131 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-nav-resources")).toBeTruthy();
   });
 
+  it.each(["Owner", "Maintainer"] as const)(
+    "allows %s to view and save workspace settings",
+    async (role) => {
+      const managedWorkspace = { ...workspace, access_role: role };
+      const { api } = createApi({ initialWorkspaces: [managedWorkspace] });
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            workspaceView: "settings",
+          }}
+        />,
+      );
+
+      expect(byTestId("collaboration-workspace-nav-settings")).toBeTruthy();
+      await change(
+        container.querySelector(
+          ".collaboration-workspace-settings input",
+        ) as HTMLInputElement,
+        "更新后的空间",
+      );
+      await click(byTestId("collaboration-workspace-settings-save"));
+      expect(api.workspaces?.update).toHaveBeenCalledWith(workspace.id, {
+        version: workspace.version,
+        name: "更新后的空间",
+        description: workspace.description,
+      });
+    },
+  );
+
+  it.each(["Developer", "Reporter", "Member"] as const)(
+    "hides workspace settings from %s even for a direct settings location",
+    async (role) => {
+      const restrictedWorkspace = { ...workspace, access_role: role };
+      const { api } = createApi({ initialWorkspaces: [restrictedWorkspace] });
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            workspaceView: "settings",
+          }}
+        />,
+      );
+
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-workspace-nav-settings"]',
+        ),
+      ).toBeNull();
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-workspace-settings-save"]',
+        ),
+      ).toBeNull();
+      expect(api.workspaces?.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not let an older location request overwrite a newer workspace", async () => {
+    const oldWorkspace = { ...workspace, id: "workspace-old", name: "旧空间" };
+    const newWorkspace = { ...workspace, id: "workspace-new", name: "新空间" };
+    const oldList = deferred<CollaborationWorkspace[]>();
+    const { api } = createApi({
+      initialWorkspaces: [oldWorkspace, newWorkspace],
+    });
+    api.workspaces!.list = vi
+      .fn()
+      .mockImplementationOnce(() => oldList.promise)
+      .mockResolvedValue([oldWorkspace, newWorkspace]);
+    api.workspaces!.get = vi.fn(async (workspaceId) =>
+      workspaceId === newWorkspace.id ? newWorkspace : oldWorkspace,
+    );
+
+    function RaceHarness() {
+      const [location, setLocation] = useState<CollaborationPlatformLocation>({
+        ...initialLocation,
+        workspaceId: oldWorkspace.id,
+      });
+      return (
+        <>
+          <button
+            data-testid="switch-workspace"
+            onClick={() =>
+              setLocation((current) => ({
+                ...current,
+                workspaceId: newWorkspace.id,
+              }))
+            }
+            type="button"
+          >
+            Switch
+          </button>
+          <CollaborationPlatformApp
+            api={api}
+            host={{
+              location,
+              capabilities: {
+                automation: false,
+                dingtalkAitable: false,
+              },
+              navigate: setLocation,
+            }}
+          />
+        </>
+      );
+    }
+
+    await render(<RaceHarness />);
+    await click(byTestId("switch-workspace"));
+    expect(container.textContent).toContain(newWorkspace.name);
+
+    await act(async () => {
+      oldList.resolve([oldWorkspace, newWorkspace]);
+      await oldList.promise;
+    });
+    await flush();
+
+    expect(container.textContent).toContain(newWorkspace.name);
+    expect(container.textContent).not.toContain(oldWorkspace.name);
+  });
+
   it("configures workspace members, agents, and execution environments through shared UI", async () => {
     vi.useFakeTimers();
     const { api } = createApi();
@@ -820,6 +953,41 @@ describe("CollaborationPlatformApp real component flow", () => {
       commentBody: undefined,
       notifyTarget: false,
     });
+  });
+
+  it("loads table assignments by issue id and renders the real target name", async () => {
+    const { api, assignments } = createApi();
+    assignments.push({
+      id: "assignment-table",
+      issue_id: issue.id,
+      target_type: "agent",
+      target_id: agent.id,
+      target_name: "表格真实智能体",
+      workflow_step: "实现",
+      comment_id: null,
+      created_by_user_id: 1,
+      created_by_user_name: "项目经理",
+      status: "active",
+      created_at: "2026-09-12T02:00:00Z",
+      updated_at: "2026-09-12T02:00:00Z",
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+          projectView: "table",
+        }}
+      />,
+    );
+
+    expect(api.assignments?.list).toHaveBeenCalledWith(issue.id);
+    expect(
+      byTestId(`collaboration-issue-table-row-${issue.id}`).textContent,
+    ).toContain("表格真实智能体");
   });
 });
 

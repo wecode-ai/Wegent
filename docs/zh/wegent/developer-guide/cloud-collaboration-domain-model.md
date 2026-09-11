@@ -119,9 +119,10 @@ Run
 └── trigger: manual | assignment | mention | workflow | automation
 ```
 
-Human 在 Wework 中打开任意有权访问的 Issue 后，可以选择本地工作区并启动 Codex
-Run；不要求该 Issue 预先分配给他。若 Human 完全手工处理而不调用 Agent，则只记录
-活动和 Deliverable，不伪造机器 Run。
+Human 在 Wework 中打开有权访问的 Issue 后可以选择本地工作区，但启动 Codex Run
+还必须拥有 Project 执行权限。仅能访问 Issue 不代表有权执行，而 Assignment 不是
+启动前提。若 Human 完全手工处理而不调用 Agent，则只记录活动和 Deliverable，不
+伪造机器 Run。
 
 Device、Executor 和 Runtime 不是 Member。它们没有持续的协作身份，不能成为
 Assignment 对象或 Agent。
@@ -164,6 +165,13 @@ ProjectAgentBinding
 
 Agent 的身份、Team、能力和默认执行策略属于 Workspace；Project 只保存是否启用
 以及项目级差异。
+
+旧模型中的授权字段不迁入 ProjectAgentBinding。迁移时，
+`ProjectChatAgent.created_by_user_id` 转为 Workspace Agent 绑定的人类所有者和
+添加者，即 `WorkspaceAgentBinding.owner_user_id` 与 `added_by_user_id`；已有
+`LoopItemExecution.executor_owner_user_id` 继续保留在 Run 上，并复制到替代或
+恢复创建的 Run。领取、心跳、事件上报和完成接口继续按该 Run 字段鉴权，因此将
+ProjectChatAgent 收敛为 ProjectAgentBinding 不会放宽原有的创建者专属执行权限。
 
 ### Workspace Agent 与 Project 专属 Agent
 
@@ -216,13 +224,33 @@ type GhostPluginRef = {
   ref: string
   version?: string
   required: boolean
-  config?: Record<string, unknown>
+  config?: NonSecretPluginConfig
+  credential_refs?: PluginCredentialRef[]
   permissions?: string[]
+}
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
+type NonSecretPluginConfig = Record<string, JsonValue>
+
+type PluginCredentialRef = {
+  name: string
+  ref: string
 }
 ```
 
 Plugin 是能力包，可以展开为 Skill、MCP、Hook、Tool 和 Runtime Requirement。
 Ghost 编译为有效能力清单时必须去重并校验冲突。
+
+`config` 是持久化的执行意图，必须符合 Plugin 声明的非秘密配置 schema。Token、
+密码、私钥等凭据不得写入 `config`，只能通过 `credential_refs` 表达，并在物化时
+由本地或云端 compiler 解析。
 
 只有影响 Agent 执行能力的 Plugin 进入 Ghost。仅扩展 Wework 菜单、页面或组件的
 UI Plugin 仍属于 Wework 宿主，不进入 Agent 能力模型。
@@ -305,7 +333,7 @@ Run 正常完成只表示本次执行结束，不自动表示 Issue 已验收完
 | Runtime | Device、Executor、Shell 能力 | 建立统一 Runtime 投影与调度接口 |
 | View | 当前看板与筛选 | 看板降为默认 View，补充服务端保存视图 |
 | Workflow | Issue Workflow | 只组织 Issue 和 Run |
-| Automation | Project Automation、本地已安排 | 合并定义和触发协议 |
+| Automation | Project Automation、本地计划任务 | 合并定义和触发协议 |
 
 ## 必须保持的领域约束
 

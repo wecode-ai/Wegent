@@ -3903,6 +3903,7 @@ class LoopItemExecutionService:
         return [
             {
                 "id": execution.id,
+                "workspace_id": execution.workspace_id or None,
                 "loop_item_id": execution.loop_item_id,
                 "cloud_project_id": execution.cloud_project_id,
                 "task_title": None,

@@ -233,4 +233,29 @@ describe("ProjectAgentConfiguration", () => {
       element("project-agent-config-missing-workspace").textContent,
     ).toContain("Workspace");
   });
+
+  it("translates execution environment kind and status labels", async () => {
+    const { api } = createApi();
+    await act(async () => {
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          project={project}
+          onError={vi.fn()}
+          translate={(key, fallback) => {
+            const translated: Record<string, string> = {
+              "todo.local_execution_environment": "LOCALIZED LOCAL",
+              "todo.execution_environment_online": "LOCALIZED ONLINE",
+            };
+            return translated[key] ?? fallback;
+          }}
+        />,
+      );
+    });
+
+    await click("project-agent-mode-codex");
+    expect(element("project-agent-codex-environment").textContent).toContain(
+      "MacBook Pro · LOCALIZED LOCAL · LOCALIZED ONLINE",
+    );
+  });
 });

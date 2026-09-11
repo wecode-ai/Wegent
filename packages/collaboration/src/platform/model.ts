@@ -11,10 +11,9 @@ import { legacyIssueAssignmentProjection } from "../dto-mappers";
 
 export function visibleIssueAssignments(
   issue: CollaborationIssue,
-  assignments: CollaborationAssignment[],
+  assignments: CollaborationAssignment[] | undefined,
 ): CollaborationAssignment[] {
-  if (assignments.length > 0) return assignments;
-  return legacyIssueAssignmentProjection(issue);
+  return assignments ?? legacyIssueAssignmentProjection(issue);
 }
 
 export function sortCollaborationWorkspaces(

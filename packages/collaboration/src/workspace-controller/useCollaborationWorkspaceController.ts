@@ -1028,10 +1028,9 @@ export function createCollaborationWorkspaceControllerCommands({
                 )
             : Promise.resolve([]),
         ]);
-        const assignments =
-          loadedAssignments.length > 0
-            ? loadedAssignments
-            : legacyIssueAssignmentProjection(issue);
+        const assignments = api.assignments
+          ? loadedAssignments
+          : legacyIssueAssignmentProjection(issue);
         if (revision !== selectedIssueLoadRevision) return null;
         dispatch({
           type: "issue-loaded",

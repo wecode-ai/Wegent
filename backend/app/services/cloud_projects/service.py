@@ -462,6 +462,13 @@ class CloudProjectService:
     ) -> dict[str, object]:
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
+        if project.workspace_id is not None:
+            require_workspace_role(
+                db,
+                int(project.workspace_id),
+                user_id,
+                BaseRole.Maintainer,
+            )
         target = db.get(User, values.user_id)
         if target is None or not target.is_active:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")

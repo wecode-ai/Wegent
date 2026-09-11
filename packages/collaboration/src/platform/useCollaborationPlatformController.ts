@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
@@ -73,9 +73,12 @@ export function useCollaborationPlatformController({
     loading: true,
     error: null,
   });
+  const loadRevisionRef = useRef(0);
 
   const load = useCallback(async () => {
+    const revision = ++loadRevisionRef.current;
     if (!api.workspaces) {
+      if (revision !== loadRevisionRef.current) return;
       setState((current) => ({
         ...current,
         loading: false,
@@ -86,11 +89,13 @@ export function useCollaborationPlatformController({
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
       const workspaces = await api.workspaces.list();
+      if (revision !== loadRevisionRef.current) return;
       if (!location.workspaceId) {
         const resources =
           location.platformView === "resources" && api.resources
             ? await api.resources.list()
             : emptyResources;
+        if (revision !== loadRevisionRef.current) return;
         setState((current) => ({
           ...current,
           workspaces,
@@ -112,13 +117,14 @@ export function useCollaborationPlatformController({
         executionEnvironments,
         resources,
       ] = await Promise.all([
-          api.workspaces.get(location.workspaceId),
-          api.projects.list(location.workspaceId),
-          api.workspaces.listMembers(location.workspaceId),
-          api.workspaces.listAgents(location.workspaceId),
-          api.workspaces.listExecutionEnvironments(location.workspaceId),
-          api.resources ? api.resources.list() : emptyResources,
-        ]);
+        api.workspaces.get(location.workspaceId),
+        api.projects.list(location.workspaceId),
+        api.workspaces.listMembers(location.workspaceId),
+        api.workspaces.listAgents(location.workspaceId),
+        api.workspaces.listExecutionEnvironments(location.workspaceId),
+        api.resources ? api.resources.list() : emptyResources,
+      ]);
+      if (revision !== loadRevisionRef.current) return;
       setState((current) => ({
         ...current,
         workspaces,
@@ -131,6 +137,7 @@ export function useCollaborationPlatformController({
         loading: false,
       }));
     } catch {
+      if (revision !== loadRevisionRef.current) return;
       setState((current) => ({
         ...current,
         loading: false,
@@ -141,6 +148,9 @@ export function useCollaborationPlatformController({
 
   useEffect(() => {
     void load();
+    return () => {
+      loadRevisionRef.current += 1;
+    };
   }, [load]);
 
   return {
@@ -392,7 +402,7 @@ export function useCollaborationPlatformController({
             ...current.resources,
             execution_environments:
               current.resources.execution_environments.map((candidate) =>
-                  candidate.device_id === added.device_id ? added : candidate,
+                candidate.device_id === added.device_id ? added : candidate,
               ),
           },
           ...updateCurrentWorkspace(current, (workspace) => ({

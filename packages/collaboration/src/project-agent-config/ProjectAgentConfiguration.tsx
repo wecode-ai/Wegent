@@ -25,10 +25,23 @@ function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
 }
 
-function environmentLabel(environment: CollaborationExecutionEnvironment) {
+function environmentLabel(
+  environment: CollaborationExecutionEnvironment,
+  translate: CollaborationTranslate,
+) {
   const kind =
-    environment.kind === "cloud_host" ? "云端执行环境" : "本地执行环境";
-  return `${environment.name} · ${kind} · ${environment.status}`;
+    environment.kind === "cloud_host"
+      ? translate("todo.cloud_execution_environment", "云端执行环境")
+      : translate("todo.local_execution_environment", "本地执行环境");
+  const status =
+    environment.status === "online"
+      ? translate("todo.execution_environment_online", "在线")
+      : environment.status === "offline"
+        ? translate("todo.execution_environment_offline", "离线")
+        : environment.status === "provisioning"
+          ? translate("todo.execution_environment_provisioning", "准备中")
+          : translate("todo.execution_environment_error", "异常");
+  return `${environment.name} · ${kind} · ${status}`;
 }
 
 export function ProjectAgentConfiguration({
@@ -456,7 +469,7 @@ export function ProjectAgentConfiguration({
                     </option>
                     {environments.map((environment) => (
                       <option key={environment.id} value={environment.id}>
-                        {environmentLabel(environment)}
+                        {environmentLabel(environment, translate)}
                       </option>
                     ))}
                   </select>

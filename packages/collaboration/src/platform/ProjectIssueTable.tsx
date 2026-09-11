@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationIssue } from "../types";
+import type { CollaborationAssignment, CollaborationIssue } from "../types";
 
 export function ProjectIssueTable({
   issues,
+  assignmentsByIssueId,
   emptyLabel,
   issueLabel,
   statusLabel,
@@ -14,6 +15,7 @@ export function ProjectIssueTable({
   onOpen,
 }: {
   issues: CollaborationIssue[];
+  assignmentsByIssueId: Record<string, CollaborationAssignment[]>;
   emptyLabel: string;
   issueLabel: string;
   statusLabel: string;
@@ -47,16 +49,22 @@ export function ProjectIssueTable({
         </thead>
         <tbody>
           {issues.map((issue) => {
-            const assignmentNames = [
-              issue.assignee_name,
-              issue.assignee_agent_name,
-              issue.assignee_team_name,
-            ].filter(Boolean);
+            const assignmentNames = (assignmentsByIssueId[issue.id] ?? []).map(
+              (assignment) => assignment.target_name,
+            );
+            const openIssue = () => onOpen(issue);
             return (
               <tr
                 key={issue.id}
                 data-testid={`collaboration-issue-table-row-${issue.id}`}
-                onClick={() => onOpen(issue)}
+                role="link"
+                tabIndex={0}
+                onClick={openIssue}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  openIssue();
+                }}
               >
                 <td>
                   <span className="collaboration-issue-key">

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
@@ -88,6 +88,11 @@ export function IssueActivityPanel({
   const [workflowStep, setWorkflowStep] = useState("");
   const [target, setTarget] = useState("");
   const [sending, setSending] = useState(false);
+  useEffect(() => {
+    setBody("");
+    setWorkflowStep("");
+    setTarget("");
+  }, [issue.id]);
   const entries = useMemo(
     () => issueActivityEntries(assignments, comments, executions),
     [assignments, comments, executions],

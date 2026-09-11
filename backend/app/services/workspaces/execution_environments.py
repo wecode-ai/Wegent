@@ -49,12 +49,14 @@ class WorkspaceExecutionEnvironmentService:
         db: Session,
         *,
         workspace_id: int,
+        user_id: int,
         execution_device_id: str,
     ) -> WorkspaceExecutionEnvironment:
+        device = _owned_execution_device(db, user_id, execution_device_id)
         row = _authorized_execution_environment(
             db,
             workspace_id=workspace_id,
-            execution_device_id=execution_device_id,
+            device_id=device.id,
         )
         if row is None:
             raise HTTPException(
@@ -72,10 +74,11 @@ class WorkspaceExecutionEnvironmentService:
         execution_device_id: str,
     ) -> WorkspaceExecutionEnvironment:
         """Authorize a selected personal environment for the current Workspace."""
+        device = _owned_execution_device(db, user_id, execution_device_id)
         existing = _authorized_execution_environment(
             db,
             workspace_id=workspace_id,
-            execution_device_id=execution_device_id,
+            device_id=device.id,
         )
         if existing is not None:
             return existing
@@ -87,26 +90,10 @@ class WorkspaceExecutionEnvironmentService:
         existing = _authorized_execution_environment(
             db,
             workspace_id=workspace_id,
-            execution_device_id=execution_device_id,
+            device_id=device.id,
         )
         if existing is not None:
             return existing
-
-        device = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Device",
-                Kind.name == execution_device_id,
-                Kind.user_id == user_id,
-                Kind.is_active.is_(True),
-            )
-            .first()
-        )
-        if device is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Execution environment is not available to this user",
-            )
 
         binding = WorkspaceExecutionEnvironment(
             workspace_id=workspace_id,
@@ -209,16 +196,36 @@ def _authorized_execution_environment(
     db: Session,
     *,
     workspace_id: int,
-    execution_device_id: str,
+    device_id: int,
 ) -> WorkspaceExecutionEnvironment | None:
     return (
         db.query(WorkspaceExecutionEnvironment)
-        .join(Kind, Kind.id == WorkspaceExecutionEnvironment.device_id)
         .filter(
             WorkspaceExecutionEnvironment.workspace_id == workspace_id,
+            WorkspaceExecutionEnvironment.device_id == device_id,
+        )
+        .first()
+    )
+
+
+def _owned_execution_device(
+    db: Session,
+    user_id: int,
+    execution_device_id: str,
+) -> Kind:
+    device = (
+        db.query(Kind)
+        .filter(
             Kind.kind == "Device",
             Kind.name == execution_device_id,
+            Kind.user_id == user_id,
             Kind.is_active.is_(True),
         )
         .first()
     )
+    if device is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Execution environment is not available to this user",
+        )
+    return device

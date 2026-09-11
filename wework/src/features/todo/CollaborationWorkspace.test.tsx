@@ -81,6 +81,22 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         </button>
         <button
           type="button"
+          data-testid="shared-open-second-project"
+          onClick={() =>
+            host.navigate({
+              platformView: 'spaces',
+              workspaceId: 'workspace-1',
+              workspaceView: 'projects',
+              projectId: 'project-2',
+              projectView: 'board',
+              issueId: null,
+            })
+          }
+        >
+          Open second project
+        </button>
+        <button
+          type="button"
           data-testid="shared-open-issue"
           onClick={() =>
             host.navigate({
@@ -189,6 +205,16 @@ const localProject = {
   project_store: 'local',
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function createProps(options?: {
   localProjects?: CloudProject[]
   activeProjectRef?: { projectStore: 'local' | 'backend'; projectId: string } | null
@@ -294,6 +320,50 @@ describe('CollaborationWorkspace', () => {
       'issue-1'
     )
     expect(screen.queryByTestId('legacy-collaboration-project')).not.toBeInTheDocument()
+  })
+
+  it('applies only the latest cloud project navigation response', async () => {
+    const user = userEvent.setup()
+    const firstRequest = deferred<typeof cloudProject>()
+    const secondProject = { ...cloudProject, id: 'project-2', name: 'Second project' }
+    const secondRequest = deferred<typeof secondProject>()
+    const { props, getProject } = createProps()
+    getProject.mockImplementation((projectId: string) =>
+      projectId === cloudProject.id ? firstRequest.promise : secondRequest.promise
+    )
+    render(<CollaborationWorkspace {...props} />)
+
+    await user.click(screen.getByTestId('shared-open-project'))
+    await user.click(screen.getByTestId('shared-open-second-project'))
+    secondRequest.resolve(secondProject)
+    await waitFor(() =>
+      expect(props.onActiveProjectChange).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'project-2' })
+      )
+    )
+    firstRequest.resolve(cloudProject)
+    await firstRequest.promise
+
+    expect(props.onActiveProjectChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('handles a rejected cloud project navigation without changing the active project', async () => {
+    const user = userEvent.setup()
+    const error = new Error('Project unavailable')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { props, getProject } = createProps({ projectLoadError: error })
+    render(<CollaborationWorkspace {...props} />)
+
+    await user.click(screen.getByTestId('shared-open-project'))
+    await waitFor(() =>
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Wework] Failed to open the collaboration project',
+        error
+      )
+    )
+
+    expect(getProject).toHaveBeenCalledWith('project-1')
+    expect(props.onActiveProjectChange).not.toHaveBeenCalled()
   })
 
   it('shows a visible Wework error when the local Task runtime is unavailable', async () => {

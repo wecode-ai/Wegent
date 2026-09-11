@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CollaborationPlatformApp,
   type CollaborationPlatformLocation,
@@ -44,6 +44,7 @@ function SharedCollaborationWorkspace({
   const [localProjects, setLocalProjects] = useState<CloudProject[]>([])
   const [localProjectRef, setLocalProjectRef] = useState<RuntimeProjectSpaceRef | null>(null)
   const [issueTaskError, setIssueTaskError] = useState<string | null>(null)
+  const projectNavigationTokenRef = useRef(0)
   const activeProjectControlled = props.activeProjectRef !== undefined
   const activeProjectStore = props.activeProjectRef?.projectStore
   const activeProjectId = props.activeProjectRef?.projectId
@@ -66,6 +67,7 @@ function SharedCollaborationWorkspace({
 
   const navigate = useCallback(
     (next: CollaborationPlatformLocation) => {
+      const requestToken = ++projectNavigationTokenRef.current
       setLocation(next)
       setLocalProjectRef(null)
       if (location.issueId && !next.issueId) onFocusedItemHandled?.()
@@ -74,9 +76,16 @@ function SharedCollaborationWorkspace({
         return
       }
       if (!api || next.projectId === location.projectId) return
-      void api.projects.get(next.projectId).then(project => {
-        onActiveProjectChange?.(toWeworkCloudExecutionProject(project))
-      })
+      void api.projects
+        .get(next.projectId)
+        .then(project => {
+          if (projectNavigationTokenRef.current !== requestToken) return
+          onActiveProjectChange?.(toWeworkCloudExecutionProject(project))
+        })
+        .catch(error => {
+          if (projectNavigationTokenRef.current !== requestToken) return
+          console.error('[Wework] Failed to open the collaboration project', error)
+        })
     },
     [api, location.issueId, location.projectId, onActiveProjectChange, onFocusedItemHandled]
   )

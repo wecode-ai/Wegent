@@ -123,9 +123,11 @@ Run
 └── trigger: manual | assignment | mention | workflow | automation
 ```
 
-A Human may open any accessible Issue in Wework, select a local workspace, and
-start a Codex Run without first being assigned. Fully manual work records
-activity and Deliverables without fabricating a machine Run.
+A Human may open an Issue in Wework and select a local workspace, but starting
+a Codex Run additionally requires Project execution permission. Issue
+accessibility alone does not authorize execution, while Assignment is not
+required. Fully manual work records activity and Deliverables without
+fabricating a machine Run.
 
 Devices, Executors, and Runtimes are not Members. They do not have durable
 collaboration identities and cannot be Assignment targets or Agents.
@@ -170,6 +172,16 @@ ProjectAgentBinding
 
 Agent identity, Team, capabilities, and default execution policy belong to the
 Workspace. A Project stores only enablement and Project-specific differences.
+
+Authorization fields from the legacy model do not move into
+ProjectAgentBinding. During migration,
+`ProjectChatAgent.created_by_user_id` becomes the human owner and adding actor
+of the Workspace Agent binding (`WorkspaceAgentBinding.owner_user_id` and
+`added_by_user_id`). Existing `LoopItemExecution.executor_owner_user_id`
+remains on the Run and is copied to replacement or resumed Runs. Claim,
+heartbeat, event-reporting, and completion endpoints authorize against that
+Run field, so replacing ProjectChatAgent with ProjectAgentBinding does not
+widen creator-only execution access.
 
 ### Workspace Agents and Project-private Agents
 
@@ -226,14 +238,36 @@ type GhostPluginRef = {
   ref: string
   version?: string
   required: boolean
-  config?: Record<string, unknown>
+  config?: NonSecretPluginConfig
+  credential_refs?: PluginCredentialRef[]
   permissions?: string[]
+}
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
+type NonSecretPluginConfig = Record<string, JsonValue>
+
+type PluginCredentialRef = {
+  name: string
+  ref: string
 }
 ```
 
 A Plugin is a capability package that may expand into Skills, MCP servers,
 Hooks, Tools, and Runtime Requirements. Compiling a Ghost into an effective
 capability manifest must deduplicate entries and validate conflicts.
+
+`config` is persisted execution intent and must conform to the non-secret
+configuration schema declared by the Plugin. Tokens, passwords, private keys,
+and other credentials must never be stored in `config`; they are represented
+only by `credential_refs` and resolved by the local or cloud compiler at
+materialization time.
 
 Only Plugins that affect Agent execution belong to Ghost. UI-only Plugins that
 extend Wework menus, pages, or components remain Wework host extensions.
