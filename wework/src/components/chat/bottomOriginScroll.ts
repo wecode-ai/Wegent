@@ -1,3 +1,6 @@
+// TEMP-DIAG (WORK-447): the app-owned scroll writer, traced with its caller.
+import { scrollDiag, scrollDiagCaller } from './scrollDiagnostics'
+
 export function getDistanceFromBottom(element: HTMLElement, bottomOrigin: boolean): number {
   if (bottomOrigin) {
     return Math.max(0, -element.scrollTop)
@@ -21,6 +24,10 @@ export function setDistanceFromBottom(
   const top = bottomOrigin
     ? -distance
     : Math.max(0, element.scrollHeight - element.clientHeight - distance)
+  scrollDiag(
+    `SET-DISTANCE d=${Math.round(distance)} top=${Math.round(top)} behavior=${behavior} origin=${bottomOrigin ? 'bottom' : 'top'} caller=${scrollDiagCaller()}`,
+    true
+  )
   if (typeof element.scrollTo === 'function') {
     element.scrollTo({ top, behavior })
   } else {

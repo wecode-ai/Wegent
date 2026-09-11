@@ -34,12 +34,14 @@ import {
   getDistanceFromTop,
   setDistanceFromBottom,
 } from './bottomOriginScroll'
+import { describeViewportTop, installScrollPositionTracer, scrollDiag } from './scrollDiagnostics'
 
 const BOTTOM_THRESHOLD = 48
 const SCROLLED_TO_BOTTOM_THRESHOLD = 8
 const STABLE_SCROLL_DELAYS = [0, 50, 150, 300, 600, 1000]
 const STABLE_SCROLL_RELEASE_RETRIES = 12
 const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
+
 interface RuntimeTranscriptGap {
   start: number
   end: number
@@ -308,6 +310,17 @@ function ScrollableMessagePaneContent({
   const userScrollPausedAutoFollowRef = useRef(false)
   const userScrollIntentRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
+  const userViewportAnchorHeightRef = useRef<number | null>(null)
+  // Where the reader put themselves, sampled only while the layout is stable, so a re-measured row
+  // that unmounts the anchor row cannot take the reading position with it.
+  const readerDistanceFromBottomRef = useRef<number | null>(null)
+  const readerPositionHeightRef = useRef<number | null>(null)
+  const clearUserViewportAnchor = useCallback(() => {
+    userViewportAnchorRef.current = null
+    userViewportAnchorHeightRef.current = null
+    readerDistanceFromBottomRef.current = null
+    readerPositionHeightRef.current = null
+  }, [])
   const lastScrollPositionRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
@@ -363,6 +376,44 @@ function ScrollableMessagePaneContent({
   useLayoutEffect(() => {
     activeScrollRefRef.current = scrollRef
   }, [scrollRef])
+
+  // TEMP-DIAG (WORK-447): trace every scroll-position write on the real scroller.
+  useLayoutEffect(() => {
+    const scroller = activeScrollRefRef.current.current
+    if (!scroller) return
+    installScrollPositionTracer(scroller)
+  }, [scrollRef])
+
+  // TEMP-DIAG (WORK-447): the scroller can be attached after the first layout commit, so arm
+  // the tracer lazily too. The first scroll event is the earliest moment it can be needed.
+  useLayoutEffect(() => {
+    let frame = 0
+    let attempts = 0
+    const arm = () => {
+      const scroller = activeScrollRefRef.current.current
+      if (scroller) {
+        installScrollPositionTracer(scroller)
+        scrollDiag(
+          `TRACER-LATE-ARM attempts=${attempts} origin=${scroller.dataset.scrollOrigin ?? 'none'}`
+        )
+        return
+      }
+      attempts += 1
+      if (attempts > 180) return
+      frame = requestAnimationFrame(arm)
+    }
+    frame = requestAnimationFrame(arm)
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [scrollRef])
+
+  // TEMP-DIAG (WORK-447): the message list renders nothing while the transcript is empty,
+  // which collapses the scroller and silently drops the reading position.
+  useLayoutEffect(() => {
+    if (messages.length > 0) return
+    scrollDiag(`LIST-EMPTY loading=${loading}`, true)
+  }, [loading, messages.length])
 
   const stopStreamingFollow = useCallback(() => {
     if (streamingFollowFrameRef.current !== null) {
@@ -421,6 +472,10 @@ function ScrollableMessagePaneContent({
       previousOverflowAnchor: scroller.style.overflowAnchor,
     }
     scroller.style.overflowAnchor = 'none'
+    scrollDiag(
+      `PRESERVE d=${Math.round(getDistanceFromBottom(scroller, bottomOrigin))} h=${Math.round(scroller.scrollHeight)}`,
+      true
+    )
   }, [bottomOrigin, clearScheduledScrolls, currentScrollKey, releasePendingLayoutScrollPosition])
 
   const handleTurnNavigationScrollTargetChange = useCallback(
@@ -476,6 +531,7 @@ function ScrollableMessagePaneContent({
         autoLoadedTranscriptGapKeysRef.current.add(gapKey)
       }
 
+      scrollDiag(`LOAD-GAP ${gapKey} reason=${reason}`, true)
       preserveScrollPositionForNextLayout()
       loadingTranscriptGapKeyRef.current = gapKey
       setLoadingTranscriptGapKey(gapKey)
@@ -585,7 +641,7 @@ function ScrollableMessagePaneContent({
       // keep the pause so the follow engine does not yank the viewport back to the bottom.
       if (isScrolledToBottom && !scrolledUp && (!pausedBeforeUpdate || options.forceSave)) {
         userScrollPausedAutoFollowRef.current = false
-        userViewportAnchorRef.current = null
+        clearUserViewportAnchor()
       } else if (options.forceSave) {
         userScrollPausedAutoFollowRef.current = true
       }
@@ -603,6 +659,7 @@ function ScrollableMessagePaneContent({
     [
       bottomOrigin,
       clearScheduledScrolls,
+      clearUserViewportAnchor,
       currentScrollKey,
       messages.length,
       saveCurrentScrollPosition,
@@ -612,15 +669,27 @@ function ScrollableMessagePaneContent({
   const restorePendingLayoutScrollPosition = useCallback(() => {
     const scroller = activeScrollRefRef.current.current
     const pending = pendingLayoutScrollPositionRef.current
-    if (!scroller || !pending) return false
+    if (!scroller || !pending) {
+      scrollDiag(`RESTORE skip (no scroller/pending)`)
+      return false
+    }
     if (pending.conversationKey !== currentScrollKey) {
+      scrollDiag(`RESTORE drop (key mismatch)`, true)
       releasePendingLayoutScrollPosition()
       return false
     }
     if (Math.abs(scroller.scrollHeight - pending.scrollHeightPx) < 0.5) {
+      scrollDiag(
+        `RESTORE skip (height unchanged) pending_d=${Math.round(pending.distanceFromBottomPx)}`
+      )
       return false
     }
 
+    const beforeDistance = getDistanceFromBottom(scroller, bottomOrigin)
+    scrollDiag(
+      `RESTORE apply pending_d=${Math.round(pending.distanceFromBottomPx)} now_d=${Math.round(beforeDistance)} pending_h=${Math.round(pending.scrollHeightPx)} now_h=${Math.round(scroller.scrollHeight)}`,
+      true
+    )
     releasePendingLayoutScrollPosition()
     setDistanceFromBottom(scroller, pending.distanceFromBottomPx, 'auto', bottomOrigin)
     lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
@@ -632,6 +701,10 @@ function ScrollableMessagePaneContent({
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
       const element = activeScrollRefRef.current.current
       if (!element) return
+      scrollDiag(
+        `SET-BOTTOM behavior=${behavior} before_d=${Math.round(getDistanceFromBottom(element, bottomOrigin))}`,
+        true
+      )
       stopStreamingFollow()
 
       if (bottomOrigin) {
@@ -661,16 +734,20 @@ function ScrollableMessagePaneContent({
       }
       isAtBottomRef.current = true
       userScrollPausedAutoFollowRef.current = false
-      userViewportAnchorRef.current = null
+      clearUserViewportAnchor()
       setShowScrollButton(false)
     },
-    [bottomOrigin, currentScrollKey, stopStreamingFollow]
+    [bottomOrigin, clearUserViewportAnchor, currentScrollKey, stopStreamingFollow]
   )
 
   const restoreSavedScrollPosition = useCallback(
     (key: string, snapshot = getConversationScrollSnapshot(key)) => {
       const element = activeScrollRefRef.current.current
       if (!element || !snapshot) return
+      scrollDiag(
+        `RESTORE-SAVED key=${key} pinned=${snapshot.pinnedToBottom} saved_d=${Math.round(snapshot.distanceFromBottomPx)} now_d=${Math.round(getDistanceFromBottom(element, bottomOrigin))}`,
+        true
+      )
 
       setDistanceFromBottom(
         element,
@@ -719,6 +796,13 @@ function ScrollableMessagePaneContent({
   const followStreamingToBottom = useCallback(() => {
     const element = activeScrollRefRef.current.current
     if (!element) return
+    {
+      const topOriginTarget = Math.max(0, element.scrollHeight - element.clientHeight)
+      const lag = bottomOrigin
+        ? getDistanceFromBottom(element, true)
+        : Math.max(0, topOriginTarget - element.scrollTop)
+      scrollDiag(`SPRING start lag=${Math.round(lag)}`, true)
+    }
     if (
       !streamingFollowActive ||
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
@@ -814,9 +898,15 @@ function ScrollableMessagePaneContent({
     lastScrollPositionRef.current = element ? getDistanceFromTop(element, bottomOrigin) : null
     isAtBottomRef.current = true
     userScrollPausedAutoFollowRef.current = false
-    userViewportAnchorRef.current = null
+    clearUserViewportAnchor()
     requestAnimationFrame(() => setShowScrollButton(false))
-  }, [bottomOrigin, clearScheduledScrolls, currentScrollKey, markCurrentConversationPinnedToBottom])
+  }, [
+    bottomOrigin,
+    clearScheduledScrolls,
+    clearUserViewportAnchor,
+    currentScrollKey,
+    markCurrentConversationPinnedToBottom,
+  ])
 
   const scheduleStableScrollToBottom = useCallback(
     (
@@ -917,23 +1007,34 @@ function ScrollableMessagePaneContent({
     }
     const pendingAssistantResponseStarted =
       pendingAssistantResponseStartRef.current && !autoScrollIsSuspended
+    // Anything the reader did themselves (sending a message, applying guidance, starting a
+    // turn) still has to bring the newest content into view.
+    const userActionBringsNewestIntoView =
+      guidanceMessageApplied ||
+      waitingForAssistantStarted ||
+      latestUserMessageChanged ||
+      assistantResponseStarted ||
+      pendingAssistantResponseStarted ||
+      (lastMessageChanged && lastMessage?.role === 'user')
+    // While the reader is parked in the history of the conversation they are already in, a
+    // transcript (re)load must not restore the snapshot taken before they scrolled up: that
+    // stale distance can be pinned to the bottom and yank the viewport back down.
+    const readerOwnsViewport =
+      !conversationChanged &&
+      userScrollPausedAutoFollowRef.current &&
+      !userActionBringsNewestIntoView
     const shouldRestoreScroll = Boolean(
       initialScrollPosition === 'restore' &&
       currentScrollKey &&
       messages.length > 0 &&
       (conversationChanged || messagesLoaded) &&
-      hasConversationScrollSnapshot(currentScrollKey)
+      hasConversationScrollSnapshot(currentScrollKey) &&
+      !readerOwnsViewport
     )
     const shouldForceBottom =
       !shouldRestoreScroll &&
-      (conversationChanged ||
-        messagesLoaded ||
-        guidanceMessageApplied ||
-        waitingForAssistantStarted ||
-        latestUserMessageChanged ||
-        assistantResponseStarted ||
-        pendingAssistantResponseStarted ||
-        (lastMessageChanged && lastMessage?.role === 'user'))
+      !readerOwnsViewport &&
+      (conversationChanged || messagesLoaded || userActionBringsNewestIntoView)
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
@@ -944,8 +1045,16 @@ function ScrollableMessagePaneContent({
     previousWaitingForAssistantRef.current = isWaitingForAssistant
     hasRenderedRef.current = true
 
+    // TEMP-DIAG (WORK-447): record what the effects below are about to do while the reader is
+    // parked in the history, so an unexpected position reset can be attributed.
+    if (userScrollPausedAutoFollowRef.current) {
+      scrollDiag(
+        `MSGS paused changed=${conversationChanged} loaded=${messagesLoaded} restore=${shouldRestoreScroll} forceBottom=${shouldForceBottom} atBottom=${isAtBottomRef.current} guidance=${guidanceMessageApplied} waiting=${waitingForAssistantStarted} readerOwns=${readerOwnsViewport}`
+      )
+    }
+
     if (conversationChanged) {
-      userViewportAnchorRef.current = null
+      clearUserViewportAnchor()
       restoredScrollSnapshotRef.current = null
       virtualInitialPositionOwnerRef.current = null
       preserveLatestUserTurnRef.current = false
@@ -987,7 +1096,7 @@ function ScrollableMessagePaneContent({
       restoredScrollSnapshotRef.current = null
       pendingAssistantResponseStartRef.current = false
       userScrollPausedAutoFollowRef.current = false
-      userViewportAnchorRef.current = null
+      clearUserViewportAnchor()
       if (virtualScrollOwnsInitialPosition && (conversationChanged || messagesLoaded)) {
         adoptVirtualBottomPosition()
         return
@@ -1037,6 +1146,7 @@ function ScrollableMessagePaneContent({
     autoScrollSuspended,
     currentScrollKey,
     clearScheduledScrolls,
+    clearUserViewportAnchor,
     externalScrollRef,
     followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
@@ -1111,21 +1221,62 @@ function ScrollableMessagePaneContent({
     }
   }, [scrollStateFrameSignature, updateScrollState])
 
-  const captureUserViewportAnchor = useCallback(() => {
+  const captureUserViewportAnchor = useCallback((options: { force?: boolean } = {}) => {
     const scroller = activeScrollRefRef.current.current
     const content = contentRef.current
     if (!scroller || !content) return
-    userViewportAnchorRef.current = createUserViewportAnchor(scroller, content)
+    const anchor = createUserViewportAnchor(scroller, content)
+    // A transient layout state can leave nothing on screen right after a re-measured row moved
+    // the viewport; that must not erase the position the reader last chose.
+    if (!anchor) return
+    const height = scroller.scrollHeight
+    if (
+      !options.force &&
+      userViewportAnchorHeightRef.current !== null &&
+      userViewportAnchorHeightRef.current !== height
+    ) {
+      // The content changed size in this same frame, so this anchor already describes the
+      // position a re-measured row produced. Keep the older baseline: it is what lets
+      // `restoreUserViewportAnchor` see how far that row dragged the viewport.
+      scrollDiag(
+        `CAPTURE-ANCHOR skip (height changed ${Math.round(userViewportAnchorHeightRef.current)} -> ${Math.round(height)})`
+      )
+      return
+    }
+    userViewportAnchorRef.current = anchor
+    userViewportAnchorHeightRef.current = height
+    scrollDiag(`CAPTURE-ANCHOR ${anchor.messageId} scrollTop=${Math.round(scroller.scrollTop)}`)
   }, [])
 
   const restoreUserViewportAnchor = useCallback(() => {
     const scroller = activeScrollRefRef.current.current
     const content = contentRef.current
     const anchor = userViewportAnchorRef.current
-    if (!scroller || !content || !anchor) return
+    if (!scroller || !content || !anchor) {
+      scrollDiag(`ANCHOR skip (no refs/anchor=${anchor ? anchor.messageId : 'null'})`)
+      return
+    }
 
     const anchorElement = findUserViewportAnchor(content, anchor)
-    if (!anchorElement) return
+    if (!anchorElement) {
+      // The anchor row is gone, so the only thing left to restore is where the reader had put
+      // themselves: a re-measured row above the viewport can otherwise drag them to the bottom.
+      userViewportAnchorHeightRef.current = scroller.scrollHeight
+      const readerDistance = readerDistanceFromBottomRef.current
+      const currentDistance = getDistanceFromBottom(scroller, bottomOrigin)
+      if (readerDistance === null || Math.abs(currentDistance - readerDistance) < 1) {
+        scrollDiag(`ANCHOR skip (message not mounted: ${anchor.messageId})`, true)
+        return
+      }
+      scrollDiag(
+        `ANCHOR-FALLBACK d ${Math.round(currentDistance)} -> ${Math.round(readerDistance)} (${anchor.messageId} unmounted)`,
+        true
+      )
+      setDistanceFromBottom(scroller, readerDistance, 'auto', bottomOrigin)
+      lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
+      captureUserViewportAnchor({ force: true })
+      return
+    }
     const anchorRect =
       anchor.textOffset === null
         ? anchorElement.getBoundingClientRect()
@@ -1133,10 +1284,22 @@ function ScrollableMessagePaneContent({
           anchorElement.getBoundingClientRect())
     const offsetFromScrollerTop = anchorRect.top - scroller.getBoundingClientRect().top
     const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
-    if (Math.abs(offsetDelta) < 0.5) return
+    // This layout change is now accounted for, so a later capture may re-baseline again.
+    userViewportAnchorHeightRef.current = scroller.scrollHeight
+    if (Math.abs(offsetDelta) < 0.5) {
+      scrollDiag(`ANCHOR skip (delta~0: ${Math.round(offsetDelta)})`)
+      return
+    }
+    scrollDiag(
+      `ANCHOR-RESTORE delta=${Math.round(offsetDelta)} d_before=${Math.round(getDistanceFromBottom(scroller, bottomOrigin))}`,
+      true
+    )
     scroller.scrollTop += offsetDelta
     lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
-  }, [bottomOrigin])
+    // The reader is settled again where this capture was taken, so the next layout change has to
+    // measure from here rather than from a baseline that already includes this correction.
+    captureUserViewportAnchor({ force: true })
+  }, [bottomOrigin, captureUserViewportAnchor])
 
   const handleContentLayoutChange = useCallback(() => {
     if (virtualInitialPositionOwnerRef.current?.key === currentScrollKey) {
@@ -1161,6 +1324,15 @@ function ScrollableMessagePaneContent({
     }
 
     if (userScrollPausedAutoFollowRef.current) {
+      {
+        const el = activeScrollRefRef.current.current
+        scrollDiag(
+          `LAYOUT paused d=${el ? Math.round(getDistanceFromBottom(el, bottomOrigin)) : -1} -> anchor`
+        )
+      }
+      // The reader owns the viewport, so measure what this layout did to the row they were reading
+      // and put it back. Measuring the DOM after the layout lands keeps the text still without
+      // predicting how far a re-measured row moved it.
       restoreUserViewportAnchor()
       return
     }
@@ -1170,6 +1342,13 @@ function ScrollableMessagePaneContent({
       (currentScrollKey !== null &&
         getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
     if (shouldFollowBottom) {
+      {
+        const el = activeScrollRefRef.current.current
+        scrollDiag(
+          `LAYOUT follow-bottom d=${el ? Math.round(getDistanceFromBottom(el, bottomOrigin)) : -1} key=${followingBottomKeyRef.current === currentScrollKey} pinned=${currentScrollKey !== null && getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true}`,
+          true
+        )
+      }
       if (streamingFollowActive && !explicitBottomFollowRef.current) {
         followStreamingToBottom()
       } else {
@@ -1187,6 +1366,7 @@ function ScrollableMessagePaneContent({
     }
   }, [
     autoScrollSuspended,
+    bottomOrigin,
     currentScrollKey,
     followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
@@ -1205,6 +1385,12 @@ function ScrollableMessagePaneContent({
     if (!content || !scroller || typeof ResizeObserver === 'undefined') return
 
     const resizeObserver = new ResizeObserver(() => {
+      // TEMP-DIAG (WORK-447): the scroller ref can be attached after the first layout commit.
+      const activeScroller = activeScrollRefRef.current.current
+      if (activeScroller) installScrollPositionTracer(activeScroller)
+      scrollDiag(
+        `RO mounted=${content.querySelectorAll('[data-message-id]').length} scrollTop=${Math.round(scroller.scrollTop)} origin=${bottomOrigin ? 'bottom' : 'top'}`
+      )
       handleContentLayoutChange()
     })
 
@@ -1214,7 +1400,7 @@ function ScrollableMessagePaneContent({
       resizeObserver.observe(footer)
     }
     return () => resizeObserver.disconnect()
-  }, [handleContentLayoutChange, stickyFooter])
+  }, [bottomOrigin, handleContentLayoutChange, stickyFooter])
 
   useEffect(
     () => () => {
@@ -1227,7 +1413,7 @@ function ScrollableMessagePaneContent({
   const handleScrollToBottom = () => {
     userScrollIntentRef.current = false
     userScrollPausedAutoFollowRef.current = false
-    userViewportAnchorRef.current = null
+    clearUserViewportAnchor()
     preserveLatestUserTurnRef.current = false
     explicitBottomFollowRef.current = true
     scheduleStableScrollToBottom('smooth', {
@@ -1259,6 +1445,28 @@ function ScrollableMessagePaneContent({
 
     const userInitiated = userScrollIntentRef.current
     userScrollIntentRef.current = false
+    {
+      const el = activeScrollRefRef.current.current
+      // TEMP-DIAG (WORK-447): the scroller ref can be attached after the first layout commit.
+      if (el) installScrollPositionTracer(el)
+      if (el) {
+        // Remember where the reader put themselves, but only from a report whose content height
+        // matches the previous one: a scroll event that lands together with a re-measured row
+        // already carries that row's drag and would poison the recorded position.
+        const height = el.scrollHeight
+        if (
+          userInitiated &&
+          userScrollPausedAutoFollowRef.current &&
+          readerPositionHeightRef.current === height
+        ) {
+          readerDistanceFromBottomRef.current = getDistanceFromBottom(el, bottomOrigin)
+        }
+        readerPositionHeightRef.current = height
+      }
+      scrollDiag(
+        `SCROLL user=${userInitiated} d=${el ? Math.round(getDistanceFromBottom(el, bottomOrigin)) : -1} h=${el ? Math.round(el.scrollHeight) : -1} paused=${userScrollPausedAutoFollowRef.current} top=${el ? describeViewportTop(contentRef.current, el) : 'none'}`
+      )
+    }
     if (userInitiated) {
       preserveLatestUserTurnRef.current = false
       const pending = pendingLayoutScrollPositionRef.current

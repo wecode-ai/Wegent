@@ -8,6 +8,7 @@ import {
 } from '@tanstack/react-virtual'
 import { useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
+import { scrollDiag } from './scrollDiagnostics'
 
 const UNINITIALIZED_POSITION = Symbol('uninitialized-bottom-origin-position')
 
@@ -80,6 +81,11 @@ export function useBottomOriginVirtualizer<
     const maximumOffset = getVirtualizerMaximumOffset(instance, element)
     const targetOffset = Math.min(maximumOffset, Math.max(0, offset + adjustments))
     const distanceFromBottom = maximumOffset - targetOffset
+    // TEMP-DIAG (WORK-447): the virtualizer's own scroll writer.
+    scrollDiag(
+      `VDISPATCH offset=${Math.round(offset)} adjustments=${Math.round(adjustments)} target=${Math.round(targetOffset)} d=${Math.round(distanceFromBottom)} behavior=${String(behavior)}`,
+      true
+    )
     element.scrollTo({
       top: distanceFromBottom === 0 ? 0 : -distanceFromBottom,
       behavior,
@@ -120,17 +126,20 @@ export function useBottomOriginVirtualizer<
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = bottomOrigin
     ? (item, delta, instance) => {
         const element = instance.scrollElement
-        if (
-          !element ||
-          element.scrollTop >= -0.5 ||
-          delta <= 0 ||
-          !bottomOriginAppendOnlyItemKeys?.has(item.key)
-        ) {
-          return false
-        }
-
+        if (!element) return false
         const offset = getVirtualizerOffset(instance, element)
-        if (item.start < offset) {
+        const streamingRow = bottomOriginAppendOnlyItemKeys?.has(item.key) === true
+        if (element && element.scrollTop < -0.5 && Math.abs(delta) >= 0.5) {
+          scrollDiag(
+            `ITEM-SIZE key=${String(item.key)} start=${Math.round(item.start)} end=${Math.round(item.start + (item.size ?? 0))} delta=${Math.round(delta)} streaming=${streamingRow} offset=${Math.round(offset)} client=${element.clientHeight} scrollTop=${Math.round(element.scrollTop)}`,
+            true
+          )
+        }
+        if (element.scrollTop >= -0.5 || delta === 0) return false
+        if (streamingRow && delta > 0 && item.start < offset) {
+          // The streaming row grew past the viewport top while the reader is parked in the
+          // history above it. Grow its spacer with the row so the offset can be shifted
+          // without the scroller clamping.
           const itemElement = instance.elementsCache.get(item.key)
           const listElement = itemElement?.parentElement
           if (listElement instanceof HTMLElement) {
@@ -140,7 +149,13 @@ export function useBottomOriginVirtualizer<
             listElement.style.height = `${Math.max(0, currentHeight + delta)}px`
           }
           element.scrollTop -= delta
+          return false
         }
+
+        // The scroller keeps the distance from the start of the content while the content height
+        // changes, so a re-measured row can move the rendered rows with it. The scroll owner
+        // corrects that from the viewport anchor once the layout lands, which measures the move
+        // that actually happened instead of predicting it from `delta`.
         return false
       }
     : shouldAdjustScrollPositionOnItemSizeChange
@@ -191,8 +206,6 @@ function getVirtualizerOffset<TScrollElement extends HTMLElement, TItemElement e
   instance: Virtualizer<TScrollElement, TItemElement>,
   element: TScrollElement
 ): number {
-  return Math.min(
-    getVirtualizerMaximumOffset(instance, element),
-    Math.max(0, getVirtualizerMaximumOffset(instance, element) + element.scrollTop)
-  )
+  const maximumOffset = getVirtualizerMaximumOffset(instance, element)
+  return Math.min(maximumOffset, Math.max(0, maximumOffset + element.scrollTop))
 }

@@ -2266,6 +2266,44 @@ export function createDesktopScenario({
         )
         await new Promise(resolve => setTimeout(resolve, 200))
       }
+
+      // Regression: sweeping upward through the history must keep moving the reader away from
+      // the bottom. Re-measured rows used to drag the viewport back down, which the user saw
+      // as small bounces while reading and as being yanked back to the very bottom.
+      const sweepStart = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation before the fast upward sweep'
+      )
+      const sweepMaximum = Math.max(
+        1,
+        sweepStart.scrollHeight - sweepStart.clientHeight,
+        distanceFromBottom(sweepStart)
+      )
+      let sweepDistanceFromBottom = distanceFromBottom(sweepStart)
+      for (const fraction of [0.25, 0.5, 0.75, 1]) {
+        await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+          value: String(Math.round(sweepMaximum * fraction)),
+        })
+        await new Promise(resolve => setTimeout(resolve, 200))
+        const sweepStep = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          `The completed conversation after fast upward sweep step ${fraction}`
+        )
+        const stepDistanceFromBottom = distanceFromBottom(sweepStep)
+        assert.ok(
+          stepDistanceFromBottom >= sweepDistanceFromBottom - 8,
+          `The fast upward scroll retreated toward the bottom (${Math.round(sweepDistanceFromBottom)}px -> ${Math.round(stepDistanceFromBottom)}px from the bottom)`
+        )
+        sweepDistanceFromBottom = stepDistanceFromBottom
+      }
+      await capture(control, 'streaming-text-19-fast-up-scroll-stable.png')
+      assert.ok(
+        sweepDistanceFromBottom > 0,
+        'The fast upward sweep never left the bottom of the completed conversation'
+      )
+
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
       await waitForBottom(
         control,

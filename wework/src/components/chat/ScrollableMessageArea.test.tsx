@@ -479,6 +479,76 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
+  test('restores the reader position when a remeasure unmounts the anchor row', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    const originalResizeObserver = globalThis.ResizeObserver
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      render(
+        <ScrollableMessageArea
+          conversationKey="anchor-unmounted"
+          messages={[
+            {
+              id: 'anchor-unmounted-message',
+              role: 'assistant',
+              content: '被卸载掉的长消息',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      const scroller = screen.getByTestId('chat-message-scroll-area')
+      const anchor = screen.getByText('被卸载掉的长消息').closest('[data-scroll-anchor]')!
+      Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+      Object.defineProperty(scroller, 'scrollHeight', { value: 2_000, configurable: true })
+      Object.defineProperty(scroller, 'scrollTop', {
+        value: 300,
+        writable: true,
+        configurable: true,
+      })
+      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+        scroller.scrollTop = Number(top)
+      })
+      mockRect(scroller, 100, 300)
+      mockScrollRelativeRect(anchor, scroller, 450, 40)
+
+      // The reader scrolls up twice at a stable height, so the second report records where they
+      // put themselves.
+      scroller.scrollTop = 300
+      fireEvent.wheel(scroller, { deltaY: -120 })
+      fireEvent.scroll(scroller)
+      scroller.scrollTop = 250
+      fireEvent.wheel(scroller, { deltaY: -120 })
+      fireEvent.scroll(scroller)
+
+      // A re-measured row drags the scroller to the very bottom and unmounts the anchor row, so
+      // the anchor itself can no longer be found.
+      anchor.closest('[data-message-id]')?.remove()
+      scroller.scrollTop = 1_800
+      act(() => {
+        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      })
+
+      // The reader is back on the text they were reading, not on the bottom the drag left them.
+      expect(scroller.scrollTop).toBe(250)
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    }
+  })
+
   test('keeps a visible text anchor fixed when paused content remeasures', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
@@ -528,7 +598,10 @@ describe('ScrollableMessageArea', () => {
       scroller.scrollTop = 1000
       fireEvent.scroll(scroller)
       scroller.scrollTop = 300
-      fireEvent.wheel(scroller)
+      scroller.scrollTop = 1000
+      fireEvent.scroll(scroller)
+      scroller.scrollTop = 300
+      fireEvent.wheel(scroller, { deltaY: -80 })
       fireEvent.scroll(scroller)
       ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
@@ -539,6 +612,71 @@ describe('ScrollableMessageArea', () => {
       })
 
       expect(scroller.scrollTo).not.toHaveBeenCalled()
+      expect(scroller.scrollTop).toBe(540)
+      expect(anchor.getBoundingClientRect().top).toBe(150)
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    }
+  })
+
+  test('keeps the paused anchor baseline when a re-measure drags the scroller first', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    const originalResizeObserver = globalThis.ResizeObserver
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      render(
+        <ScrollableMessageArea
+          conversationKey="remeasure-drag"
+          messages={[
+            {
+              id: 'remeasure-drag-message',
+              role: 'assistant',
+              content: '重新测量时正在阅读的长消息',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      const scroller = screen.getByTestId('chat-message-scroll-area')
+      const anchor = screen.getByText('重新测量时正在阅读的长消息').closest('[data-scroll-anchor]')!
+      Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+      Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+      Object.defineProperty(scroller, 'scrollTop', {
+        value: 300,
+        writable: true,
+        configurable: true,
+      })
+      mockRect(scroller, 100, 300)
+      mockScrollRelativeRect(anchor, scroller, 450, 40)
+
+      fireEvent.wheel(scroller)
+      fireEvent.scroll(scroller)
+
+      // A re-measured row shortens the content above the reader. The browser drags the viewport
+      // toward the bottom and reports a scroll event before the ResizeObserver callback runs;
+      // that event must not re-baseline the anchor onto the already-dragged position.
+      Object.defineProperty(scroller, 'scrollHeight', { value: 1440, configurable: true })
+      mockScrollRelativeRect(anchor, scroller, 690, 40)
+      scroller.scrollTop = 400
+      fireEvent.wheel(scroller, { deltaY: -80 })
+      fireEvent.scroll(scroller)
+      act(() => {
+        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      })
+
       expect(scroller.scrollTop).toBe(540)
       expect(anchor.getBoundingClientRect().top).toBe(150)
     } finally {
