@@ -31,7 +31,7 @@ import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
-import { sendE2EKey } from './e2e-keyboard.js'
+import { sendE2EKey, type E2EKeyPhase } from './e2e-keyboard.js'
 import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
@@ -544,12 +544,20 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.pressKey', params => {
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const phase = optionalStringParam(params, 'phase') ?? 'press'
+    if (!['press', 'down', 'up'].includes(phase)) {
+      throw new HostCapabilityError('e2e_invalid_key_phase', 'Unsupported verification key phase')
+    }
     const contents = e2eHost.captureTarget(label)
     if (!contents) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Verification view is unavailable')
     }
-    return sendE2EKey(contents, stringParam(params, 'key'), () =>
-      label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)
+    return sendE2EKey(
+      contents,
+      stringParam(params, 'key'),
+      () => (label === 'main' ? e2eHost.focusMainWindow() : e2eHost.focusWindow(label)),
+      process.env,
+      phase as E2EKeyPhase
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())

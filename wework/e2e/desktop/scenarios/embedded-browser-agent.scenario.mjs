@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { createServer as createHttpServer } from 'node:http'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import {
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
+} from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -177,6 +182,31 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
+}
+
+async function startForeignBridgeRuntime(runtimePath) {
+  const server = createHttpServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ ok: false, error: 'Foreign embedded browser bridge' }))
+  })
+  await new Promise((resolvePromise, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolvePromise)
+  })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string', 'Foreign bridge did not expose a TCP address')
+  await writeFile(
+    runtimePath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      pid: process.pid,
+      address: `127.0.0.1:${address.port}`,
+      token: 'foreign-embedded-browser-bridge',
+      startedAtUnixMs: Date.now(),
+    })}\n`,
+    'utf8'
+  )
+  return () => new Promise(resolvePromise => server.close(resolvePromise))
 }
 
 async function callBridge(identity, payload, label = BROWSER_LABEL) {
@@ -512,6 +542,32 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'The fresh local task did not expose its task-scoped embedded browser label'
       )
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
+      const originalBridgeRuntime = await readFile(bridgeIdentity.runtimePath, 'utf8')
+      const stopForeignBridge = await startForeignBridgeRuntime(bridgeIdentity.runtimePath)
+      try {
+        control.setScenario('embedded_browser_bridge_collision')
+        await control.command(
+          'fill',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            value: EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
+          }
+        )
+        await control.command(
+          'press',
+          '[data-testid="chat-message-input"][contenteditable="true"]',
+          {
+            key: 'Enter',
+          }
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
+          timeoutMs: uiTimeoutMs,
+        })
+      } finally {
+        await writeFile(bridgeIdentity.runtimePath, originalBridgeRuntime, 'utf8')
+        await stopForeignBridge()
+      }
       const bridgeCall = payload =>
         withTimeout(
           callBridge(bridgeIdentity, { label: browserLabel, ...payload }),

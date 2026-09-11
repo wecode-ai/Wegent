@@ -35,12 +35,23 @@ describe('isolated native keyboard verification', () => {
     expect(await sendE2EKey(contents, 'Shift+Tab', focusWindow, environment)).toEqual({
       backend: 'electron-send-input-event',
       key: 'Shift+Tab',
+      phase: 'press',
     })
     expect(focusWindow).toHaveBeenCalledOnce()
     expect(view.focus).toHaveBeenCalledOnce()
     expect(view.sendInputEvent.mock.calls).toEqual([
       [{ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] }],
       [{ type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] }],
+    ])
+  })
+
+  test('keeps native Space pressed until a matching key-up event', async () => {
+    const { view, contents, focusWindow } = fixture()
+    await sendE2EKey(contents, 'Space', focusWindow, environment, 'down')
+    await sendE2EKey(contents, 'Space', focusWindow, environment, 'up')
+    expect(view.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'keyDown', keyCode: 'Space', modifiers: [] }],
+      [{ type: 'keyUp', keyCode: 'Space', modifiers: [] }],
     ])
   })
 

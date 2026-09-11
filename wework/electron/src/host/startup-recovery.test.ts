@@ -20,6 +20,7 @@ function createFixture() {
     },
     clearCache: vi.fn(async () => undefined),
     clearAppStorage: vi.fn(async () => undefined),
+    disablePlugin: vi.fn(async () => undefined),
     log: vi.fn(),
     relaunch: vi.fn(),
     shutdown: vi.fn(),
@@ -66,6 +67,7 @@ describe('StartupRecoveryService', () => {
     expect(dependencies.cloudCredentials.clear).toHaveBeenCalledOnce()
     expect(dependencies.clearCache).toHaveBeenCalledOnce()
     expect(dependencies.clearAppStorage).toHaveBeenCalledOnce()
+    expect(dependencies.disablePlugin).not.toHaveBeenCalled()
     expect(dependencies.rendererStorage.removeByPrefixes).not.toHaveBeenCalled()
     expect(dependencies.relaunch).toHaveBeenCalledOnce()
     expect(dependencies.shutdown).toHaveBeenCalledOnce()
@@ -76,6 +78,17 @@ describe('StartupRecoveryService', () => {
 
     await Promise.all([recovery.run('retry'), recovery.run('app-state')])
 
+    expect(dependencies.rendererStorage.clear).not.toHaveBeenCalled()
+    expect(dependencies.relaunch).toHaveBeenCalledOnce()
+    expect(dependencies.shutdown).toHaveBeenCalledOnce()
+  })
+
+  test('disables one detected plugin before relaunching', async () => {
+    const { dependencies, recovery } = createFixture()
+
+    await recovery.disablePlugin('@wegent/ai-fleet-defense')
+
+    expect(dependencies.disablePlugin).toHaveBeenCalledWith('@wegent/ai-fleet-defense')
     expect(dependencies.rendererStorage.clear).not.toHaveBeenCalled()
     expect(dependencies.relaunch).toHaveBeenCalledOnce()
     expect(dependencies.shutdown).toHaveBeenCalledOnce()

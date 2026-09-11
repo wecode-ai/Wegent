@@ -77,8 +77,12 @@ jest.mock('next/image', () => ({
   __esModule: true,
   default: ({
     priority: _priority,
+    unoptimized: _unoptimized,
     ...props
-  }: React.ImgHTMLAttributes<HTMLImageElement> & { priority?: boolean }) => {
+  }: React.ImgHTMLAttributes<HTMLImageElement> & {
+    priority?: boolean
+    unoptimized?: boolean
+  }) => {
     // Use a plain img in tests to avoid Next.js image runtime requirements.
     // eslint-disable-next-line @next/next/no-img-element
     return <img {...props} alt={props.alt} />

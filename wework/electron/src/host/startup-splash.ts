@@ -127,12 +127,16 @@ export class StartupSplash {
     return this.closePromise
   }
 
-  showError(): Promise<void> {
+  showError(pluginName: string | null = null): Promise<void> {
     if (this.showErrorPromise) return this.showErrorPromise
     const target = this.options.window
     if (target.webContents.isDestroyed()) return Promise.resolve()
     this.showErrorPromise = target.webContents
-      .executeJavaScript("window.dispatchEvent(new CustomEvent('wework-startup-error')); true")
+      .executeJavaScript(
+        `window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: { pluginName: ${JSON.stringify(
+          pluginName
+        )} } })); true`
+      )
       .then(() => undefined)
       .finally(() => {
         this.showErrorPromise = null

@@ -252,11 +252,11 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function DemoEnvironmentSection({ info }) {
+    function DemoConversationSummary() {
       return createElement(
         'div',
-        { 'data-testid': 'dsh-extension-demo-environment-section' },
-        info?.workspacePath || 'Demo environment'
+        { 'data-testid': 'dsh-extension-demo-summary-section' },
+        'Demo summary section'
       )
     }
 
@@ -313,12 +313,12 @@ window.__ModuleLoader__.load({
         component: DemoTaskStatus,
       },
       {
-        slot: 'wework.environment.section',
+        slot: 'wework.conversation.summary',
         descriptor: {
-          id: 'dsh-extension-demo.environment-section',
-          order: 90,
+          id: 'dsh-extension-demo.summary-section',
+          order: 0,
         },
-        component: DemoEnvironmentSection,
+        component: DemoConversationSummary,
       },
       {
         slot: 'wework.board.card.status',

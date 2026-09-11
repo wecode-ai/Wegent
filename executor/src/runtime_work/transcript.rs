@@ -182,6 +182,8 @@ impl<'a> TurnTranscriptProjector<'a> {
             | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
                 self.push_workbench_block(item)
             }
+            "collabagenttoolcall" => self.project_collab_agent_tool_call(item),
+            "subagentactivity" => self.project_subagent_activity(item),
             "functioncalloutput"
             | "customtoolcalloutput"
             | "toolsearchoutput"
@@ -213,9 +215,10 @@ impl<'a> TurnTranscriptProjector<'a> {
             item_type if is_codex_context_compaction_item_type(item_type) => {
                 self.push_workbench_block(item)
             }
-            "agentmessage" | "agentmessageevent" => {
-                self.project_assistant_message(item, has_later_process)
+            "agentmessage" | "agentmessageevent" if !self.project_subagent_message(item) => {
+                self.project_assistant_message(item, has_later_process);
             }
+            "agentmessage" | "agentmessageevent" => {}
             "message" => self.project_role_message(item, has_later_process),
             _ if is_default_tool_output_item(item) => merge_tool_output(
                 &mut self.assistant.blocks,
@@ -298,6 +301,149 @@ impl<'a> TurnTranscriptProjector<'a> {
         ) {
             self.assistant.blocks.push(block);
         }
+    }
+
+    fn project_collab_agent_tool_call(&mut self, item: &Value) {
+        let tool = string_field(item, "tool").unwrap_or_default();
+        let agent_ids = collab_agent_ids(item);
+        if tool.eq_ignore_ascii_case("spawnAgent") {
+            for agent_id in agent_ids {
+                self.assistant.blocks.push(collab_subagent_block(
+                    item,
+                    &self.subtask_id,
+                    &agent_id,
+                    self.created_at,
+                ));
+            }
+            return;
+        }
+        if !tool.eq_ignore_ascii_case("wait") {
+            self.push_workbench_block(item);
+            return;
+        }
+        for agent_id in agent_ids {
+            let status = collab_agent_block_status(item, &agent_id);
+            if let Some(block) = self.assistant.blocks.iter_mut().rev().find(|block| {
+                block.get("type").and_then(Value::as_str) == Some("subagent")
+                    && block
+                        .get("agent_thread_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value == agent_id)
+            }) {
+                if let Some(object) = block.as_object_mut() {
+                    object.insert("status".to_owned(), Value::String(status.to_owned()));
+                    object.insert(
+                        "agent_status".to_owned(),
+                        Value::String(if status == "done" {
+                            "done".to_owned()
+                        } else if status == "error" {
+                            "interrupted".to_owned()
+                        } else {
+                            "running".to_owned()
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
+    fn project_subagent_activity(&mut self, item: &Value) {
+        let Some(agent_id) =
+            string_field(item, "agentThreadId").or_else(|| string_field(item, "agent_thread_id"))
+        else {
+            return;
+        };
+        let agent_path =
+            string_field(item, "agentPath").or_else(|| string_field(item, "agent_path"));
+        let title = agent_path
+            .as_deref()
+            .and_then(|path| path.rsplit('/').find(|segment| !segment.is_empty()))
+            .map(ToOwned::to_owned);
+        let status = subagent_activity_status(item);
+        if let Some(block) = self.assistant.blocks.iter_mut().rev().find(|block| {
+            block.get("type").and_then(Value::as_str) == Some("subagent")
+                && block
+                    .get("agent_thread_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value == agent_id)
+        }) {
+            if let Some(object) = block.as_object_mut() {
+                if let Some(agent_path) = agent_path {
+                    object.insert("agent_path".to_owned(), Value::String(agent_path));
+                }
+                if let Some(title) = title {
+                    object.insert("title".to_owned(), Value::String(title));
+                }
+                object.insert("status".to_owned(), Value::String(status.to_owned()));
+                object.insert(
+                    "agent_status".to_owned(),
+                    Value::String(subagent_agent_status(status).to_owned()),
+                );
+            }
+            return;
+        }
+
+        let mut block = collab_subagent_block(item, &self.subtask_id, &agent_id, self.created_at);
+        if let Some(object) = block.as_object_mut() {
+            object.insert("status".to_owned(), Value::String(status.to_owned()));
+            object.insert(
+                "agent_status".to_owned(),
+                Value::String(subagent_agent_status(status).to_owned()),
+            );
+            if let Some(agent_path) = agent_path {
+                object.insert("agent_path".to_owned(), Value::String(agent_path));
+            }
+            if let Some(title) = title {
+                object.insert("title".to_owned(), Value::String(title));
+            }
+        }
+        self.assistant.blocks.push(block);
+    }
+
+    fn project_subagent_message(&mut self, item: &Value) -> bool {
+        let Some(author) = string_field(item, "author") else {
+            return false;
+        };
+        let Some(content) = extract_text(item).and_then(subagent_message_payload) else {
+            return false;
+        };
+        let Some(block) = self.assistant.blocks.iter_mut().rev().find(|block| {
+            block.get("type").and_then(Value::as_str) == Some("subagent")
+                && block
+                    .get("agent_path")
+                    .and_then(Value::as_str)
+                    .is_some_and(|agent_path| agent_path == author)
+        }) else {
+            return false;
+        };
+        let Some(object) = block.as_object_mut() else {
+            return false;
+        };
+        object.insert("output".to_owned(), Value::String(content.clone()));
+        let block_id = string_field(&Value::Object(object.clone()), "id").unwrap_or_else(|| {
+            format!(
+                "subagent-{}",
+                author
+                    .rsplit('/')
+                    .find(|segment| !segment.is_empty())
+                    .unwrap_or("agent")
+            )
+        });
+        let children = object
+            .entry("children".to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(children) = children.as_array_mut() {
+            children.push(json!({
+                "id": string_field(item, "id").unwrap_or_else(|| format!("{block_id}-message")),
+                "type": "text",
+                "parent_tool_use_id": block_id,
+                "content": content,
+                "status": "done",
+                "timestamp": item_timestamp(item).unwrap_or(self.created_at),
+                "subtask_id": self.subtask_id,
+            }));
+        }
+        true
     }
 
     fn merge_file_changes(&mut self, next: Value) {
@@ -663,6 +809,9 @@ fn copy_missing_fields(object: &mut Map<String, Value>, source: &Value, keys: &[
 }
 
 fn is_root_transcript_item(item: &Value) -> bool {
+    if item_type(item) == "subagentactivity" {
+        return true;
+    }
     transcript_agent_path(item)
         .or_else(|| codex_wrapped_item_payload(item).and_then(transcript_agent_path))
         .map_or(true, |agent_path| agent_path == "/root")
@@ -809,6 +958,117 @@ fn is_substantive_process_item_type(item_type: &str) -> bool {
             "reasoning" | "plan" | "filechange" | "patchapplyend"
         )
         || is_codex_context_compaction_item_type(item_type)
+}
+
+fn collab_agent_ids(item: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    for key in ["receiverThreadIds", "receiver_thread_ids"] {
+        if let Some(values) = item.get(key).and_then(Value::as_array) {
+            for id in values.iter().filter_map(Value::as_str) {
+                if !id.trim().is_empty() && !ids.iter().any(|existing| existing == id) {
+                    ids.push(id.to_owned());
+                }
+            }
+        }
+    }
+    for key in ["agentsStates", "agents_states"] {
+        if let Some(states) = item.get(key).and_then(Value::as_object) {
+            for id in states.keys() {
+                if !id.trim().is_empty() && !ids.iter().any(|existing| existing == id) {
+                    ids.push(id.to_owned());
+                }
+            }
+        }
+    }
+    ids
+}
+
+fn collab_agent_block_status(item: &Value, agent_id: &str) -> &'static str {
+    let state = item
+        .get("agentsStates")
+        .or_else(|| item.get("agents_states"))
+        .and_then(Value::as_object)
+        .and_then(|states| states.get(agent_id));
+    let status = state
+        .and_then(|state| string_field(state, "status"))
+        .or_else(|| string_field(item, "status"))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(
+        status.as_str(),
+        "failed" | "error" | "interrupted" | "cancelled" | "canceled"
+    ) {
+        "error"
+    } else if matches!(status.as_str(), "completed" | "complete" | "done") {
+        "done"
+    } else {
+        "streaming"
+    }
+}
+
+fn subagent_activity_status(item: &Value) -> &'static str {
+    let kind = string_field(item, "kind")
+        .unwrap_or_default()
+        .replace('_', "")
+        .to_ascii_lowercase();
+    if matches!(
+        kind.as_str(),
+        "interrupted" | "cancelled" | "canceled" | "failed" | "error"
+    ) {
+        "error"
+    } else if matches!(kind.as_str(), "completed" | "complete" | "done") {
+        "done"
+    } else {
+        "streaming"
+    }
+}
+
+fn subagent_agent_status(status: &str) -> &'static str {
+    if status == "done" {
+        "done"
+    } else if status == "error" {
+        "interrupted"
+    } else {
+        "running"
+    }
+}
+
+fn subagent_message_payload(content: String) -> Option<String> {
+    let payload = content
+        .split_once("Payload:\n")
+        .map(|(_, payload)| payload)
+        .unwrap_or(&content)
+        .trim();
+    (!payload.is_empty()).then(|| payload.to_owned())
+}
+
+fn collab_subagent_block(
+    item: &Value,
+    subtask_id: &str,
+    agent_id: &str,
+    fallback_timestamp: i64,
+) -> Value {
+    let status = item
+        .get("agentsStates")
+        .or_else(|| item.get("agents_states"))
+        .and_then(Value::as_object)
+        .and_then(|states| states.get(agent_id))
+        .map(|_| collab_agent_block_status(item, agent_id))
+        .unwrap_or("streaming");
+    json!({
+        "id": format!("subagent-{agent_id}"),
+        "type": "subagent",
+        "tool_use_id": format!("subagent-{agent_id}"),
+        "tool_name": "spawnAgent",
+        "agent_id": agent_id,
+        "agent_thread_id": agent_id,
+        "agent_status": subagent_agent_status(status),
+        "description": string_field(item, "prompt"),
+        "status": status,
+        "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
+        "subtask_id": subtask_id,
+        "children": [],
+    })
 }
 
 fn is_substantive_process_item(item: &Value) -> bool {

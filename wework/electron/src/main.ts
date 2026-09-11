@@ -57,6 +57,7 @@ import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
+import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
@@ -601,6 +602,25 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     await contents.loadURL(targetUrl.toString(), {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
+    void desktopRuntime
+      .listCoreDshPlugins()
+      .then(plugins =>
+        detectCoreDshStartupPluginFailure(
+          contents,
+          plugins.filter(plugin => plugin.enabled && plugin.canToggle).map(plugin => plugin.name)
+        )
+      )
+      .then(pluginName => {
+        if (!pluginName || quitting || contents.isDestroyed()) return
+        runtimeError = `Core DSH plugin failed to load: ${pluginName}`
+        rendererHealth.failed('plugin_load_failed')
+        logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
+        notifyRuntimeChanged()
+        return startupSplash?.showError(pluginName)
+      })
+      .catch(error => {
+        console.error('[startup] failed to inspect Core DSH plugin loading', error)
+      })
   } catch (error) {
     primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
@@ -1125,6 +1145,11 @@ function installIpc(): void {
     logStartupStep('startup-recovery-app-state', 'started')
     return requiredStartupRecovery().run('app-state')
   })
+  ipcMain.handle('startup-recovery:disable-plugin', (event, name: unknown) => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    if (typeof name !== 'string' || !name.trim()) throw new Error('Plugin name is required')
+    return requiredStartupRecovery().disablePlugin(name)
+  })
   ipcMain.handle('cloud-credentials:get-device-public-key', () =>
     requiredCloudCredentials().devicePublicKey()
   )
@@ -1327,6 +1352,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  Object.assign(environment, embeddedBrowserBridge.environment())
   desktopControlBridge = new WeworkDesktopControlBridge({
     instanceId: desktopControlInstanceId(),
     instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
@@ -1704,6 +1730,10 @@ if (hasSingleInstanceLock) {
         session.defaultSession.clearStorageData({
           storages: ['serviceworkers', 'cachestorage'],
         }),
+      disablePlugin: async name => {
+        if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+        await desktopRuntime.setCoreDshPluginEnabled(name, false)
+      },
       log: logStartupStep,
       relaunch: () => app.relaunch(),
       shutdown: () => requestApplicationShutdown(() => app.exit(0)),

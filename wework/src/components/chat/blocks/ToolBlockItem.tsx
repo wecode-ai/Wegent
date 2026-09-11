@@ -17,7 +17,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
-import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import type { ProcessingBlock, SubagentBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { ActivityShimmerText } from '../ActivityShimmerText'
 import { AssistantMarkdown } from '../AssistantMarkdown'
@@ -51,7 +51,7 @@ const INLINE_DIFF_MAX_LINES = 96
 const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
 interface ToolBlockItemProps {
-  block: ProcessingBlock
+  block: Exclude<ProcessingBlock, SubagentBlock>
   compact?: boolean
   durationStartedAt?: number
   durationEndAt?: number

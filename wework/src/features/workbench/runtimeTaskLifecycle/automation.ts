@@ -1,4 +1,4 @@
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeGoalStatus, RuntimeTaskAddress } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 
@@ -9,6 +9,7 @@ interface RuntimeTaskLifecycleAutomationEvent {
   type: string
   turnId?: string | null
   transcript?: RuntimePaneTranscript
+  goalStatus?: RuntimeGoalStatus | null
 }
 
 export function registerRuntimeTaskLifecycleAutomation(
@@ -21,6 +22,8 @@ export function registerRuntimeTaskLifecycleAutomation(
       store.turnSettled(detail.address, detail.turnId)
     } else if (detail?.type === 'transcript_received' && detail.transcript) {
       store.syncTranscript(detail.address, detail.transcript)
+    } else if (detail?.type === 'goal_status_received') {
+      store.goalStatusReceived(detail.address, detail.goalStatus ?? null)
     }
   }
   target.addEventListener(E2E_RUNTIME_LIFECYCLE_EVENT, handleLifecycleEvent)
