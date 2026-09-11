@@ -346,11 +346,19 @@ export async function createDesktopScenario({
         const direct = body.tools?.find(tool =>
           (tool.name ?? tool.function?.name ?? '').endsWith('task_token_probe')
         )
+        const directNamespace = body.tools?.find(
+          tool =>
+            tool.type === 'namespace' && tool.name === 'plugin_desktop_task_token_wegent_business'
+        )
         const namespace = requestToolSearchResults(body).find(item =>
           item.tools?.some(tool => tool.name === 'task_token_probe')
         )
         if (direct) {
           events = functionCall(callId, direct.name ?? direct.function.name, {
+            case_id: currentCase,
+          })
+        } else if (directNamespace) {
+          events = namespacedFunctionCall(callId, directNamespace.name, 'task_token_probe', {
             case_id: currentCase,
           })
         } else if (namespace) {
