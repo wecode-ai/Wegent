@@ -68,6 +68,8 @@ class SelectionApplyResult:
     selected_label: str
     changed: bool
     detail: str = ""
+    restored_default: bool = False
+    task_unbound: bool = False
 
 
 def resolve_text_choice(
@@ -261,7 +263,7 @@ class ChannelSelectionService:
                 SelectionKind.AGENT,
                 get_team_display_name(default_team),
                 current is not None,
-                detail="default",
+                restored_default=True,
             )
 
         team_id = self._split_agent_value(value)

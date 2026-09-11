@@ -311,6 +311,6 @@ async def test_apply_agent_default_clears_selection(monkeypatch):
         SelectionKind.AGENT,
         "Task Default",
         True,
-        detail="default",
+        restored_default=True,
     )
     clear_selection.assert_awaited_once_with(7)

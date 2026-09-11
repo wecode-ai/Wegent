@@ -705,6 +705,8 @@ async def _run_selection_card_flow(user_id: int) -> None:
         assert card.space_id == sender_id
         assert card.card_data["view"] == "console"
         assert card.card_data["showTask"] is True
+        default_agent_label = card.card_data["nextTaskAgent"]
+        assert default_agent_label
 
         direct_entries = [
             ("/models", "model", "Claude E2E"),
@@ -815,7 +817,9 @@ async def _run_selection_card_flow(user_id: int) -> None:
             params={"action": "select", "token": agent_token},
         )
         card_params = response["cardData"]["cardParamMap"]
-        assert "已切换到智能体：DingTalk CI Selected Agent" in card_params["status"]
+        assert (
+            "已切换到智能体：DingTalk CI Selected Agent" in card_params["status"]
+        ), card_params["status"]
         assert "当前任务未修改" in card_params["status"]
         assert card_params["currentTaskAgent"] == "未绑定"
         assert card_params["nextTaskAgent"] == (
@@ -889,9 +893,11 @@ async def _run_selection_card_flow(user_id: int) -> None:
             params={"action": "select", "token": default_agent_token},
         )
         card_params = response["cardData"]["cardParamMap"]
-        assert "已恢复默认智能体：DingTalk CI Old Agent" in card_params["status"]
+        assert (
+            f"已恢复默认智能体：{default_agent_label}" in card_params["status"]
+        ), card_params["status"]
         assert card_params["currentTaskAgent"] == "未绑定"
-        assert card_params["nextTaskAgent"] == "DingTalk CI Old Agent"
+        assert card_params["nextTaskAgent"] == default_agent_label
         assert await team_selection_manager.get_selection(user_id) is None
 
         await save_conversation_card_state(

@@ -353,15 +353,14 @@ class DingTalkSelectionCardService:
         state.kind = ""
         state.page = 0
         state.option_values = {}
-        details = set(result.detail.split("|"))
-        if result.kind == SelectionKind.AGENT and "default" in details:
+        if result.kind == SelectionKind.AGENT and result.restored_default:
             state.status = f"已恢复默认智能体：{result.selected_label}"
         else:
             prefix = "已是" if not result.changed else "已切换到"
             state.status = (
                 f"{prefix}{self._kind_label(result.kind)}：{result.selected_label}"
             )
-        if result.kind == SelectionKind.AGENT and "task_unbound" in details:
+        if result.kind == SelectionKind.AGENT and result.task_unbound:
             state.status += "。当前任务未修改，下一条消息将进入新任务创建流程。"
 
     async def _apply_kind(
@@ -398,19 +397,21 @@ class DingTalkSelectionCardService:
                 default_team=self._next_task_team(db, user.id),
             )
             await self._clear_conversation_task(state, user.id)
-            details = [result.detail] if result.detail else []
+            task_unbound = False
             if (
                 session is not None
                 and session.mode == IMSessionMode.TASK
                 and session.active_task_id is not None
             ):
                 await im_session_service.clear_active_task(db, session=session)
-                details.append("task_unbound")
+                task_unbound = True
             return SelectionApplyResult(
                 kind=result.kind,
                 selected_label=result.selected_label,
                 changed=result.changed,
-                detail="|".join(details),
+                detail=result.detail,
+                restored_default=result.restored_default,
+                task_unbound=task_unbound,
             )
         if session is None:
             raise SelectionError("任务只能在私聊会话中切换。")

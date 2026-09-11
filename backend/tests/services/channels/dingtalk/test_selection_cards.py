@@ -151,7 +151,9 @@ async def test_agent_selection_unbinds_task_after_persisting(monkeypatch):
     apply_agent.assert_awaited_once()
     service._clear_conversation_task.assert_awaited_once_with(state, 7)
     clear_active_task.assert_awaited_once_with(db, session=session)
-    assert result.detail == "default|task_unbound"
+    assert result.detail == "default"
+    assert result.restored_default is False
+    assert result.task_unbound is True
 
 
 @pytest.mark.asyncio
@@ -263,6 +265,37 @@ async def test_select_callback_applies_once_and_clears_option_tokens(monkeypatch
     saved = await card_module._get_state("card-1")
     assert saved is not None
     assert saved.option_values == {}
+
+
+@pytest.mark.asyncio
+async def test_agent_status_does_not_treat_default_namespace_as_default_selection(
+    monkeypatch,
+):
+    cache = FakeCache()
+    monkeypatch.setattr(card_module, "cache_manager", cache)
+    state = _state(kind="agent", option_values={"opaque-token": "team:22"})
+    service = _service()
+    service._apply_kind = AsyncMock(
+        return_value=SelectionApplyResult(
+            SelectionKind.AGENT,
+            "Selected Agent",
+            True,
+            detail="default",
+            task_unbound=True,
+        )
+    )
+
+    await service._apply_selection(
+        db=object(),
+        user=SimpleNamespace(id=7),
+        session=SimpleNamespace(user_id=7),
+        state=state,
+        out_track_id="card-1",
+        token="opaque-token",
+    )
+
+    assert state.status.startswith("已切换到智能体：Selected Agent")
+    assert "当前任务未修改" in state.status
 
 
 @pytest.mark.asyncio
