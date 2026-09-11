@@ -93,6 +93,8 @@
   "managedByPlugin": "Managed by plugin or runtime",
   "toolsCount": "{{count}} tools",
   "noTools": "No tools yet. Check the connection and refresh.",
+  "noToolDescription": "No description provided.",
+  "loadingStatus": "Loading status",
   "mcpScopeHint": "Manage this user’s local configuration. Existing tasks depend on runtime reload; new tasks use the latest configuration.",
   "saved": "Configuration saved.",
   "removeServer": "Remove MCP server",

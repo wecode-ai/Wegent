@@ -296,3 +296,68 @@ final result: passed
 ## Result
 
 final result: blocked
+
+# Design QA
+
+## Evidence
+
+- Source visual truth:
+  - `/Users/junlong5/.wework/workspace/attachments/draft/1789116890356-0676b3a3-ff11-4d74-8f54-cccfabdaa589/image.png`
+  - `/Users/junlong5/.wework/workspace/attachments/draft/1789116896996-7ee78749-d0b7-44fc-b5a4-ff802c84ff30/image.png`
+  - `/Users/junlong5/.wework/workspace/attachments/draft/1789116903284-7378d0ee-66d6-4437-a622-0d728a28fcef/image.png`
+- Rendered implementation:
+  - `wework/test-results/ai-verify/mcp-tools-expanded.png`
+  - `wework/test-results/ai-verify/2026-09-11T09-55-11-041Z-78943/mcp-cached-return.png`
+- Side-by-side comparison:
+  - `wework/test-results/ai-verify/mcp-reference-comparison.png`
+- Viewport: approximately `1394 x 869` CSS pixels at device scale factor `2`.
+- Source pixels: `2786 x 1738`.
+- Implementation pixels: `2788 x 1738`.
+- Comparison normalization: the source was padded by 2 pixels to match the implementation width, then both full views were placed side by side without rescaling.
+- State: light theme, desktop plugin workspace, MCP tab selected, one server expanded with 140 tools.
+
+## Full-view comparison
+
+The implementation preserves the existing Wework shell and neutral visual system while replacing the unstructured MCP tool text block with a bounded, internally scrollable definition list. Tool names and descriptions now occupy stable columns, long content wraps inside its column, and the expanded region no longer pushes the whole page into an unreadable wall of text.
+
+The plugin marketplace, Skills, and MCP content headings were measured in the same Electron session. Their heading origins all matched at `left=297` and `top=163.59375`; subtitle origins also matched at `left=297` and `top=198.59375`. Tab switching therefore does not introduce the previous content jump.
+
+## Focused comparison
+
+A separate crop was unnecessary because the side-by-side image keeps the tool names, descriptions, row spacing, container border, and scrollbar readable at native density. The implementation screenshot also contains synthetic long-list data specifically sized to exercise wrapping and scrolling.
+
+## Required fidelity surfaces
+
+- Fonts and typography: page headings use the plugin-market title role; body, helper, and code text use existing semantic Wework roles. No arbitrary font sizes were introduced.
+- Spacing and layout rhythm: all three tabs share `px-5 py-6 md:px-10`; MCP tool rows use consistent padding, gaps, and a bounded `max-h-96` region.
+- Colors and tokens: neutral semantic surface, border, muted, focus, and text tokens are used. Green remains limited to connected status.
+- Image and asset quality: no image assets are part of this surface; existing Lucide UI icons are reused.
+- Copy and content: the Chinese tab label is “技能”; tool descriptions retain their source content and show a localized empty-description fallback.
+
+## Interaction verification
+
+- Expanded and collapsed a server tool list.
+- Verified a tool row is exposed through `mcp-tool-0-0`.
+- Switched MCP → 技能 → MCP after the first MCP load.
+- Verified cached MCP content returns immediately and `mcp-add` is enabled by the next macrotask.
+- Verified the background refresh remains available through the refresh action.
+- Inspected the Electron application log; no error, exception, unhandled rejection, or failed-operation entry was present.
+
+## Findings
+
+No actionable P0, P1, or P2 visual differences remain for the requested changes.
+
+## Comparison history
+
+- Earlier issue: plugin marketplace content used different desktop left and top padding from Skills and MCP.
+  - Fix: standardized the content wrapper to `px-5 py-6 md:px-10`.
+  - Post-fix evidence: identical measured heading and subtitle origins across all three tabs.
+- Earlier issue: expanded MCP tools rendered as an unstructured text block.
+  - Fix: added a two-column definition-row layout, semantic code styling, wrapping, hover treatment, and internal scrolling.
+  - Post-fix evidence: `mcp-reference-comparison.png`.
+
+## Follow-up polish
+
+None required for this scope.
+
+final result: passed

@@ -11,6 +11,7 @@ vi.mock('@/api/local/capabilities', async original => ({
   listStandaloneSkills: vi.fn(),
   readCapabilityHome: vi.fn(),
   listMcpServers: vi.fn(),
+  getCachedMcpServers: vi.fn(),
   previewSkills: vi.fn(),
   installSkills: vi.fn(),
   discardSkillPreview: vi.fn(),
@@ -30,6 +31,7 @@ beforeEach(() => {
   }
   vi.mocked(api.listStandaloneSkills).mockResolvedValue({ skills: [], errors: [] })
   vi.mocked(api.readCapabilityHome).mockResolvedValue('/isolated/codex')
+  vi.mocked(api.getCachedMcpServers).mockReturnValue(null)
   vi.mocked(api.listMcpServers).mockResolvedValue({ entries: [], statusError: false })
   vi.mocked(api.discardSkillPreview).mockResolvedValue({})
 })
@@ -45,6 +47,53 @@ describe('Plugins capability workspace', () => {
     fireEvent.click(screen.getByTestId('mcp-refresh'))
     expect(await screen.findByText('saved-server')).toBeInTheDocument()
     expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+  test('renders expanded MCP tools as scannable definition rows', async () => {
+    vi.mocked(api.listMcpServers).mockResolvedValueOnce({
+      entries: [
+        {
+          name: 'codex_apps',
+          config: null,
+          status: {
+            name: 'codex_apps',
+            serverInfo: { name: 'codex_apps' },
+            authStatus: 'unsupported',
+            tools: {
+              github_add_issue: {
+                name: 'github.add_issue_assignees',
+                description: 'Add assignees to an issue or pull request.',
+              },
+            },
+          },
+        },
+      ],
+      statusError: false,
+    })
+    render(<McpPanel />)
+    const toolsButton = await screen.findByTestId('mcp-tools-0')
+    expect(screen.queryByTestId('mcp-tool-0-0')).not.toBeInTheDocument()
+    fireEvent.click(toolsButton)
+    expect(screen.getByTestId('mcp-tool-0-0')).toHaveTextContent('github.add_issue_assignees')
+    expect(screen.getByTestId('mcp-tool-0-0')).toHaveTextContent('Add assignees')
+    fireEvent.click(toolsButton)
+    expect(screen.queryByTestId('mcp-tool-0-0')).not.toBeInTheDocument()
+  })
+  test('paints cached MCP inventory before the background refresh finishes', async () => {
+    let resolveRefresh: (result: api.McpListResult) => void = () => undefined
+    vi.mocked(api.getCachedMcpServers).mockReturnValue({
+      entries: [{ name: 'cached-server', config: { command: 'node' } }],
+      statusError: false,
+    })
+    vi.mocked(api.listMcpServers).mockReturnValue(
+      new Promise(resolve => {
+        resolveRefresh = resolve
+      })
+    )
+    const view = render(<McpPanel />)
+    expect(screen.getByText('cached-server')).toBeInTheDocument()
+    expect(screen.getByTestId('mcp-add')).not.toBeDisabled()
+    resolveRefresh({ entries: [], statusError: false })
+    view.unmount()
   })
   test('switches between existing plugins, Skills and MCP without loading unused panels', async () => {
     render(

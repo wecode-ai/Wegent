@@ -97,7 +97,7 @@ export function SkillsPanel({ onManagePlugin }: { onManagePlugin: () => void }) 
     >
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="heading-medium">{t('installedSkills')}</h2>
+          <h2 className="plugin-market-title">{t('installedSkills')}</h2>
           <p className="mt-1 text-sm text-text-secondary">{t('skillsDescription')}</p>
         </div>
         <div className="flex gap-2">

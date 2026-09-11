@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
   listMcpServers,
+  getCachedMcpServers,
   reloadMcpServers,
   saveMcpServer,
   loginMcpServer,
@@ -15,32 +16,45 @@ import { McpServerDialog } from './McpServerDialog'
 
 export function McpPanel() {
   const { t } = useTranslation('capabilities')
-  const [entries, setEntries] = useState<McpEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  const cachedResult = getCachedMcpServers()
+  const [entries, setEntries] = useState<McpEntry[]>(() => cachedResult?.entries ?? [])
+  const [loading, setLoading] = useState(() => !cachedResult)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [editing, setEditing] = useState<McpEntry | 'new' | null>(null)
   const [removing, setRemoving] = useState<McpEntry | null>(null)
+  const [expandedServers, setExpandedServers] = useState<Set<string>>(() => new Set())
+  const requestId = useRef(0)
   const refresh = useCallback(
-    (reload = false) => {
+    async (reload = false) => {
+      const id = ++requestId.current
       let reloadFailed = false
-      return (reload ? reloadMcpServers() : Promise.resolve())
-        .catch(() => {
-          reloadFailed = true
+      try {
+        if (reload) {
+          await reloadMcpServers().catch(() => {
+            reloadFailed = true
+          })
+        }
+        const result = await listMcpServers(progress => {
+          if (id === requestId.current) setEntries(progress.entries)
         })
-        .then(() => listMcpServers())
-        .then(result => {
-          setEntries(result.entries)
-          setError(reloadFailed ? t('reloadFailed') : result.statusError ? t('statusFailed') : '')
-        })
-        .catch(() => setError(t('loadFailed')))
-        .finally(() => setLoading(false))
+        if (id !== requestId.current) return
+        setEntries(result.entries)
+        setError(reloadFailed ? t('reloadFailed') : result.statusError ? t('statusFailed') : '')
+      } catch {
+        if (id === requestId.current) setError(t('loadFailed'))
+      } finally {
+        if (id === requestId.current) setLoading(false)
+      }
     },
     [t]
   )
   useEffect(() => {
     void refresh()
+    return () => {
+      requestId.current += 1
+    }
   }, [refresh])
   async function update(entry: McpEntry, remove = false) {
     if (!entry.config) return
@@ -80,7 +94,7 @@ export function McpPanel() {
     >
       <header className="mb-6 flex items-center justify-between gap-3">
         <div>
-          <h2 className="heading-medium">{t('mcpServers')}</h2>
+          <h2 className="plugin-market-title">{t('mcpServers')}</h2>
           <p className="mt-1 text-sm text-text-secondary">{t('mcpDescription')}</p>
         </div>
         <div className="flex gap-2">
@@ -122,6 +136,8 @@ export function McpPanel() {
           <p className="py-12 text-center text-text-secondary">{t('noServers')}</p>
         )}
         {entries.map((entry, index) => {
+          const tools = Object.entries(entry.status?.tools ?? {})
+          const expanded = expandedServers.has(entry.name)
           const disabled =
             entry.config?.enabled === false || entry.status?.runtimeStatus === 'disabled'
           const connected = Boolean(
@@ -141,13 +157,15 @@ export function McpPanel() {
                     ? 'connected'
                     : needsLogin
                       ? 'needsLogin'
-                      : 'notReady'
+                      : loading && !entry.status
+                        ? 'loadingStatus'
+                        : 'notReady'
           return (
             <div key={entry.name} data-testid={`mcp-row-${index}`} className="py-4">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="font-medium">{entry.name}</span>
+                <h3 className="min-w-0 flex-1 truncate text-base font-medium">{entry.name}</h3>
                 <span
-                  className={`text-sm ${status === 'connected' ? 'text-green-600' : 'text-text-secondary'}`}
+                  className={`text-xs ${status === 'connected' ? 'text-green-600' : 'text-text-secondary'}`}
                 >
                   {t(status)}
                 </span>
@@ -199,23 +217,53 @@ export function McpPanel() {
                   )}
                 </div>
               </div>
-              <details className="mt-3 text-sm">
-                <summary
+              <div className="mt-2 text-sm">
+                <button
+                  type="button"
                   data-testid={`mcp-tools-${index}`}
-                  className="cursor-pointer text-text-secondary"
+                  aria-expanded={expanded}
+                  aria-controls={`mcp-tool-list-${index}`}
+                  className="inline-flex min-h-6 items-center gap-1 rounded px-1 text-xs text-text-secondary transition-colors hover:bg-muted/50 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+                  onClick={() =>
+                    setExpandedServers(current => {
+                      const next = new Set(current)
+                      if (next.has(entry.name)) next.delete(entry.name)
+                      else next.add(entry.name)
+                      return next
+                    })
+                  }
                 >
-                  {t('toolsCount', { count: Object.keys(entry.status?.tools ?? {}).length })}
-                </summary>
-                <div className="mt-2 space-y-3 rounded-lg bg-muted/40 p-3">
-                  {Object.entries(entry.status?.tools ?? {}).map(([key, tool]) => (
-                    <div key={key}>
-                      <p className="font-medium">{tool.name}</p>
-                      <p className="text-sm text-text-secondary">{tool.description}</p>
-                    </div>
-                  ))}
-                  {!Object.keys(entry.status?.tools ?? {}).length && <p>{t('noTools')}</p>}
-                </div>
-              </details>
+                  <ChevronRight
+                    className={`size-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
+                    aria-hidden="true"
+                  />
+                  {t('toolsCount', { count: tools.length })}
+                </button>
+                {expanded && (
+                  <div
+                    id={`mcp-tool-list-${index}`}
+                    className="mt-2 max-h-96 overflow-y-auto rounded-xl border border-border/50 bg-surface/40 p-1"
+                  >
+                    {tools.map(([key, tool], toolIndex) => (
+                      <div
+                        key={key}
+                        data-testid={`mcp-tool-${index}-${toolIndex}`}
+                        className="grid gap-2 rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50 sm:grid-cols-[minmax(180px,0.42fr)_minmax(0,1fr)] sm:gap-4"
+                      >
+                        <code className="min-w-0 self-start break-all rounded-md bg-muted/70 px-2 py-1 text-code text-text-primary">
+                          {tool.name}
+                        </code>
+                        <p className="whitespace-pre-wrap break-words text-sm leading-5 text-text-secondary">
+                          {tool.description || t('noToolDescription')}
+                        </p>
+                      </div>
+                    ))}
+                    {!tools.length && (
+                      <p className="px-3 py-3 text-sm text-text-secondary">{t('noTools')}</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )
         })}

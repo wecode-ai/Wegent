@@ -1,6 +1,6 @@
 {
   "plugins": "插件",
-  "skills": "Skills",
+  "skills": "技能",
   "mcp": "MCP",
   "capabilityTabs": "能力类型",
   "close": "关闭",
@@ -93,6 +93,8 @@
   "managedByPlugin": "由插件或运行环境管理",
   "toolsCount": "{{count}} 个工具",
   "noTools": "暂无工具。请确认连接状态后刷新。",
+  "noToolDescription": "暂无说明。",
+  "loadingStatus": "正在读取状态",
   "mcpScopeHint": "此处管理当前用户的本机配置；现有任务是否生效取决于运行时重载，新任务使用最新配置。",
   "saved": "配置已保存。",
   "removeServer": "移除 MCP 服务器",

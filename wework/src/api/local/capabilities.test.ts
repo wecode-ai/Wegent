@@ -3,9 +3,13 @@ import { requestLocalExecutor } from '@/desktop/localExecutor'
 import {
   listStandaloneSkills,
   listMcpServers,
+  getCachedMcpServers,
+  clearMcpServersCache,
   saveMcpServer,
   canRemoveSkill,
   isPluginSkill,
+  type McpListResult,
+  type McpStatus,
   type StandaloneSkill,
 } from './capabilities'
 vi.mock('@/desktop/localExecutor', () => ({
@@ -13,7 +17,11 @@ vi.mock('@/desktop/localExecutor', () => ({
   requestLocalExecutor: vi.fn(),
 }))
 vi.mock('@/features/plugins/pluginTrial', () => ({ notifyLocalPluginSkillsChanged: vi.fn() }))
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(requestLocalExecutor).mockReset()
+  clearMcpServersCache()
+})
 describe('native capability management', () => {
   test('retains disabled and same-name skills by path', async () => {
     vi.mocked(requestLocalExecutor).mockResolvedValue({
@@ -37,24 +45,98 @@ describe('native capability management', () => {
     })
   })
   test('paginates runtime inventory and preserves disconnected configuration', async () => {
-    vi.mocked(requestLocalExecutor)
-      .mockResolvedValueOnce({
-        config: { mcp_servers: { offline: { url: 'https://example.test/mcp' } } },
-      })
-      .mockResolvedValueOnce({
+    vi.mocked(requestLocalExecutor).mockImplementation((_command: string, args?: unknown) => {
+      const request = args as { method?: string; params?: { cursor?: string | null } }
+      if (request.method === 'config/read') {
+        return Promise.resolve({
+          config: { mcp_servers: { offline: { url: 'https://example.test/mcp' } } },
+        })
+      }
+      if (request.params?.cursor === 'next') {
+        return Promise.resolve({ data: [{ name: 'second', tools: {} }], nextCursor: null })
+      }
+      return Promise.resolve({
         data: [{ name: 'plugin-server', pluginId: 'plugin', tools: {} }],
         nextCursor: 'next',
       })
-      .mockResolvedValueOnce({ data: [{ name: 'second', tools: {} }], nextCursor: null })
+    })
     const result = await listMcpServers()
     expect(result.entries.map(e => e.name)).toEqual(['offline', 'plugin-server', 'second'])
     expect(result.entries[1].config).toBeNull()
     expect(result.statusError).toBe(false)
+    expect(getCachedMcpServers()).toEqual(result)
+  })
+  test('returns cached MCP inventory immediately while refreshing in the background', async () => {
+    vi.mocked(requestLocalExecutor).mockImplementation((_command: string, args?: unknown) => {
+      const request = args as { method?: string }
+      if (request.method === 'config/read') {
+        return Promise.resolve({
+          config: { mcp_servers: { company: { url: 'https://example.test/mcp' } } },
+        })
+      }
+      return Promise.resolve({
+        data: [
+          {
+            name: 'company',
+            serverInfo: { name: 'company' },
+            authStatus: 'unsupported',
+            tools: {},
+          },
+        ],
+        nextCursor: null,
+      })
+    })
+    await listMcpServers()
+    const updates: McpListResult[] = []
+    await listMcpServers(update => updates.push(update))
+    expect(updates[0]).toEqual(getCachedMcpServers())
+  })
+  test('streams saved configuration while runtime status is still loading', async () => {
+    let resolveStatus: (value: { data: McpStatus[]; nextCursor: null }) => void = () => undefined
+    const pendingStatus = new Promise<{ data: McpStatus[]; nextCursor: null }>(resolve => {
+      resolveStatus = resolve
+    })
+    vi.mocked(requestLocalExecutor).mockImplementation((_command: string, args?: unknown) => {
+      const request = args as { method?: string }
+      if (request.method === 'config/read') {
+        return Promise.resolve({
+          config: { mcp_servers: { company: { url: 'https://example.test/mcp' } } },
+        })
+      }
+      return pendingStatus
+    })
+    const updates: McpListResult[] = []
+    const resultPromise = listMcpServers(update => updates.push(update))
+    await vi.waitFor(() => {
+      expect(updates.at(-1)?.entries).toMatchObject([
+        { name: 'company', config: { url: 'https://example.test/mcp' } },
+      ])
+    })
+    resolveStatus({
+      data: [
+        {
+          name: 'company',
+          serverInfo: { name: 'company' },
+          authStatus: 'unsupported',
+          tools: {},
+        },
+      ],
+      nextCursor: null,
+    })
+    const result = await resultPromise
+    expect(result.entries[0]).toMatchObject({
+      name: 'company',
+      config: { url: 'https://example.test/mcp' },
+      status: { serverInfo: { name: 'company' } },
+    })
   })
   test('reports status failure without discarding saved configuration', async () => {
-    vi.mocked(requestLocalExecutor)
-      .mockResolvedValueOnce({ config: { mcp_servers: { offline: { enabled: false } } } })
-      .mockRejectedValueOnce(new Error('not reachable'))
+    vi.mocked(requestLocalExecutor).mockImplementation((_command: string, args?: unknown) => {
+      const request = args as { method?: string }
+      return request.method === 'config/read'
+        ? Promise.resolve({ config: { mcp_servers: { offline: { enabled: false } } } })
+        : Promise.reject(new Error('not reachable'))
+    })
     expect(await listMcpServers()).toMatchObject({
       entries: [{ name: 'offline', config: { enabled: false } }],
       statusError: true,

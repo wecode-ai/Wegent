@@ -78,6 +78,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
       await wait('mcp-panel', '已连接')
       await click('mcp-tools-0')
       await wait('mcp-panel', 'check_capability')
+      await wait('mcp-tool-0-0', 'check_capability')
       await captureScreenshot(control, 'standalone-mcp.png', '[data-testid="capability-workspace"]')
       await click('mcp-toggle-0')
       await wait('mcp-panel', '已停用')

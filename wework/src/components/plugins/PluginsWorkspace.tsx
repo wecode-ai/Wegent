@@ -4835,11 +4835,7 @@ function PluginMarketplaceWorkspace({
     >
       <div
         data-testid="plugins-page-content"
-        className={[
-          'mx-auto flex h-full min-h-0 w-full max-w-[1120px] flex-col px-5 md:px-10',
-          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
-          topBarLeftActions ? 'pt-3 md:pt-4' : 'pt-6 md:pt-7',
-        ].join(' ')}
+        className="mx-auto flex h-full min-h-0 w-full max-w-[1120px] flex-col px-5 py-6 md:px-10"
       >
         {topBarLeftActions ? (
           <div className="mb-3 flex min-h-8 items-center gap-2 md:mb-4">

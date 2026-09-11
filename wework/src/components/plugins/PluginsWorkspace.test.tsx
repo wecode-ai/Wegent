@@ -1627,6 +1627,7 @@ describe('PluginsWorkspace', () => {
 
     expect(screen.getByRole('heading', { name: '插件市场' })).toBeInTheDocument()
     expect(screen.getByText('发现并接入开发工具、企业数据和专业方法。')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-page-content')).toHaveClass('px-5', 'py-6', 'md:px-10')
     expect(await screen.findByTestId('plugins-search-input')).toHaveAttribute(
       'placeholder',
       '搜索插件'
@@ -1652,7 +1653,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-marketplace-source-openai')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-add-marketplace-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-manage-marketplaces-button')).not.toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Skills' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '技能' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'MCP' })).toBeInTheDocument()
     expect(screen.queryByText('帮我整理本周的项目进度并生成可视化报告')).not.toBeInTheDocument()
     expect(screen.getByTestId('plugins-market-toolbar')).toBeInTheDocument()

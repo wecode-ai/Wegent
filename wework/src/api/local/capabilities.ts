@@ -43,6 +43,22 @@ export interface McpEntry {
   config: McpConfig | null
   status?: McpStatus
 }
+export interface McpListResult {
+  entries: McpEntry[]
+  statusError: boolean
+}
+let mcpServersCache: McpListResult | null = null
+let mcpServersLoad: Promise<McpListResult> | null = null
+const mcpProgressListeners = new Set<(result: McpListResult) => void>()
+
+export function getCachedMcpServers(): McpListResult | null {
+  return mcpServersCache
+}
+
+export function clearMcpServersCache(): void {
+  mcpServersCache = null
+}
+
 async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   await ensureLocalExecutorStarted()
   return requestLocalExecutor<T>('codex.app_server_request', { method, params })
@@ -109,39 +125,97 @@ export function canRemoveSkill(
   )
 }
 
-export async function listMcpServers(): Promise<{ entries: McpEntry[]; statusError: boolean }> {
-  const configuration = await rpc<{ config: { mcp_servers?: Record<string, McpConfig> } }>(
+function mergeMcpEntries(
+  configuration: Record<string, McpConfig>,
+  statuses: Map<string, McpStatus>
+): McpEntry[] {
+  const entries: McpEntry[] = Object.entries(configuration).map(([name, config]) => ({
+    name,
+    config,
+    status: statuses.get(name),
+  }))
+  for (const [name, status] of statuses) {
+    if (!(name in configuration)) entries.push({ name, config: null, status })
+  }
+  return entries
+}
+
+function cacheMcpResult(result: McpListResult): McpListResult {
+  mcpServersCache = result
+  for (const listener of mcpProgressListeners) listener(result)
+  return result
+}
+
+async function loadMcpServers(): Promise<McpListResult> {
+  const cachedEntries = mcpServersCache?.entries ?? []
+  const cachedConfiguration = Object.fromEntries(
+    cachedEntries.flatMap(entry => (entry.config ? [[entry.name, entry.config]] : []))
+  )
+  const cachedStatuses = new Map(
+    cachedEntries.flatMap(entry => (entry.status ? [[entry.name, entry.status]] : []))
+  )
+  let configuration: Record<string, McpConfig> = {}
+  const statuses = new Map<string, McpStatus>()
+  let configurationLoaded = false
+  const emitProgress = () => {
+    const progressiveStatuses = new Map(cachedStatuses)
+    for (const [name, status] of statuses) progressiveStatuses.set(name, status)
+    cacheMcpResult({
+      entries: mergeMcpEntries(
+        configurationLoaded ? configuration : cachedConfiguration,
+        progressiveStatuses
+      ),
+      statusError: false,
+    })
+  }
+  const configurationPromise = rpc<{ config: { mcp_servers?: Record<string, McpConfig> } }>(
     'config/read',
     { includeLayers: false }
-  )
-  const entries = new Map<string, McpEntry>(
-    Object.entries(configuration.config.mcp_servers ?? {}).map(([name, config]) => [
-      name,
-      { name, config },
-    ])
-  )
-  let cursor: string | null = null
-  const seen = new Set<string>()
-  try {
+  ).then(response => {
+    configuration = response.config.mcp_servers ?? {}
+    configurationLoaded = true
+    emitProgress()
+  })
+  const statusPromise = (async () => {
+    let cursor: string | null = null
+    const seen = new Set<string>()
     do {
       const response: { data: McpStatus[]; nextCursor: string | null } = await rpc(
         'mcpServerStatus/list',
         { cursor, limit: 100 }
       )
-      for (const status of response.data) {
-        entries.set(status.name, {
-          name: status.name,
-          config: entries.get(status.name)?.config ?? null,
-          status,
-        })
-      }
+      for (const status of response.data) statuses.set(status.name, status)
+      emitProgress()
       cursor = response.nextCursor
       if (cursor && seen.has(cursor)) throw new Error('Repeated MCP cursor')
       if (cursor) seen.add(cursor)
     } while (cursor)
-    return { entries: [...entries.values()], statusError: false }
-  } catch {
-    return { entries: [...entries.values()], statusError: true }
+  })()
+  const [configurationResult, statusResult] = await Promise.allSettled([
+    configurationPromise,
+    statusPromise,
+  ])
+  if (configurationResult.status === 'rejected') throw configurationResult.reason
+  return cacheMcpResult({
+    entries: mergeMcpEntries(configuration, statuses),
+    statusError: statusResult.status === 'rejected',
+  })
+}
+
+export async function listMcpServers(
+  onProgress?: (result: McpListResult) => void
+): Promise<McpListResult> {
+  if (onProgress) {
+    mcpProgressListeners.add(onProgress)
+    if (mcpServersCache) onProgress(mcpServersCache)
+  }
+  try {
+    mcpServersLoad ??= loadMcpServers().finally(() => {
+      mcpServersLoad = null
+    })
+    return await mcpServersLoad
+  } finally {
+    if (onProgress) mcpProgressListeners.delete(onProgress)
   }
 }
 export async function reloadMcpServers() {
