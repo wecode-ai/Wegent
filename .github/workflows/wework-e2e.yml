@@ -636,6 +636,8 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows Wework desktop Core shard E2E
+        id: windows-core-e2e
+        continue-on-error: true
         shell: pwsh
         env:
           CI: true
@@ -657,7 +659,23 @@ jobs:
               throw "Missing Windows Wework desktop E2E resource: $path"
             }
           }
-          node wework/e2e/desktop/run-checkpoints.mjs --parallel-segments $env:WEWORK_E2E_SEGMENTS
+          $arguments = @(
+            "wework/e2e/desktop/run-checkpoints.mjs",
+            "--parallel-segments",
+            $env:WEWORK_E2E_SEGMENTS
+          )
+          $nodePath = (Get-Command node).Source
+          & ./.github/scripts/run-windows-standard-user-process.ps1 `
+            -FilePath $nodePath `
+            @arguments
+
+      - name: Report Windows standard-user startup failures
+        if: always() && steps.windows-core-e2e.outcome == 'failure'
+        run: node .github/scripts/report-wework-desktop-e2e-failures.mjs
+
+      - name: Fail Windows Wework desktop Core shard E2E
+        if: always() && steps.windows-core-e2e.outcome == 'failure'
+        run: exit 1
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
