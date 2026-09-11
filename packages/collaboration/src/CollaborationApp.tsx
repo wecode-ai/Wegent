@@ -425,6 +425,7 @@ export function CollaborationApp({
               <div className="collaboration-project-content">
                 <CollaborationSettings
                   api={api}
+                  key={project.id}
                   project={project}
                   onChange={commands.replaceProject}
                   onError={() => commands.reportError(messages.saveFailed)}

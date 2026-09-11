@@ -70,6 +70,12 @@ interface IssueCreateProps {
   onError(): void;
 }
 
+const browserDueDateExtensions = {
+  dueDateInputType: "datetime-local" as const,
+  dueDateFromSource: dueDateTimeLocalFromSource,
+  dueDateToSource: dueDateTimeLocalToSource,
+};
+
 function browserSave(blob: Blob, filename: string): Promise<void> {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -158,11 +164,7 @@ export function IssueCreate({
         onClose={onClose}
         onCreated={onCreated}
         translate={editorTranslate}
-        extensions={{
-          dueDateInputType: "datetime-local",
-          dueDateFromSource: dueDateTimeLocalFromSource,
-          dueDateToSource: dueDateTimeLocalToSource,
-        }}
+        extensions={browserDueDateExtensions}
       />
     </div>
   );
@@ -211,9 +213,7 @@ export function IssueDetail({
           showPanelControls
           translate={editorTranslate}
           extensions={{
-            dueDateInputType: "datetime-local",
-            dueDateFromSource: dueDateTimeLocalFromSource,
-            dueDateToSource: dueDateTimeLocalToSource,
+            ...browserDueDateExtensions,
             openAttachment: async (attachmentId) => {
               const access = await api.attachments.access(attachmentId);
               window.open(access.url, "_blank", "noopener,noreferrer");

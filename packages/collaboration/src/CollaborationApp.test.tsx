@@ -34,9 +34,11 @@ vi.mock("./workspace-controller", () => ({
 }));
 
 import { CollaborationApp } from "./CollaborationApp";
+import { CollaborationSettings } from "./CollaborationSettings";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
+  CollaborationProjectViewShell,
   buildCollaborationProjectViewOptions,
   collaborationProjectViewIds,
 } from "./project-shell";
@@ -45,6 +47,7 @@ import type {
   CollaborationCapabilities,
   CollaborationHostAdapter,
   CollaborationLocation,
+  CollaborationProject,
 } from "./types";
 import {
   WorkspaceProjectsHome,
@@ -97,6 +100,47 @@ function renderApp(host: CollaborationHostAdapter) {
     api: {} as SharedWorkspaceApi,
     host,
   });
+}
+
+function createProject(version: number): CollaborationProject {
+  return {
+    id: "project-1",
+    project_key: "PRJ",
+    name: "Project",
+    description: "",
+    project_store: "backend",
+    task_provider: "local",
+    provider_config: {},
+    created_by_user_id: 1,
+    status: "active",
+    tags: [],
+    version,
+    created_at: "2026-09-11T00:00:00Z",
+    updated_at: `2026-09-11T00:00:0${version}Z`,
+  };
+}
+
+function controllerWithProject(project: CollaborationProject) {
+  return {
+    state: {
+      projects: [project],
+      myWork: [],
+      projectItems: { [project.id]: [] },
+      projectMembers: { [project.id]: [] },
+      project,
+      issues: [],
+      members: [],
+      agents: [],
+      selectedIssue: null,
+      comments: [],
+      loading: false,
+      error: null,
+    },
+    commands: {
+      reportError: vi.fn(),
+      replaceProject: vi.fn(),
+    },
+  };
 }
 
 const Icon = () => null;
@@ -184,6 +228,42 @@ describe("CollaborationApp API boundary", () => {
     ]);
     expect(collaborationProjectViewIds).not.toContain("members");
     expect(collaborationProjectViewIds).not.toContain("runs");
+  });
+
+  it("keeps project settings mounted across polling refreshes", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(createProject(1)),
+    );
+    const firstShell = findByType(
+      renderApp(host),
+      CollaborationProjectViewShell,
+    );
+    const firstSettings = findByType(
+      firstShell?.props.slots.manage,
+      CollaborationSettings,
+    );
+
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(createProject(2)),
+    );
+    const refreshedShell = findByType(
+      renderApp(host),
+      CollaborationProjectViewShell,
+    );
+    const refreshedSettings = findByType(
+      refreshedShell?.props.slots.manage,
+      CollaborationSettings,
+    );
+
+    expect(firstSettings?.key).toContain("project-1");
+    expect(refreshedSettings?.key).toBe(firstSettings?.key);
+    expect(refreshedSettings?.props.project.version).toBe(2);
   });
 
   it("centralizes permission filtering and host extension placement", () => {
