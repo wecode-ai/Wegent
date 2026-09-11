@@ -1796,6 +1796,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveAccessibleName('更多操作')
 
     await userEvent.click(moreButton)
+    expect(screen.getByTestId('connection-more-menu-device-1')).toBeInTheDocument()
     const restartMenuItem = screen.getByTestId('connection-restart-menu-item-device-1')
     const deleteMenuItem = screen.getByTestId('connection-delete-menu-item-device-1')
     expect(restartMenuItem).toHaveTextContent('重启设备')

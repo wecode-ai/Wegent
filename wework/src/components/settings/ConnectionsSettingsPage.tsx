@@ -886,6 +886,7 @@ function DeviceCard({
             {canUseCloudLifecycleActions && (
               <ActionMenu
                 testId={`connection-more-button-${device.device_id}`}
+                menuTestId={`connection-more-menu-${device.device_id}`}
                 ariaLabel={t('workbench.connection_more_actions')}
                 placement="bottom-end"
                 disabled={lifecyclePending || deleting}
