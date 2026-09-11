@@ -19,6 +19,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
+    _schedule_memory_save,
     create_assistant_subtask,
     create_new_task,
     create_task_and_subtasks,
@@ -28,6 +29,39 @@ from app.services.chat.storage.task_manager import (
 @contextmanager
 def _mock_db_session(db):
     yield db
+
+
+def test_schedule_memory_save_uses_loop_independent_scheduler() -> None:
+    memory_manager = SimpleNamespace(save_user_message_async=AsyncMock())
+    messages = [{"role": "user", "content": "remember this"}]
+
+    with patch(
+        "app.services.chat.storage.task_manager.schedule_async_task"
+    ) as schedule_mock:
+        _schedule_memory_save(
+            memory_manager,
+            user_id=7,
+            team_id=11,
+            task_id=13,
+            subtask_id=17,
+            messages=messages,
+            workspace_id="default/workspace",
+            project_id=19,
+            is_group_chat=False,
+        )
+
+    schedule_mock.assert_called_once_with(
+        memory_manager.save_user_message_async,
+        user_id="7",
+        team_id="11",
+        task_id="13",
+        subtask_id="17",
+        messages=messages,
+        workspace_id="default/workspace",
+        project_id="19",
+        is_group_chat=False,
+    )
+    memory_manager.save_user_message_async.assert_not_awaited()
 
 
 def test_database_handler_updates_subtask_status_through_store():
