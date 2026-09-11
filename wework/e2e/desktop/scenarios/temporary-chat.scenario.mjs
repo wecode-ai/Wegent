@@ -12,6 +12,41 @@ const INITIAL_PROMPT = 'TEMPORARY_CHAT_INITIAL_MESSAGE'
 const INITIAL_COMPLETION = 'TEMPORARY_CHAT_INITIAL_COMPLETE'
 const FOLLOW_UP_PROMPT = 'TEMPORARY_CHAT_DIRECT_FOLLOW_UP'
 const FOLLOW_UP_COMPLETION = 'TEMPORARY_CHAT_FOLLOW_UP_COMPLETE'
+const ATTACHMENT_FILENAME = 'clipboard-text-narrow-chat.txt'
+const ATTACHMENT_TEXT = JSON.stringify({
+  cardInstanceId: '501435'.repeat(20),
+  content: 'Long attachment preview in a narrow chat '.repeat(20),
+})
+
+async function assertTextAttachmentFits(control, timeoutMs) {
+  const attachmentSelector = `${SIDE_CHAT} [data-testid="message-text-attachment"]`
+  await control.command('waitFor', attachmentSelector, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs,
+  })
+  const [attachment] = JSON.parse(await control.command('getElementMetrics', attachmentSelector))
+  const [message] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${SIDE_CHAT} [data-testid="message-user"] [data-testid="message-hover-region"]`
+    )
+  )
+  const [preview] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${attachmentSelector} [data-testid="message-text-attachment-preview"]`
+    )
+  )
+  assert.ok(attachment && message && preview, 'The sent text attachment was not measurable')
+  assert.ok(
+    attachment.left >= message.left - 1 && attachment.right <= message.right + 1,
+    `The sent text attachment overflowed its message: ${JSON.stringify({ attachment, message })}`
+  )
+  assert.ok(attachment.width <= 360, 'The text attachment exceeded its desktop width limit')
+  assert.ok(preview.scrollWidth > preview.clientWidth, 'The long text preview did not truncate')
+  return attachment.width
+}
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -389,6 +424,15 @@ export function createDesktopScenario({
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
+      await control.command('dropFile', SIDE_COMPOSER, {
+        filename: ATTACHMENT_FILENAME,
+        mimeType: 'text/plain',
+        value: Buffer.from(ATTACHMENT_TEXT).toString('base64'),
+      })
+      await control.command('waitFor', `${SIDE_CHAT} [data-testid="attachment-text-preview"]`, {
+        text: 'cardInstanceId',
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('fill', SIDE_COMPOSER, { value: INITIAL_PROMPT })
       await control.command('press', SIDE_COMPOSER, { key: 'Enter' })
       await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
@@ -402,6 +446,20 @@ export function createDesktopScenario({
         executorLogOffset,
         taskTimeoutMs
       )
+
+      const narrowWidth = await assertTextAttachmentFits(control, uiTimeoutMs)
+      assert.ok(narrowWidth < 360, 'The attachment regression did not exercise a narrow container')
+      const expandButton = `${ACTIVE_SURFACE} [data-testid="toggle-right-workspace-panel-expanded-button"]`
+      await control.command('click', expandButton)
+      const expandedWidth = await assertTextAttachmentFits(control, uiTimeoutMs)
+      assert.ok(expandedWidth > narrowWidth, 'The text attachment did not grow with its container')
+      await control.command('click', expandButton)
+      const restoredWidth = await assertTextAttachmentFits(control, uiTimeoutMs)
+      assert.ok(
+        Math.abs(restoredWidth - narrowWidth) <= 1,
+        'The text attachment did not shrink after restoring the panel'
+      )
+      await captureScreenshot(control, 'temporary-chat-text-attachment-narrow.png', SIDE_CHAT)
 
       await expandProject(control, uiTimeoutMs)
       await control.command('click', '[data-testid="new-chat-button"]')
