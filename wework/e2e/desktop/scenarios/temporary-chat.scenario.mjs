@@ -15,7 +15,7 @@ const FOLLOW_UP_COMPLETION = 'TEMPORARY_CHAT_FOLLOW_UP_COMPLETE'
 const ATTACHMENT_FILENAME = 'clipboard-text-narrow-chat.txt'
 const ATTACHMENT_TEXT = JSON.stringify({
   cardInstanceId: '501435'.repeat(20),
-  content: '窄对话框中的文本附件 Long attachment preview '.repeat(20),
+  content: 'Long attachment preview in a narrow chat '.repeat(20),
 })
 
 async function assertTextAttachmentFits(control, timeoutMs) {
