@@ -404,7 +404,10 @@ function requestContainsToolOutput(request, callId) {
     if (!value || typeof value !== 'object') return false
 
     const type = value.type
-    const isToolOutput = type === 'function_call_output' || type === 'custom_tool_call_output'
+    const isToolOutput =
+      type === 'function_call_output' ||
+      type === 'custom_tool_call_output' ||
+      type === 'tool_search_output'
     if (isToolOutput && (!callId || value.call_id === callId)) return true
 
     return Object.values(value).some(containsOutput)
