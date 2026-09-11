@@ -801,20 +801,12 @@ pub(super) fn link_or_copy_dir(target: &Path, link: &Path) -> Result<(), Capabil
 }
 
 pub(super) fn copy_dir_atomic(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
-    copy_dir_atomic_prepared(source, target, |_| Ok(()))
-}
-
-pub(super) fn copy_dir_atomic_prepared(
-    source: &Path,
-    target: &Path,
-    prepare: impl FnOnce(&Path) -> Result<(), CapabilitySyncError>,
-) -> Result<(), CapabilitySyncError> {
     let temporary = sibling_temp_path(target);
     remove_existing_path(&temporary)?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
-    if let Err(error) = copy_dir_recursive(source, &temporary).and_then(|()| prepare(&temporary)) {
+    if let Err(error) = copy_dir_recursive(source, &temporary) {
         let _ = remove_existing_path(&temporary);
         return Err(error);
     }
