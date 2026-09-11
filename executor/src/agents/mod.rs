@@ -339,10 +339,8 @@ impl AgentEngine for AgentProcessEngine {
                                 command_fields.push(("cwd", cwd.display().to_string()));
                             }
                             log_executor_event("command planned", &command_fields);
-                            let _plugin_mcps;
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
-                                restore_claude_plugin_cache(&request, &spec);
-                                let prepared = match runtime_capabilities::prepare_claude_runtime(
+                                spec = match runtime_capabilities::prepare_claude_runtime(
                                     &request, spec,
                                 )
                                 .await
@@ -360,7 +358,7 @@ impl AgentEngine for AgentProcessEngine {
                                         return ExecutionOutcome::Failed { message };
                                     }
                                 };
-                                (spec, _plugin_mcps) = prepared;
+                                restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
@@ -460,10 +458,8 @@ impl AgentEngine for AgentProcessEngine {
                                 command_fields.push(("cwd", cwd.display().to_string()));
                             }
                             log_executor_event("command planned", &command_fields);
-                            let _plugin_mcps;
                             if request.resolved_agent_kind() == AgentKind::ClaudeCode {
-                                restore_claude_plugin_cache(&request, &spec);
-                                let prepared = match runtime_capabilities::prepare_claude_runtime(
+                                spec = match runtime_capabilities::prepare_claude_runtime(
                                     &request, spec,
                                 )
                                 .await
@@ -481,7 +477,7 @@ impl AgentEngine for AgentProcessEngine {
                                         return ExecutionOutcome::Failed { message };
                                     }
                                 };
-                                (spec, _plugin_mcps) = prepared;
+                                restore_claude_plugin_cache(&request, &spec);
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);

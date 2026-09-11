@@ -73,7 +73,6 @@ pub(super) fn lifecycle_sender(
 }
 
 pub struct RunningBroker {
-    _task_tokens: crate::plugin_task_token::issuer::Registration,
     endpoint: Endpoint,
     cancel: watch::Sender<bool>,
     task: JoinHandle<()>,
@@ -172,8 +171,6 @@ pub async fn start<T: LocalBackendTransport>(
             }
         }
     });
-    let task_tokens =
-        crate::plugin_task_token::issuer::register(transport.clone(), connected.clone());
     let state = BrokerState {
         transport,
         endpoint: endpoint_value.clone(),
@@ -192,7 +189,6 @@ pub async fn start<T: LocalBackendTransport>(
         .lock()
         .expect("plugin broker endpoint lock poisoned") = Some(endpoint_value.clone());
     Ok(RunningBroker {
-        _task_tokens: task_tokens,
         endpoint: endpoint_value,
         cancel,
         task,
