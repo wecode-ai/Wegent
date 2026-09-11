@@ -19,12 +19,14 @@ COPY frontend/package.json ./frontend/package.json
 COPY frontend/scripts ./frontend/scripts
 COPY frontend/.husky ./frontend/.husky
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY packages/collaboration/package.json ./packages/collaboration/package.json
 RUN echo "[frontend] installing pnpm dependencies" && \
     pnpm --filter wecode-ai-assistant... install --frozen-lockfile --reporter append-only && \
     echo "[frontend] pnpm dependencies installed"
 
 COPY frontend ./frontend
 COPY packages/chat-core ./packages/chat-core
+COPY packages/collaboration ./packages/collaboration
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
