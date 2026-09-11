@@ -32,6 +32,7 @@ from app.models.project import Project
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.models.workspace import WorkspaceExecutionEnvironment
 from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
@@ -1782,6 +1783,102 @@ def test_cloud_project_robot_binds_default_runtime_profile(
     )
     assert cleared.status_code == 200
     assert cleared.json()["defaultRuntimeProfileId"] is None
+
+
+def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    device = Kind(
+        kind="Device",
+        name="personal-codex-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "personal-codex-device"},
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "personalenv", "name": "Personal environment"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    agent_payload = {
+        "name": "Personal Codex",
+        "runtime": "codex",
+        "executionEnvironment": "local",
+        "executionDeviceId": device.name,
+    }
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json=agent_payload,
+    )
+    assert created.status_code == 201, created.text
+    agent = created.json()
+    assert agent["executionDeviceId"] == device.name
+
+    bindings = (
+        test_db.query(WorkspaceExecutionEnvironment)
+        .filter(
+            WorkspaceExecutionEnvironment.workspace_id == int(project["workspace_id"]),
+            WorkspaceExecutionEnvironment.device_id == device.id,
+        )
+        .all()
+    )
+    assert len(bindings) == 1
+    assert bindings[0].owner_type == "human"
+    assert bindings[0].owner_user_id == test_user.id
+    assert bindings[0].added_by_user_id == test_user.id
+
+    listed = test_client.get(
+        f"/api/v1/workspaces/{project['workspace_id']}/execution-environments",
+        headers=_auth(test_token),
+    )
+    assert listed.status_code == 200
+    environment = next(
+        item for item in listed.json()["items"] if item["device_id"] == device.id
+    )
+    assert environment["owner_type"] == "user"
+    assert environment["owner_id"] == str(test_user.id)
+
+    created_again = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={**agent_payload, "name": "Second Personal Codex"},
+    )
+    assert created_again.status_code == 201, created_again.text
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": agent["version"],
+            "executionDeviceId": device.name,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["executionDeviceId"] == device.name
+    assert (
+        test_db.query(WorkspaceExecutionEnvironment)
+        .filter(
+            WorkspaceExecutionEnvironment.workspace_id == int(project["workspace_id"]),
+            WorkspaceExecutionEnvironment.device_id == device.id,
+        )
+        .count()
+        == 1
+    )
 
 
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(

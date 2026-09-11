@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.workspace import WorkspaceExecutionEnvironment
+from app.models.workspace import Workspace, WorkspaceExecutionEnvironment
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceExecutionEnvironmentCreate
 from app.services.workspaces.access import require_workspace_role
@@ -51,16 +51,10 @@ class WorkspaceExecutionEnvironmentService:
         workspace_id: int,
         execution_device_id: str,
     ) -> WorkspaceExecutionEnvironment:
-        row = (
-            db.query(WorkspaceExecutionEnvironment)
-            .join(Kind, Kind.id == WorkspaceExecutionEnvironment.device_id)
-            .filter(
-                WorkspaceExecutionEnvironment.workspace_id == workspace_id,
-                Kind.kind == "Device",
-                Kind.name == execution_device_id,
-                Kind.is_active.is_(True),
-            )
-            .first()
+        row = _authorized_execution_environment(
+            db,
+            workspace_id=workspace_id,
+            execution_device_id=execution_device_id,
         )
         if row is None:
             raise HTTPException(
@@ -68,6 +62,62 @@ class WorkspaceExecutionEnvironmentService:
                 "Execution environment is not authorized in this Workspace",
             )
         return row
+
+    def ensure_owned_execution_environment_authorized(
+        self,
+        db: Session,
+        *,
+        workspace_id: int,
+        user_id: int,
+        execution_device_id: str,
+    ) -> WorkspaceExecutionEnvironment:
+        """Authorize a selected personal environment for the current Workspace."""
+        existing = _authorized_execution_environment(
+            db,
+            workspace_id=workspace_id,
+            execution_device_id=execution_device_id,
+        )
+        if existing is not None:
+            return existing
+
+        require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
+        db.query(Workspace.id).filter(
+            Workspace.id == workspace_id
+        ).with_for_update().one()
+        existing = _authorized_execution_environment(
+            db,
+            workspace_id=workspace_id,
+            execution_device_id=execution_device_id,
+        )
+        if existing is not None:
+            return existing
+
+        device = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Device",
+                Kind.name == execution_device_id,
+                Kind.user_id == user_id,
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if device is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Execution environment is not available to this user",
+            )
+
+        binding = WorkspaceExecutionEnvironment(
+            workspace_id=workspace_id,
+            device_id=device.id,
+            owner_type="human",
+            owner_user_id=user_id,
+            added_by_user_id=user_id,
+        )
+        db.add(binding)
+        db.flush()
+        return binding
 
     def add_execution_environment(
         self,
@@ -153,3 +203,22 @@ def _get_execution_environment(
             status.HTTP_404_NOT_FOUND, "Execution environment not found"
         )
     return row
+
+
+def _authorized_execution_environment(
+    db: Session,
+    *,
+    workspace_id: int,
+    execution_device_id: str,
+) -> WorkspaceExecutionEnvironment | None:
+    return (
+        db.query(WorkspaceExecutionEnvironment)
+        .join(Kind, Kind.id == WorkspaceExecutionEnvironment.device_id)
+        .filter(
+            WorkspaceExecutionEnvironment.workspace_id == workspace_id,
+            Kind.kind == "Device",
+            Kind.name == execution_device_id,
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )

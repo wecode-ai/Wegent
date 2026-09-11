@@ -252,9 +252,10 @@ class ProjectChatService:
             if project.workspace_id is not None and request.execution_device_id:
                 from app.services.workspaces import workspace_service
 
-                workspace_service.require_execution_environment_authorized(
+                workspace_service.ensure_owned_execution_environment_authorized(
                     db,
                     workspace_id=int(project.workspace_id),
+                    user_id=user_id,
                     execution_device_id=request.execution_device_id,
                 )
             workspace_binding = (
@@ -414,9 +415,10 @@ class ProjectChatService:
             if project is not None and project.workspace_id is not None and device_id:
                 from app.services.workspaces import workspace_service
 
-                workspace_service.require_execution_environment_authorized(
+                workspace_service.ensure_owned_execution_environment_authorized(
                     db,
                     workspace_id=int(project.workspace_id),
+                    user_id=user_id,
                     execution_device_id=device_id,
                 )
             if "workspace_binding" in request.model_fields_set:
