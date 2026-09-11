@@ -110,11 +110,38 @@ assert_desktop_case() {
   fi
 }
 
-assert_desktop_case "plugin capabilities owns Skills and MCP workspace" \
-  'wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}' \
+assert_desktop_output() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
+  if [[ "$output" != "$expected" ]]; then
+    printf 'Desktop output case "%s" failed:\n%s\n' "$name" "$output" >&2
+    exit 1
+  fi
+}
+
+assert_desktop_output "plugin capabilities owns Skills and MCP workspace" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
   "wework/src/components/plugins/capabilities/SkillsPanel.tsx"
-assert_desktop_case "plugin capabilities owns plugin workspace" \
-  'wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}' \
+assert_desktop_output "plugin capabilities owns plugin workspace" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-17","name":"Core / shard 17","segments":"plugin-capabilities"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=false' \
   "wework/src/components/plugins/PluginsWorkspace.tsx"
 
 assert_checkpoint_runtime_failure_rejected() {
