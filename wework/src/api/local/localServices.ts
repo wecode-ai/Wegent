@@ -1042,6 +1042,9 @@ function localRuntimeModelConfig(
     const visionSidecar = localVisionSidecarConfig(localModel)
     const primaryCodexCatalogModelId =
       localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
+    const nativeCodexTools =
+      localModel.apiFormat === 'openai-responses' &&
+      localModel.codexToolCompatibility !== 'standard'
     return {
       model: 'openai',
       model_id: localModel.modelId,
@@ -1049,6 +1052,8 @@ function localRuntimeModelConfig(
       codex_catalog_model_id: primaryCodexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
+      native_tool_search: nativeCodexTools,
+      native_namespace_tools: nativeCodexTools,
       tool_profile: localModel.toolProfile,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
@@ -1095,10 +1100,15 @@ function localRuntimeModelConfig(
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const nativeByDefault = upstreamApiFormat === 'openai-responses'
     const nativeToolSearch =
-      modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
+      modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION] == null
+        ? nativeByDefault
+        : modelOptions[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
     const nativeNamespaceTools =
-      modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
+      modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] == null
+        ? nativeByDefault
+        : modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
     const primaryCodexCatalogModelId =
       modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
@@ -1187,6 +1197,13 @@ function harnessProxyUpstream(
   if (!baseUrl || !apiFormat || !apiKey) {
     throw new Error('Harness model proxy configuration is incomplete')
   }
+  const nativeByDefault = apiFormat === 'openai-responses'
+  const nativeToolSearch =
+    typeof config.native_tool_search === 'boolean' ? config.native_tool_search : nativeByDefault
+  const nativeNamespaceTools =
+    typeof config.native_namespace_tools === 'boolean'
+      ? config.native_namespace_tools
+      : nativeByDefault
   const headers =
     config.default_headers &&
     typeof config.default_headers === 'object' &&
@@ -1200,8 +1217,8 @@ function harnessProxyUpstream(
     request_url: recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`,
     api_format: apiFormat,
     convert_custom_tools: config.tool_profile === 'function',
-    native_tool_search: false,
-    native_namespace_tools: false,
+    native_tool_search: nativeToolSearch,
+    native_namespace_tools: nativeNamespaceTools,
     api_key: apiKey,
     default_headers: headers,
     proxy_url: getLocalProxyUrl() || null,
