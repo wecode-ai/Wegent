@@ -87,7 +87,7 @@ function eventPayload(catalog, event) {
     default_columns: event.properties.map(property => property.name),
     description: event.description.en,
     name: event.name,
-    tags: ['wework', catalog.domain, `schema-v${event.eventSchemaVersion}`],
+    tags: [...new Set(['wework', catalog.domain, `schema-v${event.eventSchemaVersion}`])],
     verified: true,
   }
 }
@@ -115,7 +115,7 @@ function propertyPayload(catalog, property) {
   return {
     description: `Public Wework ${catalog.domain} telemetry property: ${property.name}`,
     property_type: postHogPropertyType(property.type),
-    tags: ['wework', catalog.domain, `schema-v${catalog.schemaVersion}`],
+    tags: [...new Set(['wework', catalog.domain, `schema-v${catalog.schemaVersion}`])],
     verified: true,
   }
 }

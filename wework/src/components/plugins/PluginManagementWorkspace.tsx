@@ -4,7 +4,7 @@ import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { track } from '@/telemetry/client'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
@@ -301,7 +301,7 @@ export function PluginManagementWorkspace({
         track('plugin_enabled_changed', {
           enabled: !plugin.enabled,
           scope: 'plugin',
-          source: 'cloud',
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
         })
       })
       .catch(() => {
@@ -344,7 +344,7 @@ export function PluginManagementWorkspace({
         track('plugin_enabled_changed', {
           enabled,
           scope: 'component',
-          source: 'cloud',
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
         })
       })
       .catch(() => {

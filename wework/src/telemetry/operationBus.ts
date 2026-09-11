@@ -1,3 +1,4 @@
+import { PLUGIN_OPERATION_DEFINITIONS, type PluginOperationKey } from './generated/pluginEvents'
 import { SMART_APP_OPERATION_DEFINITIONS } from './generated/smartAppEvents'
 import type { SmartAppOperationKey } from './generated/smartAppEvents'
 import type { WeworkTelemetryContext } from './facts'
@@ -5,7 +6,7 @@ import type { WeworkTelemetryContext } from './facts'
 export interface OperationResult {
   readonly context?: WeworkTelemetryContext
   readonly failureStage?: string
-  readonly key: SmartAppOperationKey
+  readonly key: OperationKey
   readonly outcome: 'failed' | 'succeeded'
 }
 
@@ -19,17 +20,27 @@ export interface OperationResultDetail {
   readonly context?: WeworkTelemetryContext
 }
 
+export type OperationKey = SmartAppOperationKey | PluginOperationKey
+
+const definitions = [...SMART_APP_OPERATION_DEFINITIONS, ...PLUGIN_OPERATION_DEFINITIONS]
+
 const listeners = new Set<(result: OperationResult) => void>()
 
-export function beginOperation(key: SmartAppOperationKey): OperationAttempt {
-  const definition = SMART_APP_OPERATION_DEFINITIONS.find(operation => operation.key === key)
-  if (!definition) throw new Error(`Unknown Smart App operation: ${key}`)
+export function beginOperation(key: OperationKey): OperationAttempt {
+  const definition = definitions.find(operation => operation.key === key)
+  if (!definition) throw new Error(`Unknown telemetry operation: ${key}`)
 
   let completed = false
   const finish = (result: OperationResult): boolean => {
     if (completed) return false
     completed = true
-    for (const listener of listeners) listener(result)
+    for (const listener of listeners) {
+      try {
+        listener(result)
+      } catch {
+        /* Observers must not change the business result. */
+      }
+    }
     return true
   }
 
