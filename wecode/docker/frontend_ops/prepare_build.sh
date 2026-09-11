@@ -9,6 +9,7 @@ rm -rf frontend packages patches package.json pnpm-lock.yaml pnpm-workspace.yaml
 cp -R ../../../frontend ./frontend
 mkdir -p ./packages
 cp -R ../../../packages/chat-core ./packages/chat-core
+cp -R ../../../packages/collaboration ./packages/collaboration
 cp -R ../../../patches ./patches
 cp ../../../package.json ../../../pnpm-lock.yaml ../../../pnpm-workspace.yaml ./
 cp -f .env.local ./frontend/.env.local
@@ -21,4 +22,5 @@ rm -rf \
   ./frontend/playwright-report \
   ./frontend/test-results \
   ./frontend/tsconfig.tsbuildinfo \
-  ./packages/chat-core/node_modules
+  ./packages/chat-core/node_modules \
+  ./packages/collaboration/node_modules
