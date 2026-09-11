@@ -27,6 +27,7 @@ import {
   collaborationFilePreviewKind,
   isLikelyCollaborationTextContent,
 } from "./preview";
+import { loadCollaborationFiles } from "./load";
 import type {
   CollaborationBinaryPreviewFile,
   CollaborationDeliveryFile,
@@ -127,26 +128,18 @@ export function CollaborationFilesView({
   const showsTaskAttachments = Boolean(api.listTaskAttachments);
 
   const refresh = useCallback(() => {
-    const taskAttachmentsRequest = api.listTaskAttachments
-      ? api.listTaskAttachments(project.id)
-      : Promise.resolve([]);
-    void Promise.all([
-      api.listFiles(project.id),
-      api.listDeliveryFiles(project.id),
-      taskAttachmentsRequest,
-    ])
-      .then(([shared, delivered, attachments]) => {
-        setFiles(shared);
-        setDeliveryFiles(delivered);
-        setTaskAttachments(attachments);
-      })
-      .catch((cause) =>
+    setError(null);
+    void loadCollaborationFiles(api, project.id, {
+      onFiles: setFiles,
+      onDeliveryFiles: setDeliveryFiles,
+      onTaskAttachments: setTaskAttachments,
+      onCoreError: (cause) =>
         setError(
           cause instanceof Error
             ? cause.message
             : t("todo.files_load_failed", "加载文件失败"),
         ),
-      );
+    });
   }, [api, project.id, t]);
 
   useEffect(refresh, [refresh]);
