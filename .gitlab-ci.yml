@@ -256,7 +256,7 @@ wegent-backend:
 trigger_update_backend_web:
     stage: production
     variables:
-        APP: wegent-backend-web;simulation-wegent-backend-web;beta-wegent-backend-web;outer-wegent-backend-web
+        APP: wegent-backend-web;simulation-wegent-backend-web;beta-wegent-backend-web;outer-wegent-backend-web;api-wegent-backend-web
         SERVICE: wegent-backend-web
         IMAGE_NAME: wegent-backend-web
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
@@ -300,7 +300,7 @@ wegent-chat-shell:
 trigger_update_chat_shell:
     stage: production
     variables:
-        APP: wegent-chat-shell-web;simulation-wegent-chat-shell-web;beta-wegent-chat-shell-web;outer-wegent-chat-shell-web
+        APP: wegent-chat-shell-web;simulation-wegent-chat-shell-web;beta-wegent-chat-shell-web;outer-wegent-chat-shell-web;api-wegent-chat-shell-web
         SERVICE: wegent-chat-shell-web
         IMAGE_NAME: wegent-chat-shell-web
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
