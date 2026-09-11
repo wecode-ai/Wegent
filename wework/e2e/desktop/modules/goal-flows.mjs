@@ -25,6 +25,8 @@ import {
   GOAL_BUSY_PLAN_PROMPT,
   GOAL_BUSY_PLAN_TEXT,
   GOAL_IDLE_COMPLETION_TEXT,
+  GOAL_IDLE_FOLLOW_UP_PROMPT,
+  GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_PROMPT,
   GOAL_RESTART_COMPLETION_TEXT,
@@ -369,6 +371,76 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     'The completed Goal kept the composer busy'
   )
   await captureVerificationScreenshot(control, 'goal-idle-06-completed-read.png')
+
+  await sendPrompt(control, composerSelector, GOAL_IDLE_FOLLOW_UP_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_idle', 4),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The ordinary continuation after Goal completion did not reach the model'
+  )
+  const followUpDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.status?.isAssistantStreaming === true,
+    'The ordinary continuation after Goal completion did not enter running state'
+  )
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: followUpDebugSnapshot.workbench.currentRuntimeTask,
+      type: 'goal_status_received',
+      goalStatus: 'complete',
+    }),
+  })
+  try {
+    await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes(goalRunningTestId),
+      'A late completed Goal snapshot cleared the sidebar running indicator'
+    )
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('pause-response-button') &&
+        snapshotHasAssistantActivity(snapshot) &&
+        !snapshot.testIds.includes('send-message-button'),
+      'A late completed Goal snapshot cleared the active ordinary continuation',
+      DEFAULT_STEP_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
+    const lateGoalSnapshot = await waitForWorkbenchDebugState(
+      control,
+      snapshot =>
+        snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+        snapshot.pane?.status?.taskExecution?.running === true &&
+        snapshot.pane?.status?.isAssistantStreaming === true,
+      'The live ordinary continuation became idle after the completed Goal replay'
+    )
+    assert.equal(
+      lateGoalSnapshot.pane?.status?.isBusy,
+      true,
+      'The completed Goal replay released the composer during a live ordinary continuation'
+    )
+    await captureVerificationScreenshot(control, 'goal-idle-07-follow-up-running.png')
+  } finally {
+    control.releaseGoalIdleFollowUpResponse()
+  }
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GOAL_IDLE_FOLLOW_UP_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator'),
+    'The ordinary continuation did not settle after the Goal lifecycle regression check',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {

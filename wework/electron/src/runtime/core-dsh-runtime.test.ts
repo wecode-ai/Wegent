@@ -1,8 +1,19 @@
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   CORE_DSH_VERSION,
+  copyManagedPlugin,
   prepareCoreDshLaunch,
   selectBundledDshRuntimeMatching,
   selectCoreDshRuntime,
@@ -10,6 +21,42 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('core DSH runtime', () => {
+  test('preserves linked plugin directories as Windows junctions', async () => {
+    const root = await temporaryDirectory('core-dsh-windows-links-')
+    try {
+      const source = join(root.path, 'source')
+      const assets = join(root.path, 'assets')
+      const destination = join(root.path, 'destination')
+      await mkdir(join(source, 'web'), { recursive: true })
+      await mkdir(assets)
+      await writeFile(join(assets, 'index.js'), 'window.wework = true\n')
+      await symlink(
+        assets,
+        join(source, 'web', 'assets'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+      const directoryLinkTypes: Array<string | null | undefined> = []
+
+      await copyManagedPlugin(source, destination, {
+        platform: 'win32',
+        linkDirectory: async (target, path, type) => {
+          directoryLinkTypes.push(type)
+          await symlink(target, path, type)
+        },
+      })
+
+      const copiedAssets = join(destination, 'web', 'assets')
+      expect(directoryLinkTypes).toEqual(['junction'])
+      expect((await lstat(copiedAssets)).isSymbolicLink()).toBe(true)
+      expect(await realpath(copiedAssets)).toBe(await realpath(assets))
+      await expect(readFile(join(copiedAssets, 'index.js'), 'utf8')).resolves.toBe(
+        'window.wework = true\n'
+      )
+    } finally {
+      await root.remove()
+    }
+  })
+
   test('selects only the bundled core version', async () => {
     const root = await temporaryDirectory('core-dsh-selection-')
     const rc8 = await writeRuntime(root.path, '0.1.0-rc.8', '8')
@@ -138,6 +185,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-ui-home-focus': expect.stringContaining('wework-ui-home-focus'),
         '@wegent/dsh-ui-home-developer': expect.stringContaining('wework-ui-home-developer'),
         '@wegent/dsh-ui-git': expect.stringContaining('wework-ui-git'),
+        '@wegent/dsh-ui-outputs': expect.stringContaining('wework-ui-outputs'),
       },
       dsh: {
         profile: {
@@ -163,6 +211,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-ui-home-focus',
             '@wegent/dsh-ui-home-developer',
             '@wegent/dsh-ui-git',
+            '@wegent/dsh-ui-outputs',
           ],
         },
       },
@@ -230,6 +279,9 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-outputs', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await root.remove()
   })
@@ -821,6 +873,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-home-focus', 'wework-ui-home-focus'],
       ['@wegent/dsh-ui-home-developer', 'wework-ui-home-developer'],
       ['@wegent/dsh-ui-git', 'wework-ui-git'],
+      ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )
   await mkdir(join(packageRoot, 'lib'), { recursive: true })

@@ -33,6 +33,16 @@ This document records the state sources for the Wework chat path. The goal is to
 | Attachment/model/skill selection      | `projectChat` context                                                                                                                                                                    | Send payload, composer controls                                                                                    | In-task option locking is derived from `projectChat.isOptionsLocked`                                                                                                                                                                        |
 | Device availability                   | `state.devices` + current task/project device selection                                                                                                                                  | Composer disabled reason, device prompts                                                                           | Use only for send preconditions; never for assistant streaming status                                                                                                                                                                       |
 
+## Board Conversation Split Views
+
+The project-space board Hover task panel is a split view of the original task conversation, not a separate preview conversation. The Task page, Hover panel, and card summary must use the same runtime task address and read the same canonical `RuntimeConversationTurn[]` from `runtimeConversationCache`.
+
+- The Hover panel directly reuses `TemporaryChatPanel`; message loading, live events, continuation, and attachments all target the original task conversation.
+- Card progress text and tool activity may only be projected from canonical turns through pure selectors. Do not persist `finalResponsePreview`, serialize assistant messages, or introduce board/Hover-specific message caches.
+- When the server confirms that a transcript is idle, that response is the task's authoritative snapshot and replaces old terminal turns absent from the server. Only an active transcript is merged with buffered local events.
+- A terminal conversation is evicted after five idle minutes when no full conversation view retains it. Card summaries may observe updates but must not prevent eviction merely because the board remains mounted; an open Task page or Hover split view retains the conversation while subscribed.
+- The board prefetches only a bounded transcript tail for running and review tasks. Increasing that range requires evidence that the UI needs it; a one-line summary must not load or copy complete tool output.
+
 ## Runtime Event Flow
 
 1. A new message submit sets `sendPhase` to `submitting`.

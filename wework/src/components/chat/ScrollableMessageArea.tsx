@@ -11,7 +11,7 @@ import type {
   RuntimeTurnNavigationItem,
   TurnFileChangesSummary,
 } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
@@ -114,6 +114,7 @@ interface ScrollableMessageAreaProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onOpenSubagent?: (block: SubagentBlock) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
@@ -131,6 +132,7 @@ interface ScrollableMessageAreaProps {
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
   initialScrollPosition?: 'restore' | 'latest'
+  scrollOrigin?: 'top' | 'bottom'
 }
 
 export const ScrollableMessageArea = memo(function ScrollableMessageArea(
@@ -193,6 +195,7 @@ function areScrollableMessageAreaPropsEqual(
       ? 'onRequestUserInputIgnore'
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.onOpenSubagent !== next.onOpenSubagent ? 'onOpenSubagent' : null,
     previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
     previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
@@ -219,6 +222,7 @@ function areScrollableMessageAreaPropsEqual(
       : null,
     previous.onLoadTranscriptGap !== next.onLoadTranscriptGap ? 'onLoadTranscriptGap' : null,
     previous.initialScrollPosition !== next.initialScrollPosition ? 'initialScrollPosition' : null,
+    previous.scrollOrigin !== next.scrollOrigin ? 'scrollOrigin' : null,
   ].filter((key): key is string => key !== null)
 
   return changed.length === 0
@@ -257,6 +261,7 @@ function ScrollableMessagePaneContent({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onOpenSubagent,
   onEditLastUserMessage,
   canEditLastUserMessage,
   onForkMessage,
@@ -271,11 +276,12 @@ function ScrollableMessagePaneContent({
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
   initialScrollPosition = 'restore',
+  scrollOrigin = 'top',
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
   const internalScrollRef = useRef<HTMLDivElement>(null)
   const scrollRef = externalScrollRef ?? internalScrollRef
-  const bottomOrigin = externalScrollRef !== undefined
+  const bottomOrigin = externalScrollRef !== undefined || scrollOrigin === 'bottom'
   const activeScrollRefRef = useRef(scrollRef)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyFooterRef = useRef<HTMLDivElement>(null)
@@ -350,6 +356,9 @@ function ScrollableMessagePaneContent({
         }
         if (block.type === 'file_changes') {
           return `${block.id}:${block.status}:${block.fileChanges.file_count}:${block.fileChanges.diff?.length ?? 0}`
+        }
+        if (block.type === 'subagent') {
+          return `${block.id}:${block.status}:${block.agentStatus ?? ''}:${block.output?.length ?? 0}:${block.summary?.length ?? 0}:${block.children?.length ?? 0}`
         }
         return `${block.id}:${block.status}:${String(block.toolOutput ?? '').length}`
       })
@@ -1567,9 +1576,13 @@ function ScrollableMessagePaneContent({
       <div
         ref={internalScrollRef}
         data-testid={scrollTestId}
+        data-scroll-origin={bottomOrigin ? 'bottom' : 'top'}
         className={cn(
           'h-full overflow-y-auto',
           stickyFooter && 'flex flex-col',
+          bottomOrigin &&
+            externalScrollRef === undefined &&
+            'flex flex-col-reverse [overflow-anchor:none]',
           (turnNavigationLoading || turnNavigationTargetMessageId || autoScrollSuspended) &&
             '[overflow-anchor:none]',
           scrollerClassName
@@ -1657,6 +1670,7 @@ function ScrollableMessagePaneContent({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                onOpenSubagent={onOpenSubagent}
                 onEditLastUserMessage={onEditLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
                 onForkMessage={onForkMessage}

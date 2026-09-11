@@ -35,6 +35,10 @@ import {
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
+import {
+  appendRuntimeTerminalContext,
+  resetRuntimeTerminalContextForTests,
+} from '@/lib/runtime-terminal-context'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
@@ -2153,6 +2157,13 @@ function FollowUpProbe() {
       <span data-testid="queued-message-created-at">
         {paneSession.queuedMessages.map(message => message.createdAt).join('|')}
       </span>
+      <span data-testid="queued-runtime-state">
+        {paneSession.queuedMessages
+          .map(message =>
+            message.runtimeQueued ? `runtime:${message.runtimeQueuePosition ?? ''}` : 'local'
+          )
+          .join('|')}
+      </span>
       <span data-testid="queued-errors">
         {paneSession.queuedMessages.map(message => message.error ?? '').join('|')}
       </span>
@@ -2399,6 +2410,24 @@ function FollowUpProbe() {
       >
         interrupt first queued
       </button>
+      <button
+        data-testid="queued-force-start-first"
+        type="button"
+        onClick={() => {
+          if (firstQueuedMessage) void paneSession.forceStartQueuedMessage(firstQueuedMessage.id)
+        }}
+      >
+        force start first queued
+      </button>
+      <button
+        data-testid="queued-cancel-first"
+        type="button"
+        onClick={() => {
+          if (firstQueuedMessage) void paneSession.cancelQueuedMessage(firstQueuedMessage.id)
+        }}
+      >
+        cancel first queued
+      </button>
     </div>
   )
 }
@@ -2508,6 +2537,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     vi.clearAllMocks()
     resetLocalRuntimeChatStreamsForTests()
     resetComposerAppsMemory()
+    resetRuntimeTerminalContextForTests()
     pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
       running: true,
@@ -7703,6 +7733,8 @@ describe('WorkbenchProvider runtime tasks', () => {
             weworkCloudModelNamespace: 'default',
             weworkCloudModelResourceUserId: '1',
             weworkCloudModelUpstreamApiFormat: 'openai-responses',
+            weworkCloudModelNativeToolSearch: 'true',
+            weworkCloudModelNativeNamespaceTools: 'true',
           },
         },
       })
@@ -8343,6 +8375,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   afterEach(() => {
     vi.useRealTimers()
     clearRuntimeConversationCacheForTests()
+    resetRuntimeTerminalContextForTests()
   })
 
   beforeEach(() => {
@@ -14945,6 +14978,153 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(uploadLocalAttachmentToCloud).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+  })
+
+  test('keeps an executor-queued follow-up above the composer until it is cancelled or forced', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const sendRuntimeMessage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        accepted: true,
+        taskId: 'runtime-a',
+        status: 'queued',
+        queuePosition: 2,
+      })
+      .mockResolvedValueOnce({
+        accepted: true,
+        taskId: 'runtime-a',
+        status: 'queued',
+        queuePosition: 1,
+      })
+    const cancelRuntimeTask = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const forceStartRuntimeTask = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  available: true,
+                  workspacePath: '/workspace/project-alpha',
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+      cancelRuntimeTask,
+      forceStartRuntimeTask,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+    appendRuntimeTerminalContext({
+      taskId: 'runtime-a',
+      sessionId: 'terminal-runtime-a',
+      data: 'queued terminal output',
+    })
+
+    renderWorkbenchWithLifecycleCoordinator(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('user:first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+    )
+    expect(screen.getByTestId('queued-runtime-state')).toHaveTextContent('runtime:2')
+    expect(screen.getByTestId('follow-up-messages')).not.toHaveTextContent('user:继续修')
+    expect(sendRuntimeMessage.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        additionalContext: expect.objectContaining({
+          'wework.terminal.current': expect.any(Object),
+        }),
+      })
+    )
+
+    await userEvent.click(screen.getByTestId('queued-cancel-first'))
+
+    await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(cancelRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    })
+    await waitFor(() => expect(screen.getByTestId('queued-messages')).toBeEmptyDOMElement())
+
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-runtime-state')).toHaveTextContent('runtime:1')
+    )
+    expect(sendRuntimeMessage.mock.calls[1][0]).not.toHaveProperty('additionalContext')
+
+    await userEvent.click(screen.getByTestId('queued-force-start-first'))
+
+    await waitFor(() => expect(forceStartRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(forceStartRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    })
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+    expect(screen.getByTestId('follow-up-messages')).not.toHaveTextContent('user:继续修')
+
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'forced-follow-up-turn',
+        clientUserMessageId: sendRuntimeMessage.mock.calls[1][0].clientUserMessageId,
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+    })
+
+    await waitFor(() => expect(screen.getByTestId('queued-messages')).toBeEmptyDOMElement())
+    expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('user:继续修')
   })
 
   test('retries a busy rejection when its blocking turn settles before the response returns', async () => {

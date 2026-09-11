@@ -66,6 +66,31 @@ async fn active_thread_tracking_counts_each_thread_independently() {
 }
 
 #[tokio::test]
+async fn auth_mutation_is_rejected_while_a_turn_is_active() {
+    let client = CodexAppServerClient::new("codex-auth-mutation-active-test");
+    client.mark_thread_active("thread-1").await;
+    let mutation_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mutation_observer = std::sync::Arc::clone(&mutation_called);
+
+    let result = client
+        .mutate_auth_if_idle(move || {
+            mutation_observer.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+
+    assert_eq!(
+        result,
+        Err(CodexAuthMutationError::Busy {
+            active_turn_count: 1,
+            pending_request_count: 0,
+        })
+    );
+    assert!(!mutation_called.load(std::sync::atomic::Ordering::SeqCst));
+    client.mark_thread_idle("thread-1", false).await;
+}
+
+#[tokio::test]
 async fn idle_thread_tracking_evicts_the_oldest_subscription_over_capacity() {
     let client = CodexAppServerClient::new("codex-idle-capacity-test");
 
@@ -1024,7 +1049,7 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
-fn explicit_third_party_responses_upstream_bridges_app_tools_by_default() {
+fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
     let upstream = explicit_codex_upstream(
         &json!({
             "model_id": "gpt-5.6-sol",
@@ -1035,25 +1060,25 @@ fn explicit_third_party_responses_upstream_bridges_app_tools_by_default() {
     );
 
     assert!(!upstream.convert_custom_tools);
-    assert!(!upstream.native_tool_search);
-    assert!(!upstream.native_namespace_tools);
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
 }
 
 #[test]
-fn explicit_upstream_reads_native_app_tool_capabilities() {
+fn explicit_upstream_reads_standard_app_tool_compatibility() {
     let upstream = explicit_codex_upstream(
         &json!({
-            "model_id": "native-responses-model",
+            "model_id": "standard-responses-model",
             "upstream_api_format": "openai-responses",
-            "native_tool_search": true,
-            "native_namespace_tools": true
+            "native_tool_search": false,
+            "native_namespace_tools": false
         }),
         "https://example.com",
         "secret",
     );
 
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
 }
 
 #[test]
@@ -1412,7 +1437,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
 }
 
 #[test]
-fn user_configured_third_party_responses_provider_bridges_app_tools() {
+fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-provider-native-responses");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -1436,13 +1461,13 @@ fn user_configured_third_party_responses_provider_bridges_app_tools() {
     );
     assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
     assert!(!upstream.convert_custom_tools);
-    assert!(!upstream.native_tool_search);
-    assert!(!upstream.native_namespace_tools);
+    assert!(upstream.native_tool_search);
+    assert!(upstream.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn user_configured_provider_honors_native_app_tool_capabilities() {
+fn user_configured_provider_honors_standard_app_tool_compatibility() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("configured-openai-native-app-tools");
     let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
@@ -1450,17 +1475,17 @@ fn user_configured_provider_honors_native_app_tool_capabilities() {
     fs::create_dir_all(&root).expect("test directory should be created");
     fs::write(
         root.join("config.toml"),
-        "model_provider = \"native-responses\"\n[model_providers.native-responses]\nbase_url = \"https://api.example.com/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nnative_tool_search = true\nnative_namespace_tools = true\n",
+        "model_provider = \"standard-responses\"\n[model_providers.standard-responses]\nbase_url = \"https://api.example.com/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nnative_tool_search = false\nnative_namespace_tools = false\n",
     )
     .expect("config should be written");
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
     let upstream =
-        configured_codex_provider("native-responses", None).expect("configured provider");
+        configured_codex_provider("standard-responses", None).expect("configured provider");
 
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
+    assert!(!upstream.native_tool_search);
+    assert!(!upstream.native_namespace_tools);
     let _ = fs::remove_dir_all(root);
 }
 

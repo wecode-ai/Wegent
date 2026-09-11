@@ -1,93 +1,68 @@
-interface RuntimeResponseBlock {
-  type?: string | null
-  content?: unknown
-}
+import type { RuntimeConversationTurn } from '@/types/workbench'
 
-interface RuntimeResponseMessage {
-  role?: string | null
-  content?: string | null
-  blocks?: readonly RuntimeResponseBlock[] | null
-}
-
-interface RuntimeResponseTurn {
-  items: readonly {
-    type: string
-    content?: unknown
-  }[]
-}
-
-export function latestResponseLine(value: string): string | null {
-  const lines = value
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-  return lines.at(-1) ?? null
-}
-
-export function finalAssistantMessagesPreview(
-  messages: readonly RuntimeResponseMessage[]
-): string | null {
-  const response = finalAssistantMessagesText(messages)
-  return response ? latestResponseLine(response) : null
-}
-
-export function finalAssistantMessagesText(
-  messages: readonly RuntimeResponseMessage[]
-): string | null {
-  for (const message of [...messages].reverse()) {
-    if (!message.role?.toLowerCase().startsWith('assistant')) continue
-    const content = messageText(message)
-    if (content) return content
+export function getRuntimeTaskResponsePreview(
+  turns: RuntimeConversationTurn[],
+  active: boolean
+): string {
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = turns[turnIndex]
+    if (!turn) continue
+    const activeTurn = active && (turn.status === 'pending' || turn.status === 'streaming')
+    if (activeTurn && turn.items.length === 0) return ''
+    let segmentEnd = turn.items.length
+    while (segmentEnd > 0) {
+      const previousUserIndex = turn.items.findLastIndex(
+        (item, itemIndex) => itemIndex < segmentEnd && item.type === 'user_message'
+      )
+      const segmentStart = previousUserIndex + 1
+      const assistantLine = latestAssistantTextLine(turn.items, segmentStart, segmentEnd)
+      if (activeTurn) return assistantLine
+      const blockLine = active ? '' : latestTextBlockLine(turn.items, segmentStart, segmentEnd)
+      if (assistantLine || blockLine) return assistantLine || blockLine
+      segmentEnd = previousUserIndex
+    }
   }
-  return null
+  return ''
 }
 
-export function latestAssistantMessage<T extends RuntimeResponseMessage>(
-  messages: readonly T[]
-): T | null {
-  for (const message of [...messages].reverse()) {
-    if (!message.role?.toLowerCase().startsWith('assistant')) continue
-    if (messageText(message) || message.blocks?.length) return message
+function latestAssistantTextLine(
+  items: RuntimeConversationTurn['items'],
+  start: number,
+  end: number
+): string {
+  for (let index = end - 1; index >= start; index -= 1) {
+    const item = items[index]
+    if (item?.type !== 'assistant_text') continue
+    const line = latestNonEmptyLine(item.content)
+    if (line) return line
   }
-  return null
+  return ''
 }
 
-export function finalAssistantTranscriptMessage<T extends RuntimeResponseMessage>(transcript: {
-  messages: readonly T[]
-}): T | null {
-  return latestAssistantMessage(transcript.messages)
+function latestTextBlockLine(
+  items: RuntimeConversationTurn['items'],
+  start: number,
+  end: number
+): string {
+  for (let index = end - 1; index >= start; index -= 1) {
+    const item = items[index]
+    if (item?.type !== 'block' || item.block.type !== 'text' || item.block.status !== 'done') {
+      continue
+    }
+    const line = latestNonEmptyLine(item.block.content)
+    if (line) return line
+  }
+  return ''
 }
 
-export function finalAssistantTranscriptPreview(transcript: {
-  messages: readonly RuntimeResponseMessage[]
-  turns: readonly RuntimeResponseTurn[]
-}): string | null {
-  const response = finalAssistantTranscriptText(transcript)
-  return response ? latestResponseLine(response) : null
-}
-
-export function finalAssistantTranscriptText(transcript: {
-  messages: readonly RuntimeResponseMessage[]
-  turns: readonly RuntimeResponseTurn[]
-}): string | null {
-  const latestTurn = transcript.turns.at(-1)
-  if (!latestTurn) return finalAssistantMessagesText(transcript.messages)
-
-  const content = latestTurn.items
-    .flatMap(item =>
-      item.type === 'assistant_text' && typeof item.content === 'string' ? [item.content] : []
-    )
-    .join('\n')
-    .trim()
-  return content || null
-}
-
-function messageText(message: RuntimeResponseMessage): string {
-  if (message.content?.trim()) return message.content.trim()
-  return (message.blocks ?? [])
-    .flatMap(block =>
-      block.type === 'text' && typeof block.content === 'string' ? [block.content] : []
-    )
-    .join('\n')
-    .trim()
+function latestNonEmptyLine(value: string): string {
+  let end = value.length
+  while (end > 0) {
+    const start = value.lastIndexOf('\n', end - 1) + 1
+    const line = value.slice(start, end).trim()
+    if (line) return line
+    if (start === 0) break
+    end = start - 1
+  }
+  return ''
 }

@@ -89,7 +89,11 @@ import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import {
+  reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationSnapshot,
+  runtimeConversationKey,
+} from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
   getChangeRequestMonitor,
@@ -105,7 +109,9 @@ import {
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
 import {
+  isRuntimePaneTranscriptConfirmedIdle,
   isRuntimeTaskExecutionRunning,
+  projectRuntimePaneTranscript,
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
@@ -168,8 +174,8 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
-import { finalAssistantTranscriptText } from './runtimeTaskResponsePreview'
 import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
@@ -238,6 +244,7 @@ type PendingExecutionConfiguration = {
         type: 'move'
         columnKey: string
         beforeItemId: string | null
+        forceStart: boolean
       }
     | {
         type: 'save'
@@ -1417,6 +1424,13 @@ export function CloudTodoWorkspace({
     contextKey: string
     itemId: string
   } | null>(null)
+  const openBoardRuntimeTask = useCallback(
+    (address: RuntimeTaskAddress) => {
+      setPinnedBoardPreview(null)
+      return onOpenRuntimeTask?.(address)
+    },
+    [onOpenRuntimeTask]
+  )
   const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
     useState<PendingExecutionConfiguration | null>(null)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
@@ -1447,6 +1461,7 @@ export function CloudTodoWorkspace({
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
   const boardLiveSubscriptionActiveRef = useRef(false)
+  const markingReadItemKeysRef = useRef(new Set<string>())
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
     setBoardParentId(null)
@@ -1553,20 +1568,12 @@ export function CloudTodoWorkspace({
   const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
     LocatedLoopItem[] | null
   >(null)
-  const [runtimeConversationPreviews, setRuntimeConversationPreviews] = useState<
-    Record<
-      string,
-      {
-        signature: string
-        text: string | null
-      }
-    >
-  >({})
   const [runtimeGoalsByAddress, setRuntimeGoalsByAddress] = useState<
     Record<string, RuntimeGoal | null>
   >({})
   const runtimeConversationRequestsRef = useRef(new Set<string>())
   const runtimeConversationLatestSignatureRef = useRef(new Map<string, string>())
+  const runtimeConversationLoadedSignatureRef = useRef(new Map<string, string>())
   const runtimeGoalRequestsRef = useRef(new Set<string>())
   useEffect(() => {
     if (projectMenuId === null) return
@@ -1793,7 +1800,6 @@ export function CloudTodoWorkspace({
               taskId: binding.task_id,
             })
             const runtimeTask = runtimeTaskByAddress.get(addressKey)
-            const preview = runtimeConversationPreviews[addressKey]
             const runtimeGoalLoaded = Object.prototype.hasOwnProperty.call(
               runtimeGoalsByAddress,
               addressKey
@@ -1810,20 +1816,13 @@ export function CloudTodoWorkspace({
               changeRequestTarget: runtimeTask
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
                 : null,
-              finalResponsePreview: preview?.text ?? null,
               runtimeGoal: runtimeGoalsByAddress[addressKey] ?? null,
               runtimeGoalLoaded,
             }
           }),
         ])
       ),
-    [
-      itemTaskBindings,
-      runtimeConversationPreviews,
-      runtimeGoalsByAddress,
-      runtimeTaskByAddress,
-      runtimeTaskRunningByAddress,
-    ]
+    [itemTaskBindings, runtimeGoalsByAddress, runtimeTaskByAddress, runtimeTaskRunningByAddress]
   )
   const loadBoardTaskRuntimeGoal = useCallback(
     async (address: RuntimeTaskAddress): Promise<void> => {
@@ -1925,24 +1924,27 @@ export function CloudTodoWorkspace({
       throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
     }
   }
-  const projectForItem = (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
-    if (item.project_store) {
-      return projects.find(project =>
-        sameProjectSpace(projectSpaceRef(project), {
-          projectStore: item.project_store!,
-          projectId: item.cloud_project_id,
-        })
-      )
-    }
-    const matches = projects.filter(project => project.id === item.cloud_project_id)
-    if (selectedProjectKey) {
-      const selectedMatch = matches.find(
-        project => projectSpaceKey(projectSpaceRef(project)) === selectedProjectKey
-      )
-      if (selectedMatch) return selectedMatch
-    }
-    return matches.length === 1 ? matches[0] : undefined
-  }
+  const projectForItem = useCallback(
+    (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
+      if (item.project_store) {
+        return projects.find(project =>
+          sameProjectSpace(projectSpaceRef(project), {
+            projectStore: item.project_store!,
+            projectId: item.cloud_project_id,
+          })
+        )
+      }
+      const matches = projects.filter(project => project.id === item.cloud_project_id)
+      if (selectedProjectKey) {
+        const selectedMatch = matches.find(
+          project => projectSpaceKey(projectSpaceRef(project)) === selectedProjectKey
+        )
+        if (selectedMatch) return selectedMatch
+      }
+      return matches.length === 1 ? matches[0] : undefined
+    },
+    [projects, selectedProjectKey]
+  )
   const locateItems = useCallback(
     <T extends CloudLoopItem>(
       sourceItems: T[],
@@ -2315,6 +2317,54 @@ export function CloudTodoWorkspace({
   }, [startupBoardReady])
   const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
   const selectedItemApi = apiForProject(selectedItemProject)
+  const markItemRead = useCallback(
+    async (item: LocatedLoopItem) => {
+      if (!item.is_unread) return
+      const project = projectForItem(item)
+      const itemApi = apiForProject(project)
+      if (!project || !itemApi) return
+      const projectKey = projectSpaceKey(projectSpaceRef(project))
+      const requestKey = `${projectKey}\0${item.id}`
+      if (markingReadItemKeysRef.current.has(requestKey)) return
+      markingReadItemKeysRef.current.add(requestKey)
+
+      try {
+        const updated = {
+          ...(await itemApi.markLoopItemRead(item.id)),
+          project_store: item.project_store,
+        }
+        const applyReadSnapshot = (current: LocatedLoopItem) => ({
+          ...preferNewestLoopItemSnapshot(current, updated),
+          is_unread: false,
+        })
+        setSelectedItem(current => (current?.id === item.id ? applyReadSnapshot(current) : current))
+        setItems(current =>
+          current.map(candidate =>
+            candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
+          )
+        )
+        setDetailItems(current =>
+          current.map(candidate =>
+            candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
+          )
+        )
+        setProjectItems(current => ({
+          ...current,
+          [projectKey]: (current[projectKey] ?? []).map(candidate =>
+            candidate.id === item.id ? applyReadSnapshot(candidate) : candidate
+          ),
+        }))
+      } catch (error) {
+        console.warn('[Wework project board] mark Issue read failed', {
+          itemId: item.id,
+          error,
+        })
+      } finally {
+        markingReadItemKeysRef.current.delete(requestKey)
+      }
+    },
+    [apiForProject, projectForItem]
+  )
   useEffect(() => {
     if (!selectedItem || selectedItem.detail_loaded !== false || !selectedItemApi) return
     let active = true
@@ -2349,43 +2399,8 @@ export function CloudTodoWorkspace({
     ) {
       return
     }
-    let active = true
-    const itemId = selectedItem.id
-    const projectKey = projectSpaceKey(projectSpaceRef(selectedItemProject))
-    void selectedItemApi
-      .markLoopItemRead(itemId)
-      .then(updated => {
-        if (!active) return
-        const locatedUpdated = {
-          ...updated,
-          project_store: selectedItem.project_store,
-        }
-        setSelectedItem(current => (current?.id === itemId ? locatedUpdated : current))
-        setItems(current => current.map(item => (item.id === itemId ? locatedUpdated : item)))
-        setDetailItems(current => current.map(item => (item.id === itemId ? locatedUpdated : item)))
-        setProjectItems(current => ({
-          ...current,
-          [projectKey]: (current[projectKey] ?? []).map(item =>
-            item.id === itemId ? locatedUpdated : item
-          ),
-        }))
-      })
-      .catch(error => {
-        console.warn('[Wework project board] mark Issue read failed', {
-          itemId,
-          error,
-        })
-      })
-    return () => {
-      active = false
-    }
-  }, [
-    selectedItem?.id,
-    selectedItem?.is_unread,
-    selectedItem?.project_store,
-    selectedItemApi,
-    selectedItemProject,
-  ])
+    window.queueMicrotask(() => void markItemRead(selectedItem))
+  }, [markItemRead, selectedItem, selectedItemApi, selectedItemProject])
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
   const detailAllItems =
@@ -3170,6 +3185,7 @@ export function CloudTodoWorkspace({
       return
     }
     for (const item of items) {
+      if (item.status !== 'in_review' && !isLoopItemExecutionActive(item)) continue
       for (const binding of itemTaskBindings[item.id] ?? []) {
         const addressKey = runtimeConversationKey({
           deviceId: binding.device_id,
@@ -3182,7 +3198,7 @@ export function CloudTodoWorkspace({
           task?.status ?? '',
           task?.turnStatus ?? '',
         ].join(':')
-        if (runtimeConversationPreviews[addressKey]?.signature === signature) continue
+        if (runtimeConversationLoadedSignatureRef.current.get(addressKey) === signature) continue
         const requestKey = `${addressKey}:${signature}`
         if (runtimeConversationRequestsRef.current.has(requestKey)) continue
         runtimeConversationRequestsRef.current.add(requestKey)
@@ -3195,20 +3211,30 @@ export function CloudTodoWorkspace({
             threadId: task?.threadId,
             workspacePath: task?.workspacePath,
             runtimeHandle: task?.runtimeHandle,
-            limit: 50,
+            limit: 20,
           })
           .then(transcript => {
             if (runtimeConversationLatestSignatureRef.current.get(addressKey) !== signature) {
               return
             }
-            const text = finalAssistantTranscriptText(transcript)
-            setRuntimeConversationPreviews(current => ({
-              ...current,
-              [addressKey]: {
-                signature,
-                text,
-              },
-            }))
+            const projectedTranscript = projectRuntimePaneTranscript(transcript)
+            const address = {
+              deviceId: binding.device_id,
+              taskId: binding.task_id,
+              runtime: task?.runtime,
+              threadId: task?.threadId,
+              workspacePath: task?.workspacePath,
+              runtimeHandle: task?.runtimeHandle,
+            }
+            if (
+              projectedTranscript.fullContent === true &&
+              isRuntimePaneTranscriptConfirmedIdle(projectedTranscript)
+            ) {
+              replaceRuntimeConversationSnapshot(address, projectedTranscript.turns)
+            } else {
+              reconcileRuntimeConversationSnapshot(address, projectedTranscript.turns)
+            }
+            runtimeConversationLoadedSignatureRef.current.set(addressKey, signature)
           })
           .catch(error => {
             console.warn('[Wework project board] failed to preload task conversation', {
@@ -3221,13 +3247,6 @@ export function CloudTodoWorkspace({
             if (runtimeConversationLatestSignatureRef.current.get(addressKey) !== signature) {
               return
             }
-            setRuntimeConversationPreviews(current => ({
-              ...current,
-              [addressKey]: {
-                signature,
-                text: null,
-              },
-            }))
           })
           .finally(() => {
             runtimeConversationRequestsRef.current.delete(requestKey)
@@ -3238,7 +3257,6 @@ export function CloudTodoWorkspace({
     itemTaskBindings,
     itemTaskBindingsProjectKey,
     items,
-    runtimeConversationPreviews,
     runtimeTasksByKey,
     selectedProjectKey,
     services.runtimeWorkApi,
@@ -3384,7 +3402,8 @@ export function CloudTodoWorkspace({
     columnKey: string,
     beforeItemId: string | null = null,
     executionResult?: IssueExecutionConfigResult,
-    automationRuleId?: string
+    automationRuleId?: string,
+    forceStart = false
   ): Promise<boolean> {
     const item = items.find(candidate => candidate.id === itemId)
     const column = boardColumns.find(candidate => candidate.key === columnKey)
@@ -3412,7 +3431,7 @@ export function CloudTodoWorkspace({
     if (needsExecutionConfig && !executionResult) {
       openExecutionConfiguration({
         item: executionItem,
-        continuation: { type: 'move', columnKey, beforeItemId },
+        continuation: { type: 'move', columnKey, beforeItemId, forceStart },
       })
       return false
     }
@@ -3565,14 +3584,48 @@ export function CloudTodoWorkspace({
         taskBindingCount,
       })
       if (shouldOpenTaskComposer) {
+        const initialInput = workItemTaskInput(locatedUpdated)
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
         setBackgroundTaskItemId(column.status === 'in_progress' ? locatedUpdated.id : null)
         openTaskComposer({
           workItemId: locatedUpdated.id,
-          initialInput: workItemTaskInput(locatedUpdated),
+          initialInput,
           backgroundAfterSend: column.status === 'in_progress',
+          taskRequest: forceStart
+            ? {
+                runtime: 'codex',
+                message: initialInput,
+                forceStart: true,
+              }
+            : undefined,
         })
+      } else if (forceStart && workbench) {
+        const addresses = new Map<string, RuntimeTaskAddress>()
+        for (const binding of itemTaskBindings[item.id] ?? []) {
+          const address = { deviceId: binding.device_id, taskId: binding.task_id }
+          addresses.set(runtimeConversationKey(address), address)
+        }
+        for (const address of runtimeAddressesByWorkItem.get(
+          `${item.cloud_project_id}:${item.id}`
+        ) ?? []) {
+          addresses.set(runtimeConversationKey(address), address)
+        }
+        const queuedAddresses = [...addresses.values()].filter(address => {
+          const task = runtimeTasksByKey.get(runtimeConversationKey(address))
+          return task?.status?.trim().toLowerCase() === 'queued'
+        })
+        const forceStartResults = await Promise.allSettled(
+          queuedAddresses.map(address => workbench.forceStartRuntimeTask(address))
+        )
+        const failedForceStart = forceStartResults.find(result => result.status === 'rejected')
+        if (failedForceStart?.status === 'rejected') {
+          console.error('[Wework project board] queued task force start failed', {
+            itemId: locatedUpdated.id,
+            error: failedForceStart.reason,
+          })
+          setBoardError(t('workbench.runtime_task_force_start_failed'))
+        }
       } else if (
         enteringExecution &&
         shouldRevealWorkItemWorkflowActions(
@@ -3605,7 +3658,8 @@ export function CloudTodoWorkspace({
               columnKey,
               beforeItemId,
               executionResult,
-              selectedAutomationId
+              selectedAutomationId,
+              forceStart
             )
             if (!moved) {
               throw new Error(
@@ -3648,13 +3702,27 @@ export function CloudTodoWorkspace({
             return target.status === column.status
           })
         : null
-      if (targetColumn) void moveItem(activeId, targetColumn.key, beforeCardId)
+      if (targetColumn) {
+        const source = items.find(candidate => candidate.id === activeId)
+        const forceStart =
+          nativeGroupBy === 'status' &&
+          source?.status === 'pending' &&
+          isProcessingStatus(targetColumn.status)
+        void moveItem(activeId, targetColumn.key, beforeCardId, undefined, undefined, forceStart)
+      }
       return
     }
     const status = boardStatusFromDropId(event.over?.id)
     if (status) {
       const column = boardColumns.find(candidate => candidate.key === status)
-      if (column) void moveItem(activeId, column.key)
+      if (column) {
+        const source = items.find(candidate => candidate.id === activeId)
+        const forceStart =
+          nativeGroupBy === 'status' &&
+          source?.status === 'pending' &&
+          isProcessingStatus(column.status)
+        void moveItem(activeId, column.key, null, undefined, undefined, forceStart)
+      }
     }
   }
 
@@ -5297,7 +5365,9 @@ export function CloudTodoWorkspace({
                                             : null
                                         )
                                       }
+                                      onMarkRead={markItemRead}
                                       onLoadRuntimeGoal={loadBoardTaskRuntimeGoal}
+                                      onOpenRuntimeTask={openBoardRuntimeTask}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
@@ -5439,7 +5509,9 @@ export function CloudTodoWorkspace({
                   pending.item.id,
                   pending.continuation.columnKey,
                   pending.continuation.beforeItemId,
-                  result
+                  result,
+                  undefined,
+                  pending.continuation.forceStart
                 )
               } else {
                 await saveExecutionConfiguration(pending.item, result)
@@ -5909,6 +5981,7 @@ export function CloudTodoWorkspace({
               localProjectIdForItem(selectedItem) ??
               (isMyTasksBoard ? selectedLocalProject?.id : null)
             }
+            taskRequest={taskComposerRequest.taskRequest}
             inheritFromTask={taskComposerRequest.inheritFromTask}
             workflowNodeId={taskComposerRequest.workflowNodeId}
             onAddressChange={() => {

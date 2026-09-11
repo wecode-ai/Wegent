@@ -39,6 +39,7 @@ const statusElement = document.querySelector('#splash-status')
 const titleElement = document.querySelector('#splash-title')
 const stageDots = [...document.querySelectorAll('.stage-dot')]
 const recoveryElement = document.querySelector('#startup-recovery')
+const disablePluginButton = document.querySelector('#startup-disable-plugin')
 const retryButton = document.querySelector('#startup-retry')
 const recoverButton = document.querySelector('#startup-recover')
 const resetOpenButton = document.querySelector('#startup-reset-open')
@@ -56,6 +57,7 @@ let stageIndex = prefersReducedMotion ? stages.length - 1 : 0
 let previousTime = performance.now()
 let slowStartup = false
 let startupFailed = false
+let failedPluginName = null
 let pendingResetMode = null
 let actionPending = false
 let confirmationTrigger = null
@@ -99,8 +101,12 @@ function updateCopy(index, animate) {
   const replaceStatus = () => {
     statusElement.textContent = startupFailed
       ? isChinese
-        ? '你可以重试，或重置启动状态后重新打开'
-        : 'Retry, or reset startup state and reopen Wework'
+        ? failedPluginName
+          ? `检测到插件 ${failedPluginName} 加载失败`
+          : '你可以重试，或重置启动状态后重新打开'
+        : failedPluginName
+          ? `The plugin ${failedPluginName} failed to load`
+          : 'Retry, or reset startup state and reopen Wework'
       : slowStartup
         ? isChinese
           ? '仍在加载任务列表，请稍候…'
@@ -124,6 +130,11 @@ function updateCopy(index, animate) {
 }
 
 function setLocalizedActionCopy() {
+  if (failedPluginName) {
+    disablePluginButton.textContent = isChinese
+      ? `屏蔽 ${failedPluginName} 并重启`
+      : `Disable ${failedPluginName} and restart`
+  }
   retryButton.textContent = isChinese ? '重新启动' : 'Restart'
   recoverButton.textContent = isChinese ? '恢复工作台' : 'Recover workbench'
   resetOpenButton.textContent = isChinese ? '更多重置选项' : 'More reset options'
@@ -172,6 +183,7 @@ function hideConfirmation() {
 
 function setActionPending(pending) {
   actionPending = pending
+  disablePluginButton.disabled = pending
   retryButton.disabled = pending
   recoverButton.disabled = pending
   resetOpenButton.disabled = pending
@@ -179,7 +191,7 @@ function setActionPending(pending) {
   confirmationSubmit.disabled = pending
 }
 
-async function runRecoveryAction(action) {
+async function runRecoveryAction(action, ...args) {
   actionErrorElement.hidden = true
   setActionPending(true)
   try {
@@ -187,7 +199,7 @@ async function runRecoveryAction(action) {
     if (!recovery || typeof recovery[action] !== 'function') {
       throw new Error('Startup recovery is unavailable')
     }
-    await recovery[action]()
+    await recovery[action](...args)
   } catch {
     setActionPending(false)
     actionErrorElement.textContent = isChinese
@@ -198,6 +210,9 @@ async function runRecoveryAction(action) {
 }
 
 setLocalizedActionCopy()
+disablePluginButton.addEventListener('click', () => {
+  if (failedPluginName) void runRecoveryAction('disablePlugin', failedPluginName)
+})
 retryButton.addEventListener('click', () => void runRecoveryAction('retry'))
 recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
@@ -214,7 +229,11 @@ window.addEventListener('keydown', event => {
   }
 })
 
-window.addEventListener('wework-startup-error', () => {
+window.addEventListener('wework-startup-error', event => {
+  const pluginName = event.detail?.pluginName
+  failedPluginName = typeof pluginName === 'string' && pluginName ? pluginName : null
+  disablePluginButton.hidden = failedPluginName === null
+  setLocalizedActionCopy()
   startupFailed = true
   slowStartup = true
   document.body.dataset.startupError = 'true'

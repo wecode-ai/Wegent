@@ -57,6 +57,7 @@ export const HOST_CAPABILITIES = [
   'dialog.open',
   'dialog.save',
   'desktop.events',
+  'deviceDiagnostics.microphone',
   'diagnostics.filePreview',
   'developer.openDevTools',
   'developer.openLogDirectory',

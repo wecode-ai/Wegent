@@ -850,6 +850,17 @@ async function verifyEnvironmentPanelScrollStability(control) {
   const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
+  const environmentButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-button"]`
+  if (
+    Number(
+      await control.command(
+        'getElementCount',
+        `${environmentPanelSelector} [data-testid="environment-info-popover"]`
+      )
+    ) === 0
+  ) {
+    await control.command('click', environmentButtonSelector, { visible: true })
+  }
   await control.command(
     'waitFor',
     `${environmentPanelSelector} [data-testid="environment-info-popover"]`,

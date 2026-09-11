@@ -219,6 +219,8 @@ export interface WeworkContribution {
   readonly icon?: string
   readonly module?: string
   readonly order?: number
+  readonly requiredHostServices?: readonly string[]
+  readonly when?: WeworkContextExpression
   readonly [key: string]: unknown
 }
 
@@ -232,7 +234,7 @@ export interface WeworkContributionMap {
   readonly 'wework.plugins.action': WeworkContribution
   readonly 'wework.board.card.status': WeworkContribution
   readonly 'wework.composer.action': WeworkContribution
-  readonly 'wework.environment.section': WeworkContribution
+  readonly 'wework.conversation.summary': WeworkContribution
   readonly 'wework.home': WeworkContribution
   readonly 'wework.project.create.section': WeworkContribution
   readonly 'wework.project.work.section': WeworkContribution
@@ -407,6 +409,23 @@ export interface WeworkSecretRegistry {
   scope(namespace: string): WeworkScopedSecrets
 }
 
+export interface WeworkTelemetrySink {
+  readonly id: string
+  readonly protocol: 'telemetry-sink/v1'
+  accept(fact: Readonly<Record<string, unknown>>): void | Promise<void>
+}
+
+export interface WeworkTelemetrySinkRegistry {
+  register(owner: Context, sink: WeworkTelemetrySink): () => void
+  get(id: string): WeworkTelemetrySink | null
+  list(): readonly WeworkTelemetrySink[]
+  subscribe(listener: () => void): () => void
+}
+
+export interface WeworkTelemetryService {
+  readonly sinks: WeworkTelemetrySinkRegistry
+}
+
 export interface WeworkService {
   readonly host: WeworkDesktopService
   readonly backend: WeworkPluginBackendRegistry
@@ -423,6 +442,7 @@ export interface WeworkService {
   readonly configuration: WeworkConfigurationRegistry
   readonly storage: WeworkStorageRegistry
   readonly secrets: WeworkSecretRegistry
+  readonly telemetry: WeworkTelemetryService
   readonly testing: WeworkTestingService
 }
 
@@ -442,6 +462,7 @@ export interface WeworkExtensionHost extends Pick<
   | 'configuration'
   | 'storage'
   | 'secrets'
+  | 'telemetry'
   | 'testing'
 > {
   readonly dialog: WeworkDialogService
@@ -485,7 +506,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       scope: 'session-maybe'
       owner: { readonly compact: boolean; readonly disabled: boolean }
     }
-    'wework.environment.section': {
+    'wework.conversation.summary': {
       kind: 'list'
       scope: 'session-maybe'
       owner: Readonly<Record<string, unknown>>

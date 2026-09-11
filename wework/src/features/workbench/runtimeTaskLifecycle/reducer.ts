@@ -90,6 +90,35 @@ export function reduceRuntimeTaskLifecycle(
           }
         : state
 
+    case 'send_queued': {
+      const executorAlreadyActive = state.task?.running === true || state.activeTurnId !== null
+      if (executorAlreadyActive) {
+        return {
+          ...state,
+          executionPhase: 'running',
+          turnPhase: state.activeTurnId ? 'streaming' : state.turnPhase,
+          expectedExecutorRunning: true,
+        }
+      }
+      return {
+        ...state,
+        task: state.task
+          ? {
+              ...state.task,
+              running: false,
+              status: 'queued',
+              ...(event.queuePosition === undefined
+                ? {}
+                : { queuePosition: event.queuePosition ?? undefined }),
+            }
+          : state.task,
+        executionPhase: 'queued',
+        turnPhase: 'idle',
+        activeTurnId: null,
+        expectedExecutorRunning: false,
+      }
+    }
+
     case 'send_rejected': {
       const executorAlreadyConfirmed =
         state.executionPhase === 'running' || state.turnPhase === 'streaming'
@@ -178,8 +207,13 @@ export function reduceRuntimeTaskLifecycle(
           }
         : state
 
-    case 'goal_status_received':
-      return event.goalStatus !== null && event.goalStatus !== 'active'
+    case 'goal_status_received': {
+      const goalJustSettled =
+        state.goalStatus === 'active' &&
+        event.goalStatus !== null &&
+        event.goalStatus !== 'active' &&
+        (event.goalStatus !== 'complete' || state.turnPhase === 'idle')
+      return goalJustSettled
         ? {
             ...state,
             executionPhase: 'idle',
@@ -192,6 +226,7 @@ export function reduceRuntimeTaskLifecycle(
             ...state,
             goalStatus: event.goalStatus,
           }
+    }
 
     case 'marked_read':
       return state.unread ? { ...state, unread: false } : state

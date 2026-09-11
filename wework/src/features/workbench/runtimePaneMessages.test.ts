@@ -145,6 +145,60 @@ describe('runtime transcript status', () => {
     ])
   })
 
+  test('restores subagent identity, lifecycle, and nested streamed blocks', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'in_progress',
+        items: [
+          {
+            id: 'subagent-item-1',
+            type: 'block',
+            block: {
+              id: 'subagent-thread-1',
+              type: 'subagent',
+              agent_thread_id: 'thread-1',
+              agent_status: 'running',
+              title: 'Explorer',
+              status: 'streaming',
+              timestamp: 1_780_000_001_000,
+              children: [
+                {
+                  id: 'child-text-1',
+                  type: 'text',
+                  parent_tool_use_id: 'subagent-thread-1',
+                  content: 'Inspecting the repository',
+                  status: 'streaming',
+                  timestamp: 1_780_000_001_500,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toContainEqual(
+      expect.objectContaining({
+        type: 'block',
+        block: expect.objectContaining({
+          id: 'subagent-thread-1',
+          type: 'subagent',
+          agentThreadId: 'thread-1',
+          agentStatus: 'running',
+          title: 'Explorer',
+          children: [
+            expect.objectContaining({
+              id: 'child-text-1',
+              parentToolUseId: 'subagent-thread-1',
+              content: 'Inspecting the repository',
+            }),
+          ],
+        }),
+      })
+    )
+  })
+
   test('does not infer streaming from an active conversation status', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {

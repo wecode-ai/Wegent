@@ -74,6 +74,7 @@ async fn execute_command_uses_argv_and_cwd() {
 
     let result = CommandHandler
         .execute(CommandRequest {
+            command_key: None,
             command: "cat".to_owned(),
             argv: vec!["cat".to_owned(), "target.txt".to_owned()],
             cwd: Some(workdir.display().to_string()),
@@ -91,6 +92,7 @@ async fn execute_command_uses_argv_and_cwd() {
 async fn execute_command_argv_does_not_invoke_shell() {
     let result = CommandHandler
         .execute(CommandRequest {
+            command_key: None,
             command: "printf %s".to_owned(),
             argv: vec![
                 "printf".to_owned(),
@@ -114,6 +116,7 @@ async fn execute_command_argv_does_not_invoke_shell() {
 async fn execute_command_returns_completed_process_result() {
     let result = CommandHandler
         .execute(CommandRequest {
+            command_key: None,
             command: "printf 'hello'".to_owned(),
             timeout_seconds: 5.0,
             max_output_bytes: 1024,
@@ -166,6 +169,7 @@ async fn execute_command_child_does_not_inherit_executor_stdin() {
 
     let result = CommandHandler
         .execute(CommandRequest {
+            command_key: None,
             command: "cat".to_owned(),
             timeout_seconds: 5.0,
             max_output_bytes: 1024,
@@ -181,6 +185,7 @@ async fn execute_command_child_does_not_inherit_executor_stdin() {
 async fn execute_command_times_out_and_returns_error() {
     let result = CommandHandler
         .execute(CommandRequest {
+            command_key: None,
             command: "sleep 2".to_owned(),
             timeout_seconds: 0.1,
             max_output_bytes: 1024,
@@ -204,6 +209,53 @@ async fn execute_command_missing_cwd_returns_error() {
 
     let result = CommandHandler
         .execute(CommandRequest {
+            command_key: None,
+            command: "pwd".to_owned(),
+            cwd: Some(missing_cwd.display().to_string()),
+            timeout_seconds: 5.0,
+            max_output_bytes: 1024,
+            ..CommandRequest::default()
+        })
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.exit_code, None);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Working directory does not exist"));
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn execute_windows_pwd_builtin_uses_requested_cwd() {
+    let workdir = tempfile::tempdir().unwrap();
+    let requested_cwd = workdir.path().display().to_string();
+
+    let result = CommandHandler
+        .execute(CommandRequest {
+            command_key: Some("pwd".to_owned()),
+            command: "pwd".to_owned(),
+            cwd: Some(requested_cwd.clone()),
+            timeout_seconds: 5.0,
+            max_output_bytes: 1024,
+            ..CommandRequest::default()
+        })
+        .await;
+
+    assert!(result.success);
+    assert_eq!(result.stdout, Value::String(requested_cwd));
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn execute_windows_pwd_builtin_rejects_missing_cwd() {
+    let missing_cwd = unique_dir("missing-windows-pwd-cwd");
+
+    let result = CommandHandler
+        .execute(CommandRequest {
+            command_key: Some("pwd".to_owned()),
             command: "pwd".to_owned(),
             cwd: Some(missing_cwd.display().to_string()),
             timeout_seconds: 5.0,

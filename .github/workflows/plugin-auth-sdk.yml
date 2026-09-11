@@ -2,37 +2,45 @@ name: Plugin Auth SDK
 
 on:
   pull_request:
-    paths:
-      - "sdk/plugin-auth/**"
-      - "sdk/plugin-auth-go/**"
-      - "sdk/dws-auth/**"
-      - "sdk/plugin-build/**"
-      - "shared/plugin_build.py"
-      - "shared/tests/test_plugin_build.py"
-      - "executor/src/plugin_account_auth/**"
-      - "executor/src/process/mod.rs"
-      - "executor/tests/plugin_account_auth_contract.rs"
-      - ".github/workflows/plugin-auth-sdk.yml"
-  push:
-    branches: [main]
-    paths:
-      - "sdk/plugin-auth/**"
-      - "sdk/plugin-auth-go/**"
-      - "sdk/dws-auth/**"
-      - "sdk/plugin-build/**"
-      - "shared/plugin_build.py"
-      - "shared/tests/test_plugin_build.py"
-      - "executor/src/plugin_account_auth/**"
-      - "executor/src/process/mod.rs"
-      - "executor/tests/plugin_account_auth_contract.rs"
-      - ".github/workflows/plugin-auth-sdk.yml"
-  merge_group:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect Plugin Auth SDK Changes
+    runs-on: ubuntu-latest
+    outputs:
+      plugin_auth_sdk: ${{ steps.classify.outputs.plugin_auth_sdk }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FORCE_ALL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            .github/scripts/classify-plugin-auth-sdk.sh --all
+          else
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" |
+              .github/scripts/classify-plugin-auth-sdk.sh
+          fi
+
   dws-native:
+    needs: changes
+    if: needs.changes.outputs.plugin_auth_sdk == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -58,6 +66,8 @@ jobs:
         run: uv run --no-project python -m unittest discover -s sdk/dws-auth/tests -v
 
   test:
+    needs: changes
+    if: needs.changes.outputs.plugin_auth_sdk == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -71,8 +81,12 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Test SDK, scaffolds, and isolated plugin processes
         run: uv run --no-project python -m unittest discover -s sdk/plugin-auth/tests -v
+      - name: Test Wework Creator Connector validation
+        run: uv run --no-project python -m unittest discover -s sdk/plugin-creator/tests -v
 
   native:
+    needs: changes
+    if: needs.changes.outputs.plugin_auth_sdk == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]

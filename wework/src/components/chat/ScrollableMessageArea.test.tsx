@@ -264,6 +264,28 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
   })
 
+  test('uses scroll position zero as the bottom for an internal bottom-origin preview', () => {
+    render(
+      <ScrollableMessageArea
+        scrollOrigin="bottom"
+        messages={[
+          {
+            id: 'bottom-origin-preview',
+            role: 'assistant',
+            content: '最新消息直接出现在底部',
+            status: 'done',
+            createdAt: '2026-09-10T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    expect(scroller).toHaveAttribute('data-scroll-origin', 'bottom')
+    expect(scroller).toHaveClass('flex', 'flex-col-reverse', '[overflow-anchor:none]')
+    expect(scroller.scrollTop).toBeCloseTo(0)
+  })
+
   test('updates the message list layout when only the layout class changes', () => {
     const messages = [
       {

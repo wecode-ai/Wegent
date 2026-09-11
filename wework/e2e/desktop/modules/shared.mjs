@@ -27,6 +27,7 @@ import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
+import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -121,6 +122,10 @@ const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMP
 const EMBEDDED_BROWSER_SETUP_PROMPT =
   'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP: create a local task before opening the browser.'
 const EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_SETUP_COMPLETE'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_BRIDGE_COLLISION: open the browser after another live bridge replaces the shared runtime record.'
+const EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
 const QUEUE_DIRECT_SECOND = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_SECOND'
@@ -150,6 +155,9 @@ const GOAL_IDLE_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
 const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
 const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
+const GOAL_IDLE_FOLLOW_UP_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_IDLE_FOLLOW_UP: keep this ordinary continuation running.'
+const GOAL_IDLE_FOLLOW_UP_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_FOLLOW_UP_COMPLETE'
 const GOAL_BUSY_PLAN_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN: keep this planning turn open while Goal is enabled.'
 const GOAL_BUSY_PLAN_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_BUSY_PLAN_COMPLETE'
@@ -425,7 +433,10 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'app_version',
   'arch',
   'distinct_id',
+  'domain',
+  'event_schema_version',
   'feature',
+  'failure_stage',
   'locale',
   'os',
   'release_channel',
@@ -528,7 +539,7 @@ const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
 const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
 const VERIFIES_INITIAL_TELEMETRY_CONSENT =
-  !SELECTED_DESKTOP_SEGMENT || SELECTED_DESKTOP_SEGMENT === 'telemetry-consent'
+  shouldAcceptInitialTelemetryConsent(SELECTED_DESKTOP_SEGMENT)
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..', '..')
@@ -1188,12 +1199,18 @@ async function triggerModelReloadUntilCloudFailure(control) {
   )
 }
 
-async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
+async function sendPromptUntilScenarioRequest(
+  control,
+  selector,
+  prompt,
+  scenario,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const scenarioRequest = control.awaitScenarioRequest(scenario)
   await sendPrompt(control, selector, prompt)
   return withTimeout(
     scenarioRequest,
-    DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
     `The model service did not receive the ${scenario} request`
   )
 }
@@ -1533,6 +1550,8 @@ export {
   GUIDANCE_SCROLL_COMPLETION_TEXT,
   EMBEDDED_BROWSER_SETUP_PROMPT,
   EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
+  EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   QUEUE_DIRECT_INITIAL,
   QUEUE_DIRECT_FIRST,
   QUEUE_DIRECT_SECOND,
@@ -1557,6 +1576,8 @@ export {
   GOAL_IDLE_PROMPT,
   GOAL_IDLE_INITIAL_TEXT,
   GOAL_IDLE_COMPLETION_TEXT,
+  GOAL_IDLE_FOLLOW_UP_PROMPT,
+  GOAL_IDLE_FOLLOW_UP_TEXT,
   GOAL_BUSY_PLAN_PROMPT,
   GOAL_BUSY_PLAN_TEXT,
   GOAL_BUSY_OBJECTIVE,

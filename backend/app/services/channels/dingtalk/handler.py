@@ -41,6 +41,8 @@ from app.services.execution.emitters import ResultEmitter
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
+from shared.telemetry.context import request_context
+from shared.telemetry.decorators import trace_async
 
 if TYPE_CHECKING:
     from dingtalk_stream.stream import DingTalkStreamClient
@@ -51,6 +53,34 @@ logger = logging.getLogger(__name__)
 # DingTalk may retry sending messages if ACK is not received in time
 DINGTALK_MSG_DEDUP_PREFIX = "dingtalk:msg_dedup:"
 DINGTALK_MSG_DEDUP_TTL = 300  # 5 minutes - enough to cover retry window
+
+
+def _reply_to_message_id(callback_data: dict[str, Any]) -> str:
+    """Return the stable reference for a quoted DingTalk message."""
+
+    text = callback_data.get("text")
+    if not isinstance(text, dict):
+        return ""
+    replied_message = text.get("repliedMsg")
+    if not text.get("isReplyMsg") and not isinstance(replied_message, dict):
+        return ""
+
+    candidates = [callback_data.get("originalProcessQueryKey")]
+    if isinstance(replied_message, dict):
+        candidates.extend(
+            [
+                replied_message.get("processQueryKey"),
+                replied_message.get("msgId"),
+            ]
+        )
+    candidates.append(callback_data.get("originalMsgId"))
+    for candidate in candidates:
+        if isinstance(candidate, bool) or not isinstance(candidate, (int, str)):
+            continue
+        normalized = str(candidate).strip()
+        if normalized:
+            return normalized
+    return ""
 
 
 class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallbackInfo]):
@@ -154,6 +184,9 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
                 message_id = str(callback_data.get("msgId") or "").strip()
                 if message_id:
                     extra_data["message_id"] = message_id
+                reply_to_message_id = _reply_to_message_id(callback_data)
+                if reply_to_message_id:
+                    extra_data["reply_to_message_id"] = reply_to_message_id
 
         # Include pre-downloaded images if they were attached
         images: list[dict[str, str]] = []
@@ -379,6 +412,24 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         Returns:
             Tuple of (status, message) for acknowledgment
         """
+        request_id = next(
+            (
+                value.strip()
+                for key, value in callback.headers.extensions.items()
+                if key.lower() == "x-request-id"
+                and isinstance(value, str)
+                and value.isprintable()
+                and value.strip()
+            ),
+            None,
+        )
+        # Each callback is a request; the long-lived stream may carry a startup ID.
+        with request_context(request_id):
+            return await self._process_message(callback)
+
+    @trace_async(span_name="dingtalk.process_message", tracer_name=__name__)
+    async def _process_message(self, callback: CallbackMessage) -> tuple[str, str]:
+        """Handle the callback within its own request context."""
         try:
             # Parse the incoming message
             incoming_message = ChatbotMessage.from_dict(callback.data)

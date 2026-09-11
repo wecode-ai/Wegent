@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -1494,6 +1495,7 @@ def _runtime_task_create_payload(
         "modelId": request.model_id,
         "modelType": request.model_type,
         "modelConfig": request.runtime_model_config,
+        "forceStart": request.force_start,
         "cloudProjectId": (
             str(request.cloud_project_id)
             if request.cloud_project_id is not None
@@ -2363,6 +2365,8 @@ def _runtime_send_response(
     return RuntimeSendResponse(
         accepted=bool(result.get("accepted", True)),
         taskId=str(result.get("taskId") or local_task_id),
+        status=result.get("status"),
+        queuePosition=result.get("queuePosition"),
         error=result.get("error"),
     )
 
@@ -2737,7 +2741,17 @@ async def _runtime_transfer_direct_hosts(
     peer_device_id: str,
 ) -> list[str]:
     hosts: list[str] = []
-    online_info = await device_service.get_device_online_info(user_id, device_id)
+    try:
+        online_info = await device_service.get_device_online_info(user_id, device_id)
+    except RedisError as exc:
+        logger.warning(
+            "runtime_transfer_direct_hosts_unavailable reason=redis_error "
+            "user_id=%s device_id=%s error=%s",
+            user_id,
+            device_id,
+            exc,
+        )
+        return []
     if isinstance(online_info, dict):
         _append_runtime_transfer_host(hosts, online_info.get("runtime_transfer_host"))
         _append_runtime_transfer_host(hosts, online_info.get("client_ip"))
@@ -4578,9 +4592,21 @@ def _positive_int_model_option(
     return parsed if parsed > 0 else None
 
 
-def _true_model_option(model_options: dict[str, Any], key: str) -> bool:
+def _boolean_model_option(
+    model_options: dict[str, Any],
+    key: str,
+    *,
+    default: bool,
+) -> bool:
     value = model_options.get(key)
-    return isinstance(value, str) and value.strip().lower() == "true"
+    if not isinstance(value, str):
+        return default
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return default
 
 
 def _apply_runtime_cloud_model_options(
@@ -4590,13 +4616,19 @@ def _apply_runtime_cloud_model_options(
     config["wework_model_kind"] = "cloud"
     config["tool_profile"] = "custom"
     config["codex_responses_compat_proxy"] = True
-    config["native_tool_search"] = _true_model_option(
+    upstream_api_format = str(
+        config.get("upstream_api_format") or "openai-responses"
+    ).strip()
+    native_by_default = upstream_api_format == "openai-responses"
+    config["native_tool_search"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
+        default=native_by_default,
     )
-    config["native_namespace_tools"] = _true_model_option(
+    config["native_namespace_tools"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
+        default=native_by_default,
     )
     context_window = _positive_int_model_option(
         model_options,

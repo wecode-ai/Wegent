@@ -12,7 +12,7 @@ import {
   Target,
   UserRound,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
@@ -29,19 +29,19 @@ import { getInputField } from '@/components/chat/blocks/toolBlockKinds'
 import { Tooltip } from '@/components/ui/tooltip'
 import { HoverCard } from '@/components/ui/hover-card'
 import {
-  getRuntimeConversationLiveActivitySnapshot,
-  getRuntimeConversationMessages,
+  getRuntimeConversationTurns,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
-  runtimeLiveActivityFromSnapshot,
+  EMPTY_RUNTIME_LIVE_ACTIVITY,
+  getLatestRuntimeLiveActivityFromTurns,
   type RuntimeLiveActivity,
   type RuntimeLiveToolActivity,
 } from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ModelSelectionConfig, RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { RuntimeConversationTurn } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
 import {
@@ -50,12 +50,8 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
-import {
-  finalAssistantMessagesText,
-  latestResponseLine,
-  latestAssistantMessage,
-} from './runtimeTaskResponsePreview'
 import { priorityBadgeClasses } from './todoShared'
+import { getRuntimeTaskResponsePreview } from './runtimeTaskResponsePreview'
 import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import { getCurrentWorkflowNode, workflowNodeStatusLabel } from './workflowStagePresentation'
 
@@ -68,6 +64,9 @@ export interface BoardCardDisplaySettings {
 
 export type BoardCardProgressDisplay = 'compact' | 'focused'
 
+const MARK_READ_PREVIEW_DELAY_MS = 3000
+const EMPTY_RUNTIME_CONVERSATION_TURNS: RuntimeConversationTurn[] = []
+
 const priorityLabels: Record<CloudLoopItem['priority'], string> = {
   none: '普通',
   low: '低',
@@ -78,6 +77,7 @@ const priorityLabels: Record<CloudLoopItem['priority'], string> = {
 
 interface CloudTodoCardContentProps {
   item: CloudLoopItem
+  goalBinding?: CloudTodoBoardTaskBinding
   display: BoardCardDisplaySettings
   processingStatus: boolean
   showWorkflowStage?: boolean
@@ -88,6 +88,7 @@ interface CloudTodoCardContentProps {
 
 export function CloudTodoCardContent({
   item,
+  goalBinding,
   display,
   processingStatus,
   showWorkflowStage = true,
@@ -114,6 +115,14 @@ export function CloudTodoCardContent({
           />
         ) : null}
         <span className="line-clamp-1 min-w-0">{item.title}</span>
+        {goalBinding?.runtimeGoal?.objective.trim() ? (
+          <RuntimeTaskGoalSummary
+            itemId={item.id}
+            bindingId={goalBinding.id}
+            objective={goalBinding.runtimeGoal.objective}
+            compact
+          />
+        ) : null}
       </span>
       {needsExecutionConfiguration ? (
         <span
@@ -288,7 +297,6 @@ export interface CloudTodoBoardTaskBinding {
   workflow_node_id?: string | null
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
-  finalResponsePreview?: string | null
   modelSelection?: ModelSelectionConfig | null
   runtimeGoal?: RuntimeGoal | null
   runtimeGoalLoaded?: boolean
@@ -302,7 +310,9 @@ interface CloudTodoBoardCardProps {
   onArchive: () => void
   previewPinned?: boolean
   onPreviewPinnedChange?: (pinned: boolean) => void
+  onMarkRead?: (item: CloudLoopItem) => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   display: BoardCardDisplaySettings
   processingStatus: boolean
   agentNames?: Record<string, string>
@@ -325,7 +335,9 @@ export function CloudTodoBoardCard({
   onArchive,
   previewPinned = false,
   onPreviewPinnedChange,
+  onMarkRead,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
   display,
   processingStatus,
   agentNames,
@@ -339,6 +351,11 @@ export function CloudTodoBoardCard({
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
   const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<number | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const itemRef = useRef(item)
+  useEffect(() => {
+    itemRef.current = item
+  }, [item])
   const currentWorkflowNode = item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
   const needsExecutionConfiguration =
     processingStatus && itemNeedsExecutionConfiguration(item) && Boolean(onConfigureExecution)
@@ -376,6 +393,12 @@ export function CloudTodoBoardCard({
     disabled: item.can_edit === false || dragDisabled,
   })
   const { isOver, setNodeRef: setDropRef } = useDroppable({ id: `todo-card:${item.id}` })
+
+  useEffect(() => {
+    if (!previewOpen || !item.is_unread || !onMarkRead) return
+    const timer = window.setTimeout(() => onMarkRead(itemRef.current), MARK_READ_PREVIEW_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [item.is_unread, onMarkRead, previewOpen])
 
   const card = (
     <article
@@ -447,6 +470,7 @@ export function CloudTodoBoardCard({
       >
         <CloudTodoCardContent
           item={item}
+          goalBinding={currentTaskBinding}
           display={display}
           processingStatus={processingStatus}
           showWorkflowStage={false}
@@ -508,6 +532,7 @@ export function CloudTodoBoardCard({
                     }
                   : undefined
               }
+              onLoadRuntimeGoal={onLoadRuntimeGoal}
             />
           ))}
         </div>
@@ -526,11 +551,10 @@ export function CloudTodoBoardCard({
       pinOnInteractionSelector="[data-hover-card-pin-region], [data-hover-card-pin-trigger]"
       pinned={previewPinned}
       onPinnedChange={onPreviewPinnedChange}
+      onOpenChange={setPreviewOpen}
       closeLabel={t('common.close', '关闭')}
       estimatedWidth={480}
       estimatedHeight={620}
-      placement="viewport-right"
-      viewportTop={48}
       cardClassName="w-[480px] max-w-[calc(100vw-1rem)]"
       content={
         <RuntimeTaskProgressPopup
@@ -542,6 +566,7 @@ export function CloudTodoBoardCard({
           pinned={previewPinned}
           onPin={() => onPreviewPinnedChange?.(true)}
           onLoadRuntimeGoal={onLoadRuntimeGoal}
+          onOpenRuntimeTask={onOpenRuntimeTask}
         />
       }
     >
@@ -607,6 +632,7 @@ function RuntimeTaskProgressSummary({
   repairingChangeRequest,
   onContinueChangeRequestRepair,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
@@ -617,6 +643,7 @@ function RuntimeTaskProgressSummary({
   repairingChangeRequest: boolean
   onContinueChangeRequestRepair?: () => Promise<void>
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const taskAddress = useMemo<RuntimeTaskAddress>(
@@ -629,21 +656,14 @@ function RuntimeTaskProgressSummary({
     }),
     [binding.device_id, binding.modelSelection, binding.task_id]
   )
-  const activityAddress = active ? taskAddress : null
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
     void onLoadRuntimeGoal(taskAddress)
   }, [binding.runtimeGoalLoaded, onLoadRuntimeGoal, taskAddress])
-  const activity = useRuntimeTaskActivity(activityAddress)
-  const liveMessage = useRuntimeTaskLatestAssistantMessage(taskAddress)
-  const cachedFinalResponse = useRuntimeTaskFinalResponse(
-    item.status === 'in_review' ? taskAddress : null
+  const { activity, responsePreview } = useRuntimeTaskProjection(
+    compact ? taskAddress : null,
+    active
   )
-  const finalResponseText = binding.finalResponsePreview ?? cachedFinalResponse
-  const responseText = activity.active
-    ? liveMessage?.content?.trim() || null
-    : liveMessage?.content || finalResponseText
-  const responsePreview = responseText ? latestResponseLine(responseText) : null
   const taskTitle = binding.task_title || binding.task_id
   const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
 
@@ -677,20 +697,12 @@ function RuntimeTaskProgressSummary({
         </div>
       ) : null}
       {!compact && binding.runtimeGoal?.objective.trim() ? (
-        <div
-          data-testid={`cloud-todo-card-popup-goal-${item.id}-${binding.id}`}
-          className="mt-2 flex min-w-0 gap-2 rounded-lg bg-muted/55 px-2.5 py-2"
-        >
-          <Target className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
-          <div className="min-w-0">
-            <div className="text-xs font-medium leading-5 text-text-secondary">
-              {t('todo.current_conversation_goal', '当前会话目标')}
-            </div>
-            <p className="line-clamp-3 text-xs leading-5 text-text-primary">
-              {binding.runtimeGoal.objective}
-            </p>
-          </div>
-        </div>
+        <RuntimeTaskGoalSummary
+          itemId={item.id}
+          bindingId={binding.id}
+          objective={binding.runtimeGoal.objective}
+          compact={compact}
+        />
       ) : !compact && !binding.runtimeGoalLoaded && onLoadRuntimeGoal ? (
         <div
           data-testid={`cloud-todo-card-popup-goal-loading-${item.id}-${binding.id}`}
@@ -723,8 +735,10 @@ function RuntimeTaskProgressSummary({
             sendEphemeral={false}
             collapseComposerWhenIdle
             initialScrollPosition="latest"
+            scrollOrigin="bottom"
             emptyStateText={t('todo.task_progress_empty', '暂无任务进展详情')}
             placeholder={t('workbench.task_activity_inline_placeholder')}
+            onOpenRuntimeTask={onOpenRuntimeTask}
           />
         </div>
       ) : responsePreview ? (
@@ -743,6 +757,47 @@ function RuntimeTaskProgressSummary({
   )
 }
 
+function RuntimeTaskGoalSummary({
+  itemId,
+  bindingId,
+  objective,
+  compact,
+}: {
+  itemId: string
+  bindingId: number
+  objective: string
+  compact: boolean
+}) {
+  const { t } = useTranslation('common')
+  const label = t('todo.current_conversation_goal', '当前会话目标')
+
+  if (compact) {
+    return (
+      <span
+        data-testid={`cloud-todo-card-goal-${itemId}-${bindingId}`}
+        className="inline-flex shrink-0 items-center text-text-secondary"
+        title={`${label}: ${objective}`}
+        aria-label={`${label}: ${objective}`}
+      >
+        <Target className="h-4 w-4" aria-hidden="true" />
+      </span>
+    )
+  }
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-popup-goal-${itemId}-${bindingId}`}
+      className="mt-2 flex min-w-0 gap-2 rounded-lg bg-muted/55 px-2.5 py-2"
+    >
+      <Target className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+      <div className="min-w-0">
+        <div className="text-xs font-medium leading-5 text-text-secondary">{label}</div>
+        <p className="line-clamp-3 text-xs leading-5 text-text-primary">{objective}</p>
+      </div>
+    </div>
+  )
+}
+
 function RuntimeTaskProgressPopup({
   item,
   bindings,
@@ -752,6 +807,7 @@ function RuntimeTaskProgressPopup({
   pinned,
   onPin,
   onLoadRuntimeGoal,
+  onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
   bindings: CloudTodoBoardTaskBinding[]
@@ -761,6 +817,7 @@ function RuntimeTaskProgressPopup({
   pinned: boolean
   onPin: () => void
   onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
   const visibleBindings = focusedBindingId
@@ -821,6 +878,7 @@ function RuntimeTaskProgressPopup({
                 changeRequestSnapshot={null}
                 repairingChangeRequest={false}
                 onLoadRuntimeGoal={onLoadRuntimeGoal}
+                onOpenRuntimeTask={onOpenRuntimeTask}
               />
             </div>
           ))}
@@ -863,55 +921,37 @@ function RuntimeTaskToolActivity({
   )
 }
 
-function useRuntimeTaskActivity(address: RuntimeTaskAddress | null): RuntimeLiveActivity {
+function useRuntimeTaskProjection(
+  address: RuntimeTaskAddress | null,
+  active: boolean
+): {
+  activity: RuntimeLiveActivity
+  responsePreview: string | null
+} {
   const subscribe = useCallback(
     (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
-    [address]
-  )
-  const getSnapshot = useCallback(
-    () => (address ? getRuntimeConversationLiveActivitySnapshot(address) : ''),
-    [address]
-  )
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-
-  return useMemo(() => runtimeLiveActivityFromSnapshot(snapshot), [snapshot])
-}
-
-function useRuntimeTaskFinalResponse(address: RuntimeTaskAddress | null): string | null {
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
-    [address]
-  )
-  const getSnapshot = useCallback(
-    () => (address ? finalAssistantMessagesText(getRuntimeConversationMessages(address)) : null),
-    [address]
-  )
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-}
-
-function useRuntimeTaskLatestAssistantMessage(
-  address: RuntimeTaskAddress | null
-): WorkbenchMessage | null {
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
-    [address]
-  )
-  const getSnapshot = useCallback(
-    () =>
       address
-        ? JSON.stringify(latestAssistantMessage(getRuntimeConversationMessages(address)))
-        : '',
+        ? subscribeRuntimeConversation(address, listener, {
+            retainWhileSubscribed: false,
+          })
+        : () => undefined,
     [address]
   )
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-
-  return useMemo(
-    () => (snapshot ? (JSON.parse(snapshot) as WorkbenchMessage | null) : null),
-    [snapshot]
+  const getSnapshot = useCallback(
+    () => (address ? getRuntimeConversationTurns(address) : EMPTY_RUNTIME_CONVERSATION_TURNS),
+    [address]
   )
+  const turns = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  return useMemo(() => {
+    const activity = active
+      ? getLatestRuntimeLiveActivityFromTurns(turns)
+      : EMPTY_RUNTIME_LIVE_ACTIVITY
+    return {
+      activity,
+      responsePreview: getRuntimeTaskResponsePreview(turns, active) || null,
+    }
+  }, [active, turns])
 }
 
 function runtimeToolActivityText(

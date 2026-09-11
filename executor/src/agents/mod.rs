@@ -49,9 +49,9 @@ pub(crate) use codex::{
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
-    CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexNotificationSender,
-    CodexRequestUserInputReceiver, CodexResponseValueOrigin, CodexThreadStartedCallback,
-    CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
+    CodexAppServerTurn, CodexAppServerTurnOptions, CodexAuthMutationError, CodexCancellationState,
+    CodexNotificationSender, CodexRequestUserInputReceiver, CodexResponseValueOrigin,
+    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;

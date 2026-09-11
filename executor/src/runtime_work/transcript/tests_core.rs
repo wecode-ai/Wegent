@@ -1121,3 +1121,78 @@ fn transcript_unwraps_completed_plan_events_and_skips_duplicate_final_text() {
         "# Plan\n\n- Inspect the repo."
     );
 }
+
+#[test]
+fn transcript_projects_collab_agent_calls_as_subagent_activity() {
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "completedAt": 1_780_000_010,
+            "status": "completed",
+            "items": [
+                {
+                    "id": "spawn-1",
+                    "type": "collabAgentToolCall",
+                    "tool": "spawnAgent",
+                    "prompt": "Say hello",
+                    "receiverThreadIds": ["agent-1"],
+                    "agentsStates": {
+                        "agent-1": {"status": "running"}
+                    }
+                },
+                {
+                    "id": "activity-1",
+                    "type": "subAgentActivity",
+                    "agentThreadId": "agent-1",
+                    "agentPath": "/root/say_hello",
+                    "kind": "started"
+                },
+                {
+                    "id": "child-result-1",
+                    "type": "agentMessage",
+                    "author": "/root/say_hello",
+                    "recipient": "/root",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/say_hello\nPayload:\nhello"
+                    }]
+                },
+                {
+                    "id": "wait-1",
+                    "type": "collabAgentToolCall",
+                    "tool": "wait",
+                    "receiverThreadIds": ["agent-1"],
+                    "agentsStates": {
+                        "agent-1": {"status": "completed"}
+                    }
+                },
+                {
+                    "id": "assistant-final",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "hello"
+                }
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+    let assistant = messages
+        .iter()
+        .find(|message| message["role"] == "assistant")
+        .expect("assistant transcript should be projected");
+    let blocks = assistant["blocks"].as_array().unwrap();
+
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["type"], "subagent");
+    assert_eq!(blocks[0]["agent_thread_id"], "agent-1");
+    assert_eq!(blocks[0]["title"], "say_hello");
+    assert_eq!(blocks[0]["description"], "Say hello");
+    assert_eq!(blocks[0]["output"], "hello");
+    assert_eq!(blocks[0]["status"], "done");
+    assert_eq!(blocks[0]["agent_status"], "done");
+    assert_eq!(blocks[0]["children"][0]["content"], "hello");
+}

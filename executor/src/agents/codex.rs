@@ -293,6 +293,15 @@ pub struct CodexAppServerClient {
     state: Arc<Mutex<CodexAppServerSharedState>>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum CodexAuthMutationError {
+    Busy {
+        active_turn_count: usize,
+        pending_request_count: usize,
+    },
+    Update(String),
+}
+
 impl CodexAppServerClient {
     pub fn new(binary: impl Into<String>) -> Self {
         let binary = resolve_codex_binary(&binary.into());
@@ -436,6 +445,32 @@ impl CodexAppServerClient {
         if let Some(process) = process {
             drop(process);
         }
+        Ok(())
+    }
+
+    pub async fn mutate_auth_if_idle<F>(&self, mutation: F) -> Result<(), CodexAuthMutationError>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let process = {
+            let mut state = self.state.lock().await;
+            let active_turn_count = state.active_threads.values().sum::<usize>();
+            let pending_request_count = match state.process.as_ref() {
+                Some(process) => process.pending.lock().await.len(),
+                None => 0,
+            };
+            if active_turn_count > 0 || pending_request_count > 0 {
+                return Err(CodexAuthMutationError::Busy {
+                    active_turn_count,
+                    pending_request_count,
+                });
+            }
+            mutation().map_err(CodexAuthMutationError::Update)?;
+            state.thread_generations.clear();
+            state.idle_thread_generations.clear();
+            state.process.take()
+        };
+        drop(process);
         Ok(())
     }
 
@@ -3504,6 +3539,7 @@ fn configured_codex_provider(
         .filter(|value| !value.is_empty())
         .unwrap_or("openai-responses")
         .to_owned();
+    let native_by_default = api_format == "openai-responses";
     let convert_custom_tools = api_format != "openai-responses"
         || provider_config
             .get("tool_profile")
@@ -3514,12 +3550,12 @@ fn configured_codex_provider(
         .get("native_tool_search")
         .or_else(|| provider_config.get("nativeToolSearch"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(native_by_default);
     let native_namespace_tools = provider_config
         .get("native_namespace_tools")
         .or_else(|| provider_config.get("nativeNamespaceTools"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(native_by_default);
     let request_path = match api_format.as_str() {
         "openai-chat-completions" => "/chat/completions",
         "anthropic-messages" => "/messages",

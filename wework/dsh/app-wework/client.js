@@ -40,7 +40,7 @@ window.__ModuleLoader__.load({
       'wework.internal.workspace': {
         'wework.board.card.status': { kind: 'list', scope: 'root' },
         'wework.composer.action': { kind: 'list', scope: 'session-maybe' },
-        'wework.environment.section': { kind: 'list', scope: 'session-maybe' },
+        'wework.conversation.summary': { kind: 'list', scope: 'session-maybe' },
         'wework.project.work.section': { kind: 'list', scope: 'session-maybe' },
         'wework.task.status': { kind: 'list', scope: 'root' },
         'wework.workspace.menu.section': { kind: 'list', scope: 'session-maybe' },
@@ -337,6 +337,7 @@ window.__ModuleLoader__.load({
       let active = true
       let revision = 0
       const listeners = new Set()
+      const telemetrySinkListeners = new Set()
       const contextValues = new Map()
       const contextContributions = new Map()
       const commandHandlers = new Map()
@@ -369,6 +370,15 @@ window.__ModuleLoader__.load({
         'environment',
         ['inspect', 'prepare'],
         notify
+      )
+      const notifyTelemetrySinks = () => {
+        notify()
+        for (const listener of [...telemetrySinkListeners]) listener()
+      }
+      const telemetrySinks = createProviderRegistry(
+        'telemetry-sink',
+        ['accept'],
+        notifyTelemetrySinks
       )
       const saveDialog = options.saveDialog
       const dialog = Object.freeze({
@@ -725,6 +735,29 @@ window.__ModuleLoader__.load({
             })
           },
         }),
+        telemetry: Object.freeze({
+          sinks: Object.freeze({
+            register(owner, sink) {
+              assertActive()
+              return telemetrySinks.register(owner, sink)
+            },
+            get(id) {
+              assertActive()
+              return telemetrySinks.get(id)
+            },
+            list() {
+              assertActive()
+              return telemetrySinks.list()
+            },
+            subscribe(listener) {
+              assertActive()
+              if (typeof listener !== 'function')
+                throw new Error('Telemetry sink listener must be a function')
+              telemetrySinkListeners.add(listener)
+              return () => telemetrySinkListeners.delete(listener)
+            },
+          }),
+        }),
       })
 
       return {
@@ -761,6 +794,7 @@ window.__ModuleLoader__.load({
           configuration: service.configuration,
           storage: service.storage,
           secrets: service.secrets,
+          telemetry: service.telemetry,
           testing: service.testing,
         }),
         dispose() {
@@ -781,6 +815,8 @@ window.__ModuleLoader__.load({
           contextValues.clear()
           menuLocations.clear()
           testingProviders.clear()
+          telemetrySinks.clear()
+          telemetrySinkListeners.clear()
         },
       }
     }

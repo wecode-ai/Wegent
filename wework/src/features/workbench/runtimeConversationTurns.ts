@@ -669,6 +669,7 @@ function updateStartedTurn(
     ...turns,
     {
       id: action.subtaskId,
+      clientUserMessageId: action.clientUserMessageId,
       items: [],
       status: 'streaming',
     },

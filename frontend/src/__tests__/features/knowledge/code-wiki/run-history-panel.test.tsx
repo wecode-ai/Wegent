@@ -139,7 +139,7 @@ describe('a failure reason of any length', () => {
     fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
 
     const reason = await screen.findByTestId('code-wiki-run-error')
-    expect(reason.className).toContain('line-clamp-3')
+    expect(reason.className).toContain('line-clamp-2')
     // Clamped visually, not cut: the text itself is the only diagnostic there is.
     expect(reason).toHaveTextContent('clone failed:')
     expect(reason).toHaveAttribute('title', LONG)
@@ -151,11 +151,35 @@ describe('a failure reason of any length', () => {
 
     const reason = await screen.findByTestId('code-wiki-run-error')
     fireEvent.click(reason)
-    expect(reason.className).toContain('line-clamp-3')
+    expect(reason.className).toContain('line-clamp-2')
     expect(screen.queryByTestId('code-wiki-run-error-details')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('code-wiki-run-error-details-trigger'))
 
     expect(await screen.findByTestId('code-wiki-run-error-details')).toHaveTextContent(LONG)
+  })
+})
+
+describe('history row metadata', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockHistory([
+      {
+        ...RESTORABLE,
+        published: true,
+        strategy_id: 'coordinator_adaptive',
+      },
+    ])
+  })
+
+  it('uses a localized strategy name in the compact execution summary', async () => {
+    render(<RunHistory knowledgeBaseId={1} status={null} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+
+    const summary = await screen.findByTestId('code-wiki-run-summary')
+    expect(summary).toHaveTextContent(
+      'codeWiki.strategy.options.coordinator_adaptive.title · codeWiki.history.mode.full'
+    )
+    expect(screen.getByTestId('code-wiki-run-details').className).toContain('grid-cols-')
   })
 })

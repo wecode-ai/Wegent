@@ -2781,6 +2781,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
+      await control.command('waitFor', '[data-testid="final-processing-toggle"]', {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       await control.command('click', '[data-testid="final-processing-toggle"]')
       await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2859,10 +2863,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
       phase = 'workspace-mention'
       await control.command('fill', composerSelector, { value: '@auth' })
-      await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      await control.command('clickElementWithText', '[data-testid^="workspace-mention-option-"]', {
+        text: 'auth.ts',
       })
-      await control.command('click', '[data-testid="workspace-mention-option-0"]')
       await control.command('waitFor', '[data-testid="composer-path-chip-auth-ts"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })

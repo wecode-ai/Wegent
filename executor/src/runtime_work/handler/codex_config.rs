@@ -28,13 +28,12 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn start_codex_login(&self) -> Result<Value, AppIpcError> {
+        self.preserve_current_codex_account().await?;
         self.codex_app_server
             .request(
                 "account/login/start",
                 json!({
                     "type": "chatgpt",
-                    "useHostedLoginSuccessPage": true,
-                    "appBrand": "codex",
                 }),
             )
             .await

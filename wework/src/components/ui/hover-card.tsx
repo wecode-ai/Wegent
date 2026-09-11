@@ -27,6 +27,7 @@ interface HoverCardProps {
   pinOnInteractionSelector?: string
   pinned?: boolean
   onPinnedChange?: (pinned: boolean) => void
+  onOpenChange?: (open: boolean) => void
   closeLabel?: string
   cardClassName?: string
   estimatedWidth?: number
@@ -99,6 +100,7 @@ export function HoverCard({
   pinOnInteractionSelector,
   pinned: controlledPinned,
   onPinnedChange,
+  onOpenChange,
   closeLabel = 'Close',
   cardClassName,
   estimatedWidth = 310,
@@ -112,12 +114,17 @@ export function HoverCard({
   const closeTimerRef = useRef<number | null>(null)
   const focusWithinRef = useRef(false)
   const pinnedRef = useRef(false)
+  const pointerPinPendingRef = useRef(false)
   const openRef = useRef(false)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<HoverCardPosition | null>(null)
   const [uncontrolledPinned, setUncontrolledPinned] = useState(false)
   const pinned = controlledPinned ?? uncontrolledPinned
   const displayedOpen = open || pinned
+
+  useEffect(() => {
+    onOpenChange?.(displayedOpen)
+  }, [displayedOpen, onOpenChange])
 
   useEffect(() => {
     pinnedRef.current = pinned
@@ -212,7 +219,11 @@ export function HoverCard({
         event.target instanceof Node &&
         !focusIsInsideAnchor
       ) {
-        pin()
+        if (pointerPinPendingRef.current) {
+          keepOpen()
+        } else {
+          pin()
+        }
       }
       if (focusIsInsideAnchor && !openOnFocus) return
       focusWithinRef.current = true
@@ -319,6 +330,7 @@ export function HoverCard({
       onBlurCapture={interactive || openOnFocus ? handleBlurCapture : undefined}
       onPointerMoveCapture={interactive ? keepOpen : undefined}
       onPointerDownCapture={event => {
+        pointerPinPendingRef.current = false
         if (interactive) {
           if (event.target instanceof Node && anchorRef.current?.contains(event.target)) {
             if (shouldPinInteraction(event.target)) {
@@ -333,14 +345,18 @@ export function HoverCard({
             event.target instanceof Node &&
             !anchorRef.current?.contains(event.target)
           ) {
-            pin()
+            pointerPinPendingRef.current = true
           }
           keepOpen()
           return
         }
         close()
       }}
+      onPointerCancelCapture={() => {
+        pointerPinPendingRef.current = false
+      }}
       onContextMenuCapture={event => {
+        pointerPinPendingRef.current = false
         if (interactive) {
           if (event.target instanceof Node && anchorRef.current?.contains(event.target)) {
             close()
@@ -363,6 +379,12 @@ export function HoverCard({
             style={position ?? { left: 0, top: 0, visibility: 'hidden' }}
             onMouseEnter={interactive ? keepOpen : undefined}
             onMouseLeave={interactive ? scheduleClose : undefined}
+            onClickCapture={event => {
+              if (!pointerPinPendingRef.current) return
+              pointerPinPendingRef.current = false
+              if (!shouldPinInteraction(event.target)) return
+              window.queueMicrotask(pin)
+            }}
             className={cn(
               'fixed z-[78] max-h-[calc(100vh-1rem)] overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-background p-3 text-xs text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
               interactive ? 'pointer-events-auto' : 'pointer-events-none',
@@ -380,7 +402,7 @@ export function HoverCard({
                   close()
                 }}
                 aria-label={closeLabel}
-                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition hover:bg-muted hover:text-text-primary"
+                className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition hover:bg-muted hover:text-text-primary"
               >
                 <X className="h-4 w-4" />
               </button>
