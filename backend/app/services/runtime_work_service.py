@@ -4592,9 +4592,21 @@ def _positive_int_model_option(
     return parsed if parsed > 0 else None
 
 
-def _true_model_option(model_options: dict[str, Any], key: str) -> bool:
+def _boolean_model_option(
+    model_options: dict[str, Any],
+    key: str,
+    *,
+    default: bool,
+) -> bool:
     value = model_options.get(key)
-    return isinstance(value, str) and value.strip().lower() == "true"
+    if not isinstance(value, str):
+        return default
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return default
 
 
 def _apply_runtime_cloud_model_options(
@@ -4604,13 +4616,19 @@ def _apply_runtime_cloud_model_options(
     config["wework_model_kind"] = "cloud"
     config["tool_profile"] = "custom"
     config["codex_responses_compat_proxy"] = True
-    config["native_tool_search"] = _true_model_option(
+    upstream_api_format = str(
+        config.get("upstream_api_format") or "openai-responses"
+    ).strip()
+    native_by_default = upstream_api_format == "openai-responses"
+    config["native_tool_search"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
+        default=native_by_default,
     )
-    config["native_namespace_tools"] = _true_model_option(
+    config["native_namespace_tools"] = _boolean_model_option(
         model_options,
         CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
+        default=native_by_default,
     )
     context_window = _positive_int_model_option(
         model_options,

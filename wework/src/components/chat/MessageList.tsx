@@ -1442,7 +1442,7 @@ function MessageTextAttachment({
   const attachmentPath = openableAttachmentPath(attachment)
   const clickable = Boolean(attachmentPath)
   const className =
-    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
+    'inline-flex h-9 max-w-[min(360px,100%)] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
   const content = (
     <>
       <FileText
@@ -2533,6 +2533,14 @@ function getOrderedRuntimeDisplaySegments(
   if (!items?.length) return []
 
   const blocksById = new Map(displayBlocks.map(block => [block.id, block]))
+  const subagentsByAnchorId = new Map(
+    displayBlocks.flatMap(block =>
+      block.type === 'subagent' && block.anchorBlockId
+        ? [[block.anchorBlockId, block] as const]
+        : []
+    )
+  )
+  const renderedAnchoredSubagentIds = new Set<string>()
   const segments: RuntimeDisplaySegment[] = []
 
   items.forEach(item => {
@@ -2547,8 +2555,12 @@ function getOrderedRuntimeDisplaySegments(
       return
     }
 
-    const block = blocksById.get(item.id)
+    const block = subagentsByAnchorId.get(item.id) ?? blocksById.get(item.id)
     if (!block) return
+    if (block.type === 'subagent' && block.anchorBlockId) {
+      if (renderedAnchoredSubagentIds.has(block.id)) return
+      renderedAnchoredSubagentIds.add(block.id)
+    }
     const previous = segments.at(-1)
     if (previous?.kind === 'processing') {
       previous.blocks.push(block)

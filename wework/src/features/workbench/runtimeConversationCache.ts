@@ -9,11 +9,11 @@ import type {
   RuntimeTaskAddress,
 } from '@/types/api'
 import type {
+  ProcessingBlock,
   RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
   RuntimeSubagentStatus,
   WorkbenchMessage,
-  ProcessingBlock,
 } from '@/types/workbench'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import {
@@ -28,12 +28,16 @@ import {
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
 import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
-import { getLatestRuntimeLiveActivity, runtimeLiveActivitySnapshot } from './runtimeThinking'
-
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
+const TERMINAL_CONVERSATION_IDLE_TTL_MS = 5 * 60 * 1000
+const EMPTY_RUNTIME_CONVERSATION_TURNS: RuntimeConversationTurn[] = []
 const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
 const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<(action?: RuntimePaneMessageAction) => void>>()
+const retainingListenersByConversation = new Map<
+  string,
+  Set<(action?: RuntimePaneMessageAction) => void>
+>()
 const runtimeTransportReplacedListeners = new Set<
   (payload: RuntimeTransportReplacedPayload) => void
 >()
@@ -50,6 +54,10 @@ const interruptedGuidanceIdsByConversation = new Map<string, Set<string>>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
 const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
 const pendingStreamingNotifications = new Map<string, () => void>()
+const terminalConversationEvictionTimers = new Map<
+  string,
+  ReturnType<typeof globalThis.setTimeout>
+>()
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -161,6 +169,13 @@ export function getRuntimeConversationMessages(address: RuntimeTaskAddress): Wor
   return projectRuntimeConversationTurns(touchEntry(turnsByConversation, key) ?? [])
 }
 
+export function getRuntimeConversationTurns(
+  address: RuntimeTaskAddress
+): RuntimeConversationTurn[] {
+  const key = runtimeConversationKey(address)
+  return turnsByConversation.get(key) ?? EMPTY_RUNTIME_CONVERSATION_TURNS
+}
+
 export function getRuntimeConversationMessagesForLogicalAddress(
   address: RuntimeTaskAddress
 ): WorkbenchMessage[] {
@@ -195,23 +210,30 @@ export function runtimeConversationMessageHasStartedTurn(
   )
 }
 
-export function getRuntimeConversationLiveActivitySnapshot(address: RuntimeTaskAddress): string {
-  return runtimeLiveActivitySnapshot(
-    getLatestRuntimeLiveActivity(getRuntimeConversationMessages(address))
-  )
-}
-
 export function subscribeRuntimeConversation(
   address: RuntimeTaskAddress,
-  listener: (action?: RuntimePaneMessageAction) => void
+  listener: (action?: RuntimePaneMessageAction) => void,
+  options?: {
+    retainWhileSubscribed?: boolean
+  }
 ): () => void {
   const key = runtimeConversationKey(address)
   const listeners = listenersByConversation.get(key) ?? new Set()
   listeners.add(listener)
   listenersByConversation.set(key, listeners)
+  if (options?.retainWhileSubscribed !== false) {
+    cancelTerminalConversationEviction(key)
+    const retainingListeners = retainingListenersByConversation.get(key) ?? new Set()
+    retainingListeners.add(listener)
+    retainingListenersByConversation.set(key, retainingListeners)
+  }
   return () => {
     listeners.delete(listener)
     if (listeners.size === 0) listenersByConversation.delete(key)
+    const retainingListeners = retainingListenersByConversation.get(key)
+    retainingListeners?.delete(listener)
+    if (retainingListeners?.size === 0) retainingListenersByConversation.delete(key)
+    scheduleTerminalConversationEviction(key)
   }
 }
 
@@ -230,6 +252,7 @@ export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): 
   const key = runtimeConversationKey(address)
   const existing = hydrationByConversation.get(key)
   if (existing) return existing.token
+  cancelTerminalConversationEviction(key)
   const token = Symbol(key)
   hydrationByConversation.set(key, { token, bufferedActions: [] })
   return token
@@ -283,6 +306,16 @@ export function reconcileRuntimeConversationSnapshot(
   cacheRuntimeConversationTurns(key, turns)
   notifyRuntimeConversation(key)
   return projectRuntimeConversationTurns(turns)
+}
+
+export function replaceRuntimeConversationSnapshot(
+  address: RuntimeTaskAddress,
+  snapshotTurns: RuntimeConversationTurn[]
+): WorkbenchMessage[] {
+  const key = runtimeConversationKey(address)
+  cacheRuntimeConversationTurns(key, snapshotTurns)
+  notifyRuntimeConversation(key)
+  return projectRuntimeConversationTurns(snapshotTurns)
 }
 
 export function runtimeConversationSnapshotSettlesLatestTurn(
@@ -424,8 +457,10 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
 ) {
   if (messages.length === 0) {
     queuedMessagesByConversation.delete(key)
+    scheduleTerminalConversationEviction(key)
     return
   }
+  cancelTerminalConversationEviction(key)
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
 }
 
@@ -839,8 +874,12 @@ function shortRuntimeAgentId(agentId: string): string {
 }
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
-  const key = runtimeConversationKey(address)
+  evictRuntimeConversationKey(runtimeConversationKey(address))
+}
+
+function evictRuntimeConversationKey(key: string) {
   cancelPendingStreamingNotification(key)
+  cancelTerminalConversationEviction(key)
   turnsByConversation.delete(key)
   metadataByConversation.delete(key)
   hydrationByConversation.delete(key)
@@ -862,9 +901,12 @@ export function getRuntimeConversationCacheStats() {
 export function clearRuntimeConversationCacheForTests() {
   pendingStreamingNotifications.forEach(cancel => cancel())
   pendingStreamingNotifications.clear()
+  terminalConversationEvictionTimers.forEach(timer => globalThis.clearTimeout(timer))
+  terminalConversationEvictionTimers.clear()
   turnsByConversation.clear()
   metadataByConversation.clear()
   listenersByConversation.clear()
+  retainingListenersByConversation.clear()
   runtimeTransportReplacedListeners.clear()
   hydrationByConversation.clear()
   queuedMessagesByConversation.clear()
@@ -935,7 +977,42 @@ function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {
 }
 
 function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]) {
-  cacheBoundedEntry(turnsByConversation, key, turns, cancelPendingStreamingNotification)
+  cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
+    cancelPendingStreamingNotification(evictedKey)
+    cancelTerminalConversationEviction(evictedKey)
+  })
+  scheduleTerminalConversationEviction(key)
+}
+
+function scheduleTerminalConversationEviction(key: string): void {
+  cancelTerminalConversationEviction(key)
+  if (!canEvictTerminalConversation(key)) return
+
+  const timer = globalThis.setTimeout(() => {
+    terminalConversationEvictionTimers.delete(key)
+    if (!canEvictTerminalConversation(key)) return
+    evictRuntimeConversationKey(key)
+    notifyRuntimeConversation(key)
+  }, TERMINAL_CONVERSATION_IDLE_TTL_MS)
+  terminalConversationEvictionTimers.set(key, timer)
+}
+
+function canEvictTerminalConversation(key: string): boolean {
+  const turns = turnsByConversation.get(key)
+  return Boolean(
+    turns &&
+    !retainingListenersByConversation.has(key) &&
+    !hydrationByConversation.has(key) &&
+    (queuedMessagesByConversation.get(key)?.length ?? 0) === 0 &&
+    !turns.some(turn => turn.status === 'pending' || turn.status === 'streaming')
+  )
+}
+
+function cancelTerminalConversationEviction(key: string): void {
+  const timer = terminalConversationEvictionTimers.get(key)
+  if (timer === undefined) return
+  globalThis.clearTimeout(timer)
+  terminalConversationEvictionTimers.delete(key)
 }
 
 function cacheBoundedEntry<T>(

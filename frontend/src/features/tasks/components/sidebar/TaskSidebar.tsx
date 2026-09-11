@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Monitor,
   Inbox,
+  Handshake,
   Library,
   LayoutGrid,
   ClipboardCheck,
@@ -68,6 +69,7 @@ interface TaskSidebarProps {
     | 'knowledge'
     | 'devices'
     | 'inbox'
+    | 'collaboration'
     | 'resource-library'
     | 'evaluation'
   isCollapsed?: boolean
@@ -76,6 +78,7 @@ interface TaskSidebarProps {
   isSearchDialogOpen?: boolean
   onSearchDialogOpenChange?: (open: boolean) => void
   shortcutDisplayText?: string
+  projectSection?: React.ReactNode
 }
 
 export default function TaskSidebar({
@@ -87,6 +90,7 @@ export default function TaskSidebar({
   isSearchDialogOpen: _externalIsSearchDialogOpen,
   onSearchDialogOpenChange,
   shortcutDisplayText: externalShortcutDisplayText,
+  projectSection,
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -183,6 +187,7 @@ export default function TaskSidebar({
     | 'knowledge'
     | 'devices'
     | 'inbox'
+    | 'collaboration'
     | 'resource-library'
     | 'evaluation'
     | 'wework'
@@ -204,6 +209,7 @@ export default function TaskSidebar({
   const wikiPath = getPathHref(paths.wiki, '/knowledge')
   const devicesPath = getPathHref(paths.devices, '/devices')
   const inboxPath = getPathHref(paths.inbox, '/inbox')
+  const collaborationPath = getPathHref(paths.collaboration, '/collaboration')
   const resourceLibraryPath = getPathHref(paths.resourceLibrary, '/resource-library')
   const codingNavItem = getCodingNavItem()
   const isCodeAgentActive =
@@ -259,6 +265,14 @@ export default function TaskSidebar({
         buttonPageType: 'inbox',
         unreadCount: inboxUnreadCount,
       },
+      {
+        label: t('common:navigation.collaboration'),
+        icon: Handshake,
+        path: collaborationPath,
+        isActive: pageType === 'collaboration',
+        buttonPageType: 'collaboration',
+        testId: 'task-sidebar-nav-collaboration-button',
+      },
     ]
     // Only show evaluation nav item for admin users
     if (isAdmin) {
@@ -276,6 +290,7 @@ export default function TaskSidebar({
     codingNavItem.href,
     codingNavItem.key,
     codingNavItem.labelKey,
+    collaborationPath,
     currentPath,
     devicesPath,
     feedPath,
@@ -612,6 +627,7 @@ export default function TaskSidebar({
                       height={35}
                       className="object-contain"
                       priority
+                      unoptimized
                     />
                     <span className="text-base font-semibold text-text-primary">Wegent</span>
                   </div>
@@ -814,6 +830,7 @@ export default function TaskSidebar({
                   isSearchResult={isSearchResult}
                   onTaskSelect={() => setIsMobileSidebarOpen(false)}
                   onSelectMultiple={handleSelectMultiple}
+                  projectSection={pageType === 'collaboration' ? projectSection : undefined}
                 />
               )}
               {loadingMore && isSearchResult && (

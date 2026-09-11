@@ -326,6 +326,18 @@ jobs:
       qdrant:
         image: qdrant/qdrant:v1.15.4
 
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
+        env:
+          MINIO_ROOT_USER: wegent-e2e
+          MINIO_ROOT_PASSWORD: wegent-e2e-secret
+        options: >-
+          --health-cmd="curl -f http://localhost:9000/minio/health/live"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-start-period=20s
+          --health-retries=6
+
     steps:
       - name: Generate internal service token
         run: |
@@ -422,6 +434,11 @@ jobs:
           RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CHUNK_STORAGE_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          DELIVERY_S3_BUCKET: wegent-deliveries
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
@@ -480,6 +497,7 @@ jobs:
           wait_for_url http://localhost:8000/api/docs \
             && wait_for_url http://localhost:8200/internal/rag/health \
             && wait_for_url http://qdrant:6333/readyz \
+            && wait_for_url http://minio:9000/minio/health/live \
             && wait_for_url http://localhost:8100/health \
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \

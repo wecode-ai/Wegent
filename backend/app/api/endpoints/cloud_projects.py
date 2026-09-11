@@ -10,6 +10,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    HTTPException,
     Query,
     UploadFile,
     status,
@@ -42,8 +43,16 @@ from app.schemas.cloud_project import (
     CloudProjectMemberUpdate,
     CloudProjectResponse,
     CloudProjectUpdate,
+    CollaborationMessageImportCreate,
 )
-from app.schemas.delivery import LoopItemResponse
+from app.schemas.delivery import (
+    CollaborationMessageImportResponse,
+    LoopItemCommentResponse,
+    LoopItemCreate,
+    LoopItemResponse,
+    ProjectLoopItemAttachmentListResponse,
+    ProjectLoopItemAttachmentResponse,
+)
 from app.schemas.project_board import ProjectBoardSnapshotResponse
 from app.schemas.project_chat import (
     LoopItemApproval,
@@ -52,15 +61,129 @@ from app.schemas.project_chat import (
     ProjectChatAgentUpdate,
     ProjectChatAgentView,
 )
+from app.schemas.work_queue import MessageContentSnapshot
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.provider_router import loop_item_provider_router
+from app.services.message_forwarding_service import message_forwarding_service
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
+from app.stores.tasks import subtask_store, task_access_store, task_store
 
 router = APIRouter()
+
+
+def _collaboration_message_body(
+    task_name: str,
+    snapshots: list[MessageContentSnapshot],
+    note: str | None,
+) -> str:
+    sections = [f"来自聊天“{task_name}”的消息："]
+    for snapshot in snapshots:
+        role = "用户" if snapshot.role == "USER" else "智能体"
+        sender = f" · {snapshot.senderUserName}" if snapshot.senderUserName else ""
+        timestamp = f" · {snapshot.createdAt}" if snapshot.createdAt else ""
+        content = snapshot.content.strip() or "（空消息）"
+        quoted = content.replace("\n", "\n> ")
+        sections.append(f"> **{role}{sender}{timestamp}**\n>\n> {quoted}")
+        for attachment in snapshot.attachments or []:
+            name = (
+                attachment.get("name")
+                or attachment.get("filename")
+                or attachment.get("file_name")
+                or "附件"
+            )
+            sections.append(f"- 附件：{name}")
+    if note:
+        sections.append(f"备注：{note.strip()}")
+    return "\n\n".join(sections)
+
+
+@router.post(
+    "/{project_id}/message-imports",
+    response_model=CollaborationMessageImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def import_chat_messages(
+    project_id: int,
+    values: CollaborationMessageImportCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> CollaborationMessageImportResponse:
+    """Create or update an Issue from an immutable chat-message snapshot."""
+
+    project = cloud_project_service.get(db, project_id, current_user.id)
+    task = task_store.get_active_task(db, task_id=values.source_task_id)
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Source task not found")
+    if not task_access_store.is_member(
+        db, task_id=values.source_task_id, user_id=current_user.id
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    subtasks = subtask_store.list_by_task_ordered(
+        db,
+        task_id=values.source_task_id,
+        owner_user_id=task.user_id,
+    )
+    if values.subtask_ids:
+        selected_ids = set(values.subtask_ids)
+        subtasks = [subtask for subtask in subtasks if subtask.id in selected_ids]
+        if len(subtasks) != len(selected_ids):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Source message not found")
+    if not subtasks:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No messages to import")
+
+    snapshots = [
+        message_forwarding_service.build_content_snapshot(subtask)
+        for subtask in subtasks
+    ]
+    body = _collaboration_message_body(task.name, snapshots, values.note)
+
+    if values.target.kind == "new_issue":
+        title = values.target.title or task.name or "聊天消息"
+        created = loop_item_provider_router.create(
+            db,
+            project,
+            current_user,
+            LoopItemCreate(title=title[:255], description=body, status="inbox"),
+        )
+        return CollaborationMessageImportResponse(
+            issue=LoopItemResponse.model_validate(created.values)
+        )
+
+    issue_id = values.target.issue_id or ""
+    is_external_issue = external_loop_item_provider.is_external_item(db, issue_id)
+    if is_external_issue:
+        issue = external_loop_item_provider.get(db, issue_id, current_user.id)
+        issue_project_id = issue.get("cloud_project_id")
+    else:
+        item = loop_item_service.get(db, issue_id, current_user.id)
+        issue_project_id = item.cloud_project_id
+        issue = loop_item_service.response_values(
+            db,
+            item,
+            current_user.id,
+        )
+    if str(issue_project_id) != str(project.id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+    comment = (
+        external_loop_item_provider.add_comment(
+            db,
+            issue_id,
+            current_user.id,
+            body,
+        )
+        if is_external_issue
+        else loop_item_service.add_comment(db, issue_id, current_user.id, body)
+    )
+    return CollaborationMessageImportResponse(
+        issue=LoopItemResponse.model_validate(issue),
+        comment=LoopItemCommentResponse.model_validate(comment),
+    )
 
 
 def _project_response(
@@ -442,6 +565,31 @@ def list_project_delivery_files(
             )
             for row in rows
             if row.delivery.delivered_at is not None
+        ]
+    )
+
+
+@router.get(
+    "/{project_id}/task-attachments",
+    response_model=ProjectLoopItemAttachmentListResponse,
+)
+def list_project_task_attachments(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectLoopItemAttachmentListResponse:
+    """List attachments from all active tasks in a project."""
+
+    rows = loop_item_service.list_project_attachments(db, project_id, current_user.id)
+    return ProjectLoopItemAttachmentListResponse(
+        items=[
+            ProjectLoopItemAttachmentResponse.model_validate(
+                {
+                    **attachment.__dict__,
+                    "loop_item_title": item.title or item.name or item.id,
+                }
+            )
+            for attachment, item in rows
         ]
     )
 

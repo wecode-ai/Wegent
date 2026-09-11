@@ -459,7 +459,7 @@ function createManager(
 ): SmartAppManager {
   return new SmartAppManager({
     dataDirectory: join(root, 'data'),
-    downloadsDirectory: join(root, 'downloads'),
+    downloadsDirectory: () => join(root, 'downloads'),
     logDirectory: join(root, 'logs'),
     runtimeRoot: join(root, 'runtime'),
     environment: {},

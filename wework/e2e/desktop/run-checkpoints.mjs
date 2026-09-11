@@ -16,6 +16,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-account-auth': './scenarios/plugin-account-auth.scenario.mjs',
+  'plugin-task-token': './scenarios/plugin-task-token.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
@@ -55,6 +56,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'board-focus-view': './scenarios/board-focus-view.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
+  'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
@@ -63,6 +65,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-account-auth',
+  'plugin-task-token',
   'codex-account-login',
   'cloud-space-mention',
   'change-request-status',
@@ -73,6 +76,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'offline-local-project-space',
   'board-focus-view',
   'cloud-context-resilience',
+  'collaboration-shared-core',
   'plugin-development',
   'task-attachments',
   'project-assignment-notification',

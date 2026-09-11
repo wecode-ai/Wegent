@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CircleDot, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeGoal, RuntimeGoalStatus } from '@/types/api'
 
@@ -84,7 +85,16 @@ export function GoalStatusBar({
         <span className="shrink-0 font-semibold text-text-primary">
           {t('workbench.goal_chip', '目标')}
         </span>
-        <span className="ml-1 min-w-0 truncate text-text-secondary">· {goal.objective}</span>
+        <Tooltip
+          label={goal.objective}
+          align="start"
+          testId="goal-objective-tooltip"
+          className="ml-1 min-w-0 flex-1 shrink overflow-hidden"
+        >
+          <span data-testid="goal-objective" className="block min-w-0 truncate text-text-secondary">
+            · {goal.objective}
+          </span>
+        </Tooltip>
       </div>
       {!canToggle && (
         <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
