@@ -683,7 +683,12 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
   }
   workbenchServices.sharedWorkspaceApi = createWeworkSharedWorkspaceApi({
     client: {
-      get: vi.fn(),
+      get: vi.fn(async (url: string) => {
+        if (url.endsWith('/chat-agents')) return []
+        if (url.endsWith('/comments')) return []
+        if (url.endsWith('/assignments')) return { items: [] }
+        throw new Error(`Unhandled collaboration test request: GET ${url}`)
+      }),
       getBlob: vi.fn(),
       post: vi.fn(),
       put: vi.fn(),
