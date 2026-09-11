@@ -500,6 +500,31 @@ async def test_runtime_task_update_suppresses_global_target_while_client_is_acti
 
 
 @pytest.mark.asyncio
+async def test_runtime_task_update_without_target_sessions_skips_dedup_claim(
+    test_db: Session,
+    test_user,
+    fake_im_session_cache,
+    fake_notification_cache,
+) -> None:
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address={
+            "deviceId": "device-1",
+            "localTaskId": "codex-thread-1",
+        },
+        title="Native Codex task",
+        status="updated",
+        content="Unwatched update",
+        source="codex_watcher",
+        turn_key="turn-1",
+    )
+
+    assert result == {"sent": 0, "results": []}
+    assert fake_notification_cache.values == {}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("target_kind", ["active", "subscribed"])
 async def test_runtime_task_update_master_switch_suppresses_session_targets(
     test_db: Session,

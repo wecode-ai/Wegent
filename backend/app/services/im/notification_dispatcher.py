@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 MESSAGER_KIND = "Messager"
 MESSAGER_USER_ID = 0
 RUNTIME_IM_NOTIFICATION_DEDUP_PREFIX = "channel:runtime_im_notification:"
-RUNTIME_IM_NOTIFICATION_DEDUP_TTL_SECONDS = 24 * 60 * 60
+# The executor replays unacknowledged runtime events after reconnects, so the
+# claim has to outlive a device that sleeps before it reconnects.
+RUNTIME_IM_NOTIFICATION_DEDUP_TTL_SECONDS = 6 * 60 * 60
 SENSITIVE_CONFIG_KEYS = {
     "client_secret",
     "secret",
@@ -83,6 +85,14 @@ class IMNotificationDispatcher:
         if source == "im":
             return {"sent": 0, "results": [], "skipped": "im_source"}
 
+        sessions = await self._runtime_notification_sessions(
+            db=db,
+            user_id=user_id,
+            address=address,
+        )
+        if not sessions:
+            return {"sent": 0, "results": []}
+
         dedup_key = _runtime_notification_dedup_key(
             user_id=user_id,
             address=address,
@@ -99,11 +109,6 @@ class IMNotificationDispatcher:
             )
             return {"sent": 0, "results": [], "skipped": "duplicate_turn"}
 
-        sessions = await self._runtime_notification_sessions(
-            db=db,
-            user_id=user_id,
-            address=address,
-        )
         message = _runtime_task_update_message(
             title=title,
             local_task_id=str(address.get("localTaskId") or "本地任务"),
