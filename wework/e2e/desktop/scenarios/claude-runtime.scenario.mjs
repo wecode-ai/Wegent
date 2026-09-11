@@ -176,7 +176,7 @@ async function waitForTaskIdle(control, taskRowTestId, timeoutMs) {
   )
 }
 
-async function configureClaude(control, executablePath, version, timeoutMs) {
+export async function configureClaude(control, executablePath, version, timeoutMs) {
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -225,7 +225,7 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
   })
 }
 
-async function createRemoteProject(control, workspacePath, timeoutMs, captureScreenshot) {
+export async function createRemoteProject(control, workspacePath, timeoutMs, captureScreenshot) {
   await control.command('click', '[data-testid="projects-create-button"]')
   await control.command('click', '[data-testid="project-create-remote-option"]')
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {

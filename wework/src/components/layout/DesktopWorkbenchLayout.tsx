@@ -37,7 +37,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { CollaborationWorkspace } from '@/features/todo/CollaborationWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
 import {
@@ -1095,7 +1095,7 @@ export function DesktopWorkbenchLayout({
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
           {todoOpen &&
             (state.user && services.deliveryApi ? (
-              <CloudTodoWorkspace
+              <CollaborationWorkspace
                 user={state.user}
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}
@@ -1155,7 +1155,7 @@ export function DesktopWorkbenchLayout({
                   }
                   if (!project) {
                     workspaceTabs.updateActiveTab({
-                      title: t('workbench.workspace_tab_board', '项目空间'),
+                      title: t('workbench.workspace_tab_board', '协作'),
                       contentRoute: '/todo',
                     })
                     return

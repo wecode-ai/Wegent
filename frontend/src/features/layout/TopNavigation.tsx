@@ -12,7 +12,16 @@ import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
 import TaskTitleDropdown from './TaskTitleDropdown'
 import { TaskDetail } from '@/types/api'
 type TopNavigationProps = {
-  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices' | 'flow' | 'inbox' | 'evaluation'
+  activePage?:
+    | 'chat'
+    | 'code'
+    | 'wiki'
+    | 'dashboard'
+    | 'devices'
+    | 'flow'
+    | 'inbox'
+    | 'collaboration'
+    | 'evaluation'
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string
@@ -85,6 +94,7 @@ export default function TopNavigation({
               height={isMobile ? 20 : 24}
               className="object-container"
               priority
+              unoptimized
             />
             {!isMobile && <span className="text-lg font-semibold text-text-primary">Wegent</span>}
           </div>

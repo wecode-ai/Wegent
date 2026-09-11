@@ -10,12 +10,14 @@ from typing import BinaryIO
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models.delivery import (
     CloudProject,
+    CloudProjectFile,
     Delivery,
     DeliveryAsset,
     LoopItem,
@@ -27,10 +29,13 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
+from app.services.delivery.storage import DeliveryStorageUnavailableError
 from app.services.loop_items.external_provider import external_loop_item_provider
 
 
@@ -79,6 +84,17 @@ class FakeCloudFileStorage:
         self.objects[target_key] = self.objects[source_key]
 
 
+class UnavailableCloudFileStorage(FakeCloudFileStorage):
+    def put_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        length: int,
+        content_type: str,
+    ) -> None:
+        raise DeliveryStorageUnavailableError("storage unavailable")
+
+
 @pytest.fixture
 def cloud_file_storage(monkeypatch: pytest.MonkeyPatch) -> FakeCloudFileStorage:
     storage = FakeCloudFileStorage()
@@ -89,6 +105,57 @@ def cloud_file_storage(monkeypatch: pytest.MonkeyPatch) -> FakeCloudFileStorage:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _create_chat_message(
+    db: Session,
+    *,
+    user_id: int,
+    role: SubtaskRole,
+    prompt: str,
+    result: dict[str, object] | None = None,
+) -> tuple[TaskResource, Subtask]:
+    task = TaskResource(
+        user_id=user_id,
+        kind="Task",
+        name="Release discussion",
+        namespace="default",
+        json={
+            "kind": "Task",
+            "metadata": {
+                "name": "release-discussion",
+                "namespace": "default",
+            },
+            "spec": {},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
+    db.add(task)
+    db.flush()
+    message = Subtask(
+        user_id=user_id,
+        task_id=task.id,
+        team_id=1,
+        title="Release message",
+        bot_ids=[],
+        role=role,
+        executor_namespace="",
+        executor_name="",
+        prompt=prompt,
+        result=result,
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=1,
+        parent_id=None,
+        error_message="",
+        completed_at=datetime.now(),
+        created_at=datetime.now(),
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(task)
+    db.refresh(message)
+    return task, message
 
 
 def _create_runnable_wegent_team(
@@ -659,6 +726,17 @@ def test_public_project_visitors_only_access_their_own_todo_details(
     assert owner_summary["can_view_detail"] is False
     assert owner_summary["can_edit"] is False
 
+    snapshot = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/board-snapshot",
+        headers=_auth(visitor_token),
+    )
+    assert snapshot.status_code == 200
+    snapshot_body = snapshot.json()
+    assert snapshot_body["items"] == listed_items.json()["items"]
+    assert snapshot_body["task_bindings"] == []
+    assert snapshot_body["members"] == []
+    assert snapshot_body["agents"] == []
+
     hidden_detail = test_client.get(
         f"/api/v1/loop-items/{owner_item['id']}",
         headers=_auth(visitor_token),
@@ -1048,6 +1126,7 @@ def test_backend_routes_gitlab_updates_and_comments(
         "created_at": "2026-07-28T00:00:00Z",
         "updated_at": "2026-07-28T00:00:00Z",
     }
+    notes: list[dict[str, object]] = []
     requests: list[tuple[str, str, object]] = []
 
     def provider_request(
@@ -1056,15 +1135,17 @@ def test_backend_routes_gitlab_updates_and_comments(
         payload = kwargs.get("json")
         requests.append((method, url, payload))
         if url.endswith("/notes"):
-            return FakeProviderResponse(
-                {
+            if method == "POST":
+                note = {
                     "id": 10,
                     "body": "ship it",
                     "author": {"username": "admin"},
                     "web_url": "https://gitlab.example.com/note/10",
                     "created_at": "2026-07-28T00:00:00Z",
                 }
-            )
+                notes.append(note)
+                return FakeProviderResponse(note)
+            return FakeProviderResponse(notes)
         if method == "PUT" and isinstance(payload, dict):
             issue.update(payload)
             if isinstance(issue.get("labels"), str):
@@ -1103,14 +1184,302 @@ def test_backend_routes_gitlab_updates_and_comments(
         headers=_auth(test_token),
         json={"body": "ship it"},
     )
+    listed_comments = test_client.get(
+        "/api/v1/loop-items/CLOUDGL-9/comments",
+        headers=_auth(test_token),
+    )
 
     assert updated.status_code == 200
     assert updated.json()["status"] == "completed"
     assert commented.status_code == 201
     assert commented.json()["web_url"] == "https://gitlab.example.com/note/10"
+    assert listed_comments.status_code == 200
+    assert listed_comments.json() == [commented.json()]
     assert any(method == "PUT" for method, _, _ in requests)
-    assert any(url.endswith("/notes") for _, url, _ in requests)
+    assert any(
+        method == "GET" and url.endswith("/notes") for method, url, _ in requests
+    )
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
+
+
+def test_backend_lists_github_comments_after_creation(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = {
+        "number": 12,
+        "title": "GitHub issue",
+        "body": "details",
+        "state": "open",
+        "labels": [{"name": "wegent:creator:1:admin"}],
+        "created_at": "2026-07-28T00:00:00Z",
+        "updated_at": "2026-07-28T00:00:00Z",
+    }
+    comments: list[dict[str, object]] = []
+    requests: list[tuple[str, str, object]] = []
+
+    def provider_request(
+        method: str, url: str, **kwargs: object
+    ) -> FakeProviderResponse:
+        requests.append((method, url, kwargs.get("params")))
+        if url.endswith("/comments"):
+            if method == "POST":
+                comment = {
+                    "id": 21,
+                    "body": "ready to merge",
+                    "user": {"login": "admin"},
+                    "html_url": "https://github.com/acme/repo/issues/12#issuecomment-21",
+                    "created_at": "2026-07-28T01:00:00Z",
+                    "updated_at": "2026-07-28T01:01:00Z",
+                }
+                comments.append(comment)
+                return FakeProviderResponse(comment)
+            return FakeProviderResponse(comments)
+        return FakeProviderResponse(issue)
+
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "commentgh",
+            "name": "GitHub comments",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "acme/repo",
+                "token": "server-only-secret",
+            },
+        },
+    )
+    assert project_response.status_code == 201
+
+    created = test_client.post(
+        "/api/v1/loop-items/COMMENTGH-12/comments",
+        headers=_auth(test_token),
+        json={"body": "ready to merge"},
+    )
+    listed = test_client.get(
+        "/api/v1/loop-items/COMMENTGH-12/comments",
+        headers=_auth(test_token),
+    )
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert listed.json() == [created.json()]
+    assert any(
+        method == "GET"
+        and url.endswith("/comments")
+        and params
+        == {
+            "per_page": 100,
+            "page": 1,
+            "sort": "created",
+            "direction": "asc",
+        }
+        for method, url, params in requests
+    )
+
+
+def test_external_issue_comments_require_project_access(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    visitor = User(
+        user_name="external-comment-visitor",
+        password_hash="unused",
+        email="external-comment-visitor@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(visitor)
+    test_db.commit()
+    visitor_token = create_access_token(data={"sub": visitor.user_name})
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "privategl",
+            "name": "Private GitLab",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "group/private",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+                "token": "server-only-secret",
+            },
+        },
+    )
+    assert created.status_code == 201
+
+    listed = test_client.get(
+        "/api/v1/loop-items/PRIVATEGL-9/comments",
+        headers=_auth(visitor_token),
+    )
+
+    assert listed.status_code == 404
+
+
+def test_internal_issue_comments_are_persisted_and_listed(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "comment", "name": "Comment project"},
+    ).json()
+    issue = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Review comments"},
+    ).json()
+
+    created = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+        json={"body": "Ship after the final review."},
+    )
+    listed = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+    )
+
+    assert created.status_code == 201
+    assert created.json()["body"] == "Ship after the final review."
+    assert created.json()["author"]
+    assert listed.status_code == 200
+    assert listed.json() == [created.json()]
+
+
+def test_chat_message_import_creates_issue_from_immutable_snapshot(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    task, message = _create_chat_message(
+        test_db,
+        user_id=test_user.id,
+        role=SubtaskRole.USER,
+        prompt="Keep this exact decision in the collaboration Issue.",
+    )
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "import", "name": "Imported discussions"},
+    ).json()
+
+    imported = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "new_issue", "title": "Release decision"},
+            "note": "Captured on September 10, 2026.",
+        },
+    )
+
+    assert imported.status_code == 201
+    payload = imported.json()
+    issue = payload["issue"]
+    assert issue["title"] == "Release decision"
+    assert issue["cloud_project_id"] == project["id"]
+    assert payload["comment"] is None
+    assert "Keep this exact decision" in issue["description"]
+    assert "Captured on September 10, 2026." in issue["description"]
+
+    message.prompt = "This later edit must not change the imported Issue."
+    test_db.commit()
+    persisted = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(test_token),
+    )
+    assert persisted.status_code == 200
+    assert "Keep this exact decision" in persisted.json()["description"]
+    assert "later edit" not in persisted.json()["description"]
+
+
+def test_chat_message_import_appends_to_existing_issue_and_rejects_missing_message(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    task, message = _create_chat_message(
+        test_db,
+        user_id=test_user.id,
+        role=SubtaskRole.ASSISTANT,
+        prompt="fallback",
+        result={"value": "The deployment is ready."},
+    )
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "append", "name": "Existing Issue imports"},
+    ).json()
+    issue = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Deployment"},
+    ).json()
+    other_project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "other", "name": "Other imports"},
+    ).json()
+    other_issue = test_client.post(
+        f"/api/v1/cloud-projects/{other_project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unrelated deployment"},
+    ).json()
+
+    imported = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "existing_issue", "issue_id": issue["id"]},
+        },
+    )
+    missing = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id + 10_000],
+            "target": {"kind": "existing_issue", "issue_id": issue["id"]},
+        },
+    )
+    wrong_project = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/message-imports",
+        headers=_auth(test_token),
+        json={
+            "source_task_id": task.id,
+            "subtask_ids": [message.id],
+            "target": {"kind": "existing_issue", "issue_id": other_issue["id"]},
+        },
+    )
+    comments = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}/comments",
+        headers=_auth(test_token),
+    )
+
+    assert imported.status_code == 201
+    payload = imported.json()
+    assert payload["issue"]["id"] == issue["id"]
+    assert payload["comment"]["id"]
+    assert payload["comment"]["author"]
+    assert "The deployment is ready." in payload["comment"]["body"]
+    assert missing.status_code == 404
+    assert wrong_project.status_code == 404
+    assert comments.status_code == 200
+    assert len(comments.json()) == 1
 
 
 def test_todo_lifecycle_and_multiple_local_tasks(
@@ -2039,6 +2408,50 @@ def test_cloud_workspace_file_round_trip(
     )
     assert recursive.status_code == 204
     assert cloud_file_storage.objects == {}
+
+
+def test_cloud_workspace_file_upload_rolls_back_and_raises_503(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "files503", "name": "Unavailable storage"},
+    ).json()
+    rollback_calls = 0
+    original_rollback = test_db.rollback
+
+    def track_rollback() -> None:
+        nonlocal rollback_calls
+        rollback_calls += 1
+        original_rollback()
+
+    monkeypatch.setattr(cloud_file_service, "storage", UnavailableCloudFileStorage())
+    monkeypatch.setattr(test_db, "rollback", track_rollback)
+
+    with pytest.raises(HTTPException) as exc:
+        cloud_file_service.upload(
+            test_db,
+            project["id"],
+            test_user.id,
+            "research/notes.md",
+            "text/markdown",
+            io.BytesIO(b"# Notes"),
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Delivery object storage is unavailable"
+    assert rollback_calls == 1
+    assert (
+        test_db.query(CloudProjectFile)
+        .filter(CloudProjectFile.cloud_project_id == project["id"])
+        .count()
+        == 0
+    )
 
 
 def test_cloud_workspace_lists_immutable_delivery_files(

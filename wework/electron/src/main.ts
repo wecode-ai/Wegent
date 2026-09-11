@@ -40,6 +40,7 @@ import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
+import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
 import {
@@ -1304,6 +1305,18 @@ function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
   }
 }
 
+function downloadsDirectory(): string {
+  return resolveDownloadsDirectory(
+    name => app.getPath(name),
+    (error, fallbackPath) => {
+      console.warn(
+        `[downloads] system Downloads folder is unavailable; using ${fallbackPath}`,
+        error
+      )
+    }
+  )
+}
+
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
@@ -1336,7 +1349,7 @@ async function configureDesktopRuntime(): Promise<void> {
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
-    downloadsDirectory: app.getPath('downloads'),
+    downloadsDirectory,
     logDirectories: [app.getPath('logs')],
   })
   const vncAssets = app.isPackaged
@@ -1383,7 +1396,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
       dataDirectory: app.getPath('userData'),
-      downloadsDirectory: app.getPath('downloads'),
+      downloadsDirectory,
       logDirectory: app.getPath('logs'),
       runtimeRoot,
       environment,

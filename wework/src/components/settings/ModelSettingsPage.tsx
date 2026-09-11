@@ -70,6 +70,7 @@ import {
   type LocalModelConfig,
   type LocalModelCatalogSnapshot,
   type LocalModelApiFormat,
+  type LocalModelCodexToolCompatibility,
   type LocalModelToolProfile,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
@@ -318,6 +319,7 @@ interface LocalModelFormState {
   }>
   baseUrl: string
   apiFormat: LocalModelApiFormat
+  codexToolCompatibility: LocalModelCodexToolCompatibility
   toolProfile: LocalModelToolProfile
   requestPath: string
   apiKey: string
@@ -355,6 +357,7 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   additionalModels: [],
   baseUrl: '',
   apiFormat: 'openai-responses',
+  codexToolCompatibility: 'native',
   toolProfile: 'custom',
   requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
@@ -456,6 +459,7 @@ function isLocalModelFormDirty(
       form.additionalModels.length > 0 ||
       form.baseUrl.trim() !== '' ||
       form.apiFormat !== 'openai-responses' ||
+      form.codexToolCompatibility !== 'native' ||
       form.requestPath !== DEFAULT_LOCAL_MODEL_REQUEST_PATH ||
       form.apiKey.trim() !== '' ||
       form.contextWindow.trim() !== '' ||
@@ -486,6 +490,9 @@ function isLocalModelFormDirty(
     form.additionalModels.length > 0 ||
     form.baseUrl !== editingModel.baseUrl ||
     form.apiFormat !== editingModel.apiFormat ||
+    form.codexToolCompatibility !==
+      (editingModel.codexToolCompatibility ??
+        (editingModel.apiFormat === 'openai-responses' ? 'native' : 'standard')) ||
     form.toolProfile !== editingModel.toolProfile ||
     form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
     form.apiKey.trim() !== '' ||
@@ -1212,6 +1219,9 @@ function LocalModelSettingsSection({
       additionalModels: [],
       baseUrl: model.baseUrl,
       apiFormat: model.apiFormat,
+      codexToolCompatibility:
+        model.codexToolCompatibility ??
+        (model.apiFormat === 'openai-responses' ? 'native' : 'standard'),
       toolProfile: model.toolProfile,
       requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
@@ -1299,6 +1309,7 @@ function LocalModelSettingsSection({
       additionalModels: [],
       baseUrl: profile.baseUrl,
       apiFormat: profile.apiFormat,
+      codexToolCompatibility: profile.apiFormat === 'openai-responses' ? 'native' : 'standard',
       toolProfile: profile.toolProfile,
       requestPath: profile.requestPath,
       contextWindow:
@@ -1468,6 +1479,7 @@ function LocalModelSettingsSection({
           toolProfile: form.toolProfile,
           baseUrl: form.baseUrl,
           apiFormat: form.apiFormat,
+          codexToolCompatibility: form.codexToolCompatibility,
           requestPath: form.requestPath,
           apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
           contextWindow: providerModelDefaults?.contextWindow ?? form.contextWindow,
@@ -1541,6 +1553,7 @@ function LocalModelSettingsSection({
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
         apiFormat: editingModel.apiFormat,
+        codexToolCompatibility: editingModel.codexToolCompatibility,
         toolProfile: editingModel.toolProfile,
         requestPath: editingModel.requestPath,
         apiKey: null,
@@ -2023,6 +2036,8 @@ function LocalModelSettingsSection({
                         const toolProfile = defaultLocalModelToolProfile(apiFormat)
                         updateForm({
                           apiFormat,
+                          codexToolCompatibility:
+                            apiFormat === 'openai-responses' ? 'native' : 'standard',
                           toolProfile,
                           ...(form.catalogEntry
                             ? {
@@ -2265,6 +2280,8 @@ function LocalModelSettingsSection({
                   <CustomModelCapabilitiesForm
                     entry={form.catalogEntry}
                     contextWindow={form.contextWindow}
+                    apiFormat={form.apiFormat}
+                    codexToolCompatibility={form.codexToolCompatibility}
                     onContextWindowChange={value => {
                       const parsed = Number(value)
                       updateForm({
@@ -2276,6 +2293,9 @@ function LocalModelSettingsSection({
                         },
                       })
                     }}
+                    onCodexToolCompatibilityChange={codexToolCompatibility =>
+                      updateForm({ codexToolCompatibility })
+                    }
                     onChange={catalogEntry => updateForm({ catalogEntry })}
                   />
                 )}

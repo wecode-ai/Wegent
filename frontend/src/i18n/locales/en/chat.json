@@ -37,7 +37,7 @@
     "cancel": "Cancel",
     "re_edit": "Re-edit",
     "re_edit_tooltip": "Re-edit",
-    "forward": "Forward"
+    "forward": "Send to Collaboration"
   },
   "edit": {
     "tooltip": "Edit message",

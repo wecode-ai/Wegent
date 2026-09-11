@@ -432,6 +432,26 @@ impl ManagedCapabilityManifest {
     }
 }
 
+fn prepare_native_marketplace_plugin(
+    source: &Path,
+    destination: &Path,
+    claude: bool,
+) -> Result<(), CapabilitySyncError> {
+    if crate::plugin_task_token::requires_native_proxy(source, claude)
+        .map_err(CapabilitySyncError::invalid_payload)?
+    {
+        // Native local marketplaces can load their source directly. Keep the
+        // immutable package intact and expose a filtered runtime copy there too.
+        copy_dir_atomic_prepared(source, destination, |temporary| {
+            crate::plugin_task_token::materialize_native_plugin(temporary, claude)
+                .map(|_| ())
+                .map_err(CapabilitySyncError::invalid_payload)
+        })
+    } else {
+        link_or_copy_dir(source, destination)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GlobalCapabilityStore {
     pub manifest: ManagedCapabilityManifest,
@@ -861,7 +881,7 @@ impl GlobalCapabilityStore {
             .join("marketplaces")
             .join(&spec.marketplace);
         let marketplace_link = marketplace_dir.join("plugins").join(&spec.name);
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        prepare_native_marketplace_plugin(store_path, &marketplace_link, false)?;
 
         let marketplace_json_path = marketplace_dir.join(".agents/plugins/marketplace.json");
         let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
@@ -990,7 +1010,7 @@ impl GlobalCapabilityStore {
             .join(&spec.marketplace);
         let marketplace_plugins_dir = marketplace_dir.join("plugins");
         let marketplace_link = marketplace_plugins_dir.join(plugin_codex_link_name(spec));
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        prepare_native_marketplace_plugin(store_path, &marketplace_link, true)?;
 
         let marketplace_source = json!({
             "source": "directory",

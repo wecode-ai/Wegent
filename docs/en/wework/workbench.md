@@ -137,6 +137,12 @@ With the right workspace open, select **Expand panel** in its title bar to let f
 
 You can still collapse the left sidebar while the workspace is expanded, leaving only the right workspace visible. Select **Restore panel** in the upper-right corner, or **Latest turn** at the bottom when a conversation is available, to return to the side-by-side conversation and workspace layout. Closing the right workspace or its last tab also exits the expanded state.
 
+## View execution progress
+
+While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
+
+After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
+
 ## Navigate long conversations
 
 When a conversation is taller than the current viewport, turn markers appear along the left side of the message area. The navigation stays centered in the conversation viewport instead of scrolling with message content. Select a marker to jump to that turn, or hover over it to preview the user request and assistant response summary.

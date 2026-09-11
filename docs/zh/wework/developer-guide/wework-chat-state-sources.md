@@ -33,6 +33,16 @@ sidebar_position: 18
 | 附件/模型/技能选择            | `projectChat` context                                                                                                           | send payload、composer 控件                                                                            | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生                                                                                                                  |
 | 设备可用性                    | `state.devices` + 当前任务/项目设备选择                                                                                         | composer disabled reason、设备提示                                                                     | 只用于发送前置条件，不参与 assistant streaming 判断                                                                                                                             |
 
+## 看板会话分屏
+
+项目空间看板上的 Hover 任务面板是原任务会话的分屏视图，不是独立预览会话。任务页、Hover 面板和卡片摘要必须使用同一个 runtime task address，并读取 `runtimeConversationCache` 中同一份 canonical `RuntimeConversationTurn[]`。
+
+- Hover 面板直接复用 `TemporaryChatPanel`，消息加载、实时事件、继续对话和附件都进入原任务会话。
+- 卡片上的进展文字和工具活动只能通过纯 selector 从 canonical turns 即时投影；不能保存 `finalResponsePreview`、序列化 assistant message，或维护 board/Hover 专用消息缓存。
+- 服务端确认 transcript 已 idle 时，响应是该任务的权威快照，应替换缓存中不存在于服务端的旧 terminal turns；运行中的 transcript 才与本地缓冲事件合并。
+- 已结束会话在没有完整会话视图保活时空闲五分钟后回收。卡片摘要可以监听更新，但不能因为看板常驻而阻止回收；打开的任务页或 Hover 分屏在订阅期间保活。
+- 看板只为运行中和待审核任务预取有限的 transcript 尾部。增加预取范围前必须先证明 UI 需要，不能为了生成一行摘要加载或复制完整工具输出。
+
 ## Runtime 事件流
 
 1. 新消息提交时，`sendPhase` 进入 `submitting`。

@@ -18,9 +18,9 @@ from app.models.delivery import (
     CloudProject,
     LoopItem,
     ProjectChatAgent,
-    adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
+    loop_unset_datetime_for_connection,
 )
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
@@ -1671,10 +1671,10 @@ class ProjectChatService:
 
     @staticmethod
     def _loop_unset_datetime(db: Session) -> object:
-        values = adapt_loop_node_values_for_dialect(
-            {"completed_at": None}, db.get_bind().dialect.name
+        return loop_unset_datetime_for_connection(
+            db.connection(),
+            "completed_at",
         )
-        return values["completed_at"]
 
     @staticmethod
     def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:

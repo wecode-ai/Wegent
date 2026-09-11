@@ -325,3 +325,22 @@ class CloudProjectMemberResponse(BaseModel):
     email: str | None
     role: BaseRole
     capability_description: str = ""
+
+
+class CollaborationMessageImportTarget(BaseModel):
+    kind: Literal["new_issue", "existing_issue"]
+    issue_id: str | None = Field(default=None, max_length=64)
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "CollaborationMessageImportTarget":
+        if self.kind == "existing_issue" and not self.issue_id:
+            raise ValueError("issue_id is required for an existing Issue")
+        return self
+
+
+class CollaborationMessageImportCreate(BaseModel):
+    source_task_id: int = Field(ge=1)
+    subtask_ids: list[int] | None = None
+    target: CollaborationMessageImportTarget
+    note: str | None = Field(default=None, max_length=1_000)

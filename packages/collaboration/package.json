@@ -1,0 +1,64 @@
+{
+  "name": "@wegent/collaboration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./kanban": {
+      "types": "./src/kanban/index.ts",
+      "import": "./src/kanban/index.ts"
+    },
+    "./automation": {
+      "types": "./src/automation/index.ts",
+      "import": "./src/automation/index.ts"
+    },
+    "./automation-ui": {
+      "types": "./src/automation-ui/index.ts",
+      "import": "./src/automation-ui/index.ts"
+    },
+    "./project-manage": {
+      "types": "./src/project-manage/index.ts",
+      "import": "./src/project-manage/index.ts"
+    },
+    "./project-board": {
+      "types": "./src/project-board/index.ts",
+      "import": "./src/project-board/index.ts"
+    },
+    "./project-create": {
+      "types": "./src/project-create/index.ts",
+      "import": "./src/project-create/index.ts"
+    },
+    "./project-shell": {
+      "types": "./src/project-shell/index.ts",
+      "import": "./src/project-shell/index.ts"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@dagrejs/dagre": ">=3.0",
+    "@dnd-kit/core": ">=6.3",
+    "@dnd-kit/sortable": ">=10",
+    "@dnd-kit/utilities": ">=3.2",
+    "@xyflow/react": ">=12.11",
+    "lucide-react": ">=0.554",
+    "react": ">=19",
+    "react-dom": ">=19"
+  },
+  "devDependencies": {
+    "@dagrejs/dagre": "^3.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.7"
+  }
+}

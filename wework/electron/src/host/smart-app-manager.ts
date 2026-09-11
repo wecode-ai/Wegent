@@ -72,7 +72,7 @@ export interface SmartAppRuntimeHost {
 
 export interface SmartAppManagerOptions {
   dataDirectory: string
-  downloadsDirectory: string
+  downloadsDirectory: () => string
   logDirectory: string
   runtimeRoot: string
   environment: NodeJS.ProcessEnv
@@ -522,9 +522,10 @@ export class SmartAppManager {
 
   async exportToDownloads(installationId: string): Promise<SmartAppSavedExport> {
     const exported = await this.export(installationId)
-    await mkdir(this.options.downloadsDirectory, { recursive: true })
+    const downloadsDirectory = this.options.downloadsDirectory()
+    await mkdir(downloadsDirectory, { recursive: true })
     const filename = `${safeName(exported.manifest.name)}-${exported.manifest.version}.zip`
-    const destinationPath = await uniquePath(this.options.downloadsDirectory, filename)
+    const destinationPath = await uniquePath(downloadsDirectory, filename)
     await copyFile(exported.archivePath, destinationPath)
     return { ...exported, destinationPath }
   }
