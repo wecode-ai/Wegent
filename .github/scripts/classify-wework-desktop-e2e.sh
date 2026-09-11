@@ -83,6 +83,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-project-creation
+  cloud-device-lifecycle
   core-task-flow
   "${cloud_worktree_segments[@]}"
   model-routing
@@ -110,7 +111,7 @@ cloud_segments=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   core-task-flow
-  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  embedded-browser,cloud-worktree-device-restart,cloud-project-creation,cloud-device-lifecycle
   goal-lifecycle,cloud-worktree-archive-restore
   rendering-extensions
   project-automation
