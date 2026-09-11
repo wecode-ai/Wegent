@@ -112,12 +112,6 @@ def _exchange_sync(
             or identity.runtime_instance_id != instance_id
         ):
             raise PluginAccountAuthError("plugin_auth_stale_device_socket", 403)
-        if operation == "task_token":
-            from app.services.auth.runtime_task_token import issue_runtime_task_token
-
-            return issue_runtime_task_token(
-                db, user_id=user_id, device_id=device_id, data=data
-            )
         if operation == "local_lifecycle":
             from app.services.plugin_auth_local_lifecycle import (
                 plugin_auth_local_lifecycle,

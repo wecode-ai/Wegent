@@ -168,7 +168,6 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "canceled",
 }
 DEVICE_TRACE_EXCLUDED_EVENTS = {
-    "plugin.task_token.issue",
     "plugin.auth.local_lifecycle",
     "plugin.auth.automatic",
     "plugin.auth.prepare",
@@ -1376,7 +1375,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         # Map colon-separated event names to handler methods
         self._event_handlers: Dict[str, str] = {
-            "plugin.task_token.issue": "on_plugin_task_token_issue",
             "device:register": "on_device_register",
             "device:heartbeat": "on_device_heartbeat",
             "device:status": "on_device_status",
@@ -2427,16 +2425,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
             sid=sid,
             session=await self.get_session(sid),
             operation="oauth_finish",
-            data=data,
-        )
-
-    async def on_plugin_task_token_issue(self, sid: str, data: dict) -> dict:
-        from app.api.ws.plugin_auth_broker import exchange
-
-        return await exchange(
-            sid=sid,
-            session=await self.get_session(sid),
-            operation="task_token",
             data=data,
         )
 
