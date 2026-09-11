@@ -1024,11 +1024,12 @@ export function PluginDetailView({
             <div className="overflow-hidden rounded-xl border border-border/30">
               {remoteMcpItems.map(item => {
                 const mcp = raw.spec.components.mcps.find(
-                  component => component.componentKey === item.componentKey
+                  component => `mcp:${component.name}` === item.componentKey
                 )
                 const server = mcp?.server ?? {}
                 const isEditing = editingMcp === item.componentKey
                 const overridden = Boolean(componentConfig[item.componentKey])
+                const serverUrl = typeof server.url === 'string' ? server.url : ''
                 return (
                   <div
                     key={item.key}
@@ -1037,7 +1038,7 @@ export function PluginDetailView({
                     <div className="flex min-w-0 items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium leading-5">{item.name}</p>
-                        <p className="truncate text-xs leading-4 text-text-muted">{server.url}</p>
+                        <p className="truncate text-xs leading-4 text-text-muted">{serverUrl}</p>
                       </div>
                       {overridden && (
                         <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
