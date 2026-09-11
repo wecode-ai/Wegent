@@ -88,6 +88,7 @@ export function SendToCollaborationDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        aria-describedby={undefined}
         className="collaboration-dialog sm:max-w-lg"
         data-testid="send-to-collaboration-dialog"
       >

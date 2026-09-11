@@ -10,10 +10,11 @@ import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
 
 const mockPush = jest.fn()
 let mockSearchParams = new URLSearchParams()
+let mockParams: { projectId?: string; itemId?: string } = {}
 let capturedHost: CollaborationHostAdapter | null = null
 
 jest.mock('next/navigation', () => ({
-  useParams: () => ({}),
+  useParams: () => mockParams,
   useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearchParams,
 }))
@@ -78,6 +79,7 @@ describe('CollaborationPage root routing', () => {
   beforeEach(() => {
     mockPush.mockReset()
     mockSearchParams = new URLSearchParams()
+    mockParams = {}
     capturedHost = null
     localStorage.clear()
   })
@@ -103,5 +105,19 @@ describe('CollaborationPage root routing', () => {
     expect(capturedHost?.location.rootView).toBe('home')
     fireEvent.click(screen.getByTestId('back-home'))
     expect(mockPush).toHaveBeenCalledWith('/collaboration')
+  })
+
+  it('uses decoded route params without decoding them a second time', () => {
+    mockParams = {
+      projectId: '%25',
+      itemId: '%zz',
+    }
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost?.location).toMatchObject({
+      projectId: '%25',
+      issueId: '%zz',
+    })
   })
 })
