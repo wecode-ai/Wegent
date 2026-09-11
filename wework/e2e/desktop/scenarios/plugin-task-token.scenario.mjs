@@ -253,7 +253,6 @@ export async function createDesktopScenario({
       } else {
         await control.command('click', '[data-testid="new-chat-button"]')
       }
-      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { visible: true })
       await control.command(
         'click',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
@@ -282,6 +281,10 @@ export async function createDesktopScenario({
         )
       }
     }
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+      timeoutMs: workbenchReadyTimeoutMs,
+      visible: true,
+    })
     await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `TASK_TOKEN_CASE:${caseId}` })
     await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
     const result = await wait(
