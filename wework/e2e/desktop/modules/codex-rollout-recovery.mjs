@@ -178,7 +178,8 @@ export function createCodexRolloutRecovery({ chatWorkspacePath, executorHome, ui
   async function wait(predicate, description) {
     const deadline = Date.now() + Math.max(uiTimeoutMs, TIMEOUT_FLOOR_MS)
     while (Date.now() < deadline) {
-      if (await predicate()) return
+      const value = await predicate()
+      if (value) return value
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
     }
     throw new Error(

@@ -143,17 +143,29 @@ fn scan_file(
         .seek(SeekFrom::Start(offset))
         .map_err(|error| error.to_string())?;
     let mut reports = 0;
-    let mut line = String::new();
+    let mut line = Vec::new();
     for _ in 0..MAX_RECORDS_PER_PASS {
         line.clear();
         let bytes = reader
-            .read_line(&mut line)
+            .read_until(b'\n', &mut line)
             .map_err(|error| error.to_string())?;
-        if bytes == 0 || !line.ends_with('\n') {
+        if bytes == 0 || !line.ends_with(b"\n") {
             break;
         }
-        let record: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
         offset += bytes as u64;
+        // A record this parser cannot read must not hold the cursor back:
+        // skipping it keeps every later edit in the file reportable.
+        let record = match serde_json::from_str::<Value>(&String::from_utf8_lossy(&line)) {
+            Ok(record) => record,
+            Err(error) => {
+                eprintln!(
+                    "codex rollout record skipped in {}: {error}",
+                    path.display()
+                );
+                store.set_cursor(path, offset, &parser)?;
+                continue;
+            }
+        };
         reports += store.consume(path, offset, &thread, &mut parser, &record, enabled)?;
     }
     Ok((State::Resolved, reports))
@@ -167,27 +179,33 @@ struct RolloutHeader {
     end: u64,
 }
 
+/// Reads the first record of a rollout. Anything unusable — a torn write, a
+/// record that is not `session_meta`, or a missing session id — leaves the file
+/// unresolved instead of failing it, so a later pass can still adopt it.
 fn read_header(reader: &mut BufReader<File>) -> Result<Option<RolloutHeader>, String> {
-    let mut line = String::new();
+    let mut line = Vec::new();
     reader
-        .read_line(&mut line)
+        .read_until(b'\n', &mut line)
         .map_err(|error| error.to_string())?;
-    if line.trim().is_empty() || !line.ends_with('\n') {
+    if line.is_empty() || !line.ends_with(b"\n") {
         return Ok(None);
     }
-    let record: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+    let Ok(record) = serde_json::from_str::<Value>(&String::from_utf8_lossy(&line)) else {
+        return Ok(None);
+    };
     if record["type"] != "session_meta" {
-        return Err("rollout does not start with session_meta".to_owned());
+        return Ok(None);
     }
     let meta = &record["payload"];
-    let session_id = meta["id"]
+    let Some(session_id) = meta["id"]
         .as_str()
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .ok_or("session_meta has no session id")?
-        .to_owned();
+    else {
+        return Ok(None);
+    };
     Ok(Some(RolloutHeader {
-        session_id,
+        session_id: session_id.to_owned(),
         cwd: meta["cwd"].as_str().map(ToOwned::to_owned),
         git_url: meta
             .pointer("/git/repository_url")

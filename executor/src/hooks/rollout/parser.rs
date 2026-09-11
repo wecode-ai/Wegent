@@ -43,7 +43,9 @@ pub(super) struct Edit {
 }
 
 impl Parser {
-    pub fn consume(&mut self, record: &Value) -> Result<Option<Edit>, String> {
+    /// Reads one rollout record. A record this parser cannot interpret yields no
+    /// edit instead of an error, so a shape we do not know cannot stall the feed.
+    pub fn consume(&mut self, record: &Value) -> Option<Edit> {
         let payload = &record["payload"];
         match record["type"].as_str() {
             Some("turn_context") => {
@@ -67,7 +69,7 @@ impl Parser {
                     {
                         &payload["item"]
                     }
-                    _ => return Ok(None),
+                    _ => return None,
                 };
                 let call_id = item["call_id"]
                     .as_str()
@@ -78,19 +80,19 @@ impl Parser {
                 if !call_id.is_empty() {
                     self.pending.remove(&call_id);
                     if !self.remember(&call_id) {
-                        return Ok(None);
+                        return None;
                     }
                 }
-                let changes = structured_changes(item)?;
+                let changes = structured_changes(item);
                 if changes.is_empty() {
-                    return Ok(None);
+                    return None;
                 }
-                return Ok(Some(Edit { call_id, changes }));
+                return Some(Edit { call_id, changes });
             }
             Some("response_item") => return self.response_item(payload),
             _ => {}
         }
-        Ok(None)
+        None
     }
 
     fn set_turn(&mut self, payload: &Value) {
@@ -99,35 +101,33 @@ impl Parser {
         }
     }
 
-    fn response_item(&mut self, payload: &Value) -> Result<Option<Edit>, String> {
-        let Some(call_id) = payload["call_id"].as_str() else {
-            return Ok(None);
-        };
+    fn response_item(&mut self, payload: &Value) -> Option<Edit> {
+        let call_id = payload["call_id"].as_str()?;
         match payload["type"].as_str() {
             Some("custom_tool_call") if payload["name"] == "apply_patch" => {
-                let body = payload["input"]
-                    .as_str()
-                    .ok_or("apply_patch input is not text")?;
-                self.pending
-                    .insert(call_id.to_owned(), patch_changes(body)?);
+                let body = payload["input"].as_str()?;
+                let changes = patch_changes(body);
+                if !changes.is_empty() {
+                    self.pending.insert(call_id.to_owned(), changes);
+                }
             }
             Some("custom_tool_call_output") => {
                 if let Some(changes) = self.pending.remove(call_id) {
                     if !apply_patch_succeeded(payload["output"].as_str().unwrap_or("")) {
-                        return Ok(None);
+                        return None;
                     }
                     if !self.remember(call_id) {
-                        return Ok(None);
+                        return None;
                     }
-                    return Ok(Some(Edit {
+                    return Some(Edit {
                         call_id: call_id.to_owned(),
                         changes,
-                    }));
+                    });
                 }
             }
             _ => {}
         }
-        Ok(None)
+        None
     }
 
     /// Remembers a call id so the same patch is never emitted twice from one
@@ -148,9 +148,9 @@ impl Parser {
 
 /// App-server items carry an array of changes, the rollout's Rust `FileChange`
 /// carries a path map, and older records carry a single change.
-fn structured_changes(item: &Value) -> Result<Vec<Change>, String> {
+fn structured_changes(item: &Value) -> Vec<Change> {
     if let Some(changes) = item["changes"].as_array() {
-        return Ok(changes
+        return changes
             .iter()
             .filter_map(|change| {
                 let path = change["path"].as_str()?.to_owned();
@@ -160,26 +160,28 @@ fn structured_changes(item: &Value) -> Result<Vec<Change>, String> {
                     diff: change_diff(change),
                 })
             })
-            .collect());
+            .collect();
     }
     if let Some(changes) = item["changes"].as_object() {
-        return Ok(changes
+        return changes
             .iter()
             .map(|(path, change)| Change {
                 path: path.clone(),
                 kind: normalize_kind(change["type"].as_str()),
                 diff: change_diff(change),
             })
-            .collect());
+            .collect();
     }
     if let Some(path) = item["path"].as_str() {
-        return Ok(vec![Change {
+        return vec![Change {
             path: path.to_owned(),
             kind: normalize_kind(item["kind"]["type"].as_str()),
             diff: change_diff(item),
-        }]);
+        }];
     }
-    Err("file change has no changes".to_owned())
+    // An item without a shape we know carries no file change; the caller
+    // reports nothing for it.
+    Vec::new()
 }
 
 fn change_diff(change: &Value) -> String {
@@ -209,7 +211,9 @@ fn apply_patch_succeeded(output: &str) -> bool {
         || output.lines().next() == Some("Exit code: 0")
 }
 
-fn patch_changes(body: &str) -> Result<Vec<Change>, String> {
+/// Splits an `apply_patch` body into one change per file. A body without its
+/// terminating marker cannot be trusted, so it is dropped instead of reported.
+fn patch_changes(body: &str) -> Vec<Change> {
     let mut changes = Vec::new();
     let mut current: Option<(String, String, Vec<String>)> = None;
     for line in body.lines() {
@@ -236,9 +240,9 @@ fn patch_changes(body: &str) -> Result<Vec<Change>, String> {
         }
     }
     if current.is_some() {
-        return Err("apply_patch body is incomplete".to_owned());
+        return Vec::new();
     }
-    Ok(changes)
+    changes
 }
 
 fn finish_patch(changes: &mut Vec<Change>, section: Option<(String, String, Vec<String>)>) {

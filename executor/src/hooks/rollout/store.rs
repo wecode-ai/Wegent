@@ -179,16 +179,17 @@ impl Store {
         record: &Value,
         enabled: bool,
     ) -> Result<usize, String> {
-        let edit = parser.consume(record)?;
+        let edit = parser.consume(record);
         let transaction = self.db.transaction().map_err(error)?;
         let mut queued = 0;
-        if let Some(edit) = edit {
-            let timestamp = record["timestamp"]
-                .as_str()
-                .ok_or("file change has no timestamp")?;
-            let timestamp = chrono::DateTime::parse_from_rfc3339(timestamp)
-                .map_err(error)?
-                .timestamp_millis();
+        // A change whose timestamp cannot be read is dropped, never an error:
+        // the record still commits its cursor below so one bad record cannot
+        // block every later edit in the same rollout.
+        let timestamp = rollout_timestamp(record);
+        if timestamp.is_none() && edit.is_some() {
+            eprintln!("codex rollout record skipped: file change has no usable timestamp");
+        }
+        if let (Some(edit), Some(timestamp)) = (edit, timestamp) {
             for change in edit.changes {
                 let cwd = parser
                     .cwd
@@ -336,6 +337,14 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// The rollout record timestamps every change; a missing or malformed value
+/// makes that one change unreportable instead of failing the whole scan.
+fn rollout_timestamp(record: &Value) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(record["timestamp"].as_str()?)
+        .ok()
+        .map(|timestamp| timestamp.timestamp_millis())
 }
 
 fn absolutize(cwd: &Path, path: &str) -> String {

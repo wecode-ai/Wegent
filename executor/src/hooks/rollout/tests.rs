@@ -451,3 +451,107 @@ fn nested_subagent_sources_and_deep_chains_resolve_to_the_root() {
     assert_eq!(reports.len(), 2);
     assert!(reports.iter().all(|(session, _, _)| session == "root"));
 }
+
+#[test]
+fn a_malformed_record_does_not_block_later_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("sessions")).unwrap();
+    let path = temp.path().join("sessions/rollout-root.jsonl");
+    append(&path, &[metadata("root")]);
+    // A torn write: Codex flushed part of a record before the newline arrived.
+    let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(file, "{{\"type\":\"event_msg\",\"payload\":{{").unwrap();
+    drop(file);
+    append(&path, &[file_change("call-1", &["a.rs"])]);
+
+    let database = temp.path().join("reports.db");
+    let mut store = Store::open(&database).unwrap();
+    store.register_root("root", &session(temp.path())).unwrap();
+    let outcome = scan_home(&mut store, temp.path());
+    assert_eq!(outcome.errors, 0);
+    assert_eq!(outcome.reports, 1);
+    let reports = drain(&store);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].1, "call-1");
+
+    // The cursor moved past the bad record, so a later pass reads only new data.
+    append(&path, &[file_change("call-2", &["b.rs"])]);
+    assert_eq!(scan_home(&mut store, temp.path()).reports, 1);
+    assert_eq!(drain(&store).len(), 1);
+}
+
+#[test]
+fn a_change_without_a_usable_timestamp_does_not_block_later_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("sessions")).unwrap();
+    let path = temp.path().join("sessions/rollout-root.jsonl");
+    let mut undated = file_change("call-1", &["a.rs"]);
+    undated["timestamp"] = json!("not-a-timestamp");
+    let mut unstamped = file_change("call-2", &["b.rs"]);
+    unstamped.as_object_mut().unwrap().remove("timestamp");
+    append(
+        &path,
+        &[
+            metadata("root"),
+            undated,
+            unstamped,
+            file_change("call-3", &["c.rs"]),
+        ],
+    );
+
+    let mut store = Store::open(&temp.path().join("reports.db")).unwrap();
+    store.register_root("root", &session(temp.path())).unwrap();
+    let outcome = scan_home(&mut store, temp.path());
+    assert_eq!(outcome.errors, 0);
+    assert_eq!(outcome.reports, 1);
+    let reports = drain(&store);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].1, "call-3");
+}
+
+#[test]
+fn an_unknown_file_change_shape_does_not_block_later_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("sessions")).unwrap();
+    let path = temp.path().join("sessions/rollout-root.jsonl");
+    // A completed file change whose payload carries no shape this parser knows.
+    let unknown = json!({"type":"event_msg","timestamp":TIME,"payload":{
+        "type":"item_completed",
+        "item":{"type":"FileChange","id":"call-1","status":"completed"}}});
+    append(
+        &path,
+        &[metadata("root"), unknown, file_change("call-2", &["a.rs"])],
+    );
+
+    let mut store = Store::open(&temp.path().join("reports.db")).unwrap();
+    store.register_root("root", &session(temp.path())).unwrap();
+    let outcome = scan_home(&mut store, temp.path());
+    assert_eq!(outcome.errors, 0);
+    assert_eq!(outcome.reports, 1);
+    let reports = drain(&store);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].1, "call-2");
+}
+
+#[test]
+fn a_rollout_without_a_session_meta_header_is_never_adopted() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("sessions")).unwrap();
+    let path = temp.path().join("sessions/rollout-root.jsonl");
+    append(
+        &path,
+        &[
+            json!({"type":"event_msg","payload":{}}),
+            file_change("call-1", &["a.rs"]),
+        ],
+    );
+
+    let mut store = Store::open(&temp.path().join("reports.db")).unwrap();
+    store.register_root("root", &session(temp.path())).unwrap();
+    // A file we cannot adopt is left unresolved instead of failing the scan
+    // forever with an error.
+    let outcome = scan_home(&mut store, temp.path());
+    assert_eq!(outcome.errors, 0);
+    assert_eq!(outcome.reports, 0);
+    assert_eq!(outcome.unresolved, 1);
+}
