@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
-from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.im.notification_dispatcher import (
+    RUNTIME_IM_NOTIFICATION_CONTENT_DEDUP_TTL_SECONDS,
+    im_notification_dispatcher,
+)
 from app.services.im.session_service import im_session_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -763,6 +766,109 @@ async def test_runtime_task_update_deduplicates_same_terminal_turn(
         "skipped": "duplicate_turn",
     }
     send_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_update_releases_claim_when_delivery_fails(
+    test_db: Session,
+    test_user,
+    fake_im_session_cache,
+    fake_notification_cache,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address = {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+    }
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9413,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task=address,
+    )
+    await im_session_service.enable_global_notification(test_db, session=session)
+    send_text = AsyncMock(return_value={"success": False, "error": "unavailable"})
+    monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Same terminal reply",
+        source="codex_watcher",
+        turn_key="turn-1",
+    )
+
+    assert result["sent"] == 0
+    assert fake_notification_cache.values == {}
+
+    send_text.return_value = {"success": True}
+    retried = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Same terminal reply",
+        source="codex_watcher",
+        turn_key="turn-1",
+    )
+
+    assert retried["sent"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_update_without_turn_key_uses_short_claim_ttl(
+    test_db: Session,
+    test_user,
+    fake_im_session_cache,
+    fake_notification_cache,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address = {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+    }
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9413,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task=address,
+    )
+    await im_session_service.enable_global_notification(test_db, session=session)
+    send_text = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Same terminal reply",
+        source="codex_watcher",
+    )
+
+    assert result["sent"] == 1
+    assert list(fake_notification_cache.expires.values()) == [
+        RUNTIME_IM_NOTIFICATION_CONTENT_DEDUP_TTL_SECONDS
+    ]
 
 
 @pytest.mark.asyncio

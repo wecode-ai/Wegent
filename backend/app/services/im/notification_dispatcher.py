@@ -30,6 +30,10 @@ RUNTIME_IM_NOTIFICATION_DEDUP_PREFIX = "channel:runtime_im_notification:"
 # The executor replays unacknowledged runtime events after reconnects, so the
 # claim has to outlive a device that sleeps before it reconnects.
 RUNTIME_IM_NOTIFICATION_DEDUP_TTL_SECONDS = 6 * 60 * 60
+# Events without a turn identity are only matched by status and content, so
+# they stay claimed briefly instead of hiding a later turn whose reply happens
+# to look identical.
+RUNTIME_IM_NOTIFICATION_CONTENT_DEDUP_TTL_SECONDS = 5 * 60
 SENSITIVE_CONFIG_KEYS = {
     "client_secret",
     "secret",
@@ -93,14 +97,16 @@ class IMNotificationDispatcher:
         if not sessions:
             return {"sent": 0, "results": []}
 
-        dedup_key = _runtime_notification_dedup_key(
+        dedup_key, dedup_ttl = _runtime_notification_dedup_key(
             user_id=user_id,
             address=address,
             status=status,
             content=content,
             turn_key=turn_key,
         )
-        if dedup_key and not await self._claim_runtime_notification(dedup_key):
+        if dedup_key and not await self._claim_runtime_notification(
+            dedup_key, dedup_ttl
+        ):
             logger.info(
                 "[IMNotificationDispatcher] Skipped duplicate runtime update: "
                 "user_id=%s key=%s",
@@ -115,12 +121,19 @@ class IMNotificationDispatcher:
             status=status,
             content=content,
         )
-        return await self._send_to_sessions(
-            db,
-            sessions,
-            message,
-            runtime_task=address,
-        )
+        try:
+            result = await self._send_to_sessions(
+                db,
+                sessions,
+                message,
+                runtime_task=address,
+            )
+        except Exception:
+            await self._release_runtime_notification(dedup_key)
+            raise
+        if not int(result.get("sent") or 0):
+            await self._release_runtime_notification(dedup_key)
+        return result
 
     async def send_runtime_task_update_for_user(
         self,
@@ -277,14 +290,25 @@ class IMNotificationDispatcher:
             .first()
         )
 
-    async def _claim_runtime_notification(self, dedup_key: str) -> bool:
+    async def _claim_runtime_notification(
+        self,
+        dedup_key: str,
+        ttl_seconds: int,
+    ) -> bool:
         """Atomically claim one runtime turn for IM delivery."""
 
         return await cache_manager.setnx(
             dedup_key,
             "1",
-            expire=RUNTIME_IM_NOTIFICATION_DEDUP_TTL_SECONDS,
+            expire=ttl_seconds,
         )
+
+    async def _release_runtime_notification(self, dedup_key: str) -> None:
+        """Release a claim whose notification was not delivered."""
+
+        if not dedup_key:
+            return
+        await cache_manager.delete(dedup_key)
 
     async def _send_dingtalk(
         self,
@@ -487,20 +511,22 @@ def _runtime_notification_dedup_key(
     status: str,
     content: str,
     turn_key: str | None,
-) -> str:
-    """Build a stable key that identifies one terminal runtime turn."""
+) -> tuple[str, int]:
+    """Build the claim key and TTL that identify one terminal runtime turn."""
 
     device_id = str(address.get("deviceId") or address.get("device_id") or "").strip()
     local_task_id = str(
         address.get("localTaskId") or address.get("local_task_id") or ""
     ).strip()
     if not device_id or not local_task_id:
-        return ""
+        return "", 0
 
     normalized_turn_key = str(turn_key or "").strip()
+    ttl_seconds = RUNTIME_IM_NOTIFICATION_DEDUP_TTL_SECONDS
     if not normalized_turn_key:
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         normalized_turn_key = f"{status}:{content_hash}"
+        ttl_seconds = RUNTIME_IM_NOTIFICATION_CONTENT_DEDUP_TTL_SECONDS
 
     identity = json.dumps(
         {
@@ -513,7 +539,7 @@ def _runtime_notification_dedup_key(
         separators=(",", ":"),
     )
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    return f"{RUNTIME_IM_NOTIFICATION_DEDUP_PREFIX}{user_id}:{digest}"
+    return f"{RUNTIME_IM_NOTIFICATION_DEDUP_PREFIX}{user_id}:{digest}", ttl_seconds
 
 
 @contextmanager
