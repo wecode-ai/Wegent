@@ -20,7 +20,6 @@ import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import type {
   CollaborationHostAdapter,
-  CollaborationAssignment,
   CollaborationIssue,
   CollaborationProject,
   CollaborationStatus,
@@ -35,8 +34,7 @@ import {
 import type { AutomationProject } from "./automation";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
-import { ProjectIssueTable } from "./platform";
-import { visibleIssueAssignments } from "./platform/model";
+import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 
 interface CollaborationAppProps {
   api: SharedWorkspaceApi;
@@ -101,9 +99,6 @@ export function CollaborationApp({
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
-  const [assignmentsByIssueId, setAssignmentsByIssueId] = useState<
-    Record<string, CollaborationAssignment[]>
-  >({});
   const { state, commands } = useCollaborationWorkspaceController({
     api,
     location: host.location,
@@ -128,6 +123,12 @@ export function CollaborationApp({
     loading,
     error,
   } = state;
+  const { assignmentsByIssueId, replaceIssueAssignments } =
+    useIssueAssignmentsByIssueId({
+      assignmentsApi: api.assignments,
+      issues,
+      enabled: project !== null,
+    });
   const automationPorts = useMemo(
     () =>
       host.location.view === "automation"
@@ -143,50 +144,6 @@ export function CollaborationApp({
   useEffect(() => {
     if (createProjectRequestKey > 0) setCreateProjectOpen(true);
   }, [createProjectRequestKey]);
-
-  useEffect(() => {
-    let active = true;
-    if (!project) {
-      setAssignmentsByIssueId({});
-      return () => {
-        active = false;
-      };
-    }
-    if (!api.assignments) {
-      setAssignmentsByIssueId(
-        Object.fromEntries(
-          issues.map((issue) => [
-            issue.id,
-            visibleIssueAssignments(issue, undefined),
-          ]),
-        ),
-      );
-      return () => {
-        active = false;
-      };
-    }
-    void Promise.all(
-      issues.map(
-        async (issue) =>
-          [
-            issue.id,
-            visibleIssueAssignments(
-              issue,
-              await api.assignments!.list(issue.id),
-            ),
-          ] as const,
-      ),
-    )
-      .then((entries) => {
-        if (active) setAssignmentsByIssueId(Object.fromEntries(entries));
-      })
-      .catch(() => {
-        if (active) setAssignmentsByIssueId({});
-      });
-    return () => {
-      active = false;
-    };
-  }, [api.assignments, issues, project]);
 
   const navigateView = (view: CollaborationView) => {
     host.navigate({ projectId: project?.id ?? null, issueId: null, view });
@@ -589,10 +546,7 @@ export function CollaborationApp({
           onCommentsChange={commands.replaceComments}
           onAssignmentsChange={(nextAssignments) => {
             commands.replaceAssignments(nextAssignments);
-            setAssignmentsByIssueId((current) => ({
-              ...current,
-              [selectedIssue.id]: nextAssignments,
-            }));
+            replaceIssueAssignments(selectedIssue.id, nextAssignments);
           }}
           onCreateTask={
             onCreateTask

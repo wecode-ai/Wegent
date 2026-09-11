@@ -7,3 +7,4 @@ export * from "./model";
 export * from "./ProjectIssueTable";
 export * from "./types";
 export * from "./useCollaborationPlatformController";
+export * from "./useIssueAssignmentsByIssueId";

@@ -65,8 +65,8 @@ import {
   ProjectSpaceSidebar,
   projectCreateLabels,
   useCollaborationWorkspaceController,
+  useIssueAssignmentsByIssueId,
   type CollaborationIssue,
-  type CollaborationAssignment,
   type CollaborationProject,
   type ProjectCreateTarget,
   type SharedWorkspaceApi,
@@ -1707,62 +1707,13 @@ export function CloudTodoWorkspace({
     usesSharedCloudBoard,
   ])
   const selectedProjectBoardItems = usesSharedCloudBoard ? selectedCloudProjectItems : items
-  const [loadedProjectAssignments, setLoadedProjectAssignments] = useState<{
-    projectId: string
-    assignmentsByIssue: Record<string, CollaborationAssignment[]>
-  } | null>(null)
-  const projectAssignmentLoadRevisionRef = useRef(0)
-  const selectedProjectIssueIds = useMemo(
-    () => selectedProjectBoardItems.map(issue => issue.id),
-    [selectedProjectBoardItems]
-  )
-  useEffect(() => {
-    const revision = ++projectAssignmentLoadRevisionRef.current
-    const assignmentsApi = cloudWorkspaceApi?.assignments
-    if (
-      !usesSharedCloudBoard ||
-      !selectedProjectId ||
-      !assignmentsApi ||
-      projectView !== 'table' ||
-      selectedProjectIssueIds.length === 0
-    )
-      return
-    void Promise.all(
-      selectedProjectIssueIds.map(async issueId => {
-        try {
-          return [issueId, await assignmentsApi.list(issueId)] as const
-        } catch {
-          return null
-        }
-      })
-    ).then(results => {
-      if (projectAssignmentLoadRevisionRef.current !== revision) return
-      setLoadedProjectAssignments({
-        projectId: selectedProjectId,
-        assignmentsByIssue: Object.fromEntries(
-          results.filter(
-            (result): result is readonly [string, CollaborationAssignment[]] => result !== null
-          )
-        ),
-      })
-    })
-    return () => {
-      if (projectAssignmentLoadRevisionRef.current === revision) {
-        projectAssignmentLoadRevisionRef.current += 1
-      }
-    }
-  }, [
-    cloudWorkspaceApi,
-    projectView,
-    selectedProjectId,
-    selectedProjectIssueIds,
-    usesSharedCloudBoard,
-  ])
+  const { assignmentsByIssueId: loadedProjectAssignments } = useIssueAssignmentsByIssueId({
+    assignmentsApi: cloudWorkspaceApi?.assignments,
+    issues: selectedProjectBoardItems,
+    enabled: usesSharedCloudBoard && projectView === 'table',
+  })
   const issueTableAssignmentsByIssue = useMemo(() => {
-    const assignmentsByIssue =
-      loadedProjectAssignments?.projectId === selectedProjectId
-        ? { ...loadedProjectAssignments.assignmentsByIssue }
-        : {}
+    const assignmentsByIssue = { ...loadedProjectAssignments }
     if (
       cloudWorkspace.state.selectedIssue &&
       cloudWorkspace.state.selectedIssue.cloud_project_id === selectedProjectId

@@ -18,8 +18,11 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {
     ...actual,
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) =>
+      callback,
     useEffect: vi.fn(),
     useMemo: <T,>(factory: () => T) => factory(),
+    useRef: <T,>(initialValue: T) => ({ current: initialValue }),
     useState: <T,>(initialValue: T | (() => T)) => [
       typeof initialValue === "function"
         ? (initialValue as () => T)()
