@@ -437,6 +437,7 @@ export function createDesktopScenario({
     ...createHistoricalRuns(),
   ]
   const createdPayloads = []
+  const updatedPayloads = []
   let archivedAgentPayload = null
   let createdAgentPayload = null
   let agents = [AGENT]
@@ -3434,6 +3435,32 @@ export function createDesktopScenario({
         json(response, 201, created)
         return true
       }
+      const automationMatch = url.pathname.match(
+        new RegExp(`^/api/v1/cloud-projects/${PROJECT_ID}/automations/([^/]+)$`)
+      )
+      if (request.method === 'PATCH' && automationMatch) {
+        const existingIndex = rules.findIndex(rule => rule.id === automationMatch[1])
+        // Automations owned by the real backend keep flowing there; the stub only
+        // answers for the rules it created itself.
+        if (existingIndex >= 0) {
+          const updatedPayload = await readJson(request)
+          const assignmentViolation = automationAssignmentViolation(updatedPayload)
+          if (assignmentViolation) {
+            json(response, 422, { detail: assignmentViolation })
+            return true
+          }
+          updatedPayloads.push({ id: automationMatch[1], ...updatedPayload })
+          const updated = {
+            ...rules[existingIndex],
+            ...updatedPayload,
+            id: automationMatch[1],
+            version: (rules[existingIndex].version ?? 1) + 1,
+          }
+          rules[existingIndex] = updated
+          json(response, 200, updated)
+          return true
+        }
+      }
       const runsMatch = url.pathname.match(
         new RegExp(`^/api/v1/cloud-projects/${PROJECT_ID}/automations/([^/]+)/runs$`)
       )
@@ -4839,6 +4866,25 @@ export function createDesktopScenario({
         ),
         'The single node was not persisted into the runtime workflow definition'
       )
+      // Editing an existing single-node rule must save as well: the update path shares
+      // the assignment contract with the create path.
+      await control.command('fill', '[data-testid="automation-rule-description"]', {
+        value: '编辑已有的单节点自动执行规则。',
+      })
+      await waitForValue(
+        () => Promise.resolve(updatedPayloads.length),
+        count => count >= 1,
+        'Editing the single-node automation did not reach the cloud API',
+        uiTimeoutMs
+      )
+      const updatedSingleNodeAutomation = updatedPayloads[updatedPayloads.length - 1]
+      assert.equal(updatedSingleNodeAutomation.model, null)
+      assert.equal(updatedSingleNodeAutomation.executionEnvironment, null)
+      assert.equal(updatedSingleNodeAutomation.executionDeviceId, null)
+      await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+        text: '已保存',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureScreenshot(control, 'project-automation-single-node.png')
       await control.command('click', '[data-testid="automation-editor-back"]', {
         visible: true,
