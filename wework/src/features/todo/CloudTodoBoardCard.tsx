@@ -432,6 +432,7 @@ export function CloudTodoBoardCard({
       detailButtonProps={{
         ...listeners,
         ...attributes,
+        'aria-disabled': item.can_view_detail === false || undefined,
         disabled: item.can_view_detail === false,
         onClick,
       }}

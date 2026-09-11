@@ -140,13 +140,19 @@ describe('CloudTodoBoardCard', () => {
     )
   })
 
-  it('fails closed for cloud card actions when can_edit is missing', () => {
+  it('keeps cloud card details accessible when edit permission is missing', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+    const onClick = vi.fn()
 
     render(
       <CloudTodoBoardCard
-        item={{ ...item, can_edit: undefined, project_store: 'backend' }}
-        onClick={vi.fn()}
+        item={{
+          ...item,
+          can_edit: undefined,
+          can_view_detail: undefined,
+          project_store: 'backend',
+        }}
+        onClick={onClick}
         onArchive={vi.fn()}
         display={{
           showAssignee: false,
@@ -158,6 +164,11 @@ describe('CloudTodoBoardCard', () => {
     )
 
     expect(screen.queryByTestId('cloud-todo-card-more-WEG-85')).not.toBeInTheDocument()
+    const detailButton = screen.getByTestId('cloud-todo-card-WEG-85')
+    expect(detailButton).not.toBeDisabled()
+    expect(detailButton).not.toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(detailButton)
+    expect(onClick).toHaveBeenCalledOnce()
   })
 
   it('keeps local card actions editable through the explicit local adapter marker', () => {

@@ -1309,6 +1309,13 @@ export function CloudTodoWorkspace({
         project.id === selectedProjectRef?.projectId &&
         project.project_store === selectedProjectRef.projectStore
     ) ?? (defaultProjectRequested ? (projects.find(isDefaultWorkItemProject) ?? null) : null)
+  const selectedProjectForViewAccess =
+    selectedProject &&
+    selectedProject.project_store === 'backend' &&
+    selectedProject.access_role === undefined &&
+    selectedProject.created_by_user_id === user.id
+      ? { ...selectedProject, access_role: 'Owner' as const }
+      : selectedProject
   const selectedProjectForBoardLoadRef = useRef(selectedProject)
   selectedProjectForBoardLoadRef.current = selectedProject
   useEffect(() => {
@@ -4478,7 +4485,7 @@ export function CloudTodoWorkspace({
             />
           ) : (
             <CollaborationProjectViewShell
-              project={selectedProject}
+              project={selectedProjectForViewAccess ?? selectedProject}
               view={projectView}
               labels={{
                 board: '看板',

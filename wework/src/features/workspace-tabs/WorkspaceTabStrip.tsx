@@ -19,7 +19,7 @@ import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { openWorkspaceTabWindow } from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
-import { defaultContentRoute, type WorkspaceTab, type WorkspaceTabKind } from './workspaceTabs'
+import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
 import { dshWorkspaceTabs, dshWorkspaceTabRoute } from '@/features/dsh-runtime/dshWorkspaceTabs'
@@ -166,15 +166,7 @@ function WorkspaceTabButton({
             onUnavailableAgent()
             return
           }
-          selectTab(
-            tab.id,
-            !active && tab.fixed && tab.kind === 'board'
-              ? {
-                  title: t('workbench.workspace_tab_board', '协作'),
-                  contentRoute: defaultContentRoute('board'),
-                }
-              : undefined
-          )
+          selectTab(tab.id)
         }}
         onContextMenu={event => {
           event.preventDefault()

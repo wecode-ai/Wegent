@@ -3727,6 +3727,52 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-project-manage-view')).not.toBeInTheDocument()
   })
 
+  it('preserves owner project views when a backend payload omits access_role', async () => {
+    const workbenchServices = services()
+    const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
+      typeof vi.fn
+    >
+    listCloudProjects.mockImplementation(async () => ({
+      items: [{ ...project, access_role: undefined }],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.getByTestId('cloud-project-files-view')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-automation-view')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-manage-view')).toBeInTheDocument()
+  })
+
+  it('keeps project views restricted when a non-owner payload omits access_role', async () => {
+    const workbenchServices = services()
+    const listCloudProjects = workbenchServices.deliveryApi!.listCloudProjects as ReturnType<
+      typeof vi.fn
+    >
+    listCloudProjects.mockImplementation(async () => ({
+      items: [{ ...project, access_role: undefined }],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 2, user_name: 'member', email: 'member@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.queryByTestId('cloud-project-files-view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-manage-view')).not.toBeInTheDocument()
+  })
+
   it('opens the global search with Command+K and opens a task result', async () => {
     render(
       <CloudTodoWorkspace
