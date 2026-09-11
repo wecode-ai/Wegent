@@ -21,6 +21,9 @@ const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
 const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
 const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
 const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
+pub const CODEX_TASK_MCP_SNAPSHOT: &str = ".wegent-task-mcp-source-codex.json";
+pub const CLAUDE_TASK_MCP_SNAPSHOT: &str = ".wegent-task-mcp-source-claude.json";
+pub const DEFAULT_MCP_SNAPSHOT: &str = ".wegent-default-mcp-source.json";
 const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
 const UNIX_MODE_SYMLINK: u32 = 0o120_000;
 const CODEX_MANIFEST_FIELDS: [&str; 11] = [
@@ -838,7 +841,14 @@ pub(super) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Cap
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
+        let file_name = entry.file_name();
+        if file_name == *CODEX_TASK_MCP_SNAPSHOT
+            || file_name == *CLAUDE_TASK_MCP_SNAPSHOT
+            || file_name == *DEFAULT_MCP_SNAPSHOT
+        {
+            continue;
+        }
+        let target_path = target.join(&file_name);
         if source_path.is_dir() {
             copy_dir_recursive(&source_path, &target_path)?;
         } else {

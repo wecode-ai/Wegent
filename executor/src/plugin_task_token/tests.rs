@@ -275,6 +275,66 @@ fn materialization_preserves_source_and_excludes_only_declared_remote_mcps() {
 }
 
 #[test]
+fn missing_runtime_snapshot_is_rebuilt_from_the_default_mcp_source() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".codex-plugin")).unwrap();
+    std::fs::write(
+        root.path().join(".codex-plugin/plugin.json"),
+        json!({"name": "fixture", "mcpServers": "./.wegent-native-mcp-codex.json"}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".mcp.json"),
+        json!({"private": {"url": "https://business.invalid/mcp", "headers": {"Authorization": "Bearer ${{task_token}}"}}}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".wegent-native-mcp-codex.json"),
+        json!({"mcpServers": {}}).to_string(),
+    )
+    .unwrap();
+
+    let prepared = package::materialize(root.path(), false).unwrap();
+
+    assert_eq!(prepared.len(), 1);
+    let source: Value = serde_json::from_slice(
+        &std::fs::read(root.path().join(".wegent-task-mcp-source-codex.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(source["mcpServers"]["private"].is_object());
+}
+
+#[test]
+fn runtime_snapshots_are_not_treated_as_plugin_source_files() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".codex-plugin")).unwrap();
+    std::fs::write(
+        root.path().join(".codex-plugin/plugin.json"),
+        json!({"name": "fixture", "mcpServers": {}}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".mcp.json"),
+        json!({"mcpServers": {}}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".wegent-task-mcp-source-codex.json"),
+        json!({"mcpServers": {"private": {"url": "https://stale.invalid/mcp"}}}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".wegent-default-mcp-source.json"),
+        json!({"mcpServers": {"private": {"url": "https://stale.invalid/mcp"}}}).to_string(),
+    )
+    .unwrap();
+
+    let prepared = package::materialize(root.path(), false).unwrap();
+
+    assert!(prepared.is_empty());
+}
+
+#[test]
 fn runtime_specific_plugin_declarations_stay_independent() {
     let root = tempfile::tempdir().unwrap();
     for runtime in ["codex", "claude"] {
