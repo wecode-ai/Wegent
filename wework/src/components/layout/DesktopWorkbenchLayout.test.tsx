@@ -1815,8 +1815,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('collaboration-tab-table'))
-    expect(screen.getByTestId('collaboration-tab-table')).toHaveClass('bg-background')
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -1825,7 +1825,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('collaboration-tab-table')).toHaveClass('bg-background')
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -1835,7 +1835,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('collaboration-tab-table')).toHaveClass('bg-background')
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {

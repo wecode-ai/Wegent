@@ -327,34 +327,38 @@ describe('CollaborationWorkspace', () => {
     expect(screen.queryByTestId('wework-issue-task-launcher')).not.toBeInTheDocument()
   })
 
-  it('resolves a cloud project deep link to its Workspace before rendering the platform', async () => {
-    const { props } = createProps({
+  it('opens a cloud project deep link in the existing project workbench', () => {
+    const { props, getProject } = createProps({
       activeProjectRef: { projectStore: 'backend', projectId: 'project-1' },
     })
     render(<CollaborationWorkspace {...props} />)
 
-    expect(await screen.findByTestId('shared-collaboration-platform')).toHaveAttribute(
-      'data-workspace-id',
-      'workspace-1'
+    expect(screen.getByTestId('legacy-collaboration-project')).toHaveAttribute(
+      'data-project-store',
+      'backend'
     )
-    expect(screen.getByTestId('shared-collaboration-platform')).toHaveAttribute(
+    expect(screen.getByTestId('legacy-collaboration-project')).toHaveAttribute(
       'data-project-id',
       'project-1'
     )
+    expect(screen.getByTestId('legacy-collaboration-project')).toHaveAttribute(
+      'data-embedded',
+      'false'
+    )
+    expect(getProject).not.toHaveBeenCalled()
   })
 
-  it('returns to the shared platform root when a cloud project deep link cannot be resolved', async () => {
+  it('delegates unresolved cloud project routes to the existing project workbench', () => {
     const { props } = createProps({
       activeProjectRef: { projectStore: 'backend', projectId: 'missing-project' },
       projectLoadError: new Error('Not found'),
     })
     render(<CollaborationWorkspace {...props} />)
 
-    expect(await screen.findByTestId('shared-collaboration-platform')).toHaveAttribute(
+    expect(screen.getByTestId('legacy-collaboration-project')).toHaveAttribute(
       'data-project-id',
-      ''
+      'missing-project'
     )
-    expect(screen.queryByTestId('wework-collaboration-route-loading')).not.toBeInTheDocument()
   })
 
   it('keeps local personal project spaces behind a Wework-only host entry', async () => {

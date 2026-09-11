@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CollaborationPlatformApp,
   type CollaborationPlatformLocation,
-  type CollaborationProject,
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import { ArrowLeft, HardDrive, X } from 'lucide-react'
@@ -34,20 +33,6 @@ const rootLocation: CollaborationPlatformLocation = {
   issueId: null,
 }
 
-function platformLocationForProject(
-  project: CollaborationProject,
-  issueId: string | null = null
-): CollaborationPlatformLocation {
-  return {
-    platformView: 'spaces',
-    workspaceId: project.workspace_id ?? null,
-    workspaceView: 'projects',
-    projectId: project.id,
-    projectView: 'board',
-    issueId,
-  }
-}
-
 function SharedCollaborationWorkspace({
   api,
   ...props
@@ -58,7 +43,6 @@ function SharedCollaborationWorkspace({
   const [location, setLocation] = useState<CollaborationPlatformLocation>(rootLocation)
   const [localProjects, setLocalProjects] = useState<CloudProject[]>([])
   const [localProjectRef, setLocalProjectRef] = useState<RuntimeProjectSpaceRef | null>(null)
-  const [failedRouteProjectId, setFailedRouteProjectId] = useState<string | null>(null)
   const [issueTaskError, setIssueTaskError] = useState<string | null>(null)
   const activeProjectControlled = props.activeProjectRef !== undefined
   const activeProjectStore = props.activeProjectRef?.projectStore
@@ -79,32 +63,6 @@ function SharedCollaborationWorkspace({
       active = false
     }
   }, [localProjectApi])
-
-  useEffect(() => {
-    if (!activeProjectControlled || activeProjectStore !== 'backend' || !activeProjectId || !api)
-      return
-    let active = true
-    void api.projects.get(activeProjectId).then(
-      project => {
-        if (!active) return
-        setFailedRouteProjectId(null)
-        setLocation(
-          platformLocationForProject(
-            project,
-            typeof props.focusedItemId === 'string' ? props.focusedItemId : null
-          )
-        )
-      },
-      () => {
-        if (!active) return
-        setFailedRouteProjectId(activeProjectId)
-        setLocation(rootLocation)
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [activeProjectControlled, activeProjectId, activeProjectStore, api, props.focusedItemId])
 
   const navigate = useCallback(
     (next: CollaborationPlatformLocation) => {
@@ -185,20 +143,14 @@ function SharedCollaborationWorkspace({
     [localProjects, onActiveProjectChange]
   )
 
-  const externallySelectedLocalProjectRef =
-    activeProjectControlled && activeProjectStore === 'local' && activeProjectId
+  const externallySelectedProjectRef =
+    activeProjectControlled && activeProjectStore && activeProjectId
       ? {
           projectStore: activeProjectStore,
           projectId: activeProjectId,
         }
       : null
-  const legacyProjectRef = externallySelectedLocalProjectRef ?? localProjectRef
-  const resolvingRoute =
-    activeProjectControlled &&
-    activeProjectStore === 'backend' &&
-    Boolean(activeProjectId) &&
-    failedRouteProjectId !== activeProjectId &&
-    location.projectId !== activeProjectId
+  const selectedProjectRef = externallySelectedProjectRef ?? localProjectRef
 
   return (
     <div
@@ -207,7 +159,7 @@ function SharedCollaborationWorkspace({
     >
       <header className="electron-titlebar-interactive-region flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
         <div className="flex min-w-0 items-center gap-2">
-          {legacyProjectRef ? (
+          {selectedProjectRef ? (
             <button
               type="button"
               data-testid="wework-collaboration-back-to-platform"
@@ -227,7 +179,7 @@ function SharedCollaborationWorkspace({
           )}
         </div>
         <div className="electron-titlebar-interactive-region flex items-center gap-2">
-          {localProjectApi && localProjects.length > 0 && !legacyProjectRef ? (
+          {localProjectApi && localProjects.length > 0 && !selectedProjectRef ? (
             <label className="flex items-center gap-1.5 text-sm text-text-secondary">
               <HardDrive className="h-4 w-4" />
               <span>{t('workbench.local_project_spaces', '本地项目')}</span>
@@ -260,22 +212,14 @@ function SharedCollaborationWorkspace({
         </div>
       </header>
       <div className="relative flex min-h-0 flex-1">
-        {legacyProjectRef ? (
+        {selectedProjectRef ? (
           <CloudTodoWorkspace
             {...props}
-            embedded
-            activeProjectRef={legacyProjectRef}
+            activeProjectRef={selectedProjectRef}
             defaultProjectRequested={false}
             focusedItemId={props.focusedItemId}
             onFocusedItemHandled={() => undefined}
           />
-        ) : resolvingRoute ? (
-          <div
-            className="flex flex-1 items-center justify-center text-sm text-text-muted"
-            data-testid="wework-collaboration-route-loading"
-          >
-            {t('common.loading', '加载中…')}
-          </div>
         ) : (
           <CollaborationPlatformApp
             api={api}
