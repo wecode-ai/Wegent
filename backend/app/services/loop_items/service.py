@@ -16,7 +16,6 @@ from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
@@ -929,78 +928,68 @@ class LoopItemService:
             )
 
         requested_context_ids = set(context_payloads)
-        for attempt in range(2):
-            db.query(LoopItem).filter(LoopItem.id == item.id).with_for_update().one()
-            existing_context_ids = self._attachment_source_context_ids(
-                db, item.id, requested_context_ids
-            )
-            pending_context_ids = requested_context_ids - existing_context_ids
-            if not pending_context_ids:
-                return []
+        db.query(LoopItem).filter(LoopItem.id == item.id).with_for_update().one()
+        existing_context_ids = self._attachment_source_context_ids(
+            db, item.id, requested_context_ids
+        )
+        pending_context_ids = requested_context_ids - existing_context_ids
+        if not pending_context_ids:
+            return []
 
-            prepared: list[tuple[LoopItemAttachment, bytes]] = []
-            for context_id in context_payloads:
-                if context_id not in pending_context_ids:
-                    continue
-                display_name, content_type, binary_data = context_payloads[context_id]
-                attachment_id = str(uuid.uuid4())
-                prepared.append(
-                    (
-                        LoopItemAttachment(
-                            id=attachment_id,
-                            loop_item_id=item.id,
-                            display_name=display_name,
-                            object_key=(
-                                f"projects/{project.public_id}/loop-items/{item.id}/"
-                                f"attachments/{attachment_id}"
-                            ),
-                            content_type=content_type,
-                            size_bytes=len(binary_data),
-                            sha256=hashlib.sha256(binary_data).hexdigest(),
-                            created_by_user_id=user_id,
-                            source_context_id=context_id,
-                            metadata_json={"source_context_id": context_id},
+        prepared: list[tuple[LoopItemAttachment, bytes]] = []
+        for context_id in context_payloads:
+            if context_id not in pending_context_ids:
+                continue
+            display_name, content_type, binary_data = context_payloads[context_id]
+            attachment_id = str(uuid.uuid4())
+            prepared.append(
+                (
+                    LoopItemAttachment(
+                        id=attachment_id,
+                        loop_item_id=item.id,
+                        display_name=display_name,
+                        object_key=(
+                            f"projects/{project.public_id}/loop-items/{item.id}/"
+                            f"attachments/{attachment_id}"
                         ),
-                        binary_data,
-                    )
+                        content_type=content_type,
+                        size_bytes=len(binary_data),
+                        sha256=hashlib.sha256(binary_data).hexdigest(),
+                        created_by_user_id=user_id,
+                        metadata_json={"source_context_id": context_id},
+                    ),
+                    binary_data,
                 )
+            )
 
-            written: list[str] = []
-            try:
-                for attachment, binary_data in prepared:
-                    delivery_storage.put_stream(
-                        attachment.object_key,
-                        io.BytesIO(binary_data),
-                        attachment.size_bytes,
-                        attachment.content_type,
-                    )
-                    written.append(attachment.object_key)
-                imported = [attachment for attachment, _ in prepared]
-                db.add_all(imported)
-                db.commit()
-            except DeliveryStorageUnavailableError as exc:
-                db.rollback()
-                self._cleanup_attachment_objects(written)
-                raise HTTPException(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Delivery object storage is unavailable",
-                ) from exc
-            except IntegrityError:
-                db.rollback()
-                self._cleanup_attachment_objects(written)
-                if attempt == 0:
-                    continue
-                raise
-            except Exception:
-                db.rollback()
-                self._cleanup_attachment_objects(written)
-                raise
+        written: list[str] = []
+        try:
+            for attachment, binary_data in prepared:
+                delivery_storage.put_stream(
+                    attachment.object_key,
+                    io.BytesIO(binary_data),
+                    attachment.size_bytes,
+                    attachment.content_type,
+                )
+                written.append(attachment.object_key)
+            imported = [attachment for attachment, _ in prepared]
+            db.add_all(imported)
+            db.commit()
+        except DeliveryStorageUnavailableError as exc:
+            db.rollback()
+            self._cleanup_attachment_objects(written)
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Delivery object storage is unavailable",
+            ) from exc
+        except Exception:
+            db.rollback()
+            self._cleanup_attachment_objects(written)
+            raise
 
-            for attachment in imported:
-                db.refresh(attachment)
-            return imported
-
-        raise RuntimeError("Attachment import retry loop exhausted")
+        for attachment in imported:
+            db.refresh(attachment)
+        return imported
 
     @staticmethod
     def _attachment_source_context_ids(
@@ -1011,18 +1000,17 @@ class LoopItemService:
         if not context_ids:
             return set()
         rows = (
-            db.query(
-                LoopItemAttachment.source_context_id,
-                LoopItemAttachment.metadata_json,
-            )
+            db.query(LoopItemAttachment.metadata_json)
             .filter(LoopItemAttachment.loop_item_id == item_id)
             .all()
         )
         existing: set[int] = set()
-        for source_context_id, metadata in rows:
-            value = source_context_id
-            if value is None and isinstance(metadata, dict):
-                value = metadata.get("source_context_id")
+        for (metadata,) in rows:
+            value = (
+                metadata.get("source_context_id")
+                if isinstance(metadata, dict)
+                else None
+            )
             if value is not None and int(value) in context_ids:
                 existing.add(int(value))
         return existing

@@ -11,7 +11,6 @@ from typing import BinaryIO
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
@@ -255,7 +254,6 @@ def test_import_context_attachments_copies_once(
 
     assert [entry.display_name for entry in imported] == ["conversation.png"]
     assert imported_again == []
-    assert imported[0].source_context_id == context.id
     assert imported[0].metadata_json == {"source_context_id": context.id}
     assert attachment_storage.get_bytes(imported[0].object_key) == b"context"
     assert commit_calls == 1
@@ -378,99 +376,6 @@ def test_import_context_attachments_cleanup_failure_preserves_original_error(
     assert len(storage.cleanup_calls) == 2
     assert "Failed to clean up imported attachment object" in caplog.text
     assert len(storage.objects) == 1
-
-
-def test_attachment_source_context_identity_is_unique_per_item(
-    test_db: Session,
-    test_user: User,
-    attachment_storage: FakeDeliveryStorage,
-) -> None:
-    project = _make_project(test_db, test_user, "ATTID")
-    item = _make_item(test_db, project, test_user, "Concurrent identity")
-    context = _make_context(test_db, test_user)
-    first = LoopItemAttachment(
-        id=str(uuid.uuid4()),
-        loop_item_id=item.id,
-        display_name="first.txt",
-        object_key="first",
-        content_type="text/plain",
-        size_bytes=1,
-        sha256="a" * 64,
-        created_by_user_id=test_user.id,
-        source_context_id=context.id,
-        metadata_json={"source_context_id": context.id},
-    )
-    duplicate = LoopItemAttachment(
-        id=str(uuid.uuid4()),
-        loop_item_id=item.id,
-        display_name="duplicate.txt",
-        object_key="duplicate",
-        content_type="text/plain",
-        size_bytes=1,
-        sha256="b" * 64,
-        created_by_user_id=test_user.id,
-        source_context_id=context.id,
-        metadata_json={"source_context_id": context.id},
-    )
-    test_db.add(first)
-    test_db.commit()
-    test_db.add(duplicate)
-
-    with pytest.raises(IntegrityError):
-        test_db.commit()
-
-    test_db.rollback()
-    assert (
-        test_db.query(LoopItemAttachment)
-        .filter(
-            LoopItemAttachment.loop_item_id == item.id,
-            LoopItemAttachment.source_context_id == context.id,
-        )
-        .count()
-        == 1
-    )
-
-
-def test_import_context_attachments_recovers_from_concurrent_unique_conflict(
-    test_db: Session,
-    test_user: User,
-    attachment_storage: FakeDeliveryStorage,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project = _make_project(test_db, test_user, "ATTR")
-    item = _make_item(test_db, project, test_user, "Concurrent retry")
-    context = _make_context(test_db, test_user)
-    identity_checks = 0
-
-    def source_context_ids(
-        _db: Session,
-        _item_id: str,
-        _context_ids: set[int],
-    ) -> set[int]:
-        nonlocal identity_checks
-        identity_checks += 1
-        return set() if identity_checks == 1 else {context.id}
-
-    def concurrent_commit() -> None:
-        raise IntegrityError("concurrent attachment import", None, Exception())
-
-    monkeypatch.setattr(
-        loop_item_service,
-        "_attachment_source_context_ids",
-        source_context_ids,
-    )
-    monkeypatch.setattr(test_db, "commit", concurrent_commit)
-
-    imported = loop_item_service.import_context_attachments(
-        test_db,
-        item.id,
-        test_user.id,
-        [context.id],
-    )
-
-    assert imported == []
-    assert identity_checks == 2
-    assert attachment_storage.objects == {}
 
 
 def test_add_attachment_rolls_back_and_returns_503_when_storage_is_unavailable(
