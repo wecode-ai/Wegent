@@ -446,9 +446,17 @@ export function RetrievalSettingsSection({
             onChange={handleWeightChange}
             leftLabel={t('document.retrieval.semanticWeight')}
             rightLabel={t('document.retrieval.keywordWeight')}
-            disabled={isOtherSettingsDisabled || isAllDisabledDueToRag}
+            disabled={
+              isOtherSettingsDisabled ||
+              isAllDisabledDueToRag ||
+              selectedRetriever?.storageType === 'milvus'
+            }
           />
-          <p className="text-xs text-text-muted">{t('document.retrieval.weightSum')}</p>
+          <p className="text-xs text-text-muted">
+            {selectedRetriever?.storageType === 'milvus'
+              ? t('document.retrieval.milvusHybridRankFusion')
+              : t('document.retrieval.weightSum')}
+          </p>
         </div>
       )}
     </div>

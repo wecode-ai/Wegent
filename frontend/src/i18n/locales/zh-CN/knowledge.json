@@ -747,6 +747,7 @@
       "semanticWeight": "语义权重",
       "keywordWeight": "关键词权重",
       "weightSum": "权重之和必须等于 1.0",
+      "milvusHybridRankFusion": "Milvus 混合检索按排名融合（RRF），权重配置不生效",
       "sourceType": {
         "user": "个人",
         "public": "公共",

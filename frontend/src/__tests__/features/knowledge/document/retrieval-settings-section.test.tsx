@@ -28,7 +28,9 @@ jest.mock('@/components/ui/radio-group', () => ({
 
 jest.mock('@/components/ui/slider', () => ({
   Slider: () => <div />,
-  DualWeightSlider: () => <div />,
+  DualWeightSlider: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="dual-weight-slider" data-disabled={disabled ? 'true' : 'false'} />
+  ),
 }))
 
 jest.mock('@/features/knowledge/document/hooks/useRetrievers', () => ({
@@ -62,7 +64,7 @@ jest.mock('@/features/knowledge/document/hooks/useEmbeddingModels', () => ({
 
 jest.mock('@/features/knowledge/document/hooks/useRetrievalMethods', () => ({
   useRetrievalMethods: () => ({
-    methods: { milvus: ['vector'] },
+    methods: { milvus: ['vector', 'hybrid'] },
     loading: false,
   }),
 }))
@@ -88,5 +90,21 @@ describe('RetrievalSettingsSection', () => {
     const selectors = screen.getAllByRole('combobox')
     expect(selectors[0]).toBeEnabled()
     expect(selectors[1]).toBeDisabled()
+  })
+
+  test('disables hybrid weights with a rank-fusion hint for milvus retrievers', () => {
+    render(
+      <RetrievalSettingsSection
+        config={{
+          retriever_name: 'personal-retriever',
+          retriever_namespace: 'default',
+          retrieval_mode: 'hybrid',
+        }}
+        onChange={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('dual-weight-slider')).toHaveAttribute('data-disabled', 'true')
+    expect(screen.getByText('document.retrieval.milvusHybridRankFusion')).toBeInTheDocument()
   })
 })

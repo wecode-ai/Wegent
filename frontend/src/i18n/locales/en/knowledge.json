@@ -747,6 +747,7 @@
       "semanticWeight": "Semantic Weight",
       "keywordWeight": "Keyword Weight",
       "weightSum": "Weights must sum to 1.0",
+      "milvusHybridRankFusion": "Milvus hybrid search fuses by rank (RRF); weights have no effect",
       "sourceType": {
         "user": "Personal",
         "public": "Public",
