@@ -2221,14 +2221,14 @@ export function createDesktopScenario({
       timeoutMs: uiTimeoutMs,
     })
     const executionNodeSelector = '[data-testid^="execution-node-step-"]'
+    await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
+      visible: true,
+    })
     await control.command('waitFor', executionNodeSelector, {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
     await control.command('click', executionNodeSelector, {
-      visible: true,
-    })
-    await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
       visible: true,
     })
     await control.command('hover', executionNodeSelector, {
