@@ -331,6 +331,9 @@ function toolOutputText(request, callId) {
     ) {
       return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
     }
+    if (value.type === 'tool_search_output' && value.call_id === callId) {
+      return JSON.stringify(value.tools ?? [])
+    }
     for (const item of Object.values(value)) {
       const output = findOutput(item)
       if (output != null) return output
