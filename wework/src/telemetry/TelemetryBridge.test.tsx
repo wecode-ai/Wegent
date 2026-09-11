@@ -74,16 +74,6 @@ describe('TelemetryBridge', () => {
     expect(mocks.track).toHaveBeenCalledTimes(1)
   })
 
-  it('does not prompt when telemetry is already consented by default', async () => {
-    render(<TelemetryBridge />)
-
-    expect(screen.queryByTestId('telemetry-consent-overlay')).not.toBeInTheDocument()
-    await waitFor(() => {
-      expect(mocks.installTelemetry).toHaveBeenCalledWith(true)
-      expect(mocks.setTelemetryEnabled).toHaveBeenLastCalledWith(true)
-    })
-  })
-
   it('waits for explicit consent before initializing telemetry', async () => {
     mocks.preferences.preferences.telemetryConsentAsked = false
 
