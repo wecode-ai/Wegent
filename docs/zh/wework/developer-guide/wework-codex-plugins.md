@@ -74,7 +74,11 @@ Wework 使用独立的 Codex home，避免直接污染用户命令行 Codex 的�
 
 为了复用用户已有登录态，Wework Codex home 会软链用户 `~/.codex/auth.json`。如果目标位置存在失效软链，会先移除再重新创建；如果不是 Unix 系统，则复制 auth 文件。插件、市场缓存和 Wework 运行时配置继续存放在 Wework 自己的 Codex home 中。
 
-本机没有可复用的 Codex 登录态时，用户可以在“设置 → 模型设置 → Codex 设置 → 认证信息”中选择“登录”。Wework 通过本机 Executor 调用 Codex app-server 的 ChatGPT 浏览器登录协议，在系统浏览器中打开授权页，并轮询 app-server 的账号状态；登录成功后，认证仍由独立的 Wework Codex home 保存。取消、超时、页面离开或浏览器打开失败都会取消对应登录会话，前端不会读取或展示 token、认证文件路径和文件摘要。
+本机没有可复用的 Codex 登录态时，用户可以在“设置 → 模型设置 → Codex 设置 → 认证信息”中选择“登录”。Wework 通过本机 Executor 调用 Codex app-server 的 ChatGPT 浏览器登录协议，在系统浏览器中打开授权页，并按 `auth.json` 的摘要变化判断登录是否完成；登录成功后，认证仍由独立的 Wework Codex home 保存。登录回调使用 Codex app-server 的本地成功页，不会跳转到 Codex 应用。取消、超时、页面离开或浏览器打开失败都会取消对应登录会话，前端不会读取或展示 token、认证文件路径和文件摘要。
+
+登录后，认证信息区域展示当前设备保存的 Codex 账号列表。选择“添加账号”会先保存当前 `auth.json` 的私有快照，再开始新的浏览器登录；新登录完成后，列表同时保留原账号和新账号。选择列表中的“切换”只原子替换当前 `auth.json` 并重启 Codex app-server 进程，不会创建、恢复或切换 Wework 会话，也不会修改任务保存的 Codex thread ID。为避免正在运行的请求跨账号继续执行，存在活跃 turn 或待处理 app-server 请求时切换会被拒绝，任务结束后可重试。
+
+账号元数据直接从 `auth.json` 的非敏感 JWT 声明读取，不依赖 `account/read`，因为自定义模型 provider 下该 RPC 可能不返回账号。账号索引和认证快照保存在 Wework Codex home 的 `wework-account-profiles` 目录；Unix 上文件权限为 `0600`。如果 Wework Codex home 的 `auth.json` 是指向用户原生 Codex home 的软链，切换会更新软链目标文件并保留软链本身。
 
 首次启动时，如果 Wework Codex home 还没有初始化，而本机存在原生 `~/.codex`，应用启动阶段会显示迁移选择。用户可以选择：
 

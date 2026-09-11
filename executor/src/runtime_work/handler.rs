@@ -25,8 +25,8 @@ use crate::{
     agents::{
         codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
         AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexAppServerClient, CodexAppServerTurnOptions, CodexAuthMutationError,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
@@ -111,6 +111,7 @@ impl RestoreStartupGate {
 mod archives;
 mod automation_rpc;
 mod claude_turns;
+mod codex_accounts;
 mod codex_config;
 mod collection;
 mod fork_transfer;
@@ -286,6 +287,12 @@ impl RuntimeTurnScheduler {
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());
         Some(turn)
+    }
+
+    fn enqueue_forced(&mut self, turn: SpawnTurnRequest) -> SpawnTurnRequest {
+        self.active_tasks += 1;
+        self.active_task_ids.insert(turn.local_task_id.clone());
+        turn
     }
 
     fn queued_position(&self, local_task_id: &str) -> Option<usize> {
@@ -634,8 +641,9 @@ struct ActiveCodexTranscriptItems {
 struct RuntimeThreadEventRoute {
     local_task_id: String,
     request: ExecutionRequest,
-    event_mapper: CodexNotificationEventMapper,
+    event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
     active: bool,
+    nested: bool,
 }
 
 struct ScheduledTurnGuard {
@@ -694,8 +702,9 @@ impl RuntimeThreadEventRoute {
         Self {
             local_task_id,
             request,
-            event_mapper: CodexNotificationEventMapper::default(),
+            event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),
             active,
+            nested: false,
         }
     }
 }
@@ -928,6 +937,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.auth.read" => self.read_codex_account().await,
+            "runtime.codex.accounts.list" => self.list_codex_accounts().await,
+            "runtime.codex.accounts.switch" => self.switch_codex_account(payload).await,
             "runtime.codex.auth.login.start" => self.start_codex_login().await,
             "runtime.codex.auth.login.cancel" => self.cancel_codex_login(payload).await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,

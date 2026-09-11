@@ -58,7 +58,7 @@ async def test_list_devices_preserves_cloud_device_bind_shell(test_db, monkeypat
     async def fake_latest_version():
         return "1.0.0"
 
-    monkeypatch.setattr("app.core.cache.cache_manager.mget", fake_mget)
+    monkeypatch.setattr("app.core.cache.cache_manager.mget_or_raise", fake_mget)
     monkeypatch.setattr(
         "app.services.device.cloud_provider.executor_version_service.get_latest_version",
         fake_latest_version,
@@ -85,7 +85,7 @@ async def test_list_devices_preserves_app_device_id(test_db, monkeypatch):
     async def fake_latest_version():
         return "1.0.0"
 
-    monkeypatch.setattr("app.core.cache.cache_manager.mget", fake_mget)
+    monkeypatch.setattr("app.core.cache.cache_manager.mget_or_raise", fake_mget)
     monkeypatch.setattr(
         "app.services.device.cloud_provider.executor_version_service.get_latest_version",
         fake_latest_version,
@@ -122,7 +122,7 @@ async def test_list_devices_projects_online_runtime_features_separately(
     async def fake_latest_version():
         return "1.0.0"
 
-    monkeypatch.setattr("app.core.cache.cache_manager.mget", fake_mget)
+    monkeypatch.setattr("app.core.cache.cache_manager.mget_or_raise", fake_mget)
     monkeypatch.setattr(
         "app.services.device.cloud_provider.executor_version_service.get_latest_version",
         fake_latest_version,
@@ -154,7 +154,7 @@ async def test_list_devices_does_not_expose_runtime_features_while_offline(
     async def fake_latest_version():
         return "1.0.0"
 
-    monkeypatch.setattr("app.core.cache.cache_manager.mget", fake_mget)
+    monkeypatch.setattr("app.core.cache.cache_manager.mget_or_raise", fake_mget)
     monkeypatch.setattr(
         "app.services.device.cloud_provider.executor_version_service.get_latest_version",
         fake_latest_version,

@@ -603,6 +603,7 @@ export default function TaskSidebar({
                       height={35}
                       className="object-contain"
                       priority
+                      unoptimized
                     />
                     <span className="text-base font-semibold text-text-primary">Wegent</span>
                   </div>

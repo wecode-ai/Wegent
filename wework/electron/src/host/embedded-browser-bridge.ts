@@ -47,6 +47,7 @@ interface RuntimeRecord {
 export class EmbeddedBrowserBridge {
   private server: Server | null = null
   private runtimePath: string | null = null
+  private baseUrl: string | null = null
   private token: string | null = null
   private readonly scripts = new Map<string, string>()
 
@@ -88,10 +89,19 @@ export class EmbeddedBrowserBridge {
     }
     this.server = server
     this.runtimePath = runtimePath
+    this.baseUrl = `http://127.0.0.1:${address.port}`
     this.token = token
-    process.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR = `127.0.0.1:${address.port}`
-    process.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN = token
     return runtimePath
+  }
+
+  environment(): NodeJS.ProcessEnv {
+    if (!this.baseUrl || !this.token) {
+      throw new Error('Embedded browser bridge has not started')
+    }
+    return {
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: this.baseUrl,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: this.token,
+    }
   }
 
   async stop(): Promise<void> {
@@ -99,9 +109,8 @@ export class EmbeddedBrowserBridge {
     const runtimePath = this.runtimePath
     this.server = null
     this.runtimePath = null
+    this.baseUrl = null
     this.token = null
-    delete process.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR
-    delete process.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN
     await Promise.allSettled([
       runtimePath ? rm(runtimePath, { force: true }) : Promise.resolve(),
       server ? new Promise<void>(resolve => server.close(() => resolve())) : Promise.resolve(),

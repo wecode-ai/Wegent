@@ -42,6 +42,9 @@ class RepositoryState:
     branch: str = ""
     # ``None`` means the diff is unknown, which is different from "nothing changed".
     changed_paths: Optional[tuple[ChangedPath, ...]] = None
+    # Counted at ``head_commit`` only when a historical version lacks the count it
+    # should already have stored. ``None`` keeps a failed count distinct from zero.
+    tracked_file_count: Optional[int] = None
 
 
 def read_repository_state(
@@ -50,6 +53,7 @@ def read_repository_state(
     user_id: int,
     source: SourceRepository,
     since_commit: str = "",
+    include_tracked_file_count: bool = False,
 ) -> RepositoryState:
     """Read the default branch's HEAD, and the diff since ``since_commit``.
 
@@ -59,6 +63,9 @@ def read_repository_state(
         source: The repository the wiki is bound to.
         since_commit: Commit the published wiki documents. Empty on a first run, in
             which case no diff is asked for — there is nothing to compare against.
+        include_tracked_file_count: Read the file tree at HEAD after a complete,
+            non-empty diff. This is only for historical versions that predate the
+            stored checkout count.
 
     Returns:
         What could be read. Every field is best-effort: a failure anywhere leaves the
@@ -86,13 +93,45 @@ def read_repository_state(
     if not head.head_commit or not since_commit:
         return head
 
+    changed_paths = _read_changed_paths(
+        provider, token, source, since_commit, head.head_commit
+    )
+    tracked_file_count = None
+    if include_tracked_file_count and changed_paths:
+        tracked_file_count = _read_tracked_file_count(
+            provider, token, source, head.head_commit
+        )
     return RepositoryState(
         head_commit=head.head_commit,
         branch=head.branch,
-        changed_paths=_read_changed_paths(
-            provider, token, source, since_commit, head.head_commit
-        ),
+        changed_paths=changed_paths,
+        tracked_file_count=tracked_file_count,
     )
+
+
+def read_repository_tracked_file_count(
+    db: Session,
+    *,
+    user_id: int,
+    source: SourceRepository,
+    ref: str,
+) -> Optional[int]:
+    """Count files at one known commit, or return ``None`` without guessing.
+
+    This is the direct-call counterpart for callers that already supplied a HEAD and
+    diff. Normal scheduled runs use :func:`read_repository_state` so the provider and
+    token are resolved only once.
+    """
+    if not ref:
+        return None
+    provider = provider_for(source.source_type)
+    if provider is None:
+        return None
+    git_info = get_user_git_info(user_id=user_id, domain=source.source_domain, db=db)
+    token = (git_info or {}).get("token")
+    if not token:
+        return None
+    return _read_tracked_file_count(provider, token, source, ref)
 
 
 def _read_head(provider, token: str, source: SourceRepository) -> RepositoryState:
@@ -149,3 +188,34 @@ def _read_changed_paths(
         for entry in entries
         if entry.get("path")
     )
+
+
+def _read_tracked_file_count(
+    provider, token: str, source: SourceRepository, ref: str
+) -> Optional[int]:
+    """Ask one provider for a complete tree count, preserving failure as unknown."""
+    count_files = getattr(provider, "get_tracked_file_count", None)
+    if count_files is None:
+        logger.info(
+            "[code_wiki] %s cannot count files at a repository ref",
+            source.source_type,
+        )
+        return None
+    try:
+        count = count_files(
+            token=token,
+            git_domain=source.source_domain,
+            repo_name=source.project_name,
+            ref=ref,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[code_wiki] could not count files for %s at %s: %s",
+            source.project_name,
+            ref,
+            type(exc).__name__,
+        )
+        return None
+    if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+        return None
+    return count

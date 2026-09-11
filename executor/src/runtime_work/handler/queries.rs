@@ -225,13 +225,16 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
         let local_link = self.local_task_link(&local_task_id);
-        let session_id = local_link
-            .as_ref()
-            .and_then(runtime_session_id_from_link)
-            .or_else(|| runtime_session_id_from_payload(&payload));
+        let linked_session_id = local_link.as_ref().and_then(runtime_session_id_from_link);
+        let requested_session_id = runtime_session_id_from_payload(&payload);
+        let direct_thread_override = requested_session_id
+            .as_deref()
+            .zip(linked_session_id.as_deref())
+            .is_some_and(|(requested, linked)| requested != linked);
+        let session_id = requested_session_id.or(linked_session_id);
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
-        if local_execution_running && !refresh {
+        if local_execution_running && !refresh && !direct_thread_override {
             if let Some(link) = local_link
                 .as_ref()
                 .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
@@ -344,7 +347,7 @@ impl RuntimeWorkRpcHandler {
             }));
         };
 
-        if refresh && !local_execution_running {
+        if refresh && !local_execution_running && !direct_thread_override {
             if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)
@@ -404,15 +407,20 @@ impl RuntimeWorkRpcHandler {
             .flatten()
             .filter_map(|turn| string_field(turn, "id"))
             .collect::<Vec<_>>();
-        let presentation_page_messages = local_link.as_ref().map(|_| {
-            if include_full_content {
-                full_transcript_messages(&thread, &self.device_id)
-            } else {
-                transcript_messages(&thread, &self.device_id)
-            }
-        });
-        self.merge_active_codex_transcript(&local_task_id, &mut thread);
-        self.repair_legacy_task_activity_time(&local_task_id, &thread);
+        let presentation_page_messages = local_link
+            .as_ref()
+            .filter(|_| !direct_thread_override)
+            .map(|_| {
+                if include_full_content {
+                    full_transcript_messages(&thread, &self.device_id)
+                } else {
+                    transcript_messages(&thread, &self.device_id)
+                }
+            });
+        if !direct_thread_override {
+            self.merge_active_codex_transcript(&local_task_id, &mut thread);
+            self.repair_legacy_task_activity_time(&local_task_id, &thread);
+        }
         let workspace_path = local_link
             .as_ref()
             .map(|link| link.workspace_path.clone())
@@ -429,7 +437,13 @@ impl RuntimeWorkRpcHandler {
             transcript_messages(&thread, &self.device_id)
         };
         let mut messages = transcript_messages;
-        if let Some(link) = local_link.as_ref() {
+        if let Some(link) = local_link.as_ref().filter(|_| !direct_thread_override) {
+            merge_latest_completed_transcript_messages(
+                &mut messages,
+                link,
+                before_cursor.as_deref(),
+                after_cursor.as_deref(),
+            );
             attach_user_message_presentations_for_page(
                 &mut messages,
                 user_message_presentations(link),

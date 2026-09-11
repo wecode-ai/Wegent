@@ -18,12 +18,18 @@ import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { getGlobalModelPreference, saveGlobalModelPreference } from '@/utils/modelPreferences'
 import { modelApis } from '@/apis/models'
 
+let mockCurrentToken = 'token-a'
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string, fallback?: string) => fallback || key }),
 }))
 
 jest.mock('@/apis/models', () => ({
   modelApis: { getUnifiedModels: jest.fn() },
+}))
+
+jest.mock('@/apis/user', () => ({
+  getToken: () => mockCurrentToken,
 }))
 
 const TEAM_ID = 7
@@ -66,6 +72,7 @@ describe('preselecting the remembered model', () => {
   beforeEach(() => {
     localStorage.clear()
     jest.clearAllMocks()
+    mockCurrentToken = 'token-a'
     ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({ data: MODELS })
   })
 
@@ -239,5 +246,83 @@ describe('not filling in a box that is meant to be empty', () => {
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: 'zzz-remembered' }))
     expect(getGlobalModelPreference(TEAM_ID, undefined, 'wiki')?.modelName).toBe('zzz-remembered')
+  })
+})
+
+describe('loading the available model list', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    jest.clearAllMocks()
+    mockCurrentToken = 'token-a'
+  })
+
+  it('shares one in-flight LLM request between simultaneous selectors', async () => {
+    let resolveModels: (value: { data: typeof MODELS }) => void
+    const modelsPromise = new Promise<{ data: typeof MODELS }>(resolve => {
+      resolveModels = resolve
+    })
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(modelsPromise)
+
+    render(
+      <>
+        <ModelRefSelector
+          value={null}
+          onChange={jest.fn()}
+          placeholder="Pick a generation model"
+          autoSelect={false}
+          dataTestId="generation-model-select"
+        />
+        <ModelRefSelector
+          value={null}
+          onChange={jest.fn()}
+          placeholder="Pick a summary model"
+          autoSelect={false}
+          dataTestId="summary-model-select"
+        />
+      </>
+    )
+
+    await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1))
+    resolveModels!({ data: MODELS })
+    await waitFor(() => {
+      expect(screen.getByTestId('generation-model-select')).not.toBeDisabled()
+      expect(screen.getByTestId('summary-model-select')).not.toBeDisabled()
+    })
+  })
+
+  it('does not share an in-flight LLM request after an account switch', async () => {
+    let resolveFirstRequest: (value: { data: typeof MODELS }) => void
+    const firstRequest = new Promise<{ data: typeof MODELS }>(resolve => {
+      resolveFirstRequest = resolve
+    })
+    ;(modelApis.getUnifiedModels as jest.Mock)
+      .mockReturnValueOnce(firstRequest)
+      .mockResolvedValueOnce({ data: MODELS })
+
+    const first = render(
+      <ModelRefSelector
+        value={null}
+        onChange={jest.fn()}
+        placeholder="Pick a generation model"
+        autoSelect={false}
+        dataTestId="generation-model-select"
+      />
+    )
+    await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1))
+
+    first.unmount()
+    mockCurrentToken = 'token-b'
+    render(
+      <ModelRefSelector
+        value={null}
+        onChange={jest.fn()}
+        placeholder="Pick a summary model"
+        autoSelect={false}
+        dataTestId="summary-model-select"
+      />
+    )
+
+    await waitFor(() => expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(2))
+    resolveFirstRequest!({ data: MODELS })
   })
 })

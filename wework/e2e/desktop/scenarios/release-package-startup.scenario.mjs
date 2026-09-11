@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 
 const PROFILE_NAME = 'wework-core'
@@ -159,6 +159,7 @@ async function assertReleasePackageResources() {
     /release-installer/,
     `Release startup E2E was not given a formal release binary: ${appBinary}`
   )
+  if (process.platform === 'darwin') await assertMacosMicrophoneSigning(appBinary)
   const resourcesRoot =
     process.platform === 'darwin'
       ? resolve(appBinary, '..', '..', 'Resources')
@@ -215,6 +216,38 @@ async function assertReleasePackageResources() {
       )
     ),
   ])
+}
+
+async function assertMacosMicrophoneSigning(appBinary) {
+  const appRoot = resolve(appBinary, '..', '..', '..')
+  const frameworksRoot = join(appRoot, 'Contents', 'Frameworks')
+  const helpers = (await readdir(frameworksRoot)).filter(name => name.endsWith('.app'))
+  assert.ok(helpers.length > 0, 'The release package must contain Electron helpers')
+
+  for (const bundle of [appRoot, ...helpers.map(name => join(frameworksRoot, name))]) {
+    execFileSync('codesign', ['--verify', '--strict', bundle], { stdio: 'pipe' })
+    const entitlements = execFileSync('codesign', ['--display', '--entitlements', ':-', bundle], {
+      stdio: 'pipe',
+    })
+    const plist = JSON.parse(
+      execFileSync('plutil', ['-convert', 'json', '-o', '-', '-'], {
+        input: entitlements,
+        encoding: 'utf8',
+      })
+    )
+    assert.equal(
+      plist['com.apple.security.device.audio-input'],
+      true,
+      `Microphone audio-input entitlement is missing from ${bundle}`
+    )
+  }
+
+  const description = execFileSync(
+    'plutil',
+    ['-extract', 'NSMicrophoneUsageDescription', 'raw', join(appRoot, 'Contents', 'Info.plist')],
+    { encoding: 'utf8' }
+  )
+  assert.ok(description.trim(), 'The release package must explain microphone access')
 }
 
 export async function createDesktopScenario({

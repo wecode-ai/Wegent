@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Sequence
 
+import orjson
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
@@ -646,6 +647,15 @@ def _decode_member(member: Any) -> str:
     if isinstance(member, bytes):
         return member.decode("utf-8")
     return str(member)
+
+
+def _decode_redis_json(value: Any) -> Any:
+    if isinstance(value, (bytes, bytearray, memoryview, str)):
+        try:
+            return orjson.loads(value)
+        except orjson.JSONDecodeError:
+            return value
+    return value
 
 
 im_session_service = IMSessionService()

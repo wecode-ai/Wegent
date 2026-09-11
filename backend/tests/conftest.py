@@ -109,6 +109,11 @@ class FakeIMSessionCache:
         self.expires.pop(key, None)
         return existed
 
+    async def pop(self, key: str) -> Any:
+        value = self.values.pop(key, None)
+        self.expires.pop(key, None)
+        return value
+
     async def _get_client(self) -> FakeIMSessionRedisClient:
         return FakeIMSessionRedisClient(self)
 

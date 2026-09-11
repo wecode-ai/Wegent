@@ -124,10 +124,13 @@ describe('scaffoldSmartApp', () => {
     async template => {
       const root = await createFixture(template)
 
-      await execFileAsync(process.execPath, ['scripts/typecheck.mjs'], { cwd: root })
-      await execFileAsync(process.execPath, ['--test'], { cwd: root })
-      await execFileAsync(process.execPath, ['scripts/build.mjs'], { cwd: root })
-    }
+      // Each generated check starts a real Node process, including a nested test runner.
+      const options = { cwd: root, timeout: 10_000 }
+      await execFileAsync(process.execPath, ['scripts/typecheck.mjs'], options)
+      await execFileAsync(process.execPath, ['--test'], options)
+      await execFileAsync(process.execPath, ['scripts/build.mjs'], options)
+    },
+    35_000
   )
 })
 

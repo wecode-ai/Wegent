@@ -14,6 +14,8 @@ const PROMPTS = {
   third: 'QUEUE_3_WAITING_WEWORK_DESKTOP_E2E',
   fourth: 'QUEUE_4_RUNNING_BEFORE_LIMIT_INCREASE_WEWORK_DESKTOP_E2E',
   fifth: 'QUEUE_5_STARTS_AFTER_LIMIT_INCREASE_WEWORK_DESKTOP_E2E',
+  followUpCancel: 'QUEUE_FOLLOW_UP_CANCEL_WEWORK_DESKTOP_E2E',
+  followUpForce: 'QUEUE_FOLLOW_UP_FORCE_WEWORK_DESKTOP_E2E',
 }
 
 function sse(events) {
@@ -113,6 +115,18 @@ async function waitForRequestCount(requests, count, timeoutMs) {
   throw new Error(`Timed out waiting for ${count} runtime queue model requests`)
 }
 
+async function waitForSnapshot(control, predicate, message, timeoutMs) {
+  const startedAt = Date.now()
+  let lastSnapshot = null
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    lastSnapshot = snapshot
+    if (predicate(snapshot)) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}; last testIds=${JSON.stringify(lastSnapshot?.testIds ?? [])}`)
+}
+
 async function assertQueuePosition(control, selector, expected, visible, message) {
   const text = await control.command('getText', selector, { visible })
   const positions = text.split('\n').filter(Boolean)
@@ -154,7 +168,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       for await (const chunk of request) chunks.push(chunk)
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       const requestText = JSON.stringify(body)
-      const prompt = Object.values(PROMPTS).find(candidate => requestText.includes(candidate))
+      const prompt = Object.values(PROMPTS)
+        .map(candidate => ({ candidate, index: requestText.lastIndexOf(candidate) }))
+        .filter(match => match.index >= 0)
+        .sort((left, right) => right.index - left.index)[0]?.candidate
       if (!prompt) {
         const responseId = `wework-runtime-queue-auxiliary-${Date.now()}`
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -441,6 +458,82 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           visible: sidebarVisible,
         }
       )
+      await control.command('click', `${sidebarSelector} [data-testid="${second.rowTestId}"]`)
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-follow-up-00-capacity-full.png', 'body')
+      await control.command('fill', COMPOSER_SELECTOR, { value: PROMPTS.followUpCancel })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+        text: PROMPTS.followUpCancel,
+        timeoutMs: uiTimeoutMs,
+      })
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-follow-up-01-queued.png', 'body')
+      const queuedFollowUpMessages = await control.command(
+        'getText',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+      )
+      assert.equal(
+        queuedFollowUpMessages.includes(PROMPTS.followUpCancel),
+        false,
+        'The queued follow-up was rendered as an already-sent conversation message'
+      )
+      await control.command('click', '[data-testid^="queue-cancel-button-"]')
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+        'Cancelling the native queued follow-up did not clear the composer queue',
+        uiTimeoutMs
+      )
+      assert.equal(requests.length, 4, 'Cancelling the queued follow-up reached the model')
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-follow-up-02-cancelled.png', 'body')
+
+      await control.command('fill', COMPOSER_SELECTOR, { value: PROMPTS.followUpForce })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+        text: PROMPTS.followUpForce,
+        timeoutMs: uiTimeoutMs,
+      })
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-follow-up-03-ready-to-force.png', 'body')
+      await control.command('click', '[data-testid^="queue-force-start-button-"]')
+      await waitForRequestCount(requests, 5, uiTimeoutMs)
+      assert.equal(
+        requests[4],
+        PROMPTS.followUpForce,
+        'Forcing the queued follow-up did not bypass the concurrency limit'
+      )
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+        'Force starting the native queued follow-up did not clear the composer queue',
+        uiTimeoutMs
+      )
+      const startedFollowUpMessages = await control.command(
+        'getText',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+      )
+      assert.equal(
+        startedFollowUpMessages.includes(PROMPTS.followUpForce),
+        true,
+        'The queued follow-up was not rendered after its turn started'
+      )
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-follow-up-04-force-started.png', 'body')
+      releases.get(PROMPTS.followUpForce)?.()
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        {
+          text: `${PROMPTS.followUpForce}_COMPLETE`,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-follow-up-05-completed.png', 'body')
+
       const fifth = await sendNewTask(
         control,
         newConversationSelector,
@@ -456,7 +549,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           visible: sidebarVisible,
         }
       )
-      assert.equal(requests.length, 4, 'The regression task did not wait at concurrency one')
+      assert.equal(requests.length, 5, 'The regression task did not wait at concurrency one')
 
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="settings-menu-button"]')
@@ -466,7 +559,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
         value: '2',
       })
-      await waitForRequestCount(requests, 5, uiTimeoutMs)
+      await waitForRequestCount(requests, 6, uiTimeoutMs)
       await control.command('click', '[data-testid="settings-back-button"]')
       const { requireVisible: refreshedSidebarVisible, sidebarSelector: refreshedSidebarSelector } =
         await ensureProjectExpandedInActiveSidebar(control, { timeoutMs: uiTimeoutMs })

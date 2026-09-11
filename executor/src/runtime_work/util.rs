@@ -80,6 +80,16 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("origin".to_owned(), origin);
     }
+    if let Some(model_selection) = payload
+        .get("modelSelection")
+        .or_else(|| payload.get("model_selection"))
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request
+            .extra
+            .insert("modelSelection".to_owned(), model_selection);
+    }
     if let Some(attachments) = payload
         .get("attachments")
         .filter(|value| value.is_array())
@@ -839,6 +849,31 @@ mod tests {
         assert_eq!(
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
+        );
+    }
+
+    #[test]
+    fn copies_runtime_model_selection_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "modelSelection": {
+                    "modelName": "deepseek-v4-pro-responses(public)",
+                    "modelType": "public",
+                    "options": {"reasoning": "medium"}
+                }
+            }),
+        );
+
+        assert_eq!(
+            request.extra.get("modelSelection"),
+            Some(&json!({
+                "modelName": "deepseek-v4-pro-responses(public)",
+                "modelType": "public",
+                "options": {"reasoning": "medium"}
+            }))
         );
     }
 
