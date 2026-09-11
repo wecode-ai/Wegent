@@ -53,8 +53,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
     let home = unique_dir("claude-runtime-home");
     let workspace_root = unique_dir("claude-runtime-workspace");
     let log_path = unique_dir("claude-runtime-log").join("args.json");
-    let mcp_capture_path = log_path.with_extension("mcp.json");
-    let fake_claude = write_fake_claude_capturing_mcp_config(&log_path, &mcp_capture_path);
+    let fake_claude = write_fake_claude(&log_path);
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
@@ -104,8 +103,7 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         .position(|arg| arg == "--mcp-config")
         .expect("Claude command should include --mcp-config");
     let mcp_config_path = args[mcp_flag_index + 1].as_str().unwrap();
-    let mcp_config = read_json(&mcp_capture_path);
-    assert!(!Path::new(mcp_config_path).exists());
+    let mcp_config = read_json(Path::new(mcp_config_path));
 
     assert_eq!(
         mcp_config["mcpServers"]["request-docs"]["url"],
@@ -1089,11 +1087,7 @@ fn skill_zip(path: &str, content: &str) -> Vec<u8> {
 }
 
 fn write_fake_claude(log_path: &Path) -> PathBuf {
-    write_fake_claude_with_prelude(log_path, "", None)
-}
-
-fn write_fake_claude_capturing_mcp_config(log_path: &Path, capture_path: &Path) -> PathBuf {
-    write_fake_claude_with_prelude(log_path, "", Some(capture_path))
+    write_fake_claude_with_prelude(log_path, "")
 }
 
 fn write_fake_claude_with_git_auth(
@@ -1111,38 +1105,18 @@ if [ ! -x "$GIT_ASKPASS" ]; then exit 35; fi
 if [ "$(cat "$WEGENT_GIT_USERNAME_FILE")" != "{expected_username}" ]; then exit 36; fi
 if [ "$(cat "$WEGENT_GIT_TOKEN_FILE")" != "{expected_token}" ]; then exit 37; fi"#
     );
-    write_fake_claude_with_prelude(log_path, &prelude, None)
+    write_fake_claude_with_prelude(log_path, &prelude)
 }
 
-fn write_fake_claude_with_prelude(
-    log_path: &Path,
-    prelude: &str,
-    mcp_capture_path: Option<&Path>,
-) -> PathBuf {
+fn write_fake_claude_with_prelude(log_path: &Path, prelude: &str) -> PathBuf {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
     let stdin_log_path = log_path.with_extension("stdin");
     let path = unique_dir("fake-claude-runtime").join("claude");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let mcp_capture = mcp_capture_path
-        .map(|path| {
-            format!(
-                r#"MCP_CAPTURE_PATH='{}'
-previous=''
-for arg in "$@"; do
-  if [ "$previous" = "--mcp-config" ]; then
-    cp "$arg" "$MCP_CAPTURE_PATH"
-  fi
-  previous="$arg"
-done"#,
-                path.display()
-            )
-        })
-        .unwrap_or_default();
     let content = format!(
         r#"#!/bin/sh
-{}
 {}
 LOG_PATH='{}'
 STDIN_LOG_PATH='{}'
@@ -1162,7 +1136,6 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
 printf '%s\n' '{{"type":"result","is_error":false}}'
 "#,
         prelude,
-        mcp_capture,
         log_path.display(),
         stdin_log_path.display()
     );
