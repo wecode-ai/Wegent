@@ -115,6 +115,7 @@ function resolveConfigValues(environment, fileEnvironment) {
   for (const key of [
     'WEWORK_INTERNAL_TELEMETRY_ENABLED',
     'WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST',
+    'WEWORK_INTERNAL_TELEMETRY_ALLOW_HTTP_POSTHOG_HOST',
     'WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY',
     'WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY',
     'WEWORK_INTERNAL_TELEMETRY_RELEASE_CHANNEL',
@@ -154,10 +155,10 @@ function parsePublicValues(values) {
 }
 
 function parsePrivateValues(values, environment) {
-  const posthogHost = parsePosthogHost(
-    values.WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST,
-    environment.NODE_ENV === 'test'
-  )
+  const posthogHost = parsePosthogHost(values.WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST, {
+    allowHttpLoopback: environment.NODE_ENV === 'test',
+    allowedHttpHost: values.WEWORK_INTERNAL_TELEMETRY_ALLOW_HTTP_POSTHOG_HOST,
+  })
   if (posthogHost.error) return posthogHost
 
   const posthogProjectKey = nonEmptyString(values.WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY)
@@ -195,7 +196,7 @@ function parseBoundedInteger(value, config) {
   return number
 }
 
-function parsePosthogHost(value, allowHttpLoopback) {
+function parsePosthogHost(value, { allowHttpLoopback, allowedHttpHost }) {
   const host = nonEmptyString(value)
   if (!host) return { error: 'missing_posthog_host' }
   if (host.includes('@') || host.includes('?') || host.includes('#')) {
@@ -207,8 +208,12 @@ function parsePosthogHost(value, allowHttpLoopback) {
     const isHttps = url.protocol === 'https:'
     const isAllowedHttpLoopback =
       allowHttpLoopback && url.protocol === 'http:' && LOOPBACK_HOSTNAMES.has(url.hostname)
+    const isAllowedConfiguredHttp =
+      url.protocol === 'http:' &&
+      url.hostname === allowedHttpHost &&
+      isPrivateIpv4Address(allowedHttpHost)
     if (
-      (!isHttps && !isAllowedHttpLoopback) ||
+      (!isHttps && !isAllowedHttpLoopback && !isAllowedConfiguredHttp) ||
       url.username ||
       url.password ||
       url.search ||
@@ -221,6 +226,22 @@ function parsePosthogHost(value, allowHttpLoopback) {
   } catch {
     return { error: 'invalid_posthog_host' }
   }
+}
+
+function isPrivateIpv4Address(value) {
+  if (typeof value !== 'string') return false
+  const octets = value.split('.')
+  if (octets.length !== 4 || octets.some(octet => !/^(0|[1-9]\d{0,2})$/.test(octet))) {
+    return false
+  }
+
+  const [first, second] = octets.map(Number)
+  if (octets.some(octet => Number(octet) > 255)) return false
+  return (
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  )
 }
 
 function publicConfig(error, values = DEFAULTS) {

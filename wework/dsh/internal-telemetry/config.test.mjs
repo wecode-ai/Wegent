@@ -144,6 +144,32 @@ test('allows an http loopback host only in a test environment', async () => {
   assert.deepEqual(whitespacePadded.public, publicConfig('invalid_posthog_host'))
 })
 
+test('allows HTTP only for the explicitly configured private PostHog host', async () => {
+  const accepted = await loadTelemetryConfig({
+    environment: enabledEnvironment({
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'http://10.0.0.8',
+      WEWORK_INTERNAL_TELEMETRY_ALLOW_HTTP_POSTHOG_HOST: '10.0.0.8',
+    }),
+  })
+  const wrongHost = await loadTelemetryConfig({
+    environment: enabledEnvironment({
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'http://10.0.0.9',
+      WEWORK_INTERNAL_TELEMETRY_ALLOW_HTTP_POSTHOG_HOST: '10.0.0.8',
+    }),
+  })
+  const publicHost = await loadTelemetryConfig({
+    environment: enabledEnvironment({
+      WEWORK_INTERNAL_TELEMETRY_POSTHOG_HOST: 'http://203.0.113.8',
+      WEWORK_INTERNAL_TELEMETRY_ALLOW_HTTP_POSTHOG_HOST: '203.0.113.8',
+    }),
+  })
+
+  assert.equal(accepted.public.error, null)
+  assert.equal(accepted.private.posthogHost, 'http://10.0.0.8')
+  assert.deepEqual(wrongHost.public, publicConfig('invalid_posthog_host'))
+  assert.deepEqual(publicHost.public, publicConfig('invalid_posthog_host'))
+})
+
 test('rejects absent project keys and too-short HMAC keys', async () => {
   const missingProjectKey = await loadTelemetryConfig({
     environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: '' }),
