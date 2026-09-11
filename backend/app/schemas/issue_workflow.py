@@ -8,6 +8,7 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
 from app.schemas.runtime_work import (
     RuntimeGoalCreateInput,
@@ -108,6 +109,10 @@ class WorkflowExecutionConfig(BaseModel):
             self.execution_device_id.strip() if self.execution_device_id else None
         )
         self.model = self.model.strip() if self.model else None
+        validate_non_secret_plugin_configs(
+            self.project_plugins,
+            field_name="project_plugins",
+        )
         return self
 
     def is_complete(self) -> bool:

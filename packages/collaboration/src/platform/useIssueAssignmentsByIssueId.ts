@@ -70,6 +70,7 @@ export function useIssueAssignmentsByIssueId({
 
   const replaceIssueAssignments = useCallback(
     (issueId: string, assignments: CollaborationAssignment[]) => {
+      loadRevisionRef.current += 1;
       setAssignmentsByIssueId((current) => ({
         ...current,
         [issueId]: assignments,

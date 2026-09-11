@@ -1151,9 +1151,20 @@ def test_runtime_retry_uses_a_new_execution_attempt(
 ) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
+    run_owner = User(
+        user_name="runtime-retry-owner",
+        password_hash="unused",
+        email="runtime-retry-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(run_owner)
+    test_db.commit()
+    test_db.refresh(run_owner)
     original = _make_execution(
         test_db, _make_item(test_db, project, test_user), bot, test_user
     )
+    original.executor_owner_user_id = run_owner.id
     original.execution_payload = (
         loop_item_execution_service._serialize_execution_intent(
             runtime_selection={
@@ -1174,7 +1185,7 @@ def test_runtime_retry_uses_a_new_execution_attempt(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
-        owner_user_id=test_user.id,
+        owner_user_id=run_owner.id,
         runtime_instance_id="runtime-1",
         device_capacity=1,
         runtime_active=0,
@@ -1203,6 +1214,8 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     assert retry.status == "queued"
     assert retry.attempt_no == 2
     assert retry.previous_execution_id == original.id
+    assert retry.executor_owner_user_id == run_owner.id
+    assert retry.executor_owner_user_id != bot.created_by_user_id
     assert retry.runtime_task_id != claimed.runtime_task_id
     assert retry.runtime_selection == {
         "model": "public-model",
@@ -1217,6 +1230,92 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     test_db.refresh(original)
     assert original.status == "failed"
     assert original.last_event_seq == 2
+
+
+def test_claim_filters_by_execution_owner_not_agent_creator(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    run_owner = User(
+        user_name="runtime-claim-owner",
+        password_hash="unused",
+        email="runtime-claim-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(run_owner)
+    test_db.commit()
+    test_db.refresh(run_owner)
+    _ensure_device(test_db, run_owner, "cloud-device-1")
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    execution.executor_owner_user_id = run_owner.id
+    test_db.commit()
+
+    creator_claim = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="creator-runtime",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    owner_claim = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=run_owner.id,
+        runtime_instance_id="owner-runtime",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert creator_claim is None
+    assert owner_claim is not None
+    assert owner_claim.id == execution.id
+    assert owner_claim.executor_owner_user_id == run_owner.id
+
+
+def test_infrastructure_resume_preserves_execution_owner(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    run_owner = User(
+        user_name="runtime-resume-owner",
+        password_hash="unused",
+        email="runtime-resume-owner@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(run_owner)
+    test_db.commit()
+    test_db.refresh(run_owner)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    execution.executor_owner_user_id = run_owner.id
+    test_db.commit()
+
+    resumed = loop_item_execution_service.fail(
+        test_db,
+        execution_id=execution.id,
+        error="device temporarily unavailable",
+        requeue_infra=True,
+    )
+
+    assert resumed is not None
+    assert resumed.id == execution.id
+    assert resumed.status == "queued"
+    assert resumed.executor_owner_user_id == run_owner.id
+    assert resumed.executor_owner_user_id != bot.created_by_user_id
 
 
 def test_reordered_runtime_event_cannot_overwrite_newer_truth(
@@ -4542,6 +4641,79 @@ def test_unbound_project_robot_waits_for_runtime_selection(
     assert execution.status == "waiting_runtime"
     assert execution.execution_device_id == ""
     assert execution.executor_owner_user_id == test_user.id
+
+
+def test_waiting_runtime_rejects_plugin_credentials_before_creating_execution(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot.device_id = ""
+    bot.metadata_json = {
+        "runtime": "codex",
+        "execution_mode": "auto",
+        "visibility": "public",
+    }
+    test_db.commit()
+    item = _make_item(test_db, project, test_user)
+
+    with pytest.raises(ValueError, match="use credential_refs"):
+        loop_item_execution_service.create_for_assignment(
+            test_db,
+            loop_item_id=item.id,
+            cloud_project_id=item.cloud_project_id,
+            agent=bot,
+            assigner_user_id=test_user.id,
+            environment="local",
+            execution_device_id="",
+            priority="medium",
+            automation_context={
+                "project_plugins": [
+                    {
+                        "id": "github@openai",
+                        "config": {"access_token": "plaintext"},
+                    }
+                ]
+            },
+        )
+
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == item.id)
+        .count()
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload_field", "plugins"),
+    [
+        (
+            "origin_context",
+            [{"id": "github@openai", "config": {"access_token": "plaintext"}}],
+        ),
+        (
+            "runtime_request",
+            [{"id": "github@openai", "config": {"privateKey": "plaintext"}}],
+        ),
+    ],
+)
+def test_execution_intent_rejects_plugin_credentials_before_persistence(
+    payload_field: str,
+    plugins: list[dict[str, object]],
+) -> None:
+    kwargs: dict[str, object] = {
+        "runtime_selection": {},
+        "origin_context": {},
+    }
+    if payload_field == "origin_context":
+        kwargs["origin_context"] = {"project_plugins": plugins}
+    else:
+        kwargs["runtime_request"] = {"projectPlugins": plugins}
+
+    with pytest.raises(ValueError, match="use credential_refs"):
+        loop_item_execution_service._serialize_execution_intent(**kwargs)
 
 
 def test_automation_assignment_schedules_wegent_runtime_after_commit(

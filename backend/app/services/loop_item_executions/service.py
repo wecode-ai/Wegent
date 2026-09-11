@@ -36,6 +36,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 from app.models.user import User
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
@@ -951,6 +952,18 @@ class LoopItemExecutionService:
         origin_context: dict[str, Any],
         runtime_request: dict[str, Any] | None = None,
     ) -> str:
+        validate_non_secret_plugin_configs(
+            origin_context.get("project_plugins"),
+            field_name="origin_context.project_plugins",
+        )
+        if runtime_request is not None:
+            validate_non_secret_plugin_configs(
+                runtime_request.get(
+                    "projectPlugins",
+                    runtime_request.get("project_plugins"),
+                ),
+                field_name="runtime_request.projectPlugins",
+            )
         value: dict[str, Any] = {
             "schema_version": 2,
             "runtime_selection": runtime_selection,

@@ -181,7 +181,7 @@ of the Workspace Agent binding (`WorkspaceAgentBinding.owner_user_id` and
 remains on the Run and is copied to replacement or resumed Runs. Claim,
 heartbeat, event-reporting, and completion endpoints authorize against that
 Run field, so replacing ProjectChatAgent with ProjectAgentBinding does not
-widen creator-only execution access.
+widen Run-owner execution access.
 
 ### Workspace Agents and Project-private Agents
 

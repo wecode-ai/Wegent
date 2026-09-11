@@ -171,7 +171,7 @@ Agent 的身份、Team、能力和默认执行策略属于 Workspace；Project �
 添加者，即 `WorkspaceAgentBinding.owner_user_id` 与 `added_by_user_id`；已有
 `LoopItemExecution.executor_owner_user_id` 继续保留在 Run 上，并复制到替代或
 恢复创建的 Run。领取、心跳、事件上报和完成接口继续按该 Run 字段鉴权，因此将
-ProjectChatAgent 收敛为 ProjectAgentBinding 不会放宽原有的创建者专属执行权限。
+ProjectChatAgent 收敛为 ProjectAgentBinding 不会放宽 Run 所有者的执行权限。
 
 ### Workspace Agent 与 Project 专属 Agent
 
