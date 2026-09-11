@@ -625,6 +625,9 @@ def test_minio_windows_build_uses_native_electron_release() -> None:
     )
     assert script.count("WEWORK_USE_COMPONENTIZED_HOST_UPDATE") == 1
     assert "components-$CHANNEL-windows-x64.json" in script
+    assert "release_urls=(" in script
+    assert 'if [ "$COMPONENTIZED_HOST_UPDATE" = "true" ]; then' in script
+    assert 'for url in "${release_urls[@]}"; do' in script
     assert '--unsigned) UNSIGNED="true"' in script
     assert 'if [ "$UNSIGNED" = "true" ]' in script
     assert "export CSC_IDENTITY_AUTO_DISCOVERY=false" in script
@@ -654,6 +657,16 @@ def test_windows_jenkins_pipeline_builds_unsigned_electron_release() -> None:
     assert "Required legacy updater key file is missing or empty" not in pipeline
     assert "WeWork_${version}_windows-x64-setup.exe" in pipeline
     assert "WeWorkHostUpdate_${version}_windows-x64-setup.exe" in pipeline
+    assert (
+        "const referencedUpdateNames = [installerName, hostUpdateName].filter"
+        in pipeline
+    )
+    assert "referencedUpdateNames.length !== 1" in pipeline
+    assert "const updatePackage = resolve(output, referencedUpdateNames[0])" in pipeline
+    assert (
+        "for (const path of [updatePackage, `${updatePackage}.blockmap`])" in pipeline
+    )
+    assert "resolve(output, hostUpdateName)," not in pipeline
     assert "windows_" + "x64" not in pipeline
     assert "components-${channel}-windows-x64.json" in pipeline
     assert "windows-x86_64" not in pipeline
