@@ -22,6 +22,21 @@ Forward the received token only over HTTPS to the issuing backend's `GET /api/ex
 }
 ```
 
+After installation, users can also override headers for remote MCP servers from **MCP request
+headers** in the Wework plugin detail view. The configuration is stored in
+`InstalledPlugin.spec.componentConfig` and never modifies the plugin package. The Executor merges
+headers by name, with the user's header overriding the plugin author's declaration. The default
+value is:
+
+```json
+{
+  "Authorization": "Bearer ${{task_token}}"
+}
+```
+
+Clearing the JSON and saving restores the author-declared headers. The setting is available only
+for remote HTTP/SSE MCP servers; local `command` servers cannot receive injected headers.
+
 Authorize using the full tuple `(id, task.kind, task.device_id, task.id)`. Never trust an unverified decoded JWT or a local task ID alone. Continuing a task, restarting its executor, or renewing its token preserves the identity on the same device. New and forked tasks have different identities. Moving to another device produces a different device-local task address.
 
 Existing Wegent CRD tasks return `task.kind = "wegent"` with a string task ID. Legacy runtime tokens with no concrete task binding return `task = null`; services requiring task permissions must reject them. Business MCP servers own their resource authorization rules; identity verification does not grant access by itself.
