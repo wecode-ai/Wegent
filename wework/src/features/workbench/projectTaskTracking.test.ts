@@ -4,16 +4,41 @@ import type { WorkbenchServices } from './workbenchServices'
 import { projectTaskTrackingApi, rememberProjectTaskStore } from './projectTaskTracking'
 
 describe('projectTaskTrackingApi', () => {
-  test.each([
-    ['backend', 'cloud'],
-    ['local', 'local'],
-  ] as const)('routes %s task ownership to the %s API', (projectStore, expectedLocation) => {
+  test('routes backend task ownership through the shared cloud runtime port', async () => {
+    const updateTrackedTaskStatus = vi.fn().mockResolvedValue(null)
+    const services = {
+      projectSpaceApis: {
+        local: { updateTaskTrackingStatus: vi.fn() },
+        defaultLocation: 'cloud',
+      },
+      workspaceRuntimePort: {
+        updateTrackedTaskStatus,
+      },
+    } as unknown as WorkbenchServices
+
+    const resolved = projectTaskTrackingApi(services, {
+      deviceId: 'local-device',
+      taskId: 'runtime-1',
+      runtimeHandle: {
+        origin: {
+          projectStore: 'backend',
+        },
+      },
+    })
+
+    await resolved?.updateTaskTrackingStatus(
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'running'
+    )
+
+    expect(updateTrackedTaskStatus).toHaveBeenCalledOnce()
+  })
+
+  test('routes local task ownership to the local DeliveryApi', () => {
     const local = { updateTaskTrackingStatus: vi.fn() }
-    const cloud = { updateTaskTrackingStatus: vi.fn() }
     const services = {
       projectSpaceApis: {
         local,
-        cloud,
         defaultLocation: 'cloud',
       },
     } as unknown as WorkbenchServices
@@ -23,21 +48,38 @@ describe('projectTaskTrackingApi', () => {
       taskId: 'runtime-1',
       runtimeHandle: {
         origin: {
-          projectStore,
+          projectStore: 'local',
         },
       },
     })
 
-    expect(resolved).toBe(expectedLocation === 'cloud' ? cloud : local)
+    expect(resolved).toBe(local)
+  })
+
+  test('does not fall back to the cloud legacy DeliveryApi', () => {
+    const cloud = { updateTaskTrackingStatus: vi.fn() }
+    const services = {
+      projectSpaceApis: {
+        cloud,
+        defaultLocation: 'cloud',
+      },
+      deliveryApi: cloud,
+    } as unknown as WorkbenchServices
+
+    expect(
+      projectTaskTrackingApi(services, {
+        deviceId: 'local-device',
+        taskId: 'runtime-cloud',
+        runtimeHandle: { projectStore: 'backend' },
+      })
+    ).toBeNull()
   })
 
   test('routes a task through the store recorded by its completed binding', () => {
     const local = { updateTaskTrackingStatus: vi.fn() }
-    const cloud = { updateTaskTrackingStatus: vi.fn() }
     const services = {
       projectSpaceApis: {
         local,
-        cloud,
         defaultLocation: 'cloud',
       },
     } as unknown as WorkbenchServices

@@ -2,49 +2,32 @@ import { useMemo } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import zhCnLocale from '@fullcalendar/core/locales/zh-cn'
+import { buildMyWorkCalendarEntries, MY_WORK_GROUP_EVENT_COLORS } from '@wegent/collaboration'
 import type { CloudMyWorkItem } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
-import { myWorkGroupOf, type MyWorkGroupKey } from './cloudMyWorkModel'
+import { isExecutionActive } from './executionStatus'
 import './cloud-my-work-calendar.css'
 
 interface CloudMyWorkCalendarProps {
-  items: CloudMyWorkItem[]
+  items: readonly CloudMyWorkItem[]
   onSelectItem: (item: CloudMyWorkItem) => void
-}
-
-// Status colors mirror the group dot classes used across the my-work views.
-const GROUP_EVENT_COLORS: Record<MyWorkGroupKey, string> = {
-  approval: '#f59e0b',
-  action: '#6366f1',
-  running: '#f59e0b',
-  review: '#8b5cf6',
-  done: '#10b981',
 }
 
 export function CloudMyWorkCalendar({ items, onSelectItem }: CloudMyWorkCalendarProps) {
   const { t, i18n } = useTranslation('common')
 
-  const datedItems = useMemo(
-    () =>
-      items.filter(item => {
-        if (!item.due_at) return false
-        return !Number.isNaN(new Date(item.due_at).getTime())
-      }),
-    [items]
-  )
-
   const events = useMemo(
     () =>
-      datedItems.map(item => ({
-        id: item.id,
-        title: item.title,
-        start: item.due_at as string,
+      buildMyWorkCalendarEntries(items, isExecutionActive).map(entry => ({
+        id: entry.id,
+        title: entry.title,
+        start: entry.start,
         allDay: true,
-        backgroundColor: GROUP_EVENT_COLORS[myWorkGroupOf(item)],
+        backgroundColor: MY_WORK_GROUP_EVENT_COLORS[entry.group],
         borderColor: 'transparent',
-        extendedProps: { item },
+        extendedProps: { item: entry.item },
       })),
-    [datedItems]
+    [items]
   )
 
   return (

@@ -354,7 +354,7 @@ async function verifyDefaultWorkspaceStartupTab(control) {
     'The Wework WebView did not reconnect after selecting Work items as the startup tab'
   )
   await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    text: '工作空间',
+    text: '协作',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {

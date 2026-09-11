@@ -96,15 +96,26 @@ async fn agent_process_engine_does_not_inject_project_space_mcp_into_claude_runs
     let args_dir = unique_dir("claude-no-space-mcp");
     fs::create_dir_all(&args_dir).unwrap();
     let args_file = args_dir.join("args.txt");
+    let mcp_capture_file = args_dir.join("mcp.json");
     let fake_claude = write_fake_executable(
         "fake-claude-no-space-mcp",
         &format!(
             r#"#!/bin/sh
-printf '%s\n' "$@" > "{}"
+ARGS_FILE='{}'
+MCP_CAPTURE_FILE='{}'
+previous=''
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$ARGS_FILE"
+  if [ "$previous" = "--mcp-config" ]; then
+    cp "$arg" "$MCP_CAPTURE_FILE"
+  fi
+  previous="$arg"
+done
 cat >/dev/null
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"done"}}]}}}}'
 "#,
-            args_file.display()
+            args_file.display(),
+            mcp_capture_file.display()
         ),
     );
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
@@ -134,8 +145,9 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
         .find_map(|pair| (pair[0] == "--mcp-config").then_some(pair[1]))
         .map(PathBuf::from);
     if let Some(path) = mcp_config_path {
-        let config = fs::read_to_string(path).unwrap();
+        let config = fs::read_to_string(&mcp_capture_file).unwrap();
         assert!(!config.contains("wework_space"));
+        assert!(!path.exists());
     }
 }
 

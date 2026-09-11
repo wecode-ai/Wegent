@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import tempfile
 import uuid
@@ -15,7 +16,8 @@ from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
 from app.models.cloud_project import (
@@ -26,6 +28,7 @@ from app.models.delivery import (
     LoopItem,
     LoopItemAttachment,
     LoopItemCollaborator,
+    LoopItemComment,
     ProjectAutomationRule,
     ProjectChatAgent,
     adapt_loop_node_values_for_dialect,
@@ -56,7 +59,10 @@ from app.services.cloud_projects.access import (
     CloudProjectAccess,
     require_cloud_project_role,
 )
-from app.services.delivery.storage import delivery_storage
+from app.services.delivery.storage import (
+    DeliveryStorageUnavailableError,
+    delivery_storage,
+)
 from app.services.loop_item_executions.service import (
     execution_ai_state,
     execution_display_state,
@@ -295,13 +301,6 @@ class LoopItemService:
             state["status"] = "unknown"
             state["sync_state"] = "stale"
         return state
-
-    @staticmethod
-    def _loop_unset_datetime(db: Session) -> object:
-        values = adapt_loop_node_values_for_dialect(
-            {"completed_at": None}, db.get_bind().dialect.name
-        )
-        return values["completed_at"]
 
     @staticmethod
     def _parse_ai_state_datetime(value: str) -> datetime | None:
@@ -760,6 +759,70 @@ class LoopItemService:
         self._require_item_access(db, item, user_id)
         return item
 
+    def list_comments(
+        self, db: Session, item_id: str, user_id: int
+    ) -> list[dict[str, object]]:
+        self.get(db, item_id, user_id)
+        comments = (
+            db.query(LoopItemComment)
+            .filter(
+                LoopItemComment.loop_item_id == item_id,
+                loop_datetime_is_unset(LoopItemComment.deleted_at),
+            )
+            .order_by(LoopItemComment.created_at.asc())
+            .all()
+        )
+        author_ids = {
+            comment.created_by_user_id
+            for comment in comments
+            if comment.created_by_user_id
+        }
+        authors = (
+            {
+                user.id: user.user_name
+                for user in db.query(User).filter(User.id.in_(author_ids)).all()
+            }
+            if author_ids
+            else {}
+        )
+        return [
+            {
+                "id": comment.id,
+                "body": comment.description,
+                "author": authors.get(comment.created_by_user_id, ""),
+                "web_url": None,
+                "created_at": comment.created_at,
+                "updated_at": comment.updated_at,
+            }
+            for comment in comments
+        ]
+
+    def add_comment(
+        self, db: Session, item_id: str, user_id: int, body: str
+    ) -> dict[str, object]:
+        item = self.get(db, item_id, user_id)
+        self._require_item_access(db, item, user_id, edit=True)
+        comment = LoopItemComment(
+            cloud_project_id=item.cloud_project_id,
+            loop_item_id=item.id,
+            description=body,
+            created_by_user_id=user_id,
+            updated_by_user_id=user_id,
+            status="active",
+        )
+        db.add(comment)
+        db.commit()
+        db.refresh(comment)
+        author = db.get(User, user_id)
+        return {
+            "id": comment.id,
+            "body": comment.description,
+            "author": author.user_name if author else "",
+            "web_url": None,
+            "created_at": comment.created_at,
+            "updated_at": comment.updated_at,
+        }
+
     def list_attachments(
         self, db: Session, item_id: str, user_id: int
     ) -> list[LoopItemAttachment]:
@@ -768,6 +831,23 @@ class LoopItemService:
             db.query(LoopItemAttachment)
             .filter(LoopItemAttachment.loop_item_id == item_id)
             .order_by(LoopItemAttachment.created_at.desc())
+            .all()
+        )
+
+    def list_project_attachments(
+        self, db: Session, cloud_project_id: int, user_id: int
+    ) -> list[tuple[LoopItemAttachment, LoopItem]]:
+        require_cloud_project_role(db, cloud_project_id, user_id)
+        attachment = aliased(LoopItemAttachment)
+        item = aliased(LoopItem)
+        return (
+            db.query(attachment, item)
+            .join(item, item.id == attachment.loop_item_id)
+            .filter(
+                item.cloud_project_id == str(cloud_project_id),
+                loop_datetime_is_unset(item.deleted_at),
+            )
+            .order_by(attachment.created_at.desc(), item.sequence_number)
             .all()
         )
 
@@ -796,6 +876,167 @@ class LoopItemService:
             source,
             settings.DELIVERY_MAX_ASSET_SIZE_MB,
         )
+
+    def import_context_attachments(
+        self,
+        db: Session,
+        item_id: str,
+        user_id: int,
+        context_ids: list[int],
+    ) -> list[LoopItemAttachment]:
+        """Copy uploaded conversation attachments into the task attachment store."""
+
+        from app.services.context import context_service
+        from app.services.context.context_service import NotFoundException
+
+        item = self.get(db, item_id, user_id)
+        self._require_item_access(db, item, user_id, edit=True)
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
+
+        max_size_bytes = settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024
+        context_payloads: dict[int, tuple[str, str, bytes]] = {}
+        for context_id in context_ids:
+            if context_id in context_payloads:
+                continue
+            try:
+                context = context_service.get_context(db, context_id, user_id)
+            except NotFoundException as exc:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Attachment context not found"
+                ) from exc
+            if context.context_type != "attachment" or context.status != "ready":
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Attachment context is not ready",
+                )
+            binary_data = context_service.get_attachment_binary_data(db, context)
+            if binary_data is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Attachment content is unavailable",
+                )
+            if len(binary_data) > max_size_bytes:
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    "TODO attachment is too large",
+                )
+            context_payloads[context_id] = (
+                context.original_filename[:255],
+                context.mime_type or "application/octet-stream",
+                binary_data,
+            )
+
+        requested_context_ids = set(context_payloads)
+        for attempt in range(2):
+            db.query(LoopItem).filter(LoopItem.id == item.id).with_for_update().one()
+            existing_context_ids = self._attachment_source_context_ids(
+                db, item.id, requested_context_ids
+            )
+            pending_context_ids = requested_context_ids - existing_context_ids
+            if not pending_context_ids:
+                return []
+
+            prepared: list[tuple[LoopItemAttachment, bytes]] = []
+            for context_id in context_payloads:
+                if context_id not in pending_context_ids:
+                    continue
+                display_name, content_type, binary_data = context_payloads[context_id]
+                attachment_id = str(uuid.uuid4())
+                prepared.append(
+                    (
+                        LoopItemAttachment(
+                            id=attachment_id,
+                            loop_item_id=item.id,
+                            display_name=display_name,
+                            object_key=(
+                                f"projects/{project.public_id}/loop-items/{item.id}/"
+                                f"attachments/{attachment_id}"
+                            ),
+                            content_type=content_type,
+                            size_bytes=len(binary_data),
+                            sha256=hashlib.sha256(binary_data).hexdigest(),
+                            created_by_user_id=user_id,
+                            source_context_id=context_id,
+                            metadata_json={"source_context_id": context_id},
+                        ),
+                        binary_data,
+                    )
+                )
+
+            written: list[str] = []
+            try:
+                for attachment, binary_data in prepared:
+                    delivery_storage.put_stream(
+                        attachment.object_key,
+                        io.BytesIO(binary_data),
+                        attachment.size_bytes,
+                        attachment.content_type,
+                    )
+                    written.append(attachment.object_key)
+                imported = [attachment for attachment, _ in prepared]
+                db.add_all(imported)
+                db.commit()
+            except DeliveryStorageUnavailableError as exc:
+                db.rollback()
+                self._cleanup_attachment_objects(written)
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Delivery object storage is unavailable",
+                ) from exc
+            except IntegrityError:
+                db.rollback()
+                self._cleanup_attachment_objects(written)
+                if attempt == 0:
+                    continue
+                raise
+            except Exception:
+                db.rollback()
+                self._cleanup_attachment_objects(written)
+                raise
+
+            for attachment in imported:
+                db.refresh(attachment)
+            return imported
+
+        raise RuntimeError("Attachment import retry loop exhausted")
+
+    @staticmethod
+    def _attachment_source_context_ids(
+        db: Session,
+        item_id: str,
+        context_ids: set[int],
+    ) -> set[int]:
+        if not context_ids:
+            return set()
+        rows = (
+            db.query(
+                LoopItemAttachment.source_context_id,
+                LoopItemAttachment.metadata_json,
+            )
+            .filter(LoopItemAttachment.loop_item_id == item_id)
+            .all()
+        )
+        existing: set[int] = set()
+        for source_context_id, metadata in rows:
+            value = source_context_id
+            if value is None and isinstance(metadata, dict):
+                value = metadata.get("source_context_id")
+            if value is not None and int(value) in context_ids:
+                existing.add(int(value))
+        return existing
+
+    @staticmethod
+    def _cleanup_attachment_objects(object_keys: list[str]) -> None:
+        for object_key in object_keys:
+            try:
+                delivery_storage.remove_objects([object_key])
+            except Exception:
+                logger.exception(
+                    "Failed to clean up imported attachment object %s",
+                    object_key,
+                )
 
     def has_attachment(self, db: Session, item_id: str, display_name: str) -> bool:
         return (
@@ -846,6 +1087,7 @@ class LoopItemService:
         content_type: str,
         source: BinaryIO,
         max_size_mb: int,
+        metadata: dict[str, Any] | None = None,
     ) -> LoopItemAttachment:
 
         attachment_id = str(uuid.uuid4())
@@ -866,7 +1108,14 @@ class LoopItemService:
                         "TODO attachment is too large",
                     )
             staged.seek(0)
-            delivery_storage.put_stream(object_key, staged, length, content_type)
+            try:
+                delivery_storage.put_stream(object_key, staged, length, content_type)
+            except DeliveryStorageUnavailableError as exc:
+                db.rollback()
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Delivery object storage is unavailable",
+                ) from exc
 
         attachment = LoopItemAttachment(
             id=attachment_id,
@@ -877,6 +1126,7 @@ class LoopItemService:
             size_bytes=length,
             sha256=digest.hexdigest(),
             created_by_user_id=user_id,
+            metadata_json=metadata,
         )
         try:
             db.add(attachment)
@@ -2443,8 +2693,11 @@ class LoopItemService:
         **updates: object,
     ) -> LoopItem:
         updates = {**updates, "metadata_json": metadata}
+        connection = db.connection()
         updates = adapt_loop_node_values_for_dialect(
-            updates, db.get_bind().dialect.name
+            updates,
+            connection.dialect.name,
+            loop_node_non_nullable_attributes(connection),
         )
         updated = (
             db.query(LoopItem)
