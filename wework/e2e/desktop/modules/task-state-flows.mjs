@@ -37,7 +37,12 @@ import {
   withTimeout,
 } from './shared.mjs'
 
-import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  openProjectWorkspaceTab,
+  waitForWorkbenchDebugState,
+  workspaceTabIds,
+} from './workspace-flows.mjs'
 
 const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
 
@@ -624,18 +629,30 @@ async function verifyBackgroundCompletionRestore({
   )
 
   await control.command('navigate', 'body', { value: '/todo' })
-  await control.command('waitFor', '[data-testid="cloud-my-work"]', {
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="cloud-my-work"]')
-  await control.command('waitFor', `[data-testid="my-work-group-done-${taskId}"]`, {
-    text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const myWorkSnapshot = JSON.parse(
-    await control.command('snapshot', '[data-testid="cloud-my-work-view"]')
+  const existingBoardTabIds = workspaceTabIds(
+    JSON.parse(await control.command('snapshot', 'body')),
+    'board'
   )
+  const { boardContentSelector } = await openProjectWorkspaceTab(control, existingBoardTabIds)
+  const myWorkButton = `${boardContentSelector} [data-testid="cloud-my-work"]`
+  const myWorkView = `${boardContentSelector} [data-testid="cloud-my-work-view"]`
+  await control.command('waitFor', myWorkButton, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', myWorkButton)
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="my-work-group-done-${taskId}"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const myWorkSnapshot = JSON.parse(await control.command('snapshot', myWorkView))
   assert.equal(
     myWorkSnapshot.testIds.includes(`my-work-group-running-${taskId}`),
     false,

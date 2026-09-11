@@ -217,85 +217,59 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped(`[data-testid="collaboration-project-card-${project.id}"]`)
         )
-        await control.command('waitFor', scoped('[data-testid="collaboration-root"]'), {
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', scoped('[data-testid="collaboration-board"]'), {
+        await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`), {
+          text: ISSUE_TITLE,
           timeoutMs: uiTimeoutMs,
         })
-        await control.command(
-          'waitFor',
-          scoped(`[data-testid="collaboration-issue-${issue.id}"]`),
-          {
-            text: ISSUE_TITLE,
-            timeoutMs: uiTimeoutMs,
-          }
-        )
         await capture(control, 'collaboration-shared-core-03-project-board.png')
 
-        await control.command(
-          'click',
-          scoped(`[data-testid="collaboration-issue-${issue.id}"] button`)
-        )
-        await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+        await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', scoped('[data-testid="collaboration-issue-activity"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
+        const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
+        const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
+        const activityComposerSelector = scoped('[data-testid="cloud-task-activity-composer"]')
+        await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         assert.equal(
           await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
           ISSUE_TITLE,
-          'The shared Issue detail did not load the selected real backend Issue'
+          'The mature Wework Issue detail did not load the selected real backend Issue'
         )
 
-        await control.command('fill', scoped('[data-testid="collaboration-issue-comment"]'), {
+        await control.command('fill', activityComposerSelector, {
           value: COMMENT_BODY,
         })
-        await control.command('click', scoped('[data-testid="collaboration-issue-comment-submit"]'))
-        await control.command('waitFor', scoped('[data-testid="collaboration-comments"]'), {
+        await control.command('press', activityComposerSelector, { key: 'Enter' })
+        await control.command('waitFor', activityListSelector, {
           text: COMMENT_BODY,
           timeoutMs: uiTimeoutMs,
         })
         const comments = await request(`/api/v1/loop-items/${issue.id}/comments`)
         assert.ok(comments.some(comment => comment.body === COMMENT_BODY))
 
-        await control.command('select', scoped('[data-testid="collaboration-assignment-target"]'), {
-          value: `human:${owner.id}`,
+        await request(`/api/v1/loop-items/${issue.id}/assignments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            target_type: 'human',
+            target_id: String(owner.id),
+            workflow_step: HUMAN_WORKFLOW_STEP,
+            comment_body: HUMAN_ASSIGNMENT_COMMENT,
+            notify_target: false,
+          }),
         })
-        await control.command(
-          'fill',
-          scoped('[data-testid="collaboration-assignment-workflow-step"]'),
-          {
-            value: HUMAN_WORKFLOW_STEP,
-          }
-        )
-        await control.command('fill', scoped('[data-testid="collaboration-issue-comment"]'), {
-          value: HUMAN_ASSIGNMENT_COMMENT,
-        })
-        await control.command('click', scoped('[data-testid="collaboration-issue-comment-submit"]'))
-        await control.command('waitFor', scoped('[data-testid="collaboration-comments"]'), {
-          text: HUMAN_WORKFLOW_STEP,
-          timeoutMs: uiTimeoutMs,
-        })
-
-        await control.command('select', scoped('[data-testid="collaboration-assignment-target"]'), {
-          value: `agent:${agent.id}`,
-        })
-        await control.command(
-          'fill',
-          scoped('[data-testid="collaboration-assignment-workflow-step"]'),
-          {
-            value: AGENT_WORKFLOW_STEP,
-          }
-        )
-        await control.command('fill', scoped('[data-testid="collaboration-issue-comment"]'), {
-          value: AGENT_ASSIGNMENT_COMMENT,
-        })
-        await control.command('click', scoped('[data-testid="collaboration-issue-comment-submit"]'))
-        await control.command('waitFor', scoped('[data-testid="collaboration-comments"]'), {
-          text: AGENT_WORKFLOW_STEP,
-          timeoutMs: uiTimeoutMs,
+        await request(`/api/v1/loop-items/${issue.id}/assignments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            target_type: 'agent',
+            target_id: agent.id,
+            workflow_step: AGENT_WORKFLOW_STEP,
+            comment_body: AGENT_ASSIGNMENT_COMMENT,
+            notify_target: false,
+          }),
         })
         const assignments = await request(`/api/v1/loop-items/${issue.id}/assignments`)
         assert.ok(

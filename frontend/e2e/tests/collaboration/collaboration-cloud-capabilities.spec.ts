@@ -22,6 +22,12 @@ interface CloudProject {
   version: number
 }
 
+interface CloudWorkspace {
+  id: string
+  name: string
+  version: number
+}
+
 interface CloudIssue {
   id: string
   assignee_user_id: number | null
@@ -99,17 +105,49 @@ async function createProjectByApi(page: Page, name: string): Promise<CloudProjec
   })
 }
 
-async function createProjectByUi(page: Page, name: string): Promise<CloudProject> {
+async function createProjectByUi(
+  page: Page,
+  workspaceName: string,
+  projectName: string
+): Promise<{ project: CloudProject; workspace: CloudWorkspace }> {
   await page.goto('/collaboration')
-  await page.getByTestId('collaboration-project-create').click()
-  await page.getByTestId('collaboration-project-name-input').fill(name)
+  await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
+  await page.getByTestId('collaboration-workspace-create').click()
+  await page.getByTestId('collaboration-workspace-name-input').fill(workspaceName)
+  await page
+    .getByTestId('collaboration-workspace-description-input')
+    .fill('Created through the shared Collaboration UI.')
+  await page.getByTestId('collaboration-workspace-create-confirm').click()
+  await expect(page).toHaveURL(/\/collaboration\/workspaces\/[^/?]+$/)
+  const workspaceId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
+  const workspace = await webApi<CloudWorkspace>(
+    page,
+    `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`
+  )
+
+  await page.getByTestId('collaboration-workspace-project-create').click()
+  await page.getByTestId('collaboration-project-name-input').fill(projectName)
   await page
     .getByTestId('collaboration-project-description-input')
     .fill('Created through the shared Collaboration UI.')
   await page.getByTestId('collaboration-project-create-confirm').click()
-  await expect(page).toHaveURL(/\/collaboration\/[^/?]+$/)
+  await expect(page).toHaveURL(
+    new RegExp(`/collaboration/workspaces/${encodeURIComponent(workspaceId)}/projects/[^/?]+$`)
+  )
   const projectId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
-  return webApi(page, `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`)
+  const project = await webApi<CloudProject>(
+    page,
+    `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`
+  )
+
+  await page.getByTestId('collaboration-project-back').click()
+  await expect(page.getByTestId(`collaboration-project-card-${project.id}`)).toContainText(
+    project.name
+  )
+  await page.getByTestId(`collaboration-project-card-${project.id}`).click()
+  await expect(page.getByTestId('collaboration-board')).toBeVisible()
+
+  return { project, workspace }
 }
 
 async function createIssueByApi(
@@ -170,6 +208,18 @@ async function archiveProject(page: Page, projectId: string): Promise<void> {
   await webApi(
     page,
     `/api/v1/cloud-projects/${encodeURIComponent(projectId)}?version=${project.version}`,
+    { method: 'DELETE' }
+  )
+}
+
+async function archiveWorkspace(page: Page, workspaceId: string): Promise<void> {
+  const workspace = await webApi<CloudWorkspace>(
+    page,
+    `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`
+  )
+  await webApi(
+    page,
+    `/api/v1/workspaces/${encodeURIComponent(workspaceId)}?version=${workspace.version}`,
     { method: 'DELETE' }
   )
 }
@@ -286,6 +336,7 @@ test.describe('Collaboration cloud capabilities', () => {
     test.setTimeout(120_000)
     const suffix = Date.now()
     let projectId = ''
+    let workspaceId = ''
     let myWorkRequestCount = 0
     const countMyWorkRequest = (request: { url(): string }) => {
       if (new URL(request.url()).pathname.endsWith('/cloud-work-items/my-work')) {
@@ -296,12 +347,31 @@ test.describe('Collaboration cloud capabilities', () => {
 
     try {
       await page.goto('/collaboration')
-      await expect(page.getByTestId('collaboration-root')).toBeVisible()
-      await expect(page.getByTestId('collaboration-project-create')).toBeVisible()
-      const project = await createProjectByUi(page, `Cloud Core ${suffix}`)
+      await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
+      await expect(page.getByTestId('collaboration-workspace-create')).toBeVisible()
+      const created = await createProjectByUi(
+        page,
+        `Cloud Workspace ${suffix}`,
+        `Cloud Core ${suffix}`
+      )
+      const { project, workspace } = created
       projectId = project.id
+      workspaceId = workspace.id
+
       await page.goto('/collaboration')
-      await expect(page.getByTestId('collaboration-project-create')).toBeVisible()
+      await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
+        workspace.name
+      )
+      await page.getByTestId(`collaboration-workspace-${workspace.id}`).click()
+      await expect(page.getByTestId(`collaboration-project-card-${project.id}`)).toContainText(
+        project.name
+      )
+      await captureEvidence(page, 'web-01-project-home')
+
+      await page.getByTestId(`collaboration-project-card-${project.id}`).click()
+      await expect(page.getByTestId('collaboration-board')).toBeVisible()
+      await page.goto(`/collaboration/${encodeURIComponent(project.id)}`)
+      await expect(page.getByTestId('collaboration-root')).toBeVisible()
       await expect(page.getByTestId(`cloud-sidebar-project-${project.id}`)).toContainText(
         project.name
       )
@@ -311,7 +381,6 @@ test.describe('Collaboration cloud capabilities', () => {
           .locator('.collaboration-project-summary-title')
           .filter({ hasText: project.name })
       ).toBeVisible()
-      await captureEvidence(page, 'web-01-project-home')
       await expect(page.getByTestId('cloud-projects-home-my-work')).toHaveCount(0)
 
       const sidebarProject = page.getByTestId(`cloud-sidebar-project-${project.id}`)
@@ -394,6 +463,7 @@ test.describe('Collaboration cloud capabilities', () => {
       expect(myWorkRequestCount).toBe(0)
     } finally {
       if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
       page.off('request', countMyWorkRequest)
     }
   })
