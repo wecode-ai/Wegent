@@ -262,8 +262,12 @@ function SharedCollaborationWorkspace({
   )
 }
 
-export function CollaborationWorkspace(props: CloudTodoWorkspaceProps) {
+export interface CollaborationWorkspaceProps extends CloudTodoWorkspaceProps {
+  entryMode: 'platform' | 'project'
+}
+
+export function CollaborationWorkspace({ entryMode, ...props }: CollaborationWorkspaceProps) {
   const api = props.services.sharedWorkspaceApi
-  if (!api) return <CloudTodoWorkspace {...props} />
+  if (!api || entryMode === 'project') return <CloudTodoWorkspace {...props} />
   return <SharedCollaborationWorkspace {...props} api={api} />
 }

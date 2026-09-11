@@ -216,6 +216,7 @@ function deferred<T>() {
 }
 
 function createProps(options?: {
+  entryMode?: 'platform' | 'project'
   localProjects?: CloudProject[]
   activeProjectRef?: { projectStore: 'local' | 'backend'; projectId: string } | null
   focusedItemId?: string | null
@@ -265,6 +266,7 @@ function createProps(options?: {
 
   return {
     props: {
+      entryMode: options?.entryMode ?? 'platform',
       user: { id: 1 },
       localProjects: [],
       services,
@@ -277,6 +279,15 @@ function createProps(options?: {
 }
 
 describe('CollaborationWorkspace', () => {
+  it('keeps ordinary project tabs on the existing project workbench', () => {
+    const { props } = createProps({ entryMode: 'project' })
+
+    render(<CollaborationWorkspace {...props} />)
+
+    expect(screen.getByTestId('legacy-collaboration-project')).toBeInTheDocument()
+    expect(screen.queryByTestId('shared-collaboration-platform')).not.toBeInTheDocument()
+  })
+
   it('keeps cloud Issue navigation in the shared platform and wires local Task creation to the host', async () => {
     const user = userEvent.setup()
     const { props, getProject } = createProps()

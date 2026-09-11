@@ -1096,6 +1096,13 @@ export function DesktopWorkbenchLayout({
           {todoOpen &&
             (state.user && services.deliveryApi ? (
               <CollaborationWorkspace
+                entryMode={
+                  workspaceTabs && ownedWorkspaceTab?.kind === 'board'
+                    ? ownedWorkspaceTab.fixed
+                      ? 'platform'
+                      : 'project'
+                    : 'platform'
+                }
                 user={state.user}
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}

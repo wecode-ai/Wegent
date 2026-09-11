@@ -1745,6 +1745,51 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
+  test('keeps a newly added board tab on the existing project workbench', () => {
+    deliveryApiMock.available = true
+    const boardTab = {
+      id: 'board-new',
+      kind: 'board' as const,
+      title: '协作',
+      contentRoute: '/todo',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          workspaceTabId={boardTab.id}
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeInTheDocument()
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+  })
+
   test('keeps a retained board bound to its own workspace tab route', async () => {
     deliveryApiMock.available = true
     const project = {
