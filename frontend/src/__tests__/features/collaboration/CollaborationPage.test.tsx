@@ -5,6 +5,7 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type {
+  CollaborationHostAdapter,
   CollaborationPlatformHostAdapter,
   CollaborationPlatformLocation,
 } from '@wegent/collaboration'
@@ -19,6 +20,7 @@ const mockReplace = jest.fn()
 let mockPathname = '/collaboration'
 let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
+let capturedProjectHost: CollaborationHostAdapter | null = null
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -27,6 +29,23 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('@wegent/collaboration', () => ({
+  CollaborationApp: ({ host }: { host: CollaborationHostAdapter }) => {
+    capturedProjectHost = host
+    return (
+      <button
+        type="button"
+        data-testid="project-back"
+        onClick={() =>
+          host.navigate({
+            projectId: null,
+            issueId: null,
+            view: 'board',
+            rootView: 'home',
+          })
+        }
+      />
+    )
+  },
   CollaborationPlatformApp: ({ host }: { host: CollaborationPlatformHostAdapter }) => {
     capturedHost = host
     return (
@@ -46,6 +65,10 @@ jest.mock('@wegent/collaboration', () => ({
       />
     )
   },
+}))
+
+jest.mock('@/features/collaboration/CollaborationProjectSection', () => ({
+  CollaborationProjectSection: () => null,
 }))
 
 jest.mock('@/features/collaboration/shared-api', () => ({
@@ -77,6 +100,7 @@ describe('CollaborationPage platform routing', () => {
     mockPathname = '/collaboration'
     mockSearchParams = new URLSearchParams()
     capturedHost = null
+    capturedProjectHost = null
     localStorage.clear()
   })
 
@@ -114,6 +138,56 @@ describe('CollaborationPage platform routing', () => {
       projectView: 'table',
       issueId: 'issue%3',
     })
+    expect(capturedProjectHost).toBeNull()
+  })
+
+  it.each(['automation', 'manage', 'files'] as const)(
+    'routes a legacy Project %s URL to the mature project application',
+    view => {
+      mockPathname = '/collaboration/project%201'
+      mockSearchParams = new URLSearchParams(`view=${view}`)
+
+      render(<CollaborationPage />)
+
+      expect(capturedHost).toBeNull()
+      expect(capturedProjectHost?.location).toEqual({
+        projectId: 'project 1',
+        issueId: null,
+        view,
+        rootView: 'home',
+      })
+    }
+  )
+
+  it('falls back unknown legacy Project views to the mature board', () => {
+    mockPathname = '/collaboration/project%201'
+    mockSearchParams = new URLSearchParams('view=unknown')
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost).toBeNull()
+    expect(capturedProjectHost?.location).toEqual({
+      projectId: 'project 1',
+      issueId: null,
+      view: 'board',
+      rootView: 'home',
+    })
+  })
+
+  it('routes a legacy Issue URL to the mature Issue detail and returns to spaces', () => {
+    mockPathname = '/collaboration/project%201/issues/issue%202'
+
+    render(<CollaborationPage />)
+
+    expect(capturedProjectHost?.location).toEqual({
+      projectId: 'project 1',
+      issueId: 'issue 2',
+      view: 'board',
+      rootView: 'home',
+    })
+
+    fireEvent.click(screen.getByTestId('project-back'))
+    expect(mockPush).toHaveBeenCalledWith('/collaboration')
   })
 
   it('keeps path construction centralized for every shared hierarchy level', () => {

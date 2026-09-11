@@ -7,10 +7,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
+  CollaborationApp,
   CollaborationPlatformApp,
+  type CollaborationHostAdapter,
   type CollaborationLocale,
   type CollaborationPlatformHostAdapter,
   type CollaborationPlatformLocation,
+  type CollaborationProject,
   type CollaborationView,
   type CollaborationWorkspaceView,
 } from '@wegent/collaboration'
@@ -26,6 +29,7 @@ import {
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
+import { CollaborationProjectSection } from './CollaborationProjectSection'
 
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -78,6 +82,8 @@ export function CollaborationPage() {
   const isMobile = useIsMobile()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [collaborationProjects, setCollaborationProjects] = useState<CollaborationProject[]>([])
+  const [createProjectRequestKey, setCreateProjectRequestKey] = useState(0)
   const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
 
   useEffect(() => {
@@ -95,6 +101,10 @@ export function CollaborationPage() {
     !workspaceRoute && segments[1] && segments[1] !== 'resources'
       ? decodeURIComponent(segments[1])
       : null
+  const legacyIssueId =
+    legacyProjectId && segments[2] === 'issues' && segments[3]
+      ? decodeURIComponent(segments[3])
+      : null
   const rawView = searchParams.get('view')
   const projectView: CollaborationView =
     rawView && PROJECT_VIEWS.has(rawView as CollaborationView)
@@ -110,28 +120,7 @@ export function CollaborationPage() {
     issueId,
   }
 
-  useEffect(() => {
-    if (!legacyProjectId) return
-    let active = true
-    void api.projects.get(legacyProjectId).then(
-      project => {
-        if (!active) return
-        router.replace(
-          project.workspace_id
-            ? `/collaboration/workspaces/${encodeURIComponent(project.workspace_id)}/projects/${encodeURIComponent(project.id)}`
-            : '/collaboration'
-        )
-      },
-      () => {
-        if (active) router.replace('/collaboration')
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, legacyProjectId, router])
-
-  const host = useMemo<CollaborationPlatformHostAdapter>(
+  const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
       capabilities: {
         automation: true,
@@ -150,6 +139,42 @@ export function CollaborationPage() {
       },
     }),
     [location, router]
+  )
+  const projectHost = useMemo<CollaborationHostAdapter>(
+    () => ({
+      capabilities: {
+        myWork: false,
+        automation: true,
+        dingtalkAitable: false,
+      },
+      location: {
+        projectId: legacyProjectId,
+        issueId: legacyIssueId,
+        view: projectView,
+        rootView: 'home',
+      },
+      onProjectsChange: setCollaborationProjects,
+      navigate(nextLocation) {
+        const query = nextLocation.view === 'board' ? '' : `?view=${nextLocation.view}`
+        if (!nextLocation.projectId) {
+          router.push('/collaboration')
+        } else if (nextLocation.issueId) {
+          router.push(
+            `/collaboration/${encodeURIComponent(nextLocation.projectId)}/issues/${encodeURIComponent(nextLocation.issueId)}${query}`
+          )
+        } else {
+          router.push(`/collaboration/${encodeURIComponent(nextLocation.projectId)}${query}`)
+        }
+      },
+      openExternal(url) {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      },
+      notify(message, kind) {
+        if (kind === 'success') toast.success(message)
+        else toast.error(message)
+      },
+    }),
+    [legacyIssueId, legacyProjectId, projectView, router]
   )
 
   const toggleCollapsed = () => {
@@ -175,17 +200,34 @@ export function CollaborationPage() {
           pageType="collaboration"
           isCollapsed={isCollapsed}
           onToggleCollapsed={toggleCollapsed}
+          projectSection={
+            legacyProjectId ? (
+              <CollaborationProjectSection
+                locale={locale}
+                onAdd={() => setCreateProjectRequestKey(current => current + 1)}
+                onSelect={nextProjectId =>
+                  router.push(`/collaboration/${encodeURIComponent(nextProjectId)}`)
+                }
+                projects={collaborationProjects}
+                selectedProjectId={legacyProjectId}
+              />
+            ) : undefined
+          }
         />
       </ResizableSidebar>
-      <main className="min-w-0 flex-1 overflow-hidden">
+      <main className={`min-w-0 flex-1 ${legacyProjectId ? 'overflow-auto' : 'overflow-hidden'}`}>
         {legacyProjectId ? (
-          <div className="flex h-full items-center justify-center text-sm text-text-muted">
-            Loading…
-          </div>
+          <CollaborationApp
+            api={api}
+            host={projectHost}
+            locale={locale}
+            automationUiHost={webAutomationUiHost}
+            createProjectRequestKey={createProjectRequestKey}
+          />
         ) : (
           <CollaborationPlatformApp
             api={api}
-            host={host}
+            host={platformHost}
             locale={locale}
             automationUiHost={webAutomationUiHost}
           />
