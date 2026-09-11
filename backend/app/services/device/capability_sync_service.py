@@ -722,6 +722,9 @@ class DeviceCapabilitySyncService:
         component_states = spec.get("componentStates") or {}
         if component_states:
             payload["component_states"] = component_states
+        component_config = spec.get("componentConfig") or {}
+        if component_config:
+            payload["component_config"] = component_config
         components = spec.get("components") or {}
         if components:
             payload["components"] = components

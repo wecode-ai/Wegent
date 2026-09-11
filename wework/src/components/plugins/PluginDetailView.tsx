@@ -30,6 +30,10 @@ interface PluginDetailViewProps {
   backLabel?: string
   onToggle: () => void
   onComponentToggle: (componentKey: string, enabled: boolean) => void
+  onMcpHeadersSave?: (
+    componentKey: string,
+    headers: Record<string, string> | null
+  ) => Promise<void> | void
   autoUpdateEnabled?: boolean
   autoUpdateSaving?: boolean
   autoUpdatePaused?: boolean
@@ -92,6 +96,10 @@ interface DetailComponentItem {
   name: string
   description: string
   toggleable: boolean
+}
+
+function isRemoteMcpServer(server: Record<string, unknown>): boolean {
+  return typeof server.url === 'string' && server.command === undefined
 }
 
 function formatManifestValue(value: unknown): string {
@@ -441,6 +449,7 @@ export function PluginDetailView({
   backLabel,
   onToggle,
   onComponentToggle,
+  onMcpHeadersSave,
   autoUpdateEnabled = false,
   autoUpdateSaving = false,
   autoUpdatePaused = false,
@@ -491,6 +500,10 @@ export function PluginDetailView({
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
+  const [editingMcp, setEditingMcp] = useState<string | null>(null)
+  const [editingHeaders, setEditingHeaders] = useState('')
+  const [mcpHeadersError, setMcpHeadersError] = useState<string | null>(null)
+  const [mcpHeadersSaving, setMcpHeadersSaving] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<DetailComponentItem | null>(null)
   const actionMenuRef = useRef<HTMLDivElement>(null)
 
@@ -526,6 +539,14 @@ export function PluginDetailView({
       : plugin.sourceLabel
   const componentItems = buildComponentItems(raw)
   const componentStates = raw.spec.componentStates || {}
+  const componentConfig = raw.spec.componentConfig || {}
+  const remoteMcpItems = componentItems.filter(
+    item =>
+      item.type === 'mcp' &&
+      isRemoteMcpServer(
+        raw.spec.components.mcps.find(mcp => `mcp:${mcp.name}` === item.componentKey)?.server ?? {}
+      )
+  )
   const headerMetadata = [
     formatManifestValue(raw.spec.interface?.category) || plugin.sourceLabel,
     formatManifestValue(raw.spec.interface?.developerName) ||
@@ -765,6 +786,52 @@ export function PluginDetailView({
     ) : null
 
   const capabilityItems = componentItems.filter(item => item.type !== 'connector')
+  const saveMcpHeaders = async (componentKey: string) => {
+    if (!onMcpHeadersSave) return
+    let parsed: Record<string, string> | null = null
+    const text = editingHeaders.trim()
+    if (text) {
+      try {
+        const value = JSON.parse(text)
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          throw new Error('invalid object')
+        }
+        parsed = {}
+        for (const [name, headerValue] of Object.entries(value)) {
+          if (
+            !name ||
+            !/^[A-Za-z0-9_-]+$/.test(name) ||
+            typeof headerValue !== 'string' ||
+            !headerValue ||
+            headerValue.includes('\n') ||
+            headerValue.includes('\r')
+          ) {
+            throw new Error('invalid header')
+          }
+          parsed[name] = headerValue
+        }
+      } catch {
+        setMcpHeadersError(
+          t(
+            'workbench.plugin_mcp_headers_invalid_json',
+            '请输入 JSON 对象，例如 {"Authorization":"Bearer ${{task_token}}"}'
+          )
+        )
+        return
+      }
+    }
+    setMcpHeadersSaving(true)
+    try {
+      await onMcpHeadersSave(componentKey, parsed)
+      setEditingMcp(null)
+      setEditingHeaders('')
+      setMcpHeadersError(null)
+    } catch {
+      setMcpHeadersError(t('workbench.plugin_mcp_headers_save_failed', '保存 Headers 失败'))
+    } finally {
+      setMcpHeadersSaving(false)
+    }
+  }
   const guideTemplateSection = guideExamples.length > 0 && (
     <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
       <div>
@@ -940,6 +1007,113 @@ export function PluginDetailView({
         ) : null}
 
         {autoUpdateSection}
+
+        {isInstalled && remoteMcpItems.length > 0 && (
+          <section className="mt-7 space-y-3" data-testid="plugin-mcp-header-settings">
+            <div>
+              <h2 className="text-base font-medium leading-5 text-text-primary">
+                {t('workbench.plugin_mcp_header_settings_title', 'MCP 请求 Headers')}
+              </h2>
+              <p className="mt-1 text-xs leading-4 text-text-muted">
+                {t(
+                  'workbench.plugin_mcp_header_settings_hint',
+                  '覆盖插件的远程 MCP 请求头。可使用 ${{task_token}}，Wework 会在执行时注入任务 Token。'
+                )}
+              </p>
+            </div>
+            <div className="overflow-hidden rounded-xl border border-border/30">
+              {remoteMcpItems.map(item => {
+                const mcp = raw.spec.components.mcps.find(
+                  component => component.componentKey === item.componentKey
+                )
+                const server = mcp?.server ?? {}
+                const isEditing = editingMcp === item.componentKey
+                const overridden = Boolean(componentConfig[item.componentKey])
+                return (
+                  <div
+                    key={item.key}
+                    className="space-y-2 border-b border-border/25 px-4 py-4 last:border-b-0"
+                  >
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium leading-5">{item.name}</p>
+                        <p className="truncate text-xs leading-4 text-text-muted">{server.url}</p>
+                      </div>
+                      {overridden && (
+                        <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                          {t('workbench.plugin_mcp_headers_overridden', '已覆盖默认值')}
+                        </span>
+                      )}
+                      {isEditing ? null : (
+                        <button
+                          type="button"
+                          data-testid={`plugin-mcp-headers-edit-${item.componentKey}`}
+                          className="plugin-detail-action-secondary"
+                          onClick={() => {
+                            setEditingMcp(item.componentKey)
+                            const custom = componentConfig[item.componentKey]
+                            const headers =
+                              custom && typeof custom === 'object'
+                                ? (custom as { headers?: Record<string, string> }).headers
+                                : undefined
+                            setEditingHeaders(
+                              JSON.stringify(
+                                headers ?? { Authorization: 'Bearer ${{task_token}}' },
+                                null,
+                                2
+                              )
+                            )
+                            setMcpHeadersError(null)
+                          }}
+                        >
+                          {t('workbench.plugin_mcp_headers_edit', '配置 Headers')}
+                        </button>
+                      )}
+                    </div>
+                    {isEditing && (
+                      <div className="space-y-2">
+                        <textarea
+                          data-testid={`plugin-mcp-headers-input-${item.componentKey}`}
+                          value={editingHeaders}
+                          rows={5}
+                          spellCheck={false}
+                          className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs leading-5 text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                          onChange={event => setEditingHeaders(event.target.value)}
+                        />
+                        {mcpHeadersError && (
+                          <p className="text-xs leading-4 text-red-600">{mcpHeadersError}</p>
+                        )}
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            className="plugin-detail-action-secondary"
+                            onClick={() => {
+                              setEditingMcp(null)
+                              setMcpHeadersError(null)
+                            }}
+                          >
+                            {t('workbench.plugin_mcp_headers_cancel', '取消')}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`plugin-mcp-headers-save-${item.componentKey}`}
+                            disabled={mcpHeadersSaving}
+                            className="plugin-detail-action-primary"
+                            onClick={() => void saveMcpHeaders(item.componentKey)}
+                          >
+                            {mcpHeadersSaving
+                              ? t('workbench.plugin_mcp_headers_saving', '保存中…')
+                              : t('workbench.plugin_mcp_headers_save', '保存')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         <PluginConnectorSection
           key={plugin.id}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { InstalledPlugin } from '@/types/api'
@@ -128,6 +128,41 @@ describe('PluginDetailView owner actions', () => {
     )
 
     expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
+  })
+
+  test('saves custom headers for a remote plugin MCP', async () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.components.mcps = [
+      {
+        name: 'business',
+        server: { url: 'https://business.example/mcp', headers: { 'X-Default': 'author' } },
+      },
+    ]
+    const onMcpHeadersSave = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onMcpHeadersSave={onMcpHeadersSave}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-edit-mcp:business'))
+    const input = screen.getByTestId('plugin-mcp-headers-input-mcp:business') as HTMLTextAreaElement
+    expect(input.value).toContain('"Authorization": "Bearer ${{task_token}}"')
+    fireEvent.change(input, {
+      target: { value: '{"Authorization":"Bearer ${{task_token}}"}' },
+    })
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-save-mcp:business'))
+
+    await waitFor(() => expect(onMcpHeadersSave).toHaveBeenCalled())
+    expect(onMcpHeadersSave).toHaveBeenCalledWith('mcp:business', {
+      Authorization: 'Bearer ${{task_token}}',
+    })
   })
 
   test('keeps automatic update controls visible for a materialized outdated release', () => {

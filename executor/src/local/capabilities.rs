@@ -318,6 +318,7 @@ pub struct PluginSyncSpec {
     checksum: Option<String>,
     download_path: Option<String>,
     component_states: Value,
+    component_config: Value,
 }
 
 impl PluginSyncSpec {
@@ -356,6 +357,11 @@ impl PluginSyncSpec {
                 .or_else(|| value.get("componentStates"))
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
+            component_config: value
+                .get("component_config")
+                .or_else(|| value.get("componentConfig"))
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new())),
         })
     }
 
@@ -390,6 +396,11 @@ impl PluginSyncSpec {
             download_path: None,
             component_states: plugin
                 .get("component_states")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new())),
+            component_config: plugin
+                .get("component_config")
+                .or_else(|| plugin.get("componentConfig"))
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
         }
@@ -560,6 +571,11 @@ impl GlobalCapabilityStore {
                 download_path: None,
                 component_states: plugin
                     .get("component_states")
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Map::new())),
+                component_config: plugin
+                    .get("component_config")
+                    .or_else(|| plugin.get("componentConfig"))
                     .cloned()
                     .unwrap_or_else(|| Value::Object(Map::new())),
             };

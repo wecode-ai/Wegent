@@ -112,6 +112,12 @@ class InstalledPluginService:
                 current_states = {}
             current_states.update(request.componentStates)
             spec["componentStates"] = current_states
+        if request.componentConfig is not None:
+            current_config = spec.get("componentConfig") or {}
+            if not isinstance(current_config, dict):
+                current_config = {}
+            current_config.update(request.componentConfig)
+            spec["componentConfig"] = current_config
         if request.displayName is not None:
             spec["displayName"] = request.displayName
         if request.description is not None:

@@ -499,6 +499,9 @@ pub(super) fn upsert_installed_plugin(
     if !spec.component_states.as_object().is_some_and(Map::is_empty) {
         entry.insert("componentStates".to_owned(), spec.component_states.clone());
     }
+    if !spec.component_config.as_object().is_some_and(Map::is_empty) {
+        entry.insert("componentConfig".to_owned(), spec.component_config.clone());
+    }
     ensure_object_field(&mut installed, "plugins")
         .insert(spec.key.clone(), Value::Array(vec![Value::Object(entry)]));
     write_json(&path, &installed)
@@ -539,6 +542,9 @@ pub(super) fn plugin_manifest_entry(
     }
     if !spec.component_states.as_object().is_some_and(Map::is_empty) {
         entry.insert("component_states".to_owned(), spec.component_states.clone());
+    }
+    if !spec.component_config.as_object().is_some_and(Map::is_empty) {
+        entry.insert("component_config".to_owned(), spec.component_config.clone());
     }
     entry.insert(
         "store_path".to_owned(),

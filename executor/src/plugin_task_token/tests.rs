@@ -442,6 +442,45 @@ async fn legacy_sse_announces_only_the_authenticated_local_endpoint() {
 }
 
 #[test]
+fn custom_component_headers_merge_and_validate_remote_mcp_servers() {
+    let server = json!({
+        "url": "https://business.invalid/mcp",
+        "headers": {"X-Author-Header": "author"}
+    });
+    let config = serde_json::Map::from_iter([(
+        "mcp:business".into(),
+        json!({"headers": {"Authorization": "Bearer ${{task_token}}"}}),
+    )]);
+
+    let merged =
+        package::apply_component_config_for_tests("business", server.clone(), &config).unwrap();
+    assert_eq!(merged["headers"]["X-Author-Header"], "author");
+    assert_eq!(merged["headers"]["Authorization"], "Bearer ${{task_token}}");
+
+    let invalid = serde_json::Map::from_iter([(
+        "mcp:business".into(),
+        json!({"headers": {"Bad Header": "value"}}),
+    )]);
+    assert!(package::apply_component_config_for_tests("business", server, &invalid).is_err());
+
+    let mut local = json!({"command": "server"});
+    let local_config = serde_json::Map::from_iter([(
+        "mcp:business".into(),
+        json!({"headers": {"Authorization": "Bearer ${{task_token}}"}}),
+    )]);
+    assert!(
+        package::apply_component_config_for_tests("business", local.clone(), &local_config)
+            .is_err()
+    );
+    local
+        .as_object_mut()
+        .unwrap()
+        .insert("url".into(), json!("https://business.invalid/mcp"));
+    let ignored = package::apply_component_config_for_tests("other", local, &local_config).unwrap();
+    assert!(ignored.get("headers").is_none());
+}
+
+#[test]
 fn claude_default_mcp_autoload_is_filtered_without_losing_task_declarations() {
     let root = tempfile::tempdir().unwrap();
     for runtime in ["codex", "claude"] {

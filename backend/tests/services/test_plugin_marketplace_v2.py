@@ -284,6 +284,13 @@ def _device_install(test_db, user_id: int) -> tuple[Kind, PluginRelease]:
         name="device-state",
         json={
             "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "providerKey": "wegent-market",
+                    "pluginKey": "device-state",
+                },
+                "displayName": "Device State",
+                "description": "",
                 "pluginId": plugin.id,
                 "releaseId": release.id,
                 "version": release.version,
@@ -1134,6 +1141,25 @@ def test_non_marketplace_plugin_can_disable_but_not_enable_auto_updates(
             installed_id=installed.id,
             request=InstalledPluginUpdateRequest(updatePolicy="auto"),
         )
+
+
+def test_installed_plugin_update_persists_component_config(test_db, test_user):
+    installed, _ = _device_install(test_db, test_user.id)
+
+    updated = installed_plugin_service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        request=InstalledPluginUpdateRequest(
+            componentConfig={
+                "mcp:business": {"headers": {"Authorization": "Bearer ${{task_token}}"}}
+            }
+        ),
+    )
+
+    assert updated.spec.componentConfig == {
+        "mcp:business": {"headers": {"Authorization": "Bearer ${{task_token}}"}}
+    }
 
 
 @pytest.mark.parametrize(

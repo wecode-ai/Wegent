@@ -2273,6 +2273,7 @@ export interface InstalledPlugin {
     installState: PluginInstallState
     enabled: boolean
     componentStates?: Record<string, boolean>
+    componentConfig?: Record<string, unknown>
     manifest: Record<string, unknown>
     components: InstalledPluginComponents
     interface?: PluginInterface | null
@@ -2424,6 +2425,7 @@ export interface PluginAutoUpdateBatchResponse {
 export interface InstalledPluginUpdateRequest {
   enabled?: boolean
   componentStates?: Record<string, boolean>
+  componentConfig?: Record<string, unknown>
   displayName?: string
   description?: string
   releaseId?: number

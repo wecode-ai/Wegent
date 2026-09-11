@@ -306,10 +306,15 @@ pub(super) fn load(
             }
             path
         };
+        let component_config = record["component_config"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         for (server_name, server) in materialize(&path, claude)? {
             if record["component_states"][format!("mcp:{server_name}")] == false {
                 continue;
             }
+            let server = apply_component_config(&server_name, server, &component_config)?;
             let qualified = format!(
                 "plugin_{}_{}",
                 key.replace(['@', '.', '-'], "_"),
@@ -321,4 +326,65 @@ pub(super) fn load(
         }
     }
     Ok(result)
+}
+
+fn apply_component_config(
+    server_name: &str,
+    mut server: Value,
+    component_config: &Map<String, Value>,
+) -> Result<Value, String> {
+    let Some(config) = component_config
+        .get(&format!("mcp:{server_name}"))
+        .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
+        .and_then(Value::as_object)
+    else {
+        return Ok(server);
+    };
+    if server.get("command").is_some() {
+        return Err("Custom plugin MCP headers are only supported for remote servers".into());
+    }
+    let Some(headers) = config.get("headers").and_then(Value::as_object) else {
+        return Ok(server);
+    };
+    if headers.is_empty() {
+        return Ok(server);
+    }
+    if headers.len() > 32 {
+        return Err("Plugin MCP custom headers exceed the limit".into());
+    }
+    let mut merged = server
+        .get("headers")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (name, value) in headers {
+        let Some(value) = value.as_str().filter(|value| !value.is_empty()) else {
+            return Err("Invalid plugin MCP custom header value".into());
+        };
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_".contains(character))
+            || value.contains(['\r', '\n'])
+        {
+            return Err("Invalid plugin MCP custom header".into());
+        }
+        merged.insert(name.clone(), Value::String(value.to_owned()));
+    }
+    if !merged.is_empty() {
+        server
+            .as_object_mut()
+            .ok_or("Invalid plugin MCP server configuration")?
+            .insert("headers".to_owned(), Value::Object(merged));
+    }
+    Ok(server)
+}
+
+#[cfg(test)]
+pub(super) fn apply_component_config_for_tests(
+    server_name: &str,
+    server: Value,
+    component_config: &Map<String, Value>,
+) -> Result<Value, String> {
+    apply_component_config(server_name, server, component_config)
 }
