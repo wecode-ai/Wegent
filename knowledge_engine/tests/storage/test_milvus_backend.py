@@ -158,13 +158,13 @@ class TestCreateVectorStore:
             upsert_mode=True,
             overwrite=False,
             enable_sparse=True,
-            hybrid_ranker="WeightedRanker",
+            hybrid_ranker="RRFRanker",
             hybrid_ranker_params={},
         )
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_create_vector_store_defaults_to_weighted_ranker(self, mock_milvus_vs):
-        """Test that WeightedRanker is the default hybrid ranker."""
+    def test_create_vector_store_defaults_to_rrf_ranker(self, mock_milvus_vs):
+        """Test that RRFRanker is the default hybrid ranker."""
         backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
@@ -174,12 +174,31 @@ class TestCreateVectorStore:
 
         backend.create_vector_store("test_collection")
 
-        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "WeightedRanker"
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "RRFRanker"
         assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {}
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
-    def test_create_vector_store_can_opt_out_to_rrf_ranker(self, mock_milvus_vs):
-        """Test that an explicit opt-out can request RRFRanker."""
+    def test_create_vector_store_drops_stale_weights_under_rrf(self, mock_milvus_vs):
+        """Stale WeightedRanker weights in ext config must not reach RRFRanker."""
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+                "ext": {
+                    "hybrid_ranker": "RRFRanker",
+                    "hybrid_ranker_params": {"weights": [0.6, 0.4], "k": 100},
+                },
+            }
+        )
+
+        backend.create_vector_store("test_collection")
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "RRFRanker"
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {"k": 100}
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_explicit_rrf_ranker(self, mock_milvus_vs):
+        """Test that an explicit selection of RRFRanker is honored."""
         backend = MilvusBackend(
             {
                 "url": "http://localhost:19530/default",
@@ -189,6 +208,27 @@ class TestCreateVectorStore:
         )
 
         backend.create_vector_store("test_collection")
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "RRFRanker"
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {}
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_ignores_retrieval_weights_under_rrf(
+        self, mock_milvus_vs
+    ):
+        """Retrieval weights only feed WeightedRanker; RRF fuses by rank."""
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+            }
+        )
+
+        backend.create_vector_store(
+            "test_collection",
+            retrieval_mode="hybrid",
+            retrieval_setting={"vector_weight": 0.7, "keyword_weight": 0.3},
+        )
 
         assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "RRFRanker"
         assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {}

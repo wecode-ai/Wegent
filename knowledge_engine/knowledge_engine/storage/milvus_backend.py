@@ -254,16 +254,19 @@ class MilvusBackend(BaseStorageBackend):
 
     def _resolve_hybrid_ranker(self) -> str:
         """
-        Resolve the hybrid ranker with WeightedRanker as the default.
+        Resolve the hybrid ranker with RRFRanker as the default.
 
-        RRFRanker remains available as an explicit compatibility opt-out.
+        RRF fuses the dense and sparse legs by rank, which is immune to the
+        incompatible score scales of cosine similarity (0-1) and BM25
+        (unbounded). WeightedRanker remains available as an explicit opt-in
+        via ext.hybrid_ranker = "WeightedRanker" for callers who have
+        verified their score scales are comparable; per-query retrieval
+        weights (vector_weight/keyword_weight) only apply to WeightedRanker.
         """
         configured_ranker = self.ext.get("hybrid_ranker")
-        if configured_ranker == "RRFRanker":
+        if configured_ranker in ("RRFRanker", "WeightedRanker"):
             return configured_ranker
-        if configured_ranker == "WeightedRanker":
-            return configured_ranker
-        return "WeightedRanker"
+        return "RRFRanker"
 
     def _resolve_hybrid_ranker_params(
         self,
@@ -275,6 +278,11 @@ class MilvusBackend(BaseStorageBackend):
         configured_params = dict(self.ext.get("hybrid_ranker_params") or {})
 
         if configured_ranker != "WeightedRanker":
+            # "weights" is a WeightedRanker-only parameter; passing it to
+            # RRFRanker would raise a TypeError. Drop stale weights so a
+            # retriever configured for WeightedRanker keeps working when the
+            # ranker resolves to RRFRanker.
+            configured_params.pop("weights", None)
             return configured_params
 
         vector_weight = (
