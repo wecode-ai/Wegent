@@ -5,7 +5,7 @@
 """Schemas for shared cloud projects and local execution bindings."""
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -344,8 +344,3 @@ class CollaborationMessageImportCreate(BaseModel):
     subtask_ids: list[int] | None = None
     target: CollaborationMessageImportTarget
     note: str | None = Field(default=None, max_length=1_000)
-
-
-class CollaborationMessageImportResponse(BaseModel):
-    issue: dict[str, Any]
-    comment: dict[str, Any] | None = None

@@ -13,6 +13,7 @@ import { runtimeTaskBoardState } from '@/features/workbench/runtimeTaskLifecycle
 
 export interface RuntimeMyWorkItem extends CloudMyWorkItem {
   runtime_address: RuntimeTaskAddress
+  cloud_issue_id?: string | null
 }
 
 function taskBoardStatus(
@@ -49,6 +50,13 @@ function timestamp(value: string | number | null | undefined): string {
 function runtimeCloudProjectId(task: RuntimeTaskSummary): string | null {
   const value = task.runtimeHandle?.cloudProjectId ?? task.runtimeHandle?.cloud_project_id
   return typeof value === 'string' || typeof value === 'number' ? String(value) : null
+}
+
+function runtimeCloudIssueId(task: RuntimeTaskSummary): string | null {
+  const origin = task.runtimeHandle?.origin
+  if (!origin || typeof origin !== 'object') return null
+  const value = (origin as Record<string, unknown>).loopItemId
+  return typeof value === 'string' && value ? value : null
 }
 
 function workspaceItems(
@@ -96,6 +104,7 @@ function workspaceItems(
       project_name: project.name,
       has_active_task: lifecycle.hasActiveTask,
       runtime_address: runtimeAddress,
+      cloud_issue_id: runtimeCloudIssueId(task),
     }
   })
 }

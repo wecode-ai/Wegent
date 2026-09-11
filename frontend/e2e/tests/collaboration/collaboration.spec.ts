@@ -32,15 +32,19 @@ test.describe('Collaboration module', () => {
   })
 
   test('replaces the sidebar TODO entry and preserves the legacy inbox route', async ({ page }) => {
-    await page.goto('/tasks')
-    await page.getByTestId('task-sidebar-nav-collaboration-button').click()
+    await page.goto('/inbox', { waitUntil: 'commit' })
+    const moreButton = page.getByTestId('task-sidebar-more-button')
+    await expect(moreButton).toBeVisible()
+    await moreButton.hover()
+    await page.getByTestId('task-sidebar-more-collaboration-button').click()
 
     await expect(page).toHaveURL(/\/collaboration$/)
     await expect(page.getByTestId('collaboration-root')).toBeVisible()
 
-    await page.goto('/inbox')
-    await expect(page.getByTestId('legacy-inbox-notice')).toBeVisible()
-    await page.getByTestId('legacy-inbox-notice').getByRole('link').click()
+    await page.goto('/inbox', { waitUntil: 'commit' })
+    const legacyInboxNotice = page.getByTestId('legacy-inbox-notice')
+    await expect(legacyInboxNotice).toBeVisible()
+    await legacyInboxNotice.getByRole('link').click()
     await expect(page).toHaveURL(/\/collaboration$/)
   })
 
@@ -66,31 +70,32 @@ test.describe('Collaboration module', () => {
     await expect(page.getByTestId('collaboration-board')).toBeVisible()
 
     await page.getByTestId('collaboration-issue-create').click()
-    await page.getByTestId('collaboration-issue-title-input').fill(issueTitle)
+    await page.getByTestId('cloud-todo-title').fill(issueTitle)
     await page
-      .getByTestId('collaboration-issue-description-input')
+      .getByTestId('cloud-todo-detail-description')
       .fill('Initial collaboration description.')
-    await page.getByTestId('collaboration-issue-create-confirm').click()
+    await page.getByTestId('cloud-todo-create-confirm').click()
 
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     const issuePath = new URL(page.url()).pathname
     const issueId = decodeURIComponent(issuePath.split('/').at(-1) ?? '')
     expect(issueId).not.toBe('')
 
-    await page.getByTestId('collaboration-issue-detail-title').fill(`${issueTitle} updated`)
-    await page.getByTestId('collaboration-issue-save').click()
+    await page.getByTestId('cloud-todo-detail-title').fill(`${issueTitle} updated`)
+    await page.getByTestId('cloud-todo-save').click()
     await page.getByTestId('collaboration-issue-comment').fill('Persistent E2E comment')
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText('Persistent E2E comment')
 
-    await page.getByTestId('collaboration-issue-close').click()
-    await page.getByTestId(`collaboration-issue-${issueId}-move-right`).click()
-    await expect(page.getByTestId('collaboration-column-pending')).toContainText(
+    await page.getByTestId('cloud-todo-detail-status').selectOption('pending')
+    await page.getByTestId('cloud-todo-save').click()
+    await page.getByTestId('cloud-todo-detail-close').click()
+    await expect(page.getByTestId('cloud-todo-column-pending')).toContainText(
       `${issueTitle} updated`
     )
 
     await page.reload()
-    await expect(page.getByTestId('collaboration-column-pending')).toContainText(
+    await expect(page.getByTestId('cloud-todo-column-pending')).toContainText(
       `${issueTitle} updated`
     )
     await page.getByTestId(`collaboration-issue-${issueId}`).getByRole('button').first().click()

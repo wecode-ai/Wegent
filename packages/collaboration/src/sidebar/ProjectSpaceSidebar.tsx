@@ -2,60 +2,61 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from "react";
 
 export interface ProjectSpaceSidebarNavItem {
-  icon?: ReactNode
-  label: string
-  onClick(): void
-  selected?: boolean
-  testId?: string
+  icon?: ReactNode;
+  label: string;
+  onClick(): void;
+  selected?: boolean;
+  testId?: string;
 }
 
 export interface ProjectSpaceSidebarProject {
-  canManage: boolean
-  count?: number
-  icon: ReactNode
-  id: string
-  key: string
-  name: string
-  selected: boolean
-  onArchive(): void
-  onCopyId(): Promise<void>
-  onRename(): void
+  canManage: boolean;
+  count?: number;
+  icon: ReactNode;
+  id: string;
+  key: string;
+  name: string;
+  selected: boolean;
+  onArchive(): void;
+  onCopyId(): Promise<void>;
+  onRename(): void;
 }
 
 interface ProjectSpaceSidebarTooltipOptions {
-  align: 'end'
-  children: ReactNode
-  className?: string
-  label: string
-  side: 'bottom'
+  align: "end";
+  children: ReactNode;
+  className?: string;
+  label: string;
+  side: "bottom";
 }
 
 interface ProjectSpaceSidebarLabels {
-  actions: string
-  archive: string
-  copied: string
-  copyId: string
-  rename: string
+  actions: string;
+  archive: string;
+  copied: string;
+  copyId: string;
+  rename: string;
 }
 
 interface ProjectSpaceSidebarProps {
-  account?: ReactNode
-  addIcon: ReactNode
-  addLabel: string
-  checkIcon: ReactNode
-  copyIcon: ReactNode
-  header: ReactNode
-  labels: ProjectSpaceSidebarLabels
-  moreIcon: ReactNode
-  navItems: ProjectSpaceSidebarNavItem[]
-  onAdd(): void
-  onSelectProject(projectKey: string): void
-  projects: ProjectSpaceSidebarProject[]
-  renderTooltip?(options: ProjectSpaceSidebarTooltipOptions): ReactNode
-  sectionLabel: string
+  account?: ReactNode;
+  addIcon: ReactNode;
+  addLabel: string;
+  checkIcon: ReactNode;
+  copyIcon: ReactNode;
+  header: ReactNode;
+  labels: ProjectSpaceSidebarLabels;
+  moreIcon: ReactNode;
+  navItems: ProjectSpaceSidebarNavItem[];
+  onAdd(): void;
+  onSelectProject(projectKey: string): void;
+  projects: ProjectSpaceSidebarProject[];
+  renderTooltip?(options: ProjectSpaceSidebarTooltipOptions): ReactNode;
+  sectionOnly?: boolean;
+  sectionLabel: string;
 }
 
 export function ProjectSpaceSidebar({
@@ -72,41 +73,57 @@ export function ProjectSpaceSidebar({
   onSelectProject,
   projects,
   renderTooltip,
+  sectionOnly = false,
   sectionLabel,
 }: ProjectSpaceSidebarProps) {
-  const [openProjectId, setOpenProjectId] = useState<string | null>(null)
-  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
+  const [openProjectId, setOpenProjectId] = useState<string | null>(null);
+  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (openProjectId === null) return
+    if (openProjectId === null) return;
 
     const closeOnOutsideClick = (event: MouseEvent) => {
       if (
         event.target instanceof Element &&
-        !event.target.closest('[data-cloud-project-menu-root]')
+        !event.target.closest("[data-cloud-project-menu-root]")
       ) {
-        setOpenProjectId(null)
+        setOpenProjectId(null);
       }
-    }
+    };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpenProjectId(null)
-    }
+      if (event.key === "Escape") setOpenProjectId(null);
+    };
 
-    document.addEventListener('mousedown', closeOnOutsideClick)
-    document.addEventListener('keydown', closeOnEscape)
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
     return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [openProjectId])
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openProjectId]);
 
   const copyProjectId = (project: ProjectSpaceSidebarProject) => {
     void project.onCopyId().then(() => {
-      setCopiedProjectId(project.id)
-      window.setTimeout(() => setCopiedProjectId(null), 2000)
-    })
-    setOpenProjectId(null)
-  }
+      setCopiedProjectId(project.id);
+      window.setTimeout(() => setCopiedProjectId(null), 2000);
+    });
+    setOpenProjectId(null);
+  };
+  const primaryTextClass = sectionOnly
+    ? "text-text-primary"
+    : "text-[rgb(var(--color-sidebar-text-primary))]";
+  const mutedTextClass = sectionOnly
+    ? "text-text-muted"
+    : "text-[rgb(var(--color-sidebar-text-muted))]";
+  const hoverBackgroundClass = sectionOnly
+    ? "hover:bg-hover"
+    : "hover:bg-[rgb(var(--color-sidebar-hover))]";
+  const hoverPrimaryTextClass = sectionOnly
+    ? "hover:text-text-primary"
+    : "hover:text-[rgb(var(--color-sidebar-text-primary))]";
+  const activeBackgroundClass = sectionOnly
+    ? "bg-hover"
+    : "bg-[rgb(var(--color-sidebar-active))]";
 
   const addButton = (
     <button
@@ -119,91 +136,107 @@ export function ProjectSpaceSidebar({
     >
       {addIcon}
     </button>
-  )
+  );
 
   const renderProjectMoreButton = (project: ProjectSpaceSidebarProject) => {
     const button = (
       <button
         type="button"
         data-testid={`cloud-sidebar-project-more-${project.id}`}
-        onClick={() => setOpenProjectId(current => (current === project.id ? null : project.id))}
-        className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] transition hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:flex group-hover:flex"
+        onClick={() =>
+          setOpenProjectId((current) =>
+            current === project.id ? null : project.id,
+          )
+        }
+        className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-md transition focus:flex group-hover:flex ${mutedTextClass} ${hoverBackgroundClass} ${hoverPrimaryTextClass}`}
         aria-expanded={openProjectId === project.id}
         aria-label={labels.actions}
         title={renderTooltip ? undefined : labels.actions}
       >
         {moreIcon}
       </button>
-    )
+    );
 
     return renderTooltip
       ? renderTooltip({
-          align: 'end',
+          align: "end",
           children: button,
           label: labels.actions,
-          side: 'bottom',
+          side: "bottom",
         })
-      : button
-  }
+      : button;
+  };
 
   return (
-    <div className="flex h-full w-[240px] flex-col px-1.5 pt-1.5">
-      {header}
-      <nav className="space-y-0.5">
-        {navItems.map(item => (
-          <button
-            type="button"
-            data-testid={item.testId}
-            aria-current={item.selected ? 'page' : undefined}
-            key={item.testId ?? item.label}
-            onClick={item.onClick}
-            className={
-              item.selected
-                ? 'flex h-[30px] w-full items-center gap-2 rounded-[10px] bg-[rgb(var(--color-sidebar-active))] px-2 text-left text-base leading-5 text-text-primary'
-                : 'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
-            }
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </nav>
-      <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
+    <div
+      className={
+        sectionOnly ? "w-full" : "flex h-full w-[240px] flex-col px-1.5 pt-1.5"
+      }
+    >
+      {!sectionOnly ? header : null}
+      {!sectionOnly ? (
+        <nav className="space-y-0.5">
+          {navItems.map((item) => (
+            <button
+              type="button"
+              data-testid={item.testId}
+              aria-current={item.selected ? "page" : undefined}
+              key={item.testId ?? item.label}
+              onClick={item.onClick}
+              className={
+                item.selected
+                  ? "flex h-[30px] w-full items-center gap-2 rounded-[10px] bg-[rgb(var(--color-sidebar-active))] px-2 text-left text-base leading-5 text-text-primary"
+                  : "flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+              }
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      <div
+        className={`${sectionOnly ? "" : "mt-6 "}flex h-[30px] items-center px-2.5 text-xs font-medium opacity-75 ${mutedTextClass}`}
+      >
         {sectionLabel}
         {renderTooltip ? (
           renderTooltip({
-            align: 'end',
+            align: "end",
             children: addButton,
-            className: 'ml-auto',
+            className: "ml-auto",
             label: addLabel,
-            side: 'bottom',
+            side: "bottom",
           })
         ) : (
           <span className="ml-auto inline-flex">{addButton}</span>
         )}
       </div>
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
-        {projects.map(project => (
+        {projects.map((project) => (
           <div
             key={project.key}
             data-cloud-project-menu-root
             className={
               project.selected
-                ? 'group relative flex h-[30px] w-full items-center rounded-[10px] bg-[rgb(var(--color-sidebar-active))] px-0 text-base leading-5 text-text-primary'
-                : 'group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+                ? `group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5 ${activeBackgroundClass} ${primaryTextClass}`
+                : `group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5 ${primaryTextClass} ${hoverBackgroundClass}`
             }
           >
             <button
               type="button"
               data-testid={`cloud-sidebar-project-${project.id}`}
               onClick={() => onSelectProject(project.key)}
-              className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-base"
+              className={`flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-base ${primaryTextClass}`}
             >
               {project.icon}
-              <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+              <span className="min-w-0 flex-1 truncate text-left">
+                {project.name}
+              </span>
             </button>
             {project.count ? (
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover:hidden">
+              <span
+                className={`flex h-7 w-7 shrink-0 items-center justify-center text-xs group-hover:hidden ${mutedTextClass}`}
+              >
                 {project.count}
               </span>
             ) : null}
@@ -220,8 +253,8 @@ export function ProjectSpaceSidebar({
                       type="button"
                       data-testid={`cloud-sidebar-rename-project-${project.id}`}
                       onClick={() => {
-                        project.onRename()
-                        setOpenProjectId(null)
+                        project.onRename();
+                        setOpenProjectId(null);
                       }}
                       role="menuitem"
                       className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
@@ -235,8 +268,8 @@ export function ProjectSpaceSidebar({
                       type="button"
                       data-testid={`cloud-sidebar-archive-project-${project.id}`}
                       onClick={() => {
-                        project.onArchive()
-                        setOpenProjectId(null)
+                        project.onArchive();
+                        setOpenProjectId(null);
                       }}
                       role="menuitem"
                       className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
@@ -256,14 +289,16 @@ export function ProjectSpaceSidebar({
                   className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
                 >
                   {copiedProjectId === project.id ? checkIcon : copyIcon}
-                  {copiedProjectId === project.id ? labels.copied : labels.copyId}
+                  {copiedProjectId === project.id
+                    ? labels.copied
+                    : labels.copyId}
                 </button>
               </div>
             ) : null}
           </div>
         ))}
       </div>
-      {account}
+      {!sectionOnly ? account : null}
     </div>
-  )
+  );
 }

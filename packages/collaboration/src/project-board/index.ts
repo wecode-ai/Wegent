@@ -2,5 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export * from './ProjectBoardBody'
-export * from './useProjectBoardState'
+export * from "./ProjectBoardBody";
+export * from "./useProjectBoardState";
+export * from "./useStandardCloudBoardController";

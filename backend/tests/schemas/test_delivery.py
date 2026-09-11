@@ -6,14 +6,21 @@
 
 from datetime import datetime
 
+import pytest
 from sqlalchemy import event
 
 from app.models.delivery import (
     LoopNode,
     _adapt_mysql_non_null_defaults,
     adapt_loop_node_values_for_dialect,
+    loop_unset_datetime_for_connection,
 )
-from app.schemas.delivery import LoopItemResponse
+from app.schemas.delivery import CollaborationMessageImportResponse, LoopItemResponse
+
+
+def test_collaboration_message_import_response_requires_typed_issue() -> None:
+    with pytest.raises(ValueError):
+        CollaborationMessageImportResponse.model_validate({"issue": {}})
 
 
 def test_loop_item_response_normalizes_mysql_sentinel_values() -> None:
@@ -84,6 +91,32 @@ def test_loop_item_update_preserves_nullable_mysql_columns() -> None:
         "due_at": None,
         "completed_at": datetime(1970, 1, 1, 0, 0, 1),
     }
+
+
+@pytest.mark.parametrize(
+    ("non_nullable_attributes", "expected"),
+    [
+        (frozenset(), None),
+        (frozenset({"completed_at"}), datetime(1970, 1, 1, 0, 0, 1)),
+    ],
+)
+def test_loop_unset_datetime_uses_connected_mysql_schema_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    non_nullable_attributes: frozenset[str],
+    expected: datetime | None,
+) -> None:
+    connection = object()
+    monkeypatch.setattr(
+        "app.models.delivery.loop_node_non_nullable_attributes",
+        lambda current: (
+            non_nullable_attributes if current is connection else frozenset()
+        ),
+    )
+
+    assert (
+        loop_unset_datetime_for_connection(connection, "completed_at")  # type: ignore[arg-type]
+        == expected
+    )
 
 
 def test_team_assignee_sentinel_does_not_change_real_team_ids() -> None:

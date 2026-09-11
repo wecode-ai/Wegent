@@ -73,6 +73,7 @@ interface TaskSidebarProps {
   isSearchDialogOpen?: boolean
   onSearchDialogOpenChange?: (open: boolean) => void
   shortcutDisplayText?: string
+  projectSection?: React.ReactNode
 }
 
 export default function TaskSidebar({
@@ -84,6 +85,7 @@ export default function TaskSidebar({
   isSearchDialogOpen: _externalIsSearchDialogOpen,
   onSearchDialogOpenChange,
   shortcutDisplayText: externalShortcutDisplayText,
+  projectSection,
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -803,6 +805,7 @@ export default function TaskSidebar({
                   isSearchResult={isSearchResult}
                   onTaskSelect={() => setIsMobileSidebarOpen(false)}
                   onSelectMultiple={handleSelectMultiple}
+                  projectSection={pageType === 'collaboration' ? projectSection : undefined}
                 />
               )}
               {loadingMore && isSearchResult && (

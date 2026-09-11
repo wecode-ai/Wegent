@@ -1,128 +1,134 @@
-export type CollaborationFilePreviewKind = 'text' | 'binary' | 'unknown'
+export type CollaborationFilePreviewKind = "text" | "binary" | "unknown";
 
 const TEXT_FILE_EXTENSIONS = new Set([
-  'c',
-  'cc',
-  'cpp',
-  'cs',
-  'css',
-  'dart',
-  'go',
-  'h',
-  'hpp',
-  'htm',
-  'html',
-  'java',
-  'js',
-  'json',
-  'jsx',
-  'kt',
-  'log',
-  'md',
-  'markdown',
-  'mjs',
-  'py',
-  'rb',
-  'rs',
-  'sh',
-  'sql',
-  'svg',
-  'toml',
-  'ts',
-  'tsx',
-  'txt',
-  'xml',
-  'yaml',
-  'yml',
-  'zsh',
-])
+  "c",
+  "cc",
+  "cpp",
+  "cs",
+  "css",
+  "dart",
+  "go",
+  "h",
+  "hpp",
+  "htm",
+  "html",
+  "java",
+  "js",
+  "json",
+  "jsx",
+  "kt",
+  "log",
+  "md",
+  "markdown",
+  "mjs",
+  "py",
+  "rb",
+  "rs",
+  "sh",
+  "sql",
+  "svg",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml",
+  "zsh",
+]);
 
 const BINARY_FILE_EXTENSIONS = new Set([
-  'avif',
-  'bmp',
-  'doc',
-  'docx',
-  'epub',
-  'gif',
-  'jpeg',
-  'jpg',
-  'mermaid',
-  'mmd',
-  'odp',
-  'ods',
-  'odt',
-  'pdf',
-  'plantuml',
-  'png',
-  'ppt',
-  'pptx',
-  'puml',
-  'tif',
-  'tiff',
-  'webp',
-  'xls',
-  'xlsx',
-  'xmind',
-  'zip',
-])
+  "avif",
+  "bmp",
+  "doc",
+  "docx",
+  "epub",
+  "gif",
+  "jpeg",
+  "jpg",
+  "mermaid",
+  "mmd",
+  "odp",
+  "ods",
+  "odt",
+  "pdf",
+  "plantuml",
+  "png",
+  "ppt",
+  "pptx",
+  "puml",
+  "tif",
+  "tiff",
+  "webp",
+  "xls",
+  "xlsx",
+  "xmind",
+  "zip",
+]);
 
-const TEXT_FILE_NAMES = new Set(['dockerfile', 'license', 'makefile', 'readme'])
+const TEXT_FILE_NAMES = new Set([
+  "dockerfile",
+  "license",
+  "makefile",
+  "readme",
+]);
 
 function fileName(path: string): string {
-  return path.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? ''
+  return path.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
 }
 
 export function collaborationFilePreviewKind(
   path: string,
-  contentType = ''
+  contentType = "",
 ): CollaborationFilePreviewKind {
-  const name = fileName(path)
-  if (TEXT_FILE_NAMES.has(name) || name.startsWith('dockerfile.')) return 'text'
+  const name = fileName(path);
+  if (TEXT_FILE_NAMES.has(name) || name.startsWith("dockerfile."))
+    return "text";
 
-  const dotIndex = name.lastIndexOf('.')
-  const extension = dotIndex >= 0 ? name.slice(dotIndex + 1) : ''
-  if (TEXT_FILE_EXTENSIONS.has(extension)) return 'text'
-  if (BINARY_FILE_EXTENSIONS.has(extension)) return 'binary'
+  const dotIndex = name.lastIndexOf(".");
+  const extension = dotIndex >= 0 ? name.slice(dotIndex + 1) : "";
+  if (TEXT_FILE_EXTENSIONS.has(extension)) return "text";
+  if (BINARY_FILE_EXTENSIONS.has(extension)) return "binary";
 
-  const normalizedContentType = contentType.toLowerCase()
+  const normalizedContentType = contentType.toLowerCase();
   if (
-    normalizedContentType.startsWith('text/') ||
-    normalizedContentType.includes('json') ||
-    normalizedContentType.includes('xml') ||
-    normalizedContentType.includes('yaml') ||
-    normalizedContentType.includes('javascript')
+    normalizedContentType.startsWith("text/") ||
+    normalizedContentType.includes("json") ||
+    normalizedContentType.includes("xml") ||
+    normalizedContentType.includes("yaml") ||
+    normalizedContentType.includes("javascript")
   ) {
-    return 'text'
+    return "text";
   }
   if (
-    normalizedContentType.startsWith('image/') ||
-    normalizedContentType === 'application/pdf' ||
-    normalizedContentType === 'application/zip' ||
-    normalizedContentType.includes('officedocument') ||
-    normalizedContentType.includes('opendocument') ||
-    normalizedContentType === 'application/msword' ||
-    normalizedContentType === 'application/vnd.ms-excel' ||
-    normalizedContentType === 'application/vnd.ms-powerpoint'
+    normalizedContentType.startsWith("image/") ||
+    normalizedContentType === "application/pdf" ||
+    normalizedContentType === "application/zip" ||
+    normalizedContentType.includes("officedocument") ||
+    normalizedContentType.includes("opendocument") ||
+    normalizedContentType === "application/msword" ||
+    normalizedContentType === "application/vnd.ms-excel" ||
+    normalizedContentType === "application/vnd.ms-powerpoint"
   ) {
-    return 'binary'
+    return "binary";
   }
-  return 'unknown'
+  return "unknown";
 }
 
 export function isLikelyCollaborationTextContent(bytes: Uint8Array): boolean {
-  if (bytes.byteLength === 0) return true
-  if (bytes.includes(0)) return false
+  if (bytes.byteLength === 0) return true;
+  if (bytes.includes(0)) return false;
 
-  let text: string
+  let text: string;
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    return false
+    return false;
   }
 
-  let controlCharacters = 0
+  let controlCharacters = 0;
   for (const character of text) {
-    const codePoint = character.codePointAt(0) ?? 0
+    const codePoint = character.codePointAt(0) ?? 0;
     if (
       (codePoint >= 0 && codePoint <= 8) ||
       codePoint === 11 ||
@@ -130,8 +136,8 @@ export function isLikelyCollaborationTextContent(bytes: Uint8Array): boolean {
       (codePoint >= 14 && codePoint <= 31) ||
       codePoint === 127
     ) {
-      controlCharacters += 1
+      controlCharacters += 1;
     }
   }
-  return controlCharacters / Math.max(text.length, 1) <= 0.01
+  return controlCharacters / Math.max(text.length, 1) <= 0.01;
 }

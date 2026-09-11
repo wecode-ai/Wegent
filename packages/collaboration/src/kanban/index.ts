@@ -2,4 +2,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export * from './KanbanBoard'
+export * from "./KanbanBoard";

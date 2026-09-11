@@ -1,6 +1,6 @@
-import type { SVGProps } from 'react'
+import type { SVGProps } from "react";
 
-type IconProps = SVGProps<SVGSVGElement>
+type IconProps = SVGProps<SVGSVGElement>;
 
 function Icon({ children, ...props }: IconProps) {
   return (
@@ -17,7 +17,7 @@ function Icon({ children, ...props }: IconProps) {
     >
       {children}
     </svg>
-  )
+  );
 }
 
 export function ChevronRightIcon(props: IconProps) {
@@ -25,7 +25,7 @@ export function ChevronRightIcon(props: IconProps) {
     <Icon {...props}>
       <path d="m9 18 6-6-6-6" />
     </Icon>
-  )
+  );
 }
 
 export function DownloadIcon(props: IconProps) {
@@ -35,7 +35,7 @@ export function DownloadIcon(props: IconProps) {
       <path d="m7 10 5 5 5-5" />
       <path d="M5 21h14" />
     </Icon>
-  )
+  );
 }
 
 export function EyeIcon(props: IconProps) {
@@ -44,7 +44,7 @@ export function EyeIcon(props: IconProps) {
       <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
       <circle cx="12" cy="12" r="3" />
     </Icon>
-  )
+  );
 }
 
 export function FileIcon(props: IconProps) {
@@ -53,7 +53,7 @@ export function FileIcon(props: IconProps) {
       <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
       <polyline points="14 2 14 8 20 8" />
     </Icon>
-  )
+  );
 }
 
 export function FolderIcon(props: IconProps) {
@@ -61,7 +61,7 @@ export function FolderIcon(props: IconProps) {
     <Icon {...props}>
       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </Icon>
-  )
+  );
 }
 
 export function FolderPlusIcon(props: IconProps) {
@@ -71,7 +71,7 @@ export function FolderPlusIcon(props: IconProps) {
       <path d="M9 13h6" />
       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </Icon>
-  )
+  );
 }
 
 export function PencilIcon(props: IconProps) {
@@ -80,7 +80,7 @@ export function PencilIcon(props: IconProps) {
       <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
       <path d="m15 5 4 4" />
     </Icon>
-  )
+  );
 }
 
 export function TrashIcon(props: IconProps) {
@@ -92,7 +92,7 @@ export function TrashIcon(props: IconProps) {
       <path d="M10 11v6" />
       <path d="M14 11v6" />
     </Icon>
-  )
+  );
 }
 
 export function UploadIcon(props: IconProps) {
@@ -102,7 +102,7 @@ export function UploadIcon(props: IconProps) {
       <path d="m17 8-5-5-5 5" />
       <path d="M5 21h14" />
     </Icon>
-  )
+  );
 }
 
 export function XIcon(props: IconProps) {
@@ -111,5 +111,5 @@ export function XIcon(props: IconProps) {
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
     </Icon>
-  )
+  );
 }

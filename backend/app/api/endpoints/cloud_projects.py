@@ -44,9 +44,10 @@ from app.schemas.cloud_project import (
     CloudProjectResponse,
     CloudProjectUpdate,
     CollaborationMessageImportCreate,
-    CollaborationMessageImportResponse,
 )
 from app.schemas.delivery import (
+    CollaborationMessageImportResponse,
+    LoopItemCommentResponse,
     LoopItemCreate,
     LoopItemResponse,
     ProjectLoopItemAttachmentListResponse,
@@ -151,7 +152,7 @@ def import_chat_messages(
             LoopItemCreate(title=title[:255], description=body, status="inbox"),
         )
         return CollaborationMessageImportResponse(
-            issue=LoopItemResponse.model_validate(created.values).model_dump()
+            issue=LoopItemResponse.model_validate(created.values)
         )
 
     issue_id = values.target.issue_id or ""
@@ -180,8 +181,8 @@ def import_chat_messages(
         else loop_item_service.add_comment(db, issue_id, current_user.id, body)
     )
     return CollaborationMessageImportResponse(
-        issue=LoopItemResponse.model_validate(issue).model_dump(),
-        comment=comment,
+        issue=LoopItemResponse.model_validate(issue),
+        comment=LoopItemCommentResponse.model_validate(comment),
     )
 
 

@@ -1,13 +1,16 @@
-import { useCallback, useMemo, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import {
   CollaborationFilesView,
+  createCollaborationTranslator,
+  createSharedWorkspaceFilesViewApi,
   type CollaborationFilePreviewProps,
-  type CollaborationFilesApi,
   type CollaborationFilesTranslateOptions,
+  type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import type { CloudProject } from '@/api/deliveries'
 import { WorkspaceFilePreview } from '@/components/layout/workspace-panels/WorkspaceFilePreview'
 import { Tooltip } from '@/components/ui/tooltip'
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
@@ -15,6 +18,7 @@ import type { WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { readFileFromAccessUrl, saveBlobToDownloads } from './cloudFileTransfer'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
+type CloudFilesWorkspaceApi = Pick<SharedWorkspaceApi, 'files' | 'attachments'>
 
 function WeworkFilePreview({
   file,
@@ -44,43 +48,48 @@ const telemetry = {
   },
 }
 
-export function CloudFilesView({ api, project }: { api: DeliveryApi; project: CloudProject }) {
-  const { t } = useTranslation('common')
-  const filesApi = useMemo<CollaborationFilesApi>(
-    () => ({
-      async listFiles(projectId) {
-        return (await api.listCloudFiles(projectId)).items
-      },
-      async listDeliveryFiles(projectId) {
-        return (await api.listProjectDeliveryFiles(projectId)).items
-      },
-      async listTaskAttachments(projectId) {
-        return (await api.listProjectTaskAttachments(projectId)).items
-      },
-      createFolder: (projectId, path) => api.createCloudFolder(projectId, path),
-      uploadFile: (projectId, file, path) => api.uploadCloudFile(projectId, file, path),
-      moveFile: (fileId, path, version) => api.moveCloudFile(fileId, path, version),
-      deleteFile: (fileId, recursive) => api.deleteCloudFile(fileId, recursive),
-      previewFile: fileId => api.readCloudFile(fileId),
-      async downloadFile(fileId) {
-        const access = await api.accessCloudFile(fileId)
-        return readFileFromAccessUrl(access.url)
-      },
-      previewDeliveryFile: assetId => api.readDeliveryFile(assetId),
-      async downloadDeliveryFile(assetId) {
-        const access = await api.accessDeliveryFile(assetId)
-        return readFileFromAccessUrl(access.url)
-      },
-      previewTaskAttachment: attachmentId => api.readLoopItemAttachment(attachmentId),
-      openTaskAttachment: (attachmentId, filename) =>
-        api.downloadLoopItemAttachment(attachmentId, filename),
-    }),
-    [api]
+function WeworkFilesView({
+  workspaceApi,
+  project,
+}: {
+  workspaceApi: CloudFilesWorkspaceApi
+  project: CloudProject
+}) {
+  const { i18n, t } = useTranslation('common')
+  const translateRef = useRef(t)
+  useEffect(() => {
+    translateRef.current = t
+  }, [t])
+  const language = i18n.resolvedLanguage ?? i18n.language ?? 'zh-CN'
+  const sharedTranslate = useMemo(
+    () => createCollaborationTranslator(language.startsWith('en') ? 'en' : 'zh-CN'),
+    [language]
+  )
+  const filesApi = useMemo(
+    () =>
+      createSharedWorkspaceFilesViewApi(
+        {
+          files: workspaceApi.files,
+          attachments: workspaceApi.attachments,
+        },
+        {
+          readAccess: access => readFileFromAccessUrl(access.url),
+          saveTaskAttachment: saveBlobToDownloads,
+        }
+      ),
+    [workspaceApi]
   )
   const translate = useCallback(
-    (key: string, fallback?: string, options?: CollaborationFilesTranslateOptions) =>
-      fallback === undefined ? t(key) : t(key, fallback, options),
-    [t]
+    (key: string, fallback?: string, options?: CollaborationFilesTranslateOptions) => {
+      const translated =
+        fallback === undefined
+          ? translateRef.current(key, options)
+          : translateRef.current(key, fallback, options)
+      return typeof translated === 'string' && translated !== key
+        ? translated
+        : sharedTranslate(key, fallback, options)
+    },
+    [sharedTranslate]
   )
   const renderTooltip = useCallback(
     (label: string, child: ReactNode, align: 'start' | 'center' | 'end' = 'center') => (
@@ -102,4 +111,19 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       renderTooltip={renderTooltip}
     />
   )
+}
+
+export function CloudFilesView({
+  api,
+  project,
+}: {
+  api: CloudFilesWorkspaceApi
+  project: CloudProject
+}) {
+  return <WeworkFilesView workspaceApi={api} project={project} />
+}
+
+export function LocalFilesView({ api, project }: { api: DeliveryApi; project: CloudProject }) {
+  const workspaceApi = useMemo(() => createWeworkDeliverySharedWorkspaceApi(api), [api])
+  return <WeworkFilesView workspaceApi={workspaceApi} project={project} />
 }

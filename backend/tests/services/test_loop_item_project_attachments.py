@@ -11,6 +11,7 @@ from typing import BinaryIO
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
@@ -19,6 +20,7 @@ from app.models.subtask_context import ContextStatus, ContextType, SubtaskContex
 from app.models.user import User
 from app.schemas.delivery import LoopItemCreate
 from app.services.attachment.storage_backend import generate_storage_key
+from app.services.delivery.storage import DeliveryStorageUnavailableError
 from app.services.loop_items import loop_item_service
 
 
@@ -47,6 +49,66 @@ class FakeDeliveryStorage:
     def remove_objects(self, object_keys: list[str]) -> None:
         for key in object_keys:
             self.objects.pop(key, None)
+
+
+class UnavailableDeliveryStorage(FakeDeliveryStorage):
+    def put_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        length: int,
+        content_type: str,
+    ) -> None:
+        raise DeliveryStorageUnavailableError("storage unavailable")
+
+
+class FailSecondDeliveryStorage(FakeDeliveryStorage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.put_calls = 0
+        self.removed: list[str] = []
+
+    def put_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        length: int,
+        content_type: str,
+    ) -> None:
+        self.put_calls += 1
+        if self.put_calls == 2:
+            raise DeliveryStorageUnavailableError("storage unavailable")
+        super().put_stream(object_key, stream, length, content_type)
+
+    def remove_objects(self, object_keys: list[str]) -> None:
+        self.removed.extend(object_keys)
+        super().remove_objects(object_keys)
+
+
+class FailThirdAndFirstCleanupDeliveryStorage(FakeDeliveryStorage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.put_calls = 0
+        self.cleanup_calls: list[str] = []
+
+    def put_stream(
+        self,
+        object_key: str,
+        stream: BinaryIO,
+        length: int,
+        content_type: str,
+    ) -> None:
+        self.put_calls += 1
+        if self.put_calls == 3:
+            raise DeliveryStorageUnavailableError("original upload failure")
+        super().put_stream(object_key, stream, length, content_type)
+
+    def remove_objects(self, object_keys: list[str]) -> None:
+        object_key = object_keys[0]
+        self.cleanup_calls.append(object_key)
+        if len(self.cleanup_calls) == 1:
+            raise RuntimeError("cleanup failure")
+        super().remove_objects(object_keys)
 
 
 @pytest.fixture
@@ -169,10 +231,20 @@ def test_import_context_attachments_copies_once(
     test_db: Session,
     test_user: User,
     attachment_storage: FakeDeliveryStorage,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = _make_project(test_db, test_user, "ATTI")
     item = _make_item(test_db, project, test_user, "Report")
     context = _make_context(test_db, test_user)
+    commit_calls = 0
+    original_commit = test_db.commit
+
+    def track_commit() -> None:
+        nonlocal commit_calls
+        commit_calls += 1
+        original_commit()
+
+    monkeypatch.setattr(test_db, "commit", track_commit)
 
     imported = loop_item_service.import_context_attachments(
         test_db, item.id, test_user.id, [context.id]
@@ -183,8 +255,10 @@ def test_import_context_attachments_copies_once(
 
     assert [entry.display_name for entry in imported] == ["conversation.png"]
     assert imported_again == []
+    assert imported[0].source_context_id == context.id
     assert imported[0].metadata_json == {"source_context_id": context.id}
     assert attachment_storage.get_bytes(imported[0].object_key) == b"context"
+    assert commit_calls == 1
 
 
 def test_import_context_attachments_rejects_unready_context(
@@ -206,3 +280,236 @@ def test_import_context_attachments_rejects_unready_context(
         )
 
     assert exc.value.status_code == 422
+
+
+def test_import_context_attachments_validates_all_contexts_before_writing(
+    test_db: Session,
+    test_user: User,
+    attachment_storage: FakeDeliveryStorage,
+) -> None:
+    project = _make_project(test_db, test_user, "ATTV")
+    item = _make_item(test_db, project, test_user, "Validate first")
+    valid = _make_context(test_db, test_user, name="valid.txt", data=b"valid")
+    missing_context_id = valid.id + 100_000
+
+    with pytest.raises(HTTPException) as exc:
+        loop_item_service.import_context_attachments(
+            test_db,
+            item.id,
+            test_user.id,
+            [valid.id, missing_context_id],
+        )
+
+    assert exc.value.status_code == 404
+    assert attachment_storage.objects == {}
+    assert (
+        test_db.query(LoopItemAttachment)
+        .filter(LoopItemAttachment.loop_item_id == item.id)
+        .count()
+        == 0
+    )
+
+
+def test_import_context_attachments_cleans_batch_when_second_upload_fails(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(test_db, test_user, "ATTF")
+    item = _make_item(test_db, project, test_user, "Atomic upload")
+    first = _make_context(test_db, test_user, name="first.txt", data=b"first")
+    second = _make_context(test_db, test_user, name="second.txt", data=b"second")
+    storage = FailSecondDeliveryStorage()
+    monkeypatch.setattr(
+        "app.services.loop_items.service.delivery_storage",
+        storage,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        loop_item_service.import_context_attachments(
+            test_db,
+            item.id,
+            test_user.id,
+            [first.id, second.id],
+        )
+
+    assert exc.value.status_code == 503
+    assert storage.put_calls == 2
+    assert len(storage.removed) == 1
+    assert storage.objects == {}
+    assert (
+        test_db.query(LoopItemAttachment)
+        .filter(LoopItemAttachment.loop_item_id == item.id)
+        .count()
+        == 0
+    )
+
+
+def test_import_context_attachments_cleanup_failure_preserves_original_error(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project = _make_project(test_db, test_user, "ATTC")
+    item = _make_item(test_db, project, test_user, "Cleanup every object")
+    contexts = [
+        _make_context(test_db, test_user, name=f"{index}.txt", data=str(index).encode())
+        for index in range(3)
+    ]
+    storage = FailThirdAndFirstCleanupDeliveryStorage()
+    monkeypatch.setattr(
+        "app.services.loop_items.service.delivery_storage",
+        storage,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        loop_item_service.import_context_attachments(
+            test_db,
+            item.id,
+            test_user.id,
+            [context.id for context in contexts],
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.__cause__ is not None
+    assert str(exc.value.__cause__) == "original upload failure"
+    assert storage.put_calls == 3
+    assert len(storage.cleanup_calls) == 2
+    assert "Failed to clean up imported attachment object" in caplog.text
+    assert len(storage.objects) == 1
+
+
+def test_attachment_source_context_identity_is_unique_per_item(
+    test_db: Session,
+    test_user: User,
+    attachment_storage: FakeDeliveryStorage,
+) -> None:
+    project = _make_project(test_db, test_user, "ATTID")
+    item = _make_item(test_db, project, test_user, "Concurrent identity")
+    context = _make_context(test_db, test_user)
+    first = LoopItemAttachment(
+        id=str(uuid.uuid4()),
+        loop_item_id=item.id,
+        display_name="first.txt",
+        object_key="first",
+        content_type="text/plain",
+        size_bytes=1,
+        sha256="a" * 64,
+        created_by_user_id=test_user.id,
+        source_context_id=context.id,
+        metadata_json={"source_context_id": context.id},
+    )
+    duplicate = LoopItemAttachment(
+        id=str(uuid.uuid4()),
+        loop_item_id=item.id,
+        display_name="duplicate.txt",
+        object_key="duplicate",
+        content_type="text/plain",
+        size_bytes=1,
+        sha256="b" * 64,
+        created_by_user_id=test_user.id,
+        source_context_id=context.id,
+        metadata_json={"source_context_id": context.id},
+    )
+    test_db.add(first)
+    test_db.commit()
+    test_db.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        test_db.commit()
+
+    test_db.rollback()
+    assert (
+        test_db.query(LoopItemAttachment)
+        .filter(
+            LoopItemAttachment.loop_item_id == item.id,
+            LoopItemAttachment.source_context_id == context.id,
+        )
+        .count()
+        == 1
+    )
+
+
+def test_import_context_attachments_recovers_from_concurrent_unique_conflict(
+    test_db: Session,
+    test_user: User,
+    attachment_storage: FakeDeliveryStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(test_db, test_user, "ATTR")
+    item = _make_item(test_db, project, test_user, "Concurrent retry")
+    context = _make_context(test_db, test_user)
+    identity_checks = 0
+
+    def source_context_ids(
+        _db: Session,
+        _item_id: str,
+        _context_ids: set[int],
+    ) -> set[int]:
+        nonlocal identity_checks
+        identity_checks += 1
+        return set() if identity_checks == 1 else {context.id}
+
+    def concurrent_commit() -> None:
+        raise IntegrityError("concurrent attachment import", None, Exception())
+
+    monkeypatch.setattr(
+        loop_item_service,
+        "_attachment_source_context_ids",
+        source_context_ids,
+    )
+    monkeypatch.setattr(test_db, "commit", concurrent_commit)
+
+    imported = loop_item_service.import_context_attachments(
+        test_db,
+        item.id,
+        test_user.id,
+        [context.id],
+    )
+
+    assert imported == []
+    assert identity_checks == 2
+    assert attachment_storage.objects == {}
+
+
+def test_add_attachment_rolls_back_and_returns_503_when_storage_is_unavailable(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(test_db, test_user, "ATTU")
+    item = _make_item(test_db, project, test_user, "Unavailable storage")
+    rollback_calls = 0
+    original_rollback = test_db.rollback
+
+    def track_rollback() -> None:
+        nonlocal rollback_calls
+        rollback_calls += 1
+        original_rollback()
+
+    monkeypatch.setattr(
+        "app.services.loop_items.service.delivery_storage",
+        UnavailableDeliveryStorage(),
+    )
+    monkeypatch.setattr(test_db, "rollback", track_rollback)
+
+    with pytest.raises(HTTPException) as exc:
+        loop_item_service.add_attachment(
+            test_db,
+            item.id,
+            test_user.id,
+            "report.txt",
+            "text/plain",
+            io.BytesIO(b"report"),
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Delivery object storage is unavailable"
+    assert rollback_calls == 1
+    assert (
+        test_db.query(LoopItemAttachment)
+        .filter(LoopItemAttachment.loop_item_id == item.id)
+        .count()
+        == 0
+    )

@@ -26,6 +26,16 @@ describe('createWebSharedWorkspaceApi', () => {
     client.patch.mockResolvedValue({ id: 'project-1' })
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
+    await api.projects.create({
+      name: 'GitLab board',
+      description: 'Cloud project',
+      taskProvider: 'gitlab',
+      providerConfig: {
+        repository: 'group/project',
+        api_base: 'https://gitlab.example.com/api/v4',
+      },
+      visibility: 'public',
+    })
     await api.projects.update('project/1', {
       version: 3,
       providerConfig: { repository: 'owner/repo' },
@@ -42,6 +52,16 @@ describe('createWebSharedWorkspaceApi', () => {
       version: 3,
       provider_config: { repository: 'owner/repo' },
       pull_request_automation: { enabled: true },
+    })
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects', {
+      name: 'GitLab board',
+      description: 'Cloud project',
+      task_provider: 'gitlab',
+      provider_config: {
+        repository: 'group/project',
+        api_base: 'https://gitlab.example.com/api/v4',
+      },
+      visibility: 'public',
     })
     expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/loop-items', {
       title: 'Ship it',
@@ -93,7 +113,7 @@ describe('createWebSharedWorkspaceApi', () => {
       nextCursor: 'cursor-2',
       taskBindings: [
         {
-          id: 42,
+          id: '42',
           projectId: '11',
           issueId: 'issue-1',
           taskUserId: 7,
@@ -107,12 +127,29 @@ describe('createWebSharedWorkspaceApi', () => {
         },
       ],
     })
-    await expect(api.workflowPlans.get('issue-1')).resolves.toMatchObject({
+    await expect(api.workflowPlans.get!('issue-1')).resolves.toMatchObject({
       runId: 'run-1',
       issueId: 'issue-1',
       planVersion: 2,
       status: 'awaiting_approval',
     })
+  })
+
+  it('maps workflow stage context with the shared DTO contract', async () => {
+    const client = createClient()
+    client.get.mockResolvedValue({
+      compiled_task_instruction: 'Run the deployment',
+      source: 'delivery',
+    })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await expect(api.workflowPlans.getStageContext('issue-1', 'node-1')).resolves.toEqual({
+      compiledTaskInstruction: 'Run the deployment',
+      source: 'delivery',
+    })
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/loop-items/issue-1/workflow-nodes/node-1/input-context'
+    )
   })
 
   it('uses multipart transport and the authenticated binary transport', async () => {
@@ -170,6 +207,181 @@ describe('createWebSharedWorkspaceApi', () => {
     ).toThrow(TypeError)
   })
 
+  it('builds the shared automation execution and plugin catalogs from Web APIs', async () => {
+    const client = createClient()
+    client.get
+      .mockResolvedValueOnce({
+        items: [
+          {
+            device_id: 'device-cloud',
+            name: 'Cloud Runner',
+            status: 'online',
+            device_type: 'cloud',
+          },
+          {
+            device_id: 'device-offline',
+            name: 'Offline Runner',
+            status: 'offline',
+            device_type: 'cloud',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            name: 'gpt-web',
+            displayName: 'GPT Web',
+            type: 'public',
+            namespace: 'default',
+            resourceUserId: 0,
+            config: { reasoning_effort: 'high', ignored: true },
+            isActive: true,
+            modelCategoryType: 'llm',
+          },
+        ],
+      })
+      .mockResolvedValueOnce([
+        {
+          id: 'profile-cloud',
+          name: 'Cloud GPT',
+          executionEnvironment: 'cloud',
+          executionDeviceId: 'device-cloud',
+          model: 'gpt-web',
+          modelType: 'public',
+          modelOptions: { reasoning_effort: 'medium' },
+          status: 'active',
+          version: 2,
+        },
+      ])
+      .mockResolvedValueOnce({
+        items: [
+          {
+            metadata: { name: 'plugin-github' },
+            spec: {
+              enabled: true,
+              installState: 'installed',
+              displayName: 'GitHub',
+              source: {
+                pluginKey: 'github',
+                marketplace: 'official',
+              },
+            },
+          },
+        ],
+      })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await expect(api.automationExecutionCatalog!.load('project-1')).resolves.toEqual({
+      environments: [
+        {
+          deviceId: 'device-cloud',
+          label: 'Cloud Runner',
+          executionEnvironment: 'cloud',
+        },
+      ],
+      models: [
+        {
+          name: 'gpt-web',
+          label: 'GPT Web',
+          type: 'public',
+          options: {
+            reasoning_effort: 'high',
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '0',
+          },
+        },
+      ],
+      runtimeProfiles: [
+        expect.objectContaining({
+          id: 'profile-cloud',
+          executionDeviceId: 'device-cloud',
+          model: 'gpt-web',
+          modelOptions: { reasoning_effort: 'medium' },
+        }),
+      ],
+      plugins: [],
+    })
+    await expect(
+      api.automationExecutionCatalog!.loadPlugins('project-1', ['device-cloud'])
+    ).resolves.toEqual([
+      {
+        id: 'github@official',
+        label: 'GitHub',
+        reference: {
+          id: 'github@official',
+          pluginName: 'github',
+          marketplaceId: 'official',
+          displayName: 'GitHub',
+        },
+      },
+    ])
+    expect(client.get).toHaveBeenCalledWith('/plugins/installed?device_id=device-cloud')
+  })
+
+  it('keeps upload/local automation plugins by normalized fallback identities', async () => {
+    const client = createClient()
+    client.get.mockResolvedValueOnce({
+      items: [
+        {
+          metadata: { name: 'uploaded-record' },
+          spec: {
+            enabled: true,
+            installState: 'installed',
+            displayName: 'Uploaded tools',
+            source: {
+              type: 'upload',
+              pluginKey: 'uploaded-tools',
+              providerKey: 'codex-local',
+            },
+            manifest: {},
+          },
+        },
+        {
+          metadata: { name: 'local-record' },
+          spec: {
+            enabled: true,
+            installState: 'installed',
+            displayName: 'Personal tools',
+            source: {
+              type: 'local',
+              pluginKey: 'personal-tools',
+              providerKey: 'codex-local',
+            },
+            manifest: {
+              marketplaceId: 'personal-marketplace',
+            },
+          },
+        },
+      ],
+    })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await expect(
+      api.automationExecutionCatalog!.loadPlugins('project-1', ['device-cloud'])
+    ).resolves.toEqual([
+      {
+        id: 'personal-tools@personal-marketplace',
+        label: 'Personal tools',
+        reference: {
+          id: 'personal-tools@personal-marketplace',
+          pluginName: 'personal-tools',
+          marketplaceId: 'personal-marketplace',
+          displayName: 'Personal tools',
+        },
+      },
+      {
+        id: 'uploaded-tools@codex-local',
+        label: 'Uploaded tools',
+        reference: {
+          id: 'uploaded-tools@codex-local',
+          pluginName: 'uploaded-tools',
+          marketplaceId: 'codex-local',
+          displayName: 'Uploaded tools',
+        },
+      },
+    ])
+  })
+
   it('publishes a complete and non-silent capability matrix', () => {
     const unsupported = WEB_SHARED_WORKSPACE_CAPABILITIES.filter(
       capability => capability.status === 'unsupported'
@@ -183,12 +395,25 @@ describe('createWebSharedWorkspaceApi', () => {
 
     expect(unsupported).toEqual([])
     expect(partial).toEqual([])
-    expect(supported).toHaveLength(90)
-    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(90)
+    expect(supported).toHaveLength(91)
+    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(91)
+    expect(
+      WEB_SHARED_WORKSPACE_CAPABILITIES.some(
+        capability =>
+          capability.capability === 'projects.listMyWork' ||
+          capability.endpoint?.includes('/cloud-work-items/my-work')
+      )
+    ).toBe(false)
     expect(
       WEB_SHARED_WORKSPACE_CAPABILITIES.every(
         item => item.status === 'supported' || Boolean(item.reason)
       )
     ).toBe(true)
+  })
+
+  it('does not expose a My Work port from the Web adapter', () => {
+    const api = createWebSharedWorkspaceApi(createClient(), { getBlob: jest.fn() })
+
+    expect(api.myWork).toBeUndefined()
   })
 })

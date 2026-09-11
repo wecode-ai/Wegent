@@ -2,6 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
+import { CollaborationRoute } from '@/features/collaboration/CollaborationRoute'
 
-export default CollaborationPage
+export default CollaborationRoute

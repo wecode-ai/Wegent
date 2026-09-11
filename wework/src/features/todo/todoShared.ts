@@ -1,5 +1,8 @@
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
-export { reorderLaneItems } from '@wegent/collaboration'
+export {
+  collaborationIssueCardPriorityClasses as priorityBadgeClasses,
+  reorderLaneItems,
+} from '@wegent/collaboration'
 
 export const columns: Array<{ status: CloudLoopItem['status']; label: string }> = [
   { status: 'inbox', label: '收集箱' },
@@ -31,14 +34,6 @@ export const memberAvatarClasses = [
   'bg-gradient-to-br from-emerald-400 to-emerald-500',
   'bg-gradient-to-br from-amber-400 to-amber-500',
 ]
-
-export const priorityBadgeClasses: Record<CloudLoopItem['priority'], string> = {
-  none: 'bg-muted text-text-secondary',
-  low: 'bg-muted text-text-secondary',
-  medium: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  high: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  urgent: 'bg-red-500/10 text-red-600 dark:text-red-400',
-}
 
 // Resolves a user id to the project member display name; returns null when
 // the user is not (or no longer) a member of the project.

@@ -3,57 +3,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 
 import {
   CollaborationApp,
   type CollaborationHostAdapter,
   type SharedWorkspaceApi,
-  type WorkspaceMyWorkItem,
 } from '@wegent/collaboration'
 
-function myWorkItem(): WorkspaceMyWorkItem {
-  return {
-    id: 'issue-1',
-    cloud_project_id: 'project-1',
-    sequence_number: 1,
-    parent_id: null,
-    created_by_user_id: 1,
-    assignee_user_id: 1,
-    title: '真实接口任务',
-    description: '',
-    status: 'pending',
-    priority: 'high',
-    due_at: null,
-    tags: [],
-    sort_order: 0,
-    version: 1,
-    created_at: '2026-09-10T00:00:00Z',
-    updated_at: '2026-09-10T00:00:00Z',
-    completed_at: null,
-    project_key: 'WEB',
-    project_name: 'Web 项目',
-    has_active_task: false,
-  }
-}
-
-describe('CollaborationApp My Work root', () => {
-  it('loads listMyWork directly and uses the shared grouped view', async () => {
-    const listMyWork = jest.fn().mockResolvedValue([myWorkItem()])
-    const listProjects = jest.fn()
-    const getBoardSnapshot = jest.fn()
-    const navigate = jest.fn()
+describe('CollaborationApp Web My Work boundary', () => {
+  it('does not render or request My Work when the Web host disables it', async () => {
+    const listMyWork = jest.fn().mockResolvedValue([])
     const api = {
-      projects: { listMyWork, list: listProjects },
-      issues: { getBoardSnapshot },
+      projects: { list: jest.fn().mockResolvedValue([]) },
+      myWork: { list: listMyWork },
     } as unknown as SharedWorkspaceApi
     const host: CollaborationHostAdapter = {
       capabilities: {
-        cloudProjects: true,
-        localProjects: false,
-        aiAssignment: true,
+        myWork: false,
         automation: true,
-        terminal: false,
         dingtalkAitable: false,
       },
       location: {
@@ -62,33 +30,14 @@ describe('CollaborationApp My Work root', () => {
         view: 'board',
         rootView: 'my-work',
       },
-      navigate,
+      navigate: jest.fn(),
     }
 
-    render(<CollaborationApp api={api} host={host} locale="zh-CN" />)
+    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
 
-    expect(await screen.findByTestId('my-work-groups')).toBeInTheDocument()
-    expect(screen.getByTestId('my-work-group-action-issue-1')).toHaveTextContent('真实接口任务')
-    expect(screen.getByTestId('my-work-view-tab-group')).toHaveAttribute('aria-selected', 'true')
-    expect(listMyWork).toHaveBeenCalledTimes(1)
-    expect(listProjects).not.toHaveBeenCalled()
-    expect(getBoardSnapshot).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByTestId('my-work-group-action-issue-1'))
-    expect(navigate).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      issueId: 'issue-1',
-      view: 'board',
-    })
-
-    fireEvent.click(screen.getByTestId('collaboration-my-work-back'))
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({
-        projectId: null,
-        issueId: null,
-        view: 'board',
-        rootView: 'home',
-      })
-    )
+    expect(await screen.findByTestId('collaboration-project-create')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-my-work-view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-projects-home-my-work')).not.toBeInTheDocument()
+    expect(listMyWork).not.toHaveBeenCalled()
   })
 })

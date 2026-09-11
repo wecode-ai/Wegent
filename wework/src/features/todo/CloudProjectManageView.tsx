@@ -10,6 +10,7 @@ import type {
 } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
@@ -17,14 +18,18 @@ import type {
   ProjectManageApi,
   ProjectManageExtensionContext,
   ProjectManageHost,
+  SharedProjectManageWorkspaceApi,
 } from '@wegent/collaboration/project-manage'
-import { ProjectManageView } from '@wegent/collaboration/project-manage'
-import { BoardLayoutEditor } from './BoardLayoutEditor'
+import {
+  ProjectManageView,
+  createSharedWorkspaceProjectManageApi,
+} from '@wegent/collaboration/project-manage'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 import { waitForDwsAuthentication } from './dwsAuth'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
+type CloudManageWorkspaceApi = SharedProjectManageWorkspaceApi
 
 function configText(project: CloudProject, key: string): string {
   const value = (project.provider_config as Record<string, unknown>)[key]
@@ -146,7 +151,7 @@ export function CloudProjectManageView({
   boardCardDisplay,
   onProjectUpdated,
 }: {
-  api: DeliveryApi
+  api: CloudManageWorkspaceApi
   aitableApi?: AITableApi
   dwsApi?: DwsApi
   project: CloudProject
@@ -157,21 +162,13 @@ export function CloudProjectManageView({
   const manageApi = useMemo<
     ProjectManageApi<CloudProject, CloudProjectMember, CloudLoopItem, CloudUserSearchItem>
   >(
-    () => ({
-      listMembers: projectId => api.listCloudProjectMembers(projectId),
-      listItems: projectId => api.listLoopItems(projectId),
-      searchUsers: query => api.searchCloudProjectUsers(query),
-      addMember: (projectId, userId, role) => api.addCloudProjectMember(projectId, userId, role),
-      updateMember: (projectId, userId, values) =>
-        api.updateCloudProjectMember(projectId, userId, values),
-      removeMember: (projectId, userId) => api.removeCloudProjectMember(projectId, userId),
-      updateItem: (itemId, values) => api.updateLoopItem(itemId, values),
-      updateProject: (projectId, values) =>
-        api.updateCloudProject(
-          projectId,
-          values as Parameters<DeliveryApi['updateCloudProject']>[1]
-        ),
-    }),
+    () =>
+      createSharedWorkspaceProjectManageApi(api) as ProjectManageApi<
+        CloudProject,
+        CloudProjectMember,
+        CloudLoopItem,
+        CloudUserSearchItem
+      >,
     [api]
   )
   const host = useMemo<ProjectManageHost>(
@@ -196,7 +193,6 @@ export function CloudProjectManageView({
         </Tooltip>
       ),
       renderActionMenu: options => <ActionMenu {...options} />,
-      renderBoardLayout: options => <BoardLayoutEditor {...options} />,
     }),
     [t]
   )
@@ -229,4 +225,12 @@ export function CloudProjectManageView({
       onProjectUpdated={onProjectUpdated}
     />
   )
+}
+
+export function LocalProjectManageView({
+  api,
+  ...props
+}: Omit<Parameters<typeof CloudProjectManageView>[0], 'api'> & { api: DeliveryApi }) {
+  const workspaceApi = useMemo(() => createWeworkDeliverySharedWorkspaceApi(api), [api])
+  return <CloudProjectManageView {...props} api={workspaceApi} />
 }

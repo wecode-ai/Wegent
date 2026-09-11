@@ -20,13 +20,16 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
+import { buildInstalledPluginProjectCatalog } from '@wegent/collaboration'
 import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import { createProjectAutomationApi } from '@/api/projectAutomations'
 import { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 import { createPluginApi } from '@/api/plugins'
-import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
-import { createWeworkSharedWorkspaceApi } from '@/features/collaboration'
+import {
+  createWeworkSharedWorkspaceApi,
+  createWeworkWorkspaceRuntimePort,
+} from '@/features/collaboration'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
@@ -88,11 +91,12 @@ export function createBackendWorkbenchServices(
     runtimeProfileApi,
     projectChatAgentApi,
   })
+  const workspaceRuntimePort = createWeworkWorkspaceRuntimePort(deliveryApi, projectAutomationApi)
   const cloudPluginApi = createPluginApi(client, apiBaseUrl)
   const pluginApi = {
     async listPlugins(deviceId: string) {
       const response = await cloudPluginApi.listInstalledPlugins(deviceId)
-      return buildProjectPluginCatalog(response.items)
+      return buildInstalledPluginProjectCatalog(response.items)
     },
   }
 
@@ -106,6 +110,7 @@ export function createBackendWorkbenchServices(
     deviceApi,
     deliveryApi,
     sharedWorkspaceApi,
+    workspaceRuntimePort,
     feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl) : undefined,
     projectSpaceApis: {
       cloud: deliveryApi,

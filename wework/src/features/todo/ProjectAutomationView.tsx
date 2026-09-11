@@ -17,14 +17,20 @@ import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
-import { AutomationRulesView } from './AutomationRulesView.jsx'
+import { PopupMenu } from '@/components/common/MenuSelect'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
-  useAutomationCloudState,
-  type AutomationExecutionCatalog,
-} from '../../../../packages/collaboration/src/automation'
+  createSharedWorkspaceAutomationPorts,
+  EventSubscriptionPicker,
+  ProjectAutomationRulesView,
+} from '@wegent/collaboration/automation-ui'
+import type { AutomationExecutionCatalog } from '@wegent/collaboration/automation'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { createWeworkAutomationSharedWorkspaceApi } from '@/features/collaboration'
 
 interface ProjectAutomationViewProps {
-  api: NonNullable<WorkbenchServices['deliveryApi']>
+  api?: NonNullable<WorkbenchServices['deliveryApi']>
+  workspaceApi?: SharedWorkspaceApi
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   projectAutomationApi?: WorkbenchServices['projectAutomationApi']
@@ -84,6 +90,12 @@ const executionCatalogCache = new Map<string, ExecutionCatalogCacheEntry>()
 const executionCatalogLoads = new Map<string, ExecutionCatalogLoadRequest>()
 const executionPluginCache = new Map<string, ExecutionPluginCacheEntry>()
 const executionPluginLoads = new Map<string, ExecutionPluginLoadRequest>()
+const automationUiHost = {
+  useTranslation,
+  PopupMenu,
+  Tooltip,
+  EventSubscriptionPicker,
+}
 
 function executionCatalogSourcesMatch(
   entry: {
@@ -163,9 +175,10 @@ async function fetchExecutionPlugins(
 }
 
 export function ProjectAutomationView(props: ProjectAutomationViewProps) {
-  const { t } = useTranslation('common')
+  const { i18n, t } = useTranslation('common')
   const {
     api,
+    workspaceApi,
     project,
     projectAutomationApi,
     projectIncomingHookApi,
@@ -178,78 +191,22 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   } = props
   const projectId = String(project.id)
   const cacheKey = `${projectId}:${String(currentUserId ?? '')}`
-  const cloudApi = useMemo(
+  const automationWorkspaceApi = useMemo(() => {
+    if (workspaceApi) return workspaceApi
+    if (!api) return null
+    return createWeworkAutomationSharedWorkspaceApi(
+      api,
+      projectAutomationApi,
+      projectIncomingHookApi
+    )
+  }, [api, projectAutomationApi, projectIncomingHookApi, workspaceApi])
+  const sharedPorts = useMemo(
     () =>
-      projectAutomationApi
-        ? {
-            list: (targetProjectId: string) => projectAutomationApi.list(targetProjectId),
-            create: (
-              targetProjectId: string,
-              input: Parameters<typeof projectAutomationApi.create>[1]
-            ) => projectAutomationApi.create(targetProjectId, input),
-            migrateWorkflow: (
-              targetProjectId: string,
-              input: Parameters<typeof projectAutomationApi.migrateWorkflow>[1]
-            ) => projectAutomationApi.migrateWorkflow(targetProjectId, input),
-            update: (
-              targetProjectId: string,
-              automationId: string,
-              input: Parameters<typeof projectAutomationApi.update>[2]
-            ) => projectAutomationApi.update(targetProjectId, automationId, input),
-            remove: (targetProjectId: string, automationId: string) =>
-              projectAutomationApi.delete(targetProjectId, automationId),
-            runNow: (targetProjectId: string, automationId: string) =>
-              projectAutomationApi.runNow(targetProjectId, automationId),
-            listRuns: (targetProjectId: string, automationId: string) =>
-              projectAutomationApi.listRuns(targetProjectId, automationId),
-          }
-        : undefined,
-    [projectAutomationApi]
+      automationWorkspaceApi
+        ? createSharedWorkspaceAutomationPorts<CloudProject>(automationWorkspaceApi)
+        : null,
+    [automationWorkspaceApi]
   )
-  const projectApi = useMemo(
-    () => ({
-      clearLegacyWorkflow: (currentProject: CloudProject) =>
-        api.updateCloudProject(currentProject.id, {
-          version: currentProject.version,
-          workflow_definition: {
-            version: Math.max(1, currentProject.workflow_definition?.version ?? 1),
-            stage_mode: 'none',
-            advancement_policy: 'manual',
-            coordinator_prompt: '',
-            approval_policy: 'required',
-            ai_automation_rule_id: null,
-            execution_config: null,
-            nodes: [],
-          },
-        }),
-    }),
-    [api]
-  )
-  const automation = useAutomationCloudState<CloudProject>({
-    api: cloudApi,
-    cacheSource: projectAutomationApi,
-    projectApi,
-    incomingHooksApi: projectIncomingHookApi,
-    project,
-    currentUserId,
-    canManage: canManageAgents,
-    legacyUpgradeRequiredMessage: t(
-      'cloud_project.legacy_workflow_upgrade_required',
-      '旧版 Issue 编排需要由项目管理员完成自动升级'
-    ),
-    serviceUnavailableMessage: '当前项目没有可用的自动化服务',
-    managePermissionMessage: '当前账号没有管理自动化的权限',
-    runtimeUserRequiredMessage: '当前项目缺少可用的 Runtime 用户',
-    duplicateName: name => `${name} 副本`,
-    onProjectUpdated,
-    onRunRefreshError: refreshError => {
-      console.error('[Wework project automation] run history refresh failed', {
-        projectId,
-        error: refreshError,
-      })
-    },
-  })
-
   const loadExecutionCatalog = useCallback(async (): Promise<AutomationExecutionCatalog> => {
     const cached = executionCatalogCache.get(cacheKey)
     if (
@@ -330,27 +287,28 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     return plugins
   }, [cacheKey, loadExecutionCatalog, pluginApi])
 
+  if (!sharedPorts) return null
+
   return (
-    <AutomationRulesView
-      rules={automation.rules}
-      runs={automation.runs}
-      loading={automation.loading}
-      error={automation.error}
-      canManage={canManageAgents}
-      projectTags={project.tags}
-      eventSourceCatalog={automation.eventSourceCatalog}
-      projectIncomingHookApi={projectIncomingHookApi}
-      projectId={projectId}
+    <ProjectAutomationRulesView
+      automationApi={sharedPorts.automationApi}
+      automationCacheSource={workspaceApi ?? projectAutomationApi}
+      projectApi={sharedPorts.projectApi}
+      incomingHooksApi={sharedPorts.incomingHooksApi}
+      locale={i18n.language}
+      uiHost={automationUiHost}
       project={project}
-      onReload={automation.reload}
+      currentUserId={currentUserId}
+      canManage={canManageAgents}
+      onProjectUpdated={onProjectUpdated}
       onLoadExecutionCatalog={loadExecutionCatalog}
       onLoadExecutionPlugins={loadExecutionPlugins}
-      onLoadRuns={automation.refreshRuns}
-      onRunRule={automation.runRule}
-      onSaveRule={automation.persistRule}
-      onToggleRule={automation.toggleRule}
-      onDuplicateRule={automation.duplicateRule}
-      onDeleteRule={automation.deleteRule}
+      onRunRefreshError={refreshError => {
+        console.error('[Wework project automation] run history refresh failed', {
+          projectId,
+          error: refreshError,
+        })
+      }}
     />
   )
 }

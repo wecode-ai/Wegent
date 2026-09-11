@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { CloudFilesView } from './CloudFilesView'
+import { LocalFilesView } from './CloudFilesView'
 
 const transferMocks = vi.hoisted(() => ({
   readFileFromAccessUrl: vi.fn(),
@@ -110,7 +110,7 @@ describe('CloudFilesView', () => {
       downloadLoopItemAttachment: vi.fn(async () => undefined),
     } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
 
-    render(<CloudFilesView api={api} project={project} />)
+    render(<LocalFilesView api={api} project={project} />)
 
     expect(screen.getByTestId('cloud-files-view')).toHaveClass('min-h-0', 'flex-1')
     expect(await screen.findByTestId('task-attachment-attachment-1')).toHaveTextContent('CLOUD-3')
@@ -144,7 +144,7 @@ describe('CloudFilesView', () => {
     )
   })
 
-  it('does not show raw task attachments for remote projects', async () => {
+  it('shows cloud task attachments for remote projects', async () => {
     const listProjectTaskAttachments = vi.fn(async () => ({ items: [] }))
     const api = {
       listCloudFiles: vi.fn(async () => ({ items: [] })),
@@ -153,15 +153,16 @@ describe('CloudFilesView', () => {
     } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
 
     render(
-      <CloudFilesView
+      <LocalFilesView
         api={api}
         project={{ ...project, project_store: 'backend', task_provider: 'local' }}
       />
     )
 
     await screen.findByText('共享文件')
-    expect(listProjectTaskAttachments).not.toHaveBeenCalled()
-    expect(screen.queryByText('任务附件')).not.toBeInTheDocument()
+    await waitFor(() => expect(listProjectTaskAttachments).toHaveBeenCalledWith('13'))
+    expect(screen.getByText('任务附件')).toBeInTheDocument()
+    expect(screen.getByText('暂无任务附件')).toBeInTheDocument()
   })
 
   it('opens shared files in the reusable right-side preview component', async () => {
@@ -194,7 +195,7 @@ describe('CloudFilesView', () => {
       readCloudFile,
     } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
 
-    render(<CloudFilesView api={api} project={project} />)
+    render(<LocalFilesView api={api} project={project} />)
 
     await userEvent.click(await screen.findByRole('button', { name: '共享文件' }))
     await userEvent.click(await screen.findByRole('button', { name: 'research' }))
@@ -244,20 +245,20 @@ describe('CloudFilesView', () => {
     )
     vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    const { container } = render(<CloudFilesView api={api} project={project} />)
+    const { container } = render(<LocalFilesView api={api} project={project} />)
 
     await userEvent.click(await screen.findByRole('button', { name: '共享文件' }))
 
     await userEvent.click(screen.getByTestId('cloud-folder-add'))
     await userEvent.type(screen.getByTestId('cloud-folder-name'), 'drafts')
     await userEvent.click(screen.getByTestId('cloud-folder-create-confirm'))
-    await waitFor(() => expect(api.createCloudFolder).toHaveBeenCalledWith(13, 'drafts'))
+    await waitFor(() => expect(api.createCloudFolder).toHaveBeenCalledWith('13', 'drafts'))
 
     const input = container.querySelector<HTMLInputElement>('input[type="file"]')
     expect(input).not.toBeNull()
     await userEvent.upload(input!, new File(['upload'], 'upload.txt', { type: 'text/plain' }))
     await waitFor(() =>
-      expect(api.uploadCloudFile).toHaveBeenCalledWith(13, expect.any(File), 'upload.txt')
+      expect(api.uploadCloudFile).toHaveBeenCalledWith('13', expect.any(File), 'upload.txt')
     )
 
     await userEvent.click(screen.getByTestId('cloud-file-rename-file-1'))

@@ -1266,7 +1266,12 @@ def list_loop_item_comments(
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[LoopItemCommentResponse]:
     if external_loop_item_provider.is_external_item(db, item_id):
-        return []
+        return [
+            LoopItemCommentResponse.model_validate(comment)
+            for comment in external_loop_item_provider.list_comments(
+                db, item_id, current_user.id
+            )
+        ]
     return [
         LoopItemCommentResponse.model_validate(comment)
         for comment in loop_item_service.list_comments(db, item_id, current_user.id)

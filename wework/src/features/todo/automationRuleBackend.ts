@@ -1,1 +1,1 @@
-export * from '../../../../packages/collaboration/src/automation/model'
+export * from '@wegent/collaboration/automation'

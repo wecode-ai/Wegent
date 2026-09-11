@@ -2,209 +2,166 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState } from "react";
 
-import { CollaborationBoard } from './CollaborationBoard'
-import { collaborationMessages, type CollaborationLocale } from './i18n'
-import { collaborationTestIds } from './testIds'
-import { CollaborationSettings } from './CollaborationSettings'
-import { IssueDetail } from './IssueDetail'
-import { CollaborationFilesAdapter } from './web-adapter/CollaborationFilesAdapter'
-import { MyWorkAdapter } from './web-adapter/MyWorkAdapter'
-import { WorkspaceProjectsHomeAdapter } from './web-adapter/WorkspaceProjectsHomeAdapter'
 import {
-  ProjectViewSwitcher,
-  type CollaborationProjectViewOption,
-} from './workspace-header/ProjectViewSwitcher'
+  collaborationMessages,
+  createCollaborationTranslator,
+  localizeStandardStatuses,
+  type CollaborationLocale,
+} from "./i18n";
+import { collaborationTestIds } from "./testIds";
+import { CollaborationSettings } from "./CollaborationSettings";
+import { IssueCreate, IssueDetail } from "./IssueDetail";
+import { CollaborationProjectViewShell } from "./project-shell";
+import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
+import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
+import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
+import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import type {
-  CollaborationAttachment,
-  CollaborationComment,
   CollaborationHostAdapter,
   CollaborationIssue,
-  CollaborationMember,
-  CollaborationPriority,
   CollaborationProject,
   CollaborationStatus,
   CollaborationView,
-} from './types'
-import type { SharedWorkspaceApi } from './ports/SharedWorkspaceApi'
-import type { WorkspaceMyWorkItem } from './ports/SharedWorkspaceApi'
-
-const DEFAULT_STATUSES: CollaborationStatus[] = [
-  { id: 'pending', name: '待处理', color: 'gray' },
-  { id: 'in_progress', name: '进行中', color: 'blue' },
-  { id: 'completed', name: '已完成', color: 'green' },
-]
-
-export const collaborationProjectViewIds = ['board', 'files', 'automation', 'manage'] as const
+} from "./types";
+import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
+import {
+  ProjectAutomationRulesView,
+  createSharedWorkspaceAutomationPorts,
+  type AutomationUiHost,
+} from "./automation-ui";
+import type { AutomationProject } from "./automation";
+import { useCollaborationWorkspaceController } from "./workspace-controller";
+import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 
 interface CollaborationAppProps {
-  api: SharedWorkspaceApi
-  host: CollaborationHostAdapter
-  locale?: CollaborationLocale
-  pollIntervalMs?: number
+  api: SharedWorkspaceApi;
+  host: CollaborationHostAdapter;
+  locale?: CollaborationLocale;
+  pollIntervalMs?: number;
+  automationUiHost?: AutomationUiHost;
+  createProjectRequestKey?: number;
 }
 
-function errorStatus(error: unknown): number | null {
-  if (!error || typeof error !== 'object' || !('status' in error)) return null
-  return typeof error.status === 'number' ? error.status : null
+function projectStatuses(
+  project: CollaborationProject,
+  messages:
+    | (typeof collaborationMessages)["zh-CN"]
+    | (typeof collaborationMessages)["en"],
+  translate: ReturnType<typeof createCollaborationTranslator>,
+): CollaborationStatus[] {
+  const statuses = project.board_config?.statuses;
+  return statuses && statuses.length > 0
+    ? localizeStandardStatuses(statuses, translate)
+    : [
+        { id: "inbox", name: messages.statusInbox, color: "gray" },
+        { id: "pending", name: messages.statusPending, color: "blue" },
+        {
+          id: "in_progress",
+          name: messages.statusInProgress,
+          color: "orange",
+        },
+        { id: "in_review", name: messages.statusInReview, color: "purple" },
+        { id: "completed", name: messages.statusCompleted, color: "green" },
+      ];
 }
 
-function projectStatuses(project: CollaborationProject): CollaborationStatus[] {
-  const statuses = project.board_config?.statuses
-  return statuses && statuses.length > 0 ? statuses : DEFAULT_STATUSES
+function requireAutomationUiHost(
+  host: AutomationUiHost | undefined,
+): AutomationUiHost {
+  if (!host)
+    throw new Error(
+      "CollaborationApp automationUiHost is required for automation view",
+    );
+  return host;
 }
 
 export function CollaborationApp({
   api,
   host,
-  locale = 'zh-CN',
+  locale = "zh-CN",
   pollIntervalMs = 15_000,
+  automationUiHost,
+  createProjectRequestKey = 0,
 }: CollaborationAppProps) {
-  const messages = collaborationMessages[locale]
-  const [projects, setProjects] = useState<CollaborationProject[]>([])
-  const [myWork, setMyWork] = useState<WorkspaceMyWorkItem[]>([])
-  const [projectItems, setProjectItems] = useState<Record<string, CollaborationIssue[]>>({})
-  const [projectMembers, setProjectMembers] = useState<Record<string, CollaborationMember[]>>({})
-  const [project, setProject] = useState<CollaborationProject | null>(null)
-  const [issues, setIssues] = useState<CollaborationIssue[]>([])
-  const [selectedIssue, setSelectedIssue] = useState<CollaborationIssue | null>(null)
-  const [attachments, setAttachments] = useState<CollaborationAttachment[]>([])
-  const [comments, setComments] = useState<CollaborationComment[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [createProjectOpen, setCreateProjectOpen] = useState(false)
-  const [createIssueOpen, setCreateIssueOpen] = useState(false)
-
-  const notify = useCallback(
-    (message: string, kind: 'success' | 'error' = 'error') => {
-      host.notify?.(message, kind)
-      if (kind === 'error') setError(message)
-    },
-    [host]
-  )
-
-  const loadProjects = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const nextProjects = await api.projects.list()
-      const snapshots = await Promise.all(
-        nextProjects.map(async nextProject => ({
-          projectId: nextProject.id,
-          snapshot: await api.issues.getBoardSnapshot(nextProject.id),
-        }))
-      )
-      setProjects(nextProjects)
-      setProjectItems(
-        Object.fromEntries(snapshots.map(({ projectId, snapshot }) => [projectId, snapshot.items]))
-      )
-      setProjectMembers(
-        Object.fromEntries(
-          snapshots.map(({ projectId, snapshot }) => [projectId, snapshot.members])
-        )
-      )
-    } catch {
-      setError(messages.loadFailed)
-    } finally {
-      setLoading(false)
-    }
-  }, [api, messages.loadFailed])
-
-  const loadProject = useCallback(
-    async (projectId: string, showLoading = true) => {
-      if (showLoading) setLoading(true)
-      try {
-        const [nextProject, snapshot] = await Promise.all([
-          api.projects.get(projectId),
-          api.issues.getBoardSnapshot(projectId),
-        ])
-        setProject(nextProject)
-        setIssues(snapshot.items)
-        setError(null)
-      } catch {
-        setError(messages.loadFailed)
-      } finally {
-        if (showLoading) setLoading(false)
-      }
-    },
-    [api, messages.loadFailed]
-  )
-
-  const loadMyWork = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      setMyWork(await api.projects.listMyWork())
-    } catch {
-      setError(messages.loadFailed)
-    } finally {
-      setLoading(false)
-    }
-  }, [api, messages.loadFailed])
+  const messages = collaborationMessages[locale];
+  const translate = useMemo(
+    () => createCollaborationTranslator(locale),
+    [locale],
+  );
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const { state, commands } = useCollaborationWorkspaceController({
+    api,
+    location: host.location,
+    messages,
+    myWorkEnabled: host.capabilities.myWork === true,
+    pollIntervalMs,
+    notify: (message, kind) => host.notify?.(message, kind),
+  });
+  const {
+    projects,
+    myWork,
+    projectItems,
+    projectMembers,
+    project,
+    issues,
+    members,
+    agents,
+    selectedIssue,
+    comments,
+    loading,
+    error,
+  } = state;
+  const automationPorts = useMemo(
+    () =>
+      host.location.view === "automation"
+        ? createSharedWorkspaceAutomationPorts(api)
+        : null,
+    [api, host.location.view],
+  );
 
   useEffect(() => {
-    if (host.location.projectId) {
-      void loadProject(host.location.projectId)
-    } else if (host.location.rootView === 'my-work') {
-      setProject(null)
-      setSelectedIssue(null)
-      void loadMyWork()
-    } else {
-      setProject(null)
-      setSelectedIssue(null)
-      void loadProjects()
-    }
-  }, [host.location.projectId, host.location.rootView, loadMyWork, loadProject, loadProjects])
+    host.onProjectsChange?.(projects);
+  }, [host, projects]);
 
   useEffect(() => {
-    const projectId = host.location.projectId
-    if (!projectId || pollIntervalMs <= 0) return
-    const timer = window.setInterval(() => void loadProject(projectId, false), pollIntervalMs)
-    return () => window.clearInterval(timer)
-  }, [host.location.projectId, loadProject, pollIntervalMs])
-
-  useEffect(() => {
-    const issueId = host.location.issueId
-    if (!issueId) {
-      setSelectedIssue(null)
-      setAttachments([])
-      setComments([])
-      return
-    }
-    void Promise.all([
-      api.issues.get(issueId),
-      api.attachments.list(issueId),
-      api.comments.list(issueId),
-    ])
-      .then(([issue, nextAttachments, nextComments]) => {
-        setSelectedIssue(issue)
-        setAttachments(nextAttachments)
-        setComments(nextComments)
-      })
-      .catch(() => setError(messages.loadFailed))
-  }, [api, host.location.issueId, messages.loadFailed])
+    if (createProjectRequestKey > 0) setCreateProjectOpen(true);
+  }, [createProjectRequestKey]);
 
   const navigateView = (view: CollaborationView) => {
-    host.navigate({ projectId: project?.id ?? null, issueId: null, view })
-  }
+    host.navigate({ projectId: project?.id ?? null, issueId: null, view });
+  };
 
   if (loading) {
     return (
-      <div className="collaboration-loading" data-testid={collaborationTestIds.root}>
+      <div
+        className="collaboration-loading"
+        data-testid={collaborationTestIds.root}
+      >
         {messages.loading}
       </div>
-    )
+    );
   }
 
   return (
-    <section className="collaboration-app" data-testid={collaborationTestIds.root}>
+    <section
+      className={`collaboration-app${project ? " collaboration-app-project" : ""}`}
+      data-testid={collaborationTestIds.root}
+    >
       {error && (
-        <div className="collaboration-alert" role="alert" data-testid="collaboration-error">
+        <div
+          className="collaboration-alert"
+          role="alert"
+          data-testid="collaboration-error"
+        >
           {error}
         </div>
       )}
-      {!project && host.location.rootView === 'my-work' ? (
+      {!project &&
+      host.capabilities.myWork === true &&
+      host.location.rootView === "my-work" ? (
         <MyWorkAdapter
           items={myWork}
           locale={locale}
@@ -212,15 +169,15 @@ export function CollaborationApp({
             host.navigate({
               projectId: null,
               issueId: null,
-              view: 'board',
-              rootView: 'home',
+              view: "board",
+              rootView: "home",
             })
           }
-          onSelectItem={item =>
+          onSelectItem={(item) =>
             host.navigate({
               projectId: item.cloud_project_id,
               issueId: item.id,
-              view: 'board',
+              view: "board",
             })
           }
         />
@@ -229,484 +186,326 @@ export function CollaborationApp({
           projects={projects}
           projectItems={projectItems}
           projectMembers={projectMembers}
+          myWork={host.capabilities.myWork === true ? myWork : []}
           onCreateProject={() => setCreateProjectOpen(true)}
-          onSelectProject={nextProject =>
+          onSelectProject={(nextProject) =>
             host.navigate({
               projectId: nextProject.id,
               issueId: null,
-              view: 'board',
+              view: "board",
             })
           }
-          onManageProject={nextProject =>
+          onManageProject={(nextProject) =>
             host.navigate({
               projectId: nextProject.id,
               issueId: null,
-              view: 'manage',
+              view: "manage",
             })
           }
-          onOpenMyWork={() =>
-            host.navigate({
-              projectId: null,
-              issueId: null,
-              view: 'board',
-              rootView: 'my-work',
-            })
+          onOpenMyWork={
+            host.capabilities.myWork === true
+              ? () =>
+                  host.navigate({
+                    projectId: null,
+                    issueId: null,
+                    view: "board",
+                    rootView: "my-work",
+                  })
+              : undefined
           }
-          onUnavailable={() => notify(messages.capabilitiesUnavailable)}
+          onUnavailable={() =>
+            commands.reportError(messages.capabilitiesUnavailable)
+          }
+          locale={locale}
         />
       ) : (
-        <>
-          <header className="collaboration-project-header">
+        <CollaborationProjectViewShell
+          project={project}
+          view={host.location.view}
+          labels={{
+            board: messages.board,
+            files: messages.files,
+            automation: messages.automation,
+            manage: messages.settings,
+          }}
+          testIds={{
+            board: "collaboration-tab-board",
+            files: "collaboration-tab-files",
+            automation: "collaboration-tab-automation",
+            manage: "collaboration-tab-manage",
+          }}
+          automationSupported={host.capabilities.automation}
+          switcherAriaLabel={messages.title}
+          compactSwitcherIcon={<span aria-hidden="true">▾</span>}
+          onViewChange={(view) => navigateView(view as CollaborationView)}
+          assistantOpen={false}
+          backAction={
             <button
               type="button"
-              className="collaboration-link-button"
+              className="relative z-10 mr-2 flex h-8 items-center rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
               data-testid="collaboration-project-back"
-              onClick={() => host.navigate({ projectId: null, issueId: null, view: 'board' })}
-            >
-              ← {messages.back}
-            </button>
-            <div>
-              <span className="collaboration-project-key">{project.project_key}</span>
-              <h1>{project.name}</h1>
-              {project.description && <p>{project.description}</p>}
-            </div>
-            <button
-              type="button"
-              className="collaboration-primary-button"
-              data-testid={collaborationTestIds.createIssue}
-              onClick={() => setCreateIssueOpen(true)}
-            >
-              {messages.createIssue}
-            </button>
-            {host.projectActions?.map(action => (
-              <button
-                type="button"
-                className="collaboration-secondary-button"
-                data-testid={action.testId}
-                key={action.id}
-                onClick={() => action.invoke(project)}
-              >
-                {action.renderIcon?.()}
-                {action.label}
-              </button>
-            ))}
-          </header>
-          <div className="mb-5">
-            <ProjectViewSwitcher
-              ariaLabel={messages.title}
-              compact={false}
-              value={host.location.view}
-              options={collaborationProjectViewIds
-                .filter(view => view !== 'automation' || host.capabilities.automation)
-                .map(
-                  view =>
-                    ({
-                      id: view,
-                      label:
-                        view === 'board'
-                          ? messages.board
-                          : view === 'files'
-                            ? messages.files
-                            : view === 'automation'
-                              ? messages.automation
-                              : messages.settings,
-                      testId: `collaboration-tab-${view}`,
-                    }) satisfies CollaborationProjectViewOption
-                )}
-              onChange={view => navigateView(view as CollaborationView)}
-            />
-          </div>
-          {host.location.view === 'board' && (
-            <CollaborationBoard
-              project={project}
-              issues={issues}
-              statuses={projectStatuses(project)}
-              labels={{
-                noIssues: messages.noIssues,
-                search: messages.searchIssues,
-                groupBy: messages.groupBy,
-                groupStatus: messages.groupStatus,
-                groupPriority: messages.groupPriority,
-                groupAssignee: messages.groupAssignee,
-                groupTag: messages.groupTag,
-                unassigned: messages.unassigned,
-                noTag: messages.noTag,
-              }}
-              onOpen={issue =>
-                host.navigate({
-                  projectId: project.id,
-                  issueId: issue.id,
-                  view: 'board',
-                })
+              onClick={() =>
+                host.navigate({ projectId: null, issueId: null, view: "board" })
               }
-              onReorder={async (issue, status, laneIds, optimisticItems) => {
-                try {
-                  setIssues(optimisticItems)
-                  const updated = await api.issues.reorder(project.id, {
-                    parentId: issue.parent_id,
-                    status,
-                    issueIds: laneIds,
+              aria-label={messages.back}
+            >
+              ←
+            </button>
+          }
+          embedded
+          hasCreateAction
+          sidebarCollapsed={false}
+          title={project.name}
+          titleIcon={
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-500/10 text-xs font-semibold text-indigo-600">
+              {project.project_key.slice(0, 2)}
+            </span>
+          }
+          renderRightActions={({ actionRefs, showLabels }) => (
+            <>
+              {host.location.view === "board" ? (
+                <button
+                  ref={actionRefs.add}
+                  type="button"
+                  className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
+                  data-testid={collaborationTestIds.createIssue}
+                  onClick={() => setCreateIssueOpen(true)}
+                >
+                  <span aria-hidden="true">＋</span>
+                  {showLabels ? messages.createIssue : null}
+                </button>
+              ) : null}
+              {host.projectActions?.map((action) => (
+                <button
+                  type="button"
+                  className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
+                  data-testid={action.testId}
+                  key={action.id}
+                  onClick={() => action.invoke(project)}
+                >
+                  {action.renderIcon?.()}
+                  {showLabels ? action.label : null}
+                </button>
+              ))}
+            </>
+          )}
+          slots={{
+            board: (
+              <ProjectBoardAdapter
+                agents={agents ?? []}
+                boardError={error}
+                project={project}
+                issues={issues}
+                members={members ?? []}
+                statuses={projectStatuses(project, messages, translate)}
+                labels={{
+                  noIssues: messages.noIssues,
+                  search: messages.searchIssues,
+                  groupBy: messages.groupBy,
+                  groupStatus: messages.groupStatus,
+                  groupPriority: messages.groupPriority,
+                  groupAssignee: messages.groupAssignee,
+                  groupTag: messages.groupTag,
+                  unassigned: messages.unassigned,
+                  noTag: messages.noTag,
+                }}
+                onOpen={(issue) =>
+                  host.navigate({
+                    projectId: project.id,
+                    issueId: issue.id,
+                    view: "board",
                   })
-                  const updatedById = new Map(updated.map(item => [item.id, item]))
-                  setIssues(current => current.map(item => updatedById.get(item.id) ?? item))
-                } catch (moveError) {
-                  if (errorStatus(moveError) === 409) {
-                    await loadProject(project.id, false)
-                    notify(messages.conflict)
-                  } else {
-                    notify(messages.saveFailed)
+                }
+                onMove={async (issue, mutation) => {
+                  if (mutation.kind === "status") {
+                    await commands.reorderIssue({
+                      issue,
+                      status: mutation.status,
+                      laneIds: mutation.laneIds,
+                      optimisticItems: mutation.optimisticItems,
+                    });
+                    return;
                   }
+                  if (mutation.kind === "assignee" && mutation.assigneeType) {
+                    await commands.assignIssue(String(project.id), issue.id, {
+                      version: issue.version,
+                      assigneeType: mutation.assigneeType,
+                      assigneeId: mutation.assigneeId!,
+                      notifyAssignee: true,
+                    });
+                    return;
+                  }
+                  await commands.updateIssue(
+                    issue.id,
+                    mutation.kind === "priority"
+                      ? {
+                          version: issue.version,
+                          priority:
+                            mutation.priority as CollaborationIssue["priority"],
+                        }
+                      : mutation.kind === "tag"
+                        ? { version: issue.version, tags: mutation.tags }
+                        : {
+                            version: issue.version,
+                            assigneeUserId: null,
+                            assigneeAgentId: null,
+                            assigneeTeamId: null,
+                          },
+                    { throwOnError: true },
+                  );
+                }}
+                onCreateIssue={() => setCreateIssueOpen(true)}
+                onGroupByChange={(groupBy) =>
+                  commands.changeProjectGroup({
+                    project,
+                    groupBy,
+                    defaultStatuses: projectStatuses(
+                      project,
+                      messages,
+                      translate,
+                    ),
+                  })
                 }
-              }}
-              onGroupByChange={async groupBy => {
-                const currentConfig = project.board_config ?? {
-                  group_by: 'status' as const,
-                  processing_start_status_id: projectStatuses(project)[1]?.id ?? null,
-                  statuses: projectStatuses(project),
-                }
-                setProject({
-                  ...project,
-                  board_config: { ...currentConfig, group_by: groupBy },
-                })
-                try {
-                  setProject(
-                    await api.projects.update(project.id, {
-                      version: project.version,
-                      boardConfig: { ...currentConfig, group_by: groupBy },
-                    })
-                  )
-                } catch (updateError) {
-                  if (errorStatus(updateError) === 409) await loadProject(project.id, false)
-                  else setProject(project)
-                  notify(messages.saveFailed)
-                }
-              }}
-            />
-          )}
-          {host.location.view === 'files' && (
-            <CollaborationFilesAdapter api={api.files} project={project} />
-          )}
-          {host.location.view === 'automation' && (
-            <CapabilityView
-              title={messages.automation}
-              unavailable={!host.capabilities.automation}
-              unavailableMessage={messages.capabilitiesUnavailable}
-            />
-          )}
-          {host.location.view === 'manage' && (
-            <CollaborationSettings
-              api={api}
-              project={project}
-              onChange={setProject}
-              onError={() => notify(messages.saveFailed)}
-            />
-          )}
-        </>
+              />
+            ),
+            files: (
+              <div className="collaboration-project-content">
+                <CollaborationFilesAdapter
+                  api={api}
+                  project={project}
+                  locale={locale}
+                />
+              </div>
+            ),
+            automation: automationPorts ? (
+              <div className="collaboration-project-content">
+                <ProjectAutomationRulesView
+                  automationApi={automationPorts.automationApi}
+                  automationCacheSource={api.automations}
+                  projectApi={automationPorts.projectApi}
+                  incomingHooksApi={automationPorts.incomingHooksApi}
+                  locale={locale}
+                  uiHost={requireAutomationUiHost(automationUiHost)}
+                  project={project as CollaborationProject & AutomationProject}
+                  currentUserId={project.current_user_id}
+                  canManage={
+                    project.access_role === "Owner" ||
+                    project.access_role === "Maintainer"
+                  }
+                  onProjectUpdated={(updated) =>
+                    commands.replaceProject(updated as CollaborationProject)
+                  }
+                  onLoadExecutionCatalog={
+                    api.automationExecutionCatalog
+                      ? () => api.automationExecutionCatalog!.load(project.id)
+                      : undefined
+                  }
+                  onLoadExecutionPlugins={
+                    api.automationExecutionCatalog
+                      ? (deviceIds) =>
+                          api.automationExecutionCatalog!.loadPlugins(
+                            project.id,
+                            deviceIds,
+                          )
+                      : undefined
+                  }
+                  onRunRefreshError={(refreshError) => {
+                    console.error(
+                      "[Web collaboration automation] run history refresh failed",
+                      {
+                        projectId: project.id,
+                        error: refreshError,
+                      },
+                    );
+                  }}
+                />
+              </div>
+            ) : null,
+            manage: (
+              <div className="collaboration-project-content">
+                <CollaborationSettings
+                  api={api}
+                  project={project}
+                  onChange={commands.replaceProject}
+                  onError={() => commands.reportError(messages.saveFailed)}
+                  translate={translate}
+                />
+              </div>
+            ),
+          }}
+        />
       )}
       {createProjectOpen && (
-        <CreateProjectDialog
-          allowLocalProjects={host.capabilities.localProjects}
-          messages={messages}
+        <ProjectCreateDialog
+          targets={[
+            {
+              location: "cloud",
+              create: api.projects.create,
+            },
+          ]}
+          defaultLocation="cloud"
+          allowDingTalkAITable={host.capabilities.dingtalkAitable}
+          labels={projectCreateLabels[locale]}
+          testIds={{
+            name: "collaboration-project-name-input",
+            description: "collaboration-project-description-input",
+            confirm: collaborationTestIds.createProjectConfirm,
+          }}
+          host={host.projectCreate}
           onClose={() => setCreateProjectOpen(false)}
-          onCreate={async values => {
-            try {
-              const created = await api.projects.create({
-                name: values.name,
-                description: values.description,
-              })
-              setCreateProjectOpen(false)
-              host.navigate({
-                projectId: created.id,
-                issueId: null,
-                view: 'board',
-              })
-            } catch {
-              notify(messages.saveFailed)
-            }
+          onCreated={(created) => {
+            setCreateProjectOpen(false);
+            host.navigate({
+              projectId: created.id,
+              issueId: null,
+              view: "board",
+            });
           }}
         />
       )}
       {createIssueOpen && project && (
-        <CreateIssueDialog
-          statuses={projectStatuses(project)}
+        <IssueCreate
+          api={api}
+          project={project}
+          allIssues={issues}
           messages={messages}
+          translate={translate}
           onClose={() => setCreateIssueOpen(false)}
-          onCreate={async values => {
-            try {
-              const created = await api.issues.create(project.id, values)
-              setIssues(current => [...current, created])
-              setCreateIssueOpen(false)
-              host.navigate({
-                projectId: project.id,
-                issueId: created.id,
-                view: 'board',
-              })
-            } catch {
-              notify(messages.saveFailed)
-            }
+          onCreated={(created) => {
+            commands.appendIssue(created);
+            setCreateIssueOpen(false);
+            host.navigate({
+              projectId: project.id,
+              issueId: created.id,
+              view: "board",
+            });
           }}
+          onError={() => commands.reportError(messages.saveFailed)}
         />
       )}
       {selectedIssue && project && (
         <IssueDetail
           api={api}
+          project={project}
           issue={selectedIssue}
-          statuses={projectStatuses(project)}
-          attachments={attachments}
+          allIssues={issues}
           comments={comments}
           messages={messages}
-          onClose={() =>
+          translate={translate}
+          onClose={() => {
+            commands.clearSelectedIssue();
             host.navigate({
               projectId: project.id,
               issueId: null,
               view: host.location.view,
-            })
-          }
-          onChange={updated => {
-            setSelectedIssue(updated)
-            setIssues(current => current.map(item => (item.id === updated.id ? updated : item)))
+            });
           }}
-          onAttachmentsChange={setAttachments}
-          onCommentsChange={setComments}
-          onConflict={async () => {
-            const current = await api.issues.get(selectedIssue.id)
-            setSelectedIssue(current)
-            setIssues(items => items.map(item => (item.id === current.id ? current : item)))
-            notify(messages.conflict)
-          }}
-          onError={() => notify(messages.saveFailed)}
+          onChange={commands.replaceIssue}
+          onCommentsChange={commands.replaceComments}
+          onConflict={commands.refreshSelectedIssue}
+          onError={() => commands.reportError(messages.saveFailed)}
         />
       )}
     </section>
-  )
-}
-
-type Messages = (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en']
-
-function DialogFrame({
-  testId,
-  title,
-  children,
-}: {
-  testId: string
-  title: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="collaboration-dialog-backdrop">
-      <div className="collaboration-dialog" role="dialog" aria-modal="true" data-testid={testId}>
-        <h2>{title}</h2>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function CreateProjectDialog({
-  allowLocalProjects,
-  messages,
-  onClose,
-  onCreate,
-}: {
-  allowLocalProjects: boolean
-  messages: Messages
-  onClose(): void
-  onCreate(values: {
-    name: string
-    description: string
-    project_store?: 'local' | 'backend'
-  }): Promise<void>
-}) {
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [projectStore, setProjectStore] = useState<'local' | 'backend'>('backend')
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    if (name.trim()) {
-      void onCreate({
-        name: name.trim(),
-        description: description.trim(),
-        ...(allowLocalProjects ? { project_store: projectStore } : {}),
-      })
-    }
-  }
-  return (
-    <DialogFrame testId={collaborationTestIds.createProjectDialog} title={messages.createProject}>
-      <form onSubmit={submit}>
-        <label>
-          {messages.projectName}
-          <input
-            data-testid="collaboration-project-name-input"
-            value={name}
-            onChange={event => setName(event.target.value)}
-            autoFocus
-          />
-        </label>
-        <label>
-          {messages.projectDescription}
-          <textarea
-            data-testid="collaboration-project-description-input"
-            value={description}
-            onChange={event => setDescription(event.target.value)}
-          />
-        </label>
-        {allowLocalProjects && (
-          <fieldset className="collaboration-project-location">
-            <legend>{messages.projectLocation}</legend>
-            <label>
-              <input
-                type="radio"
-                name="collaboration-project-location"
-                value="backend"
-                data-testid="collaboration-project-location-cloud"
-                checked={projectStore === 'backend'}
-                onChange={() => setProjectStore('backend')}
-              />
-              {messages.cloudProject}
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="collaboration-project-location"
-                value="local"
-                data-testid="collaboration-project-location-local"
-                checked={projectStore === 'local'}
-                onChange={() => setProjectStore('local')}
-              />
-              {messages.localProject}
-            </label>
-          </fieldset>
-        )}
-        <footer>
-          <button type="button" onClick={onClose}>
-            {messages.cancel}
-          </button>
-          <button
-            type="submit"
-            className="collaboration-primary-button"
-            data-testid={collaborationTestIds.createProjectConfirm}
-            disabled={!name.trim()}
-          >
-            {messages.create}
-          </button>
-        </footer>
-      </form>
-    </DialogFrame>
-  )
-}
-
-function CreateIssueDialog({
-  statuses,
-  messages,
-  onClose,
-  onCreate,
-}: {
-  statuses: CollaborationStatus[]
-  messages: Messages
-  onClose(): void
-  onCreate(values: {
-    title: string
-    description: string
-    status: string
-    priority: CollaborationPriority
-  }): Promise<void>
-}) {
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [status, setStatus] = useState(statuses[0]?.id ?? 'pending')
-  const [priority, setPriority] = useState<CollaborationPriority>('none')
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    if (title.trim()) {
-      void onCreate({
-        title: title.trim(),
-        description: description.trim(),
-        status,
-        priority,
-      })
-    }
-  }
-  return (
-    <DialogFrame testId={collaborationTestIds.createIssueDialog} title={messages.createIssue}>
-      <form onSubmit={submit}>
-        <label>
-          {messages.issueTitle}
-          <input
-            data-testid="collaboration-issue-title-input"
-            value={title}
-            onChange={event => setTitle(event.target.value)}
-            autoFocus
-          />
-        </label>
-        <label>
-          {messages.issueDescription}
-          <textarea
-            data-testid="collaboration-issue-description-input"
-            value={description}
-            onChange={event => setDescription(event.target.value)}
-          />
-        </label>
-        <div className="collaboration-form-row">
-          <label>
-            {messages.issueStatus}
-            <select
-              data-testid="collaboration-issue-status-input"
-              value={status}
-              onChange={event => setStatus(event.target.value)}
-            >
-              {statuses.map(item => (
-                <option value={item.id} key={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {messages.issuePriority}
-            <select
-              data-testid="collaboration-issue-priority-input"
-              value={priority}
-              onChange={event => setPriority(event.target.value as CollaborationPriority)}
-            >
-              {['none', 'low', 'medium', 'high', 'urgent'].map(value => (
-                <option value={value} key={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <footer>
-          <button type="button" onClick={onClose}>
-            {messages.cancel}
-          </button>
-          <button
-            type="submit"
-            className="collaboration-primary-button"
-            data-testid={collaborationTestIds.createIssueConfirm}
-            disabled={!title.trim()}
-          >
-            {messages.create}
-          </button>
-        </footer>
-      </form>
-    </DialogFrame>
-  )
-}
-
-function CapabilityView({
-  title,
-  unavailable,
-  unavailableMessage,
-}: {
-  title: string
-  unavailable: boolean
-  unavailableMessage: string
-}) {
-  return (
-    <section className="collaboration-panel">
-      <h2>{title}</h2>
-      {unavailable && <p>{unavailableMessage}</p>}
-    </section>
-  )
+  );
 }

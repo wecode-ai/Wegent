@@ -2,35 +2,308 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ComponentProps } from 'react'
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import {
+  Children,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
-import { CollaborationApp, collaborationProjectViewIds } from './CollaborationApp'
-import type { SharedWorkspaceApi } from './ports/SharedWorkspaceApi'
-import type { CollaborationLocation } from './types'
+const collaborationAppMocks = vi.hoisted(() => ({
+  useController: vi.fn(),
+}));
 
-describe('CollaborationApp API boundary', () => {
-  it('accepts the grouped SharedWorkspaceApi as its only cloud API', () => {
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useEffect: vi.fn(),
+    useMemo: <T,>(factory: () => T) => factory(),
+    useState: <T,>(initialValue: T | (() => T)) => [
+      typeof initialValue === "function"
+        ? (initialValue as () => T)()
+        : initialValue,
+      vi.fn(),
+    ],
+  };
+});
+
+vi.mock("./workspace-controller", () => ({
+  useCollaborationWorkspaceController: collaborationAppMocks.useController,
+}));
+
+import { CollaborationApp } from "./CollaborationApp";
+import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
+import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
+import {
+  buildCollaborationProjectViewOptions,
+  collaborationProjectViewIds,
+} from "./project-shell";
+import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
+import type {
+  CollaborationCapabilities,
+  CollaborationHostAdapter,
+  CollaborationLocation,
+} from "./types";
+import {
+  WorkspaceProjectsHome,
+  type WorkspaceProjectsHomeHost,
+} from "./workspace/WorkspaceProjectsHome";
+
+function descendants(node: ReactNode): ReactElement[] {
+  if (!node || typeof node !== "object" || !("props" in node)) return [];
+  const element = node as ReactElement;
+  return [
+    element,
+    ...Children.toArray(element.props.children).flatMap((child) =>
+      descendants(child),
+    ),
+  ];
+}
+
+function findByType(node: ReactNode, type: ReactElement["type"]) {
+  return descendants(node).find((element) => element.type === type);
+}
+
+function findByTestId(node: ReactNode, testId: string) {
+  return descendants(node).find(
+    (element) => element.props["data-testid"] === testId,
+  );
+}
+
+function createHost(
+  myWork: boolean | undefined,
+  rootView: CollaborationLocation["rootView"],
+): CollaborationHostAdapter {
+  return {
+    capabilities: {
+      myWork,
+      automation: true,
+      dingtalkAitable: false,
+    },
+    location: {
+      projectId: null,
+      issueId: null,
+      view: "board",
+      rootView,
+    },
+    navigate: vi.fn(),
+  };
+}
+
+function renderApp(host: CollaborationHostAdapter) {
+  return CollaborationApp({
+    api: {} as SharedWorkspaceApi,
+    host,
+  });
+}
+
+const Icon = () => null;
+
+function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
+  return {
+    icons: {
+      Check: Icon,
+      Cloud: Icon,
+      Copy: Icon,
+      HardDrive: Icon,
+      Plus: Icon,
+      Search: Icon,
+      Settings: Icon,
+    },
+    translate: (_key, fallback) => fallback,
+    copyText: async () => undefined,
+    formatRelativeTime: (value) => value,
+    renderTooltip: ({ children }) => children,
+    renderModal: ({ children }) => children,
+  };
+}
+
+describe("CollaborationApp API boundary", () => {
+  beforeEach(() => {
+    collaborationAppMocks.useController.mockReset();
+    collaborationAppMocks.useController.mockReturnValue({
+      state: {
+        projects: [],
+        myWork: [
+          {
+            id: "my-work-1",
+            cloud_project_id: "project-1",
+            project_key: "PRJ",
+            title: "Hidden Web task",
+          },
+        ],
+        projectItems: {},
+        projectMembers: {},
+        project: null,
+        issues: [],
+        members: [],
+        agents: [],
+        selectedIssue: null,
+        comments: [],
+        loading: false,
+        error: null,
+      },
+      commands: {
+        reportError: vi.fn(),
+      },
+    });
+  });
+
+  it("accepts the grouped SharedWorkspaceApi as its only cloud API", () => {
     expectTypeOf<
-      ComponentProps<typeof CollaborationApp>['api']
-    >().toEqualTypeOf<SharedWorkspaceApi>()
-    expect(true).toBe(true)
-  })
+      ComponentProps<typeof CollaborationApp>["api"]
+    >().toEqualTypeOf<SharedWorkspaceApi>();
+    expect(true).toBe(true);
+  });
 
-  it('models My Work as a root location rather than a project view', () => {
+  it("exposes only capabilities that change shared app behavior", () => {
+    expectTypeOf<keyof CollaborationCapabilities>().toEqualTypeOf<
+      "myWork" | "automation" | "dingtalkAitable"
+    >();
+  });
+
+  it("models My Work as a root location rather than a project view", () => {
     const location: CollaborationLocation = {
       projectId: null,
       issueId: null,
-      view: 'board',
-      rootView: 'my-work',
-    }
+      view: "board",
+      rootView: "my-work",
+    };
 
-    expect(location.rootView).toBe('my-work')
-  })
+    expect(location.rootView).toBe("my-work");
+  });
 
-  it('uses the original Wework project view set without Web-only pages', () => {
-    expect(collaborationProjectViewIds).toEqual(['board', 'files', 'automation', 'manage'])
-    expect(collaborationProjectViewIds).not.toContain('members')
-    expect(collaborationProjectViewIds).not.toContain('runs')
-  })
-})
+  it("uses the original Wework project view set without Web-only pages", () => {
+    expect(collaborationProjectViewIds).toEqual([
+      "board",
+      "files",
+      "automation",
+      "manage",
+    ]);
+    expect(collaborationProjectViewIds).not.toContain("members");
+    expect(collaborationProjectViewIds).not.toContain("runs");
+  });
+
+  it("centralizes permission filtering and host extension placement", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "RestrictedAnalyst" },
+      labels: {
+        board: "Board",
+        files: "Files",
+        automation: "Automation",
+        manage: "Manage",
+      },
+      testIds: {
+        board: "board",
+        files: "files",
+        automation: "automation",
+        manage: "manage",
+      },
+      automationSupported: true,
+      extensions: [
+        {
+          id: "table",
+          label: "Table",
+          testId: "table",
+          content: null,
+        },
+      ],
+    });
+
+    expect(options.map((option) => option.id)).toEqual(["board", "table"]);
+  });
+
+  it.each([undefined, false])(
+    "keeps My Work unavailable when the host capability is %s",
+    (myWork) => {
+      const host = createHost(myWork, "my-work");
+      const tree = renderApp(host);
+      const home = findByType(tree, WorkspaceProjectsHomeAdapter);
+
+      expect(findByType(tree, MyWorkAdapter)).toBeUndefined();
+      expect(home).toBeDefined();
+      expect(home?.props.myWork).toEqual([]);
+      expect(home?.props.onOpenMyWork).toBeUndefined();
+      expect(host.navigate).not.toHaveBeenCalled();
+      expect(collaborationAppMocks.useController).toHaveBeenCalledWith(
+        expect.objectContaining({ myWorkEnabled: false }),
+      );
+    },
+  );
+
+  it("keeps My Work available only when the host explicitly enables it", () => {
+    const homeHost = createHost(true, "home");
+    const home = findByType(renderApp(homeHost), WorkspaceProjectsHomeAdapter);
+
+    expect(home?.props.myWork).toHaveLength(1);
+    expect(home?.props.onOpenMyWork).toEqual(expect.any(Function));
+    expect(collaborationAppMocks.useController).toHaveBeenCalledWith(
+      expect.objectContaining({ myWorkEnabled: true }),
+    );
+    home?.props.onOpenMyWork();
+    expect(homeHost.navigate).toHaveBeenCalledWith({
+      projectId: null,
+      issueId: null,
+      view: "board",
+      rootView: "my-work",
+    });
+
+    const myWorkHost = createHost(true, "my-work");
+    expect(findByType(renderApp(myWorkHost), MyWorkAdapter)).toBeDefined();
+  });
+
+  it("keeps the Wework direct onOpenMyWork integration available", () => {
+    const onOpenMyWork = vi.fn();
+    const tree = WorkspaceProjectsHome({
+      projects: [],
+      projectCounts: {},
+      projectMembers: {},
+      projectItems: {},
+      myWork: [],
+      searchQuery: "",
+      host: createWorkspaceHomeHost(),
+      onCreateProject: vi.fn(),
+      onSelectProject: vi.fn(),
+      onManageProject: vi.fn(),
+      onSelectItem: vi.fn(),
+      onOpenMyWork,
+    });
+    const entry = findByTestId(tree, "cloud-projects-home-my-work");
+
+    expect(entry).toBeDefined();
+    entry?.props.onClick();
+    expect(onOpenMyWork).toHaveBeenCalledOnce();
+  });
+
+  it("hides the whole My Work section when no host callback is provided", () => {
+    const tree = WorkspaceProjectsHome({
+      projects: [],
+      projectCounts: {},
+      projectMembers: {},
+      projectItems: {},
+      myWork: [
+        {
+          id: "my-work-1",
+          cloud_project_id: "project-1",
+          project_key: "PRJ",
+          title: "Hidden Web task",
+          status: "pending",
+          updated_at: "2026-09-11T00:00:00Z",
+        },
+      ],
+      searchQuery: "",
+      host: createWorkspaceHomeHost(),
+      onCreateProject: vi.fn(),
+      onSelectProject: vi.fn(),
+      onManageProject: vi.fn(),
+      onSelectItem: vi.fn(),
+    });
+
+    expect(findByTestId(tree, "cloud-projects-home-my-work")).toBeUndefined();
+    expect(
+      findByTestId(tree, "cloud-projects-home-todo-my-work-1"),
+    ).toBeUndefined();
+  });
+});

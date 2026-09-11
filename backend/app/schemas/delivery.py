@@ -292,6 +292,11 @@ class LoopItemCommentResponse(BaseModel):
     updated_at: datetime
 
 
+class CollaborationMessageImportResponse(BaseModel):
+    issue: LoopItemResponse
+    comment: LoopItemCommentResponse | None = None
+
+
 class LoopItemAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

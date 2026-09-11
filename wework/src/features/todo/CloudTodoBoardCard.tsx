@@ -1,12 +1,17 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  CollaborationIssueCard,
+  CollaborationIssueCardContent,
+  getCurrentWorkflowNode,
+  type CollaborationIssueCardLabels,
+  workflowNodeStatusLabel,
+} from '@wegent/collaboration'
+import {
   AlertTriangle,
   Archive,
   Bot,
-  CalendarDays,
   Ellipsis,
-  Flag,
   ListTodo,
   Pin,
   Target,
@@ -14,6 +19,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
+import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
@@ -55,13 +61,12 @@ import {
   latestResponseLine,
   latestAssistantMessage,
 } from './runtimeTaskResponsePreview'
-import { priorityBadgeClasses } from './todoShared'
 import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
-import { getCurrentWorkflowNode, workflowNodeStatusLabel } from './workflowStagePresentation'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
   showPriority: boolean
+  showReference?: boolean
   showTags: boolean
   showDate: boolean
 }
@@ -70,12 +75,30 @@ export type BoardCardProgressDisplay = 'compact' | 'focused'
 
 const MARK_READ_PREVIEW_DELAY_MS = 3000
 
-const priorityLabels: Record<CloudLoopItem['priority'], string> = {
+const priorityLabels: CollaborationIssueCardLabels['priority'] = {
   none: '普通',
   low: '低',
   medium: '中',
   high: '高',
   urgent: '紧急',
+}
+
+const boardCardLabels: CollaborationIssueCardLabels = {
+  assignee: '负责人',
+  priority: priorityLabels,
+  unassigned: '未指定',
+}
+
+function ExecutionConfigurationBadge({ itemId }: { itemId: string }) {
+  return (
+    <span
+      data-testid={`cloud-todo-card-needs-execution-config-${itemId}`}
+      className="mt-2 inline-flex w-fit items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-300"
+    >
+      <AlertTriangle className="h-3.5 w-3.5" />
+      待配置
+    </span>
+  )
 }
 
 interface CloudTodoCardContentProps {
@@ -97,105 +120,33 @@ export function CloudTodoCardContent({
   showWorkflowStage = true,
   agentNames,
 }: CloudTodoCardContentProps) {
-  const tags = item.tags ?? []
-  const showFooter = display.showPriority || display.showDate || display.showAssignee
-  const assigneeName =
-    item.assignee_name ||
-    item.assignee_team_name ||
-    (item.assignee_agent_id
-      ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
-      : null)
   const needsExecutionConfiguration = processingStatus && itemNeedsExecutionConfiguration(item)
 
   return (
     <>
-      <span className="flex min-w-0 items-center gap-2 pr-5 text-base font-medium leading-5 text-text-primary">
-        {item.is_unread ? (
-          <span
-            data-testid={`cloud-todo-card-unread-${item.id}`}
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
-            aria-hidden="true"
-          />
-        ) : null}
-        <span className="line-clamp-1 min-w-0">{item.title}</span>
-        {goalBinding?.runtimeGoal?.objective.trim() ? (
-          <RuntimeTaskGoalSummary
-            itemId={item.id}
-            bindingId={goalBinding.id}
-            objective={goalBinding.runtimeGoal.objective}
-            compact
-          />
-        ) : null}
-      </span>
-      {needsExecutionConfiguration ? (
-        <span
-          data-testid={`cloud-todo-card-needs-execution-config-${item.id}`}
-          className="mt-2 inline-flex w-fit items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-300"
-        >
-          <AlertTriangle className="h-3.5 w-3.5" />
-          待配置
-        </span>
-      ) : null}
-      {display.showTags && tags.length > 0 ? (
-        <span className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden">
-          {tags.slice(0, 2).map((tag, index) => (
-            <span
-              key={tag}
-              className={cn(
-                'inline-flex h-5 max-w-28 shrink-0 items-center truncate rounded-md px-2 text-xs',
-                index === 0
-                  ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300'
-                  : 'bg-sky-500/10 text-sky-700 dark:text-sky-300'
-              )}
-            >
-              {tag}
-            </span>
-          ))}
-          {tags.length > 2 ? (
-            <span className="shrink-0 text-xs text-text-muted">+{tags.length - 2}</span>
-          ) : null}
-        </span>
-      ) : null}
-
-      {showFooter ? (
-        <span className="mt-2.5 flex min-h-6 items-center gap-3 text-xs text-text-muted">
-          {display.showPriority ? (
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5',
-                priorityBadgeClasses[item.priority]
-              )}
-            >
-              <Flag className="h-3 w-3" />
-              {priorityLabels[item.priority]}
-            </span>
-          ) : null}
-          {display.showDate ? (
-            <span className="inline-flex items-center gap-1">
-              <CalendarDays className="h-3 w-3" />
-              {(item.due_at ?? item.updated_at).slice(5, 10)}
-            </span>
-          ) : null}
-          {display.showAssignee ? (
-            assigneeName ? (
-              <Tooltip label={assigneeName} align="end" className="ml-auto min-w-0 shrink">
-                <span
-                  data-testid={`cloud-todo-card-assignee-${item.id}`}
-                  className="inline-flex min-w-0 items-center gap-1.5"
-                >
-                  <span className="sr-only">负责人</span>
-                  {item.assignee_agent_id || item.assignee_team_id ? (
-                    <Bot className="h-3.5 w-3.5 shrink-0" />
-                  ) : null}
-                  <span className="truncate">{assigneeName}</span>
-                </span>
-              </Tooltip>
-            ) : (
-              <span className="ml-auto">未指定</span>
-            )
-          ) : null}
-        </span>
-      ) : null}
+      <CollaborationIssueCardContent
+        item={item}
+        reference={item.id}
+        display={display}
+        labels={boardCardLabels}
+        agentNames={agentNames}
+        renderAssigneeTooltip={(label, child) => (
+          <Tooltip label={label} align="end" className="ml-auto min-w-0 shrink">
+            {child}
+          </Tooltip>
+        )}
+        titleTrailing={
+          goalBinding?.runtimeGoal?.objective.trim() ? (
+            <RuntimeTaskGoalSummary
+              itemId={item.id}
+              bindingId={goalBinding.id}
+              objective={goalBinding.runtimeGoal.objective}
+              compact
+            />
+          ) : null
+        }
+      />
+      {needsExecutionConfiguration ? <ExecutionConfigurationBadge itemId={item.id} /> : null}
       {showWorkflowStage ? (
         <CloudTodoWorkflowStage item={item} processingStatus={processingStatus} />
       ) : null}
@@ -354,6 +305,7 @@ export function CloudTodoBoardCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<number | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const editable = canEditProjectSpaceIssue(item)
   const itemRef = useRef(item)
   useEffect(() => {
     itemRef.current = item
@@ -392,7 +344,7 @@ export function CloudTodoBoardCard({
     isDragging,
   } = useDraggable({
     id: item.id,
-    disabled: item.can_edit === false || dragDisabled,
+    disabled: !editable || dragDisabled,
   })
   const { isOver, setNodeRef: setDropRef } = useDroppable({ id: `todo-card:${item.id}` })
 
@@ -403,143 +355,154 @@ export function CloudTodoBoardCard({
   }, [item.is_unread, onMarkRead, previewOpen])
 
   const card = (
-    <article
-      ref={node => {
+    <CollaborationIssueCard
+      item={item}
+      reference={item.id}
+      display={display}
+      labels={boardCardLabels}
+      agentNames={agentNames}
+      renderAssigneeTooltip={(label, child) => (
+        <Tooltip label={label} align="end" className="ml-auto min-w-0 shrink">
+          {child}
+        </Tooltip>
+      )}
+      titleTrailing={
+        currentTaskBinding?.runtimeGoal?.objective.trim() ? (
+          <RuntimeTaskGoalSummary
+            itemId={item.id}
+            bindingId={currentTaskBinding.id}
+            objective={currentTaskBinding.runtimeGoal.objective}
+            compact
+          />
+        ) : null
+      }
+      afterContent={
+        needsExecutionConfiguration ? <ExecutionConfigurationBadge itemId={item.id} /> : null
+      }
+      cardRef={node => {
         setDragRef(node)
         setDropRef(node)
       }}
-      data-testid={`cloud-todo-card-drop-${item.id}`}
-      style={{ transform: CSS.Translate.toString(transform) }}
-      className={cn(
-        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition-shadow hover:shadow-md',
-        item.is_unread
-          ? 'border-focus/30 bg-focus/10 hover:border-focus/40 hover:bg-focus/[0.14]'
-          : 'border-border bg-background hover:border-text-primary/15',
-        isDragging && 'opacity-25 shadow-none',
-        isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
-      )}
-    >
-      {item.can_edit !== false && !archiveDisabled ? (
-        <div className="absolute right-2 top-2 z-20">
-          <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
-            <button
-              type="button"
-              data-testid={`cloud-todo-card-more-${item.id}`}
-              onClick={event => {
-                event.stopPropagation()
-                setMenuOpen(current => !current)
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
-              aria-label={t('todo.project_actions', '项目操作')}
-              aria-expanded={menuOpen}
-            >
-              <Ellipsis className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-          {menuOpen ? (
-            <div
-              data-testid={`cloud-todo-card-menu-${item.id}`}
-              className="absolute right-0 top-8 w-32 rounded-lg border border-border bg-background p-1 shadow-md"
-            >
+      cardStyle={{ transform: CSS.Translate.toString(transform) }}
+      cardClassName="touch-none"
+      dragging={isDragging}
+      dropTarget={isOver}
+      articleTestId={`cloud-todo-card-drop-${item.id}`}
+      menu={
+        editable && !archiveDisabled ? (
+          <div className="absolute right-2 top-2 z-20">
+            <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
               <button
                 type="button"
-                data-testid={`cloud-todo-card-archive-${item.id}`}
+                data-testid={`cloud-todo-card-more-${item.id}`}
                 onClick={event => {
                   event.stopPropagation()
-                  setMenuOpen(false)
-                  onArchive()
+                  setMenuOpen(current => !current)
                 }}
-                className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+                aria-label={t('todo.project_actions', '项目操作')}
+                aria-expanded={menuOpen}
               >
-                <Archive className="h-3.5 w-3.5" />
-                归档任务
+                <Ellipsis className="h-3.5 w-3.5" />
               </button>
+            </Tooltip>
+            {menuOpen ? (
+              <div
+                data-testid={`cloud-todo-card-menu-${item.id}`}
+                className="absolute right-0 top-8 w-32 rounded-lg border border-border bg-background p-1 shadow-md"
+              >
+                <button
+                  type="button"
+                  data-testid={`cloud-todo-card-archive-${item.id}`}
+                  onClick={event => {
+                    event.stopPropagation()
+                    setMenuOpen(false)
+                    onArchive()
+                  }}
+                  className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                  归档任务
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null
+      }
+      detailFlushBottom={showWorkflowRow}
+      detailButtonTestId={`cloud-todo-card-${item.id}`}
+      detailButtonProps={{
+        ...listeners,
+        ...attributes,
+        disabled: item.can_view_detail === false,
+        onClick,
+      }}
+      childrenAction={
+        <>
+          {showWorkflowRow ? (
+            <span className="block px-3.5 pb-3">
+              <CloudTodoWorkflowStage
+                item={item}
+                processingStatus={processingStatus}
+                onOpen={item.can_view_detail === false ? undefined : onClick}
+                onConfigureExecution={onConfigureExecution}
+              />
+            </span>
+          ) : null}
+          {progressTaskBindings.length > 0 ? (
+            <div
+              role={onPreviewPinnedChange ? 'button' : undefined}
+              tabIndex={onPreviewPinnedChange ? 0 : undefined}
+              aria-label={t('todo.pin_task_progress_named', '固定任务进展：{{task}}', {
+                task: currentTaskBinding?.task_title || currentTaskBinding?.task_id,
+              })}
+              data-hover-card-pin-trigger
+              data-testid={`cloud-todo-card-tasks-${item.id}`}
+              onClick={() => onPreviewPinnedChange?.(true)}
+              onKeyDown={event => {
+                if (!onPreviewPinnedChange || (event.key !== 'Enter' && event.key !== ' ')) return
+                event.preventDefault()
+                onPreviewPinnedChange(true)
+              }}
+              className="w-full px-3.5 pb-3"
+            >
+              {progressTaskBindings.map(binding => (
+                <RuntimeTaskProgressSummary
+                  key={binding.id}
+                  item={item}
+                  binding={binding}
+                  compact
+                  progressDisplay={progressDisplay}
+                  active={
+                    binding.running || (binding.id === currentTaskBinding?.id && hasActiveTask)
+                  }
+                  changeRequestSnapshot={
+                    binding.id === currentTaskBinding?.id ? changeRequestSnapshot : null
+                  }
+                  repairingChangeRequest={repairingChangeRequest}
+                  onContinueChangeRequestRepair={
+                    binding.id === currentTaskBinding?.id &&
+                    changeRequestSnapshot?.changeRequest &&
+                    autoRepairStatus(changeRequestSnapshot.changeRequest) &&
+                    onContinueChangeRequestRepair
+                      ? async () => {
+                          setRepairingChangeRequest(true)
+                          try {
+                            await onContinueChangeRequestRepair(binding, changeRequestSnapshot!)
+                          } finally {
+                            setRepairingChangeRequest(false)
+                          }
+                        }
+                      : undefined
+                  }
+                  onLoadRuntimeGoal={onLoadRuntimeGoal}
+                />
+              ))}
             </div>
           ) : null}
-        </div>
-      ) : null}
-      <button
-        type="button"
-        data-testid={`cloud-todo-card-${item.id}`}
-        disabled={item.can_view_detail === false}
-        onClick={onClick}
-        className={cn(
-          'w-full px-3.5 pt-3.5 text-left disabled:cursor-default',
-          showWorkflowRow ? 'pb-0' : 'pb-3'
-        )}
-        {...listeners}
-        {...attributes}
-      >
-        <CloudTodoCardContent
-          item={item}
-          goalBinding={currentTaskBinding}
-          display={display}
-          processingStatus={processingStatus}
-          showWorkflowStage={false}
-          agentNames={agentNames}
-        />
-      </button>
-      {showWorkflowRow ? (
-        <span className="block px-3.5 pb-3">
-          <CloudTodoWorkflowStage
-            item={item}
-            processingStatus={processingStatus}
-            onOpen={item.can_view_detail === false ? undefined : onClick}
-            onConfigureExecution={onConfigureExecution}
-          />
-        </span>
-      ) : null}
-
-      {progressTaskBindings.length > 0 ? (
-        <div
-          role={onPreviewPinnedChange ? 'button' : undefined}
-          tabIndex={onPreviewPinnedChange ? 0 : undefined}
-          aria-label={t('todo.pin_task_progress_named', '固定任务进展：{{task}}', {
-            task: currentTaskBinding?.task_title || currentTaskBinding?.task_id,
-          })}
-          data-hover-card-pin-trigger
-          data-testid={`cloud-todo-card-tasks-${item.id}`}
-          onClick={() => onPreviewPinnedChange?.(true)}
-          onKeyDown={event => {
-            if (!onPreviewPinnedChange || (event.key !== 'Enter' && event.key !== ' ')) return
-            event.preventDefault()
-            onPreviewPinnedChange(true)
-          }}
-          className="w-full px-3.5 pb-3"
-        >
-          {progressTaskBindings.map(binding => (
-            <RuntimeTaskProgressSummary
-              key={binding.id}
-              item={item}
-              binding={binding}
-              compact
-              progressDisplay={progressDisplay}
-              active={binding.running || (binding.id === currentTaskBinding?.id && hasActiveTask)}
-              changeRequestSnapshot={
-                binding.id === currentTaskBinding?.id ? changeRequestSnapshot : null
-              }
-              repairingChangeRequest={repairingChangeRequest}
-              onContinueChangeRequestRepair={
-                binding.id === currentTaskBinding?.id &&
-                changeRequestSnapshot?.changeRequest &&
-                autoRepairStatus(changeRequestSnapshot.changeRequest) &&
-                onContinueChangeRequestRepair
-                  ? async () => {
-                      setRepairingChangeRequest(true)
-                      try {
-                        await onContinueChangeRequestRepair(binding, changeRequestSnapshot!)
-                      } finally {
-                        setRepairingChangeRequest(false)
-                      }
-                    }
-                  : undefined
-              }
-              onLoadRuntimeGoal={onLoadRuntimeGoal}
-            />
-          ))}
-        </div>
-      ) : null}
-    </article>
+        </>
+      }
+    />
   )
 
   if (previewDisabled || isDragging || progressTaskBindings.length === 0) return card

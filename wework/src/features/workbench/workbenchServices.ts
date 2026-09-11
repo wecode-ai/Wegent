@@ -48,7 +48,7 @@ import type {
 } from '@/types/automation'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import type { SharedWorkspaceApi, WeworkWorkspaceRuntimePort } from '@wegent/collaboration'
 import type { createExternalIssueApi } from '@/api/local/localDelivery'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
@@ -151,6 +151,7 @@ export interface WorkbenchServices {
   }
   deliveryApi?: DeliveryApi
   sharedWorkspaceApi?: SharedWorkspaceApi
+  workspaceRuntimePort?: WeworkWorkspaceRuntimePort
   feedbackApi?: ReturnType<typeof createFeedbackApi>
   aitableApi?: AITableApi
   dwsApi?: DwsApi

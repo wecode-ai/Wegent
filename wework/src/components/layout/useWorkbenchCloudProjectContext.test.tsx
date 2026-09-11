@@ -60,6 +60,64 @@ function loopItem(projectId: string): CloudLoopItem {
   }
 }
 
+interface RuntimeTestApi {
+  findCloudContextForTask?: (
+    task: RuntimeTaskAddress
+  ) => Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>
+  bindTask?: (issueId: string, task: RuntimeTaskAddress, taskTitle?: string | null) => Promise<void>
+  trackProjectTask?: (
+    projectId: string,
+    task: RuntimeTaskAddress,
+    title: string,
+    description: string
+  ) => Promise<{ item: CloudLoopItem }>
+  updateTaskTrackingStatus?: (
+    task: RuntimeTaskAddress,
+    status: string
+  ) => Promise<CloudLoopItem | null>
+}
+
+function cloudRuntimePort(
+  api: RuntimeTestApi
+): NonNullable<WorkbenchServices['workspaceRuntimePort']> {
+  const cachedIssues = new Map<string, CloudLoopItem | null>()
+  const taskKey = (task: RuntimeTaskAddress) => `${task.deviceId}:${task.taskId}`
+  return {
+    async findCloudContextForTask(task) {
+      if (!api.findCloudContextForTask) throw new Error('Not bound yet')
+      const context = await api.findCloudContextForTask(task)
+      cachedIssues.set(taskKey(task), context.loop_item)
+      return {
+        project: context.project,
+        issueId: context.loop_item?.id ?? null,
+      }
+    },
+    async findIssueForTask(task) {
+      const issue = cachedIssues.get(taskKey(task))
+      if (!issue) throw new Error('Task is not linked to an Issue')
+      return issue
+    },
+    bindTask(issueId, task, taskTitle) {
+      return api.bindTask?.(issueId, task, taskTitle) ?? Promise.resolve()
+    },
+    unbindTask: vi.fn().mockResolvedValue(undefined),
+    unbindCloudContext: vi.fn().mockResolvedValue(undefined),
+    async trackProjectTask(projectId, task, title, description) {
+      if (!api.trackProjectTask) throw new Error('Tracking is not configured')
+      const result = await api.trackProjectTask(projectId, task, title, description)
+      cachedIssues.set(taskKey(task), result.item)
+      return { issue: result.item }
+    },
+    async updateTrackedTaskStatus(task, status) {
+      if (!api.updateTaskTrackingStatus) return null
+      return api.updateTaskTrackingStatus(task, status)
+    },
+    updateTrackedTaskTitle: vi.fn().mockResolvedValue(null),
+    claimNextExecution: vi.fn().mockResolvedValue(null),
+    reportExecutionLifecycle: vi.fn().mockResolvedValue(null),
+  }
+}
+
 function renderCloudContext(services?: WorkbenchServices) {
   return renderHook(() =>
     useWorkbenchCloudProjectContext({
@@ -89,8 +147,10 @@ describe('useWorkbenchCloudProjectContext', () => {
       deviceId: 'device-1',
       taskId: 'runtime-1',
     }
+    const legacyBindTask = vi.fn().mockResolvedValue(undefined)
+    const runtimeBindTask = vi.fn().mockResolvedValue(undefined)
     const deliveryApi = {
-      bindTask: vi.fn().mockResolvedValue(undefined),
+      bindTask: legacyBindTask,
       findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
       listCloudProjects: vi.fn().mockResolvedValue({ items: [cloudProject] }),
       listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
@@ -99,6 +159,10 @@ describe('useWorkbenchCloudProjectContext', () => {
     }
     const services = {
       deliveryApi,
+      workspaceRuntimePort: cloudRuntimePort({
+        ...deliveryApi,
+        bindTask: runtimeBindTask,
+      }),
     } as unknown as WorkbenchServices
     const { result, rerender } = renderHook(
       ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress | null }) =>
@@ -140,12 +204,13 @@ describe('useWorkbenchCloudProjectContext', () => {
     rerender({ currentRuntimeTask: runtimeTask })
 
     await waitFor(() =>
-      expect(deliveryApi.bindTask).toHaveBeenCalledWith(
+      expect(runtimeBindTask).toHaveBeenCalledWith(
         item.id,
         runtimeTask,
         'Implement the selected task'
       )
     )
+    expect(legacyBindTask).not.toHaveBeenCalled()
   })
 
   test('does not reload task context when only the address object identity changes', async () => {
@@ -154,6 +219,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       deliveryApi: {
         findCloudContextForTask,
       },
+      workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }),
     } as unknown as WorkbenchServices
     const { rerender } = renderHook(
       ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress }) =>
@@ -217,6 +283,7 @@ describe('useWorkbenchCloudProjectContext', () => {
         listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
         listLoopItems: vi.fn().mockResolvedValue({ items: [completedItem] }),
       },
+      workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }),
     } as unknown as WorkbenchServices
     const { publishProjectSpaceTaskContextChanged } =
       await import('@/features/todo/projectSpaceSelection')
@@ -261,6 +328,12 @@ describe('useWorkbenchCloudProjectContext', () => {
         listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
         listLoopItems: vi.fn().mockResolvedValue({ items: [reviewItem] }),
       },
+      workspaceRuntimePort: cloudRuntimePort({
+        findCloudContextForTask: vi.fn().mockResolvedValue({
+          project: cloudProject,
+          loop_item: reviewItem,
+        }),
+      }),
     } as unknown as WorkbenchServices
     const { result } = renderHook(() =>
       useWorkbenchCloudProjectContext({
@@ -412,23 +485,29 @@ describe('useWorkbenchCloudProjectContext', () => {
     const firstTrackProjectTask = vi.fn().mockResolvedValue({ item: firstItem })
     const secondTrackProjectTask = vi.fn().mockResolvedValue({ item: secondItem })
     const firstServices = {
-      deliveryApi: {
-        findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
-        listCloudProjects: vi.fn().mockResolvedValue({ items: [firstProject] }),
-        listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
-        listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
-        listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
-        trackProjectTask: firstTrackProjectTask,
+      projectSpaceApis: {
+        local: {
+          findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+          listCloudProjects: vi.fn().mockResolvedValue({ items: [firstProject] }),
+          listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+          listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+          listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+          trackProjectTask: firstTrackProjectTask,
+        },
+        defaultLocation: 'local',
       },
     } as unknown as WorkbenchServices
     const secondServices = {
-      deliveryApi: {
-        findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
-        listCloudProjects: vi.fn().mockResolvedValue({ items: [secondProject] }),
-        listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
-        listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
-        listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
-        trackProjectTask: secondTrackProjectTask,
+      projectSpaceApis: {
+        local: {
+          findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+          listCloudProjects: vi.fn().mockResolvedValue({ items: [secondProject] }),
+          listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+          listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+          listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+          trackProjectTask: secondTrackProjectTask,
+        },
+        defaultLocation: 'local',
       },
     } as unknown as WorkbenchServices
     const firstHook = renderHook(
@@ -706,6 +785,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
       findCloudContextForTask,
+      trackProjectTask: vi.fn(() => new Promise<{ item: CloudLoopItem }>(() => {})),
     }
     const services = {
       projectSpaceApis: {
@@ -1126,6 +1206,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       deviceId: 'device-1',
       taskId: 'runtime-1',
     }
+    const workspaceRuntimePort = cloudRuntimePort({ findCloudContextForTask })
     const { rerender } = renderHook(
       ({
         currentRuntimeTask,
@@ -1147,7 +1228,10 @@ describe('useWorkbenchCloudProjectContext', () => {
       {
         initialProps: {
           currentRuntimeTask: runtimeTask,
-          services: { deliveryApi } as unknown as WorkbenchServices,
+          services: {
+            deliveryApi,
+            workspaceRuntimePort,
+          } as unknown as WorkbenchServices,
         },
       }
     )
@@ -1156,7 +1240,10 @@ describe('useWorkbenchCloudProjectContext', () => {
 
     rerender({
       currentRuntimeTask: { ...runtimeTask },
-      services: { deliveryApi } as unknown as WorkbenchServices,
+      services: {
+        deliveryApi,
+        workspaceRuntimePort,
+      } as unknown as WorkbenchServices,
     })
     await act(async () => {})
 

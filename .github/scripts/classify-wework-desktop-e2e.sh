@@ -831,6 +831,9 @@ classify_path() {
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
       ;;
+    packages/collaboration/*)
+      select_target "core:collaboration-shared-core"
+      ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
       ;;

@@ -2,21 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  buildInstalledPluginProjectCatalog,
+  mapCollaborationExecutionDto,
+  mapWorkspaceDeliveryAssetDto,
+  mapWorkspaceDeliveryDto,
+  mapWorkspaceIssueCollaboratorDto,
+  mapWorkspaceTaskBindingDto,
+  mapWorkspaceWorkflowPlanDto,
+  mapWorkspaceWorkflowStageContextDto,
+} from '@wegent/collaboration'
 import type {
+  CollaborationAttachment,
   CollaborationBoardSnapshot,
-  CollaborationExecution,
   CollaborationFile,
   CollaborationIssue,
   CollaborationProject,
+  InstalledPluginCatalogItem,
   SharedWorkspaceApi,
   WorkspaceBinaryAccess,
-  WorkspaceDelivery,
-  WorkspaceDeliveryAsset,
+  WorkspaceAutomationExecutionCatalog,
+  WorkspaceAutomationPlugin,
   WorkspaceDeliveryFile,
-  WorkspaceIssueCollaborator,
-  WorkspaceMyWorkItem,
-  WorkspaceTaskBinding,
-  WorkspaceWorkflowPlan,
 } from '@wegent/collaboration'
 
 import { ApiError, apiClient } from '@/apis/client'
@@ -54,11 +61,6 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
     capability: 'projects.archive',
     status: 'supported',
     endpoint: 'DELETE /v1/cloud-projects/{id}',
-  },
-  {
-    capability: 'projects.listMyWork',
-    status: 'supported',
-    endpoint: 'GET /v1/cloud-work-items/my-work',
   },
   {
     capability: 'projects.importMessages',
@@ -451,6 +453,16 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
     endpoint: 'PUT /v1/cloud-projects/{id}/executions/{executionId}/runtime',
   },
   {
+    capability: 'automationExecutionCatalog.load',
+    status: 'supported',
+    endpoint: 'GET /devices + GET /models/unified + GET /v1/runtime-profiles',
+  },
+  {
+    capability: 'automationExecutionCatalog.loadPlugins',
+    status: 'supported',
+    endpoint: 'GET /plugins/installed',
+  },
+  {
     capability: 'agents.list',
     status: 'supported',
     endpoint: 'GET /v1/cloud-projects/{id}/chat-agents',
@@ -487,103 +499,101 @@ function keysToSnakeCase(value: unknown): unknown {
   )
 }
 
-function mapTaskBinding(row: Record<string, unknown>): WorkspaceTaskBinding {
-  return {
-    id: Number(row.id),
-    projectId: String(row.cloud_project_id ?? ''),
-    issueId: row.loop_item_id == null ? null : String(row.loop_item_id),
-    taskUserId: Number(row.task_user_id),
-    deviceId: String(row.device_id ?? ''),
-    taskId: String(row.task_id ?? ''),
-    taskTitle: row.task_title == null ? null : String(row.task_title),
-    backendTaskId: row.backend_task_id == null ? null : Number(row.backend_task_id),
-    modelSelection:
-      (row.modelSelection as Record<string, unknown> | null | undefined) ??
-      (row.model_selection as Record<string, unknown> | null | undefined) ??
-      null,
-    workflowNodeId: row.workflow_node_id == null ? null : String(row.workflow_node_id),
-    linkedAt: String(row.linked_at ?? ''),
-  }
-}
-
-function mapWorkflowPlan(row: Record<string, unknown>): WorkspaceWorkflowPlan {
-  return {
-    runId: String(row.run_id ?? ''),
-    issueId: String(row.issue_id ?? ''),
-    stageId: String(row.stage_id ?? ''),
-    planVersion: Number(row.plan_version),
-    approvalPolicy: row.approval_policy === 'automatic' ? 'automatic' : 'required',
-    status: row.status as WorkspaceWorkflowPlan['status'],
-    summary: String(row.summary ?? ''),
-    items: Array.isArray(row.items) ? (row.items as Array<Record<string, unknown>>) : [],
-    managerRun: (row.manager_run as Record<string, unknown> | null | undefined) ?? null,
-  }
-}
-
-function mapCollaborator(row: Record<string, unknown>): WorkspaceIssueCollaborator {
-  return {
-    id: String(row.id),
-    issueId: String(row.loop_item_id ?? ''),
-    userId: Number(row.user_id),
-    userName: String(row.user_name ?? ''),
-    email: row.email == null ? null : String(row.email),
-    source: String(row.source ?? ''),
-    addedByUserId: Number(row.added_by_user_id),
-    createdAt: String(row.created_at ?? ''),
-  }
-}
-
-function mapDeliveryAsset(row: Record<string, unknown>): WorkspaceDeliveryAsset {
-  return {
-    id: String(row.id),
-    kind: String(row.kind ?? ''),
-    displayName: String(row.display_name ?? ''),
-    relativePath: String(row.relative_path ?? ''),
-    contentType: row.content_type == null ? null : String(row.content_type),
-    sizeBytes: Number(row.size_bytes),
-    sha256: String(row.sha256 ?? ''),
-  }
-}
-
-function mapDelivery(row: Record<string, unknown>): WorkspaceDelivery {
-  return {
-    id: String(row.id),
-    issueId: String(row.loop_item_id ?? ''),
-    status: row.status === 'delivered' ? 'delivered' : 'draft',
-    markdown: row.markdown == null ? undefined : String(row.markdown),
-    chat: (row.chat as Record<string, unknown> | null | undefined) ?? null,
-    assets: Array.isArray(row.assets)
-      ? row.assets.map(asset => mapDeliveryAsset(asset as Record<string, unknown>))
-      : [],
-    fulfillments: Array.isArray(row.fulfillments)
-      ? (row.fulfillments as Array<Record<string, unknown>>)
-      : [],
-    createdAt: String(row.created_at ?? ''),
-    deliveredAt: row.delivered_at == null ? null : String(row.delivered_at),
-  }
-}
-
-function mapExecution(row: Record<string, unknown>): CollaborationExecution {
-  return {
-    id: Number(row.id),
-    loop_item_id: String(row.loopItemId ?? ''),
-    task_title: String(row.taskTitle ?? ''),
-    executor_type: String(row.executorType ?? ''),
-    status: String(row.status ?? ''),
-    display_state: String(row.displayState ?? ''),
-    observed_state: String(row.observedState ?? ''),
-    sync_state: String(row.syncState ?? ''),
-    started_at: row.startedAt == null ? null : String(row.startedAt),
-    completed_at: row.completedAt == null ? null : String(row.completedAt),
-    error_message: row.errorMessage == null ? null : String(row.errorMessage),
-  }
-}
-
 function mapBinaryAccess(row: Record<string, unknown>): WorkspaceBinaryAccess {
   return {
     url: String(row.url ?? ''),
     expiresInSeconds: Number(row.expires_in_seconds ?? 0),
   }
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(recordValue(value)).flatMap(([key, item]) =>
+      typeof item === 'string' ? [[key, item]] : []
+    )
+  )
+}
+
+function mapAutomationExecutionCatalog(
+  devicesResponse: unknown,
+  modelsResponse: unknown,
+  runtimeProfilesResponse: unknown
+): WorkspaceAutomationExecutionCatalog {
+  const devices = Array.isArray(recordValue(devicesResponse).items)
+    ? (recordValue(devicesResponse).items as Array<Record<string, unknown>>)
+    : []
+  const models = Array.isArray(recordValue(modelsResponse).data)
+    ? (recordValue(modelsResponse).data as Array<Record<string, unknown>>)
+    : []
+  const runtimeProfiles = Array.isArray(runtimeProfilesResponse)
+    ? (runtimeProfilesResponse as Array<Record<string, unknown>>)
+    : []
+
+  return {
+    environments: devices
+      .filter(device => device.status !== 'offline')
+      .map(device => ({
+        deviceId: String(device.device_id ?? ''),
+        label: String(device.name ?? device.device_id ?? ''),
+        executionEnvironment:
+          device.device_type === 'local' ? ('local' as const) : ('cloud' as const),
+      }))
+      .filter(environment => environment.deviceId),
+    models: models
+      .filter(model => model.isActive !== false && model.modelCategoryType !== 'image')
+      .map(model => ({
+        name: String(model.name ?? ''),
+        label: String(model.displayName ?? model.name ?? ''),
+        type: ['public', 'user', 'group', 'runtime'].includes(String(model.type))
+          ? (model.type as 'public' | 'user' | 'group' | 'runtime')
+          : null,
+        options: {
+          ...stringRecord(model.config),
+          ...(typeof model.namespace === 'string'
+            ? { weworkCloudModelNamespace: model.namespace }
+            : {}),
+          ...(typeof model.resourceUserId === 'number'
+            ? { weworkCloudModelResourceUserId: String(model.resourceUserId) }
+            : {}),
+        },
+      }))
+      .filter(model => model.name),
+    runtimeProfiles: runtimeProfiles
+      .map(profile => ({
+        ...profile,
+        id: String(profile.id ?? ''),
+        name: String(profile.name ?? ''),
+        executionEnvironment:
+          profile.executionEnvironment === 'local' ? ('local' as const) : ('cloud' as const),
+        executionDeviceId: String(profile.executionDeviceId ?? ''),
+        model: String(profile.model ?? ''),
+        modelType: ['public', 'user', 'group', 'runtime'].includes(String(profile.modelType))
+          ? (profile.modelType as 'public' | 'user' | 'group' | 'runtime')
+          : null,
+        modelOptions: stringRecord(profile.modelOptions),
+        status: profile.status === 'archived' ? ('archived' as const) : ('active' as const),
+        version: Number(profile.version ?? 1),
+      }))
+      .filter(profile => profile.id && profile.status === 'active'),
+    plugins: [],
+  }
+}
+
+function mapAutomationPlugins(response: unknown): WorkspaceAutomationPlugin[] {
+  const items = Array.isArray(recordValue(response).items)
+    ? (recordValue(response).items as InstalledPluginCatalogItem[])
+    : []
+  return buildInstalledPluginProjectCatalog(items).map(reference => ({
+    id: reference.id,
+    label: reference.displayName,
+    reference: { ...reference },
+  }))
 }
 
 async function defaultGetBlob(endpoint: string): Promise<Blob> {
@@ -629,12 +639,6 @@ export function createWebSharedWorkspaceApi(
       archive(projectId, version) {
         return client.delete(`/v1/cloud-projects/${encoded(projectId)}?version=${version}`)
       },
-      async listMyWork() {
-        const response = await client.get<{ items: WorkspaceMyWorkItem[] }>(
-          '/v1/cloud-work-items/my-work'
-        )
-        return response.items
-      },
       importMessages(projectId, input) {
         return client.post(
           `/v1/cloud-projects/${encoded(projectId)}/message-imports`,
@@ -669,7 +673,9 @@ export function createWebSharedWorkspaceApi(
         return {
           items: response.items,
           nextCursor: response.next_cursor,
-          taskBindings: response.task_bindings.map(mapTaskBinding),
+          taskBindings: response.task_bindings.map(binding =>
+            mapWorkspaceTaskBindingDto(binding, projectId)
+          ),
         }
       },
       async getBoardSnapshot(projectId) {
@@ -682,7 +688,9 @@ export function createWebSharedWorkspaceApi(
           items: response.items,
           members: response.members,
           agents: response.agents,
-          taskBindings: response.task_bindings.map(mapTaskBinding),
+          taskBindings: response.task_bindings.map(binding =>
+            mapWorkspaceTaskBindingDto(binding, projectId)
+          ),
         }
       },
       get(issueId) {
@@ -790,25 +798,25 @@ export function createWebSharedWorkspaceApi(
         const response = await client.get<Array<Record<string, unknown>>>(
           `/v1/loop-items/${encoded(issueId)}/collaborators`
         )
-        return response.map(mapCollaborator)
+        return response.map(mapWorkspaceIssueCollaboratorDto)
       },
       async add(issueId, userId) {
         const response = await client.post<Record<string, unknown>>(
           `/v1/loop-items/${encoded(issueId)}/collaborators`,
           { user_id: userId }
         )
-        return mapCollaborator(response)
+        return mapWorkspaceIssueCollaboratorDto(response)
       },
       remove(issueId, userId) {
         return client.delete(`/v1/loop-items/${encoded(issueId)}/collaborators/${encoded(userId)}`)
       },
     },
     taskBindings: {
-      async list(issueId) {
+      async list(issueId, projectId) {
         const response = await client.get<Array<Record<string, unknown>>>(
           `/v1/loop-items/${encoded(issueId)}/tasks`
         )
-        return response.map(mapTaskBinding)
+        return response.map(binding => mapWorkspaceTaskBindingDto(binding, projectId))
       },
     },
     workflowPlans: {
@@ -816,42 +824,42 @@ export function createWebSharedWorkspaceApi(
         const response = await client.get<Record<string, unknown> | null>(
           `/v1/loop-items/${encoded(issueId)}/workflow-plan`
         )
-        return response ? mapWorkflowPlan(response) : null
+        return response ? mapWorkspaceWorkflowPlanDto(response) : null
       },
       async approve(issueId) {
         const response = await client.post<Record<string, unknown>>(
           `/v1/loop-items/${encoded(issueId)}/workflow-plan/approve`,
           {}
         )
-        return mapWorkflowPlan(response)
+        return mapWorkspaceWorkflowPlanDto(response)
       },
       async approveReview(issueId) {
         const response = await client.post<Record<string, unknown>>(
           `/v1/loop-items/${encoded(issueId)}/workflow-plan/review`,
           {}
         )
-        return mapWorkflowPlan(response)
+        return mapWorkspaceWorkflowPlanDto(response)
       },
       async pause(issueId) {
         const response = await client.post<Record<string, unknown>>(
           `/v1/loop-items/${encoded(issueId)}/workflow-plan/pause`,
           {}
         )
-        return mapWorkflowPlan(response)
+        return mapWorkspaceWorkflowPlanDto(response)
       },
       async resume(issueId) {
         const response = await client.post<Record<string, unknown>>(
           `/v1/loop-items/${encoded(issueId)}/workflow-plan/resume`,
           {}
         )
-        return mapWorkflowPlan(response)
+        return mapWorkspaceWorkflowPlanDto(response)
       },
       async replan(issueId) {
         const response = await client.post<Record<string, unknown>>(
           `/v1/loop-items/${encoded(issueId)}/workflow-plan/replan`,
           {}
         )
-        return mapWorkflowPlan(response)
+        return mapWorkspaceWorkflowPlanDto(response)
       },
       decideNode(issueId, workflowNodeId, action, reason) {
         return client.post(
@@ -859,10 +867,11 @@ export function createWebSharedWorkspaceApi(
           { action, reason: reason ?? '' }
         )
       },
-      getStageContext(issueId, workflowNodeId) {
-        return client.get(
+      async getStageContext(issueId, workflowNodeId) {
+        const response = await client.get<Record<string, unknown>>(
           `/v1/loop-items/${encoded(issueId)}/workflow-nodes/${encoded(workflowNodeId)}/input-context`
         )
+        return mapWorkspaceWorkflowStageContextDto(response)
       },
     },
     members: {
@@ -958,26 +967,26 @@ export function createWebSharedWorkspaceApi(
         const response = await client.get<{ items: Array<Record<string, unknown>> }>(
           `/v1/loop-items/${encoded(issueId)}/deliveries`
         )
-        return response.items.map(mapDelivery)
+        return response.items.map(mapWorkspaceDeliveryDto)
       },
       async get(deliveryId) {
-        return mapDelivery(await client.get(`/v1/deliveries/${encoded(deliveryId)}`))
+        return mapWorkspaceDeliveryDto(await client.get(`/v1/deliveries/${encoded(deliveryId)}`))
       },
       async create(issueId, input) {
-        return mapDelivery(
-          await client.post(`/v1/loop-items/${encoded(issueId)}/deliveries`, input)
+        return mapWorkspaceDeliveryDto(
+          await client.post(`/v1/loop-items/${encoded(issueId)}/deliveries`, keysToSnakeCase(input))
         )
       },
       async addAsset(deliveryId, file, relativePath) {
         const form = new FormData()
         form.set('file', file, file.name)
         form.set('relative_path', relativePath)
-        return mapDeliveryAsset(
+        return mapWorkspaceDeliveryAssetDto(
           await client.postForm(`/v1/deliveries/${encoded(deliveryId)}/assets`, form)
         )
       },
       async finalize(deliveryId, input) {
-        return mapDelivery(
+        return mapWorkspaceDeliveryDto(
           await client.post(`/v1/deliveries/${encoded(deliveryId)}/finalize`, {
             fulfillments: input.fulfillments.map(keysToSnakeCase),
           })
@@ -996,7 +1005,7 @@ export function createWebSharedWorkspaceApi(
         const response = await client.get<{ items: Array<Record<string, unknown>> }>(
           `/v1/cloud-projects/${encoded(projectId)}/executions${suffix}`
         )
-        return response.items.map(mapExecution)
+        return response.items.map(mapCollaborationExecutionDto)
       },
       async stop(projectId, executionId) {
         const response = await client.post<Record<string, unknown>>(
@@ -1094,6 +1103,21 @@ export function createWebSharedWorkspaceApi(
         )
       },
     },
+    automationExecutionCatalog: {
+      async load() {
+        const [devices, models, runtimeProfiles] = await Promise.all([
+          client.get('/devices'),
+          client.get('/models/unified?include_config=true&model_category_type=llm'),
+          client.get('/v1/runtime-profiles'),
+        ])
+        return mapAutomationExecutionCatalog(devices, models, runtimeProfiles)
+      },
+      async loadPlugins(_projectId, deviceIds) {
+        const deviceQuery = deviceIds.length === 1 ? `?device_id=${encoded(deviceIds[0])}` : ''
+        const response = await client.get(`/plugins/installed${deviceQuery}`)
+        return mapAutomationPlugins(response)
+      },
+    },
     runtimeProfiles: {
       list() {
         return client.get('/v1/runtime-profiles')
@@ -1120,7 +1144,7 @@ export function createWebSharedWorkspaceApi(
           `/v1/cloud-projects/${encoded(projectId)}/executions/${encoded(executionId)}/runtime`,
           { runtimeProfileId, version }
         )
-        return mapExecution(response)
+        return mapCollaborationExecutionDto(response)
       },
     },
     agents: {

@@ -10,7 +10,7 @@ import {
   CollaborationApp,
   type CollaborationHostAdapter,
   type CollaborationLocale,
-  type CollaborationRootView,
+  type CollaborationProject,
   type CollaborationView,
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
@@ -24,18 +24,13 @@ import {
 } from '@/features/tasks/components/sidebar'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
+import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
+import { CollaborationProjectSection } from './CollaborationProjectSection'
 
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
-const COLLABORATION_VIEWS = new Set<CollaborationView>([
-  'board',
-  'files',
-  'members',
-  'automation',
-  'runs',
-  'manage',
-])
+const COLLABORATION_VIEWS = new Set<CollaborationView>(['board', 'files', 'automation', 'manage'])
 
 export function CollaborationPage() {
   const router = useRouter()
@@ -45,38 +40,33 @@ export function CollaborationPage() {
   const isMobile = useIsMobile()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [collaborationProjects, setCollaborationProjects] = useState<CollaborationProject[]>([])
+  const [createProjectRequestKey, setCreateProjectRequestKey] = useState(0)
 
   useEffect(() => {
     setIsCollapsed(localStorage.getItem('task-sidebar-collapsed') === 'true')
   }, [])
 
   const rawView = searchParams.get('view')
-  const rootView: CollaborationRootView = rawView === 'my-work' ? 'my-work' : 'home'
   const view: CollaborationView =
     rawView && COLLABORATION_VIEWS.has(rawView as CollaborationView)
       ? (rawView as CollaborationView)
       : 'board'
-  const projectId = params.projectId ? decodeURIComponent(params.projectId) : null
-  const issueId = params.itemId ? decodeURIComponent(params.itemId) : null
+  const projectId = params.projectId ?? null
+  const issueId = params.itemId ?? null
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
 
   const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
   const host = useMemo<CollaborationHostAdapter>(
     () => ({
       capabilities: {
-        cloudProjects: true,
-        localProjects: false,
-        aiAssignment: true,
+        myWork: false,
         automation: true,
-        terminal: false,
         dingtalkAitable: false,
       },
-      location: { projectId, issueId, view, rootView },
+      location: { projectId, issueId, view, rootView: 'home' },
+      onProjectsChange: setCollaborationProjects,
       navigate(location) {
-        if (!location.projectId && location.rootView === 'my-work') {
-          router.push('/collaboration?view=my-work')
-          return
-        }
         const nextView = location.view === 'board' ? '' : `?view=${location.view}`
         if (!location.projectId) {
           router.push('/collaboration')
@@ -96,7 +86,7 @@ export function CollaborationPage() {
         else toast.error(message)
       },
     }),
-    [issueId, projectId, rootView, router, view]
+    [issueId, projectId, router, view]
   )
 
   const toggleCollapsed = () => {
@@ -122,10 +112,27 @@ export function CollaborationPage() {
           pageType="collaboration"
           isCollapsed={isCollapsed}
           onToggleCollapsed={toggleCollapsed}
+          projectSection={
+            <CollaborationProjectSection
+              locale={locale}
+              onAdd={() => setCreateProjectRequestKey(current => current + 1)}
+              onSelect={nextProjectId =>
+                router.push(`/collaboration/${encodeURIComponent(nextProjectId)}`)
+              }
+              projects={collaborationProjects}
+              selectedProjectId={projectId}
+            />
+          }
         />
       </ResizableSidebar>
       <main className="min-w-0 flex-1 overflow-auto">
-        <CollaborationApp api={api} host={host} locale={locale} />
+        <CollaborationApp
+          api={api}
+          host={host}
+          locale={locale}
+          automationUiHost={webAutomationUiHost}
+          createProjectRequestKey={createProjectRequestKey}
+        />
       </main>
     </div>
   )

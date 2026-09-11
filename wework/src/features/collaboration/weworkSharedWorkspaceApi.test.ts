@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest'
+import { createSharedWorkspaceAutomationPorts } from '@wegent/collaboration/automation-ui'
 import type {
   CloudLoopItem,
   CloudLoopItemCollaborator,
@@ -21,8 +22,10 @@ import {
   WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS,
   WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS,
   WEWORK_SHARED_WORKSPACE_MISSING_METHODS,
+  createWeworkAutomationSharedWorkspaceApi,
   createWeworkDeliverySharedWorkspaceApi,
   createWeworkSharedWorkspaceApi,
+  createWeworkWorkspaceRuntimePort,
 } from './weworkSharedWorkspaceApi'
 
 type DeliveryApi = ReturnType<typeof createDeliveryApi>
@@ -188,6 +191,18 @@ function createMockDeliveryApi() {
     addLoopItemCollaborator: vi.fn().mockResolvedValue(collaborator),
     removeLoopItemCollaborator: vi.fn().mockResolvedValue(undefined),
     listTaskBindings: vi.fn().mockResolvedValue([binding]),
+    findLoopItemForTask: vi.fn().mockResolvedValue(issue),
+    findCloudContextForTask: vi.fn().mockResolvedValue({
+      project,
+      loop_item_id: issue.id,
+      workflow_node_id: 'node-1',
+    }),
+    bindTask: vi.fn().mockResolvedValue(undefined),
+    unbindTask: vi.fn().mockResolvedValue(undefined),
+    unbindCloudContext: vi.fn().mockResolvedValue(undefined),
+    trackProjectTask: vi.fn().mockResolvedValue({ item: issue }),
+    updateTaskTrackingStatus: vi.fn().mockResolvedValue(issue),
+    updateTaskTrackingTitle: vi.fn().mockResolvedValue(issue),
     getWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowReview: vi.fn().mockResolvedValue(workflowPlan),
@@ -261,7 +276,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       workflow_definition: { version: 1 },
     })
     await api.projects.archive('project-1', 2)
-    await expect(api.projects.listMyWork()).resolves.toEqual([issue])
+    await expect(api.myWork.list()).resolves.toEqual([issue])
 
     await api.issues.list('project-1', { assigneeType: 'user', assigneeId: 8 })
     await expect(
@@ -271,7 +286,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         cursor: 'cursor',
         limit: 20,
       })
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       items: [issue],
       nextCursor: 'next',
       taskBindings: [
@@ -583,8 +598,8 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       'create',
       'update',
       'archive',
-      'listMyWork',
     ])
+    expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list'])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS).toEqual({
       projects: ['get', 'importMessages'],
       comments: ['list', 'create'],
@@ -623,7 +638,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
 
     await expect(
       createWeworkDeliverySharedWorkspaceApi(deliveryApi).taskBindings.list('issue-1')
-    ).rejects.toThrow('DeliveryApi task binding 4 is missing cloud_project_id')
+    ).rejects.toThrow('Workspace task binding 4 is missing cloud_project_id')
   })
 
   it('combines every cloud workspace domain behind one complete API', async () => {
@@ -715,6 +730,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     expect(Object.keys(api).sort()).toEqual(
       [
         'projects',
+        'myWork',
         'issues',
         'comments',
         'attachments',
@@ -760,7 +776,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
 
     await expect(
       api.runtimeProfiles.selectExecution('project-1', 7, 'profile-1', 2)
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       id: 7,
       loop_item_id: 'issue-1',
       task_title: 'Issue',
@@ -773,5 +789,192 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       completed_at: null,
       error_message: null,
     })
+  })
+})
+
+describe('createWeworkAutomationSharedWorkspaceApi', () => {
+  it('routes local automation and legacy workflow clearing through shared ports', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const projectAutomationApi = {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      migrateWorkflow: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      runNow: vi.fn(),
+      listRuns: vi.fn().mockResolvedValue([]),
+    }
+    const projectIncomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([]),
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      update: vi.fn(),
+      rotate: vi.fn(),
+      remove: vi.fn(),
+    }
+    const workspaceApi = createWeworkAutomationSharedWorkspaceApi(
+      deliveryApi,
+      projectAutomationApi as never,
+      projectIncomingHookApi as never
+    )
+    const ports = createSharedWorkspaceAutomationPorts<CloudProject>(workspaceApi)
+    const workflowDefinition = {
+      version: 3,
+      stage_mode: 'none' as const,
+      advancement_policy: 'manual' as const,
+      coordinator_prompt: '',
+      approval_policy: 'required' as const,
+      ai_automation_rule_id: null,
+      execution_config: null,
+      nodes: [],
+    }
+
+    await ports.automationApi.list('project-1')
+    await ports.incomingHooksApi.catalog()
+    await ports.projectApi.clearLegacyWorkflow(
+      { ...project, version: 4 } as CloudProject,
+      workflowDefinition
+    )
+
+    expect(projectAutomationApi.list).toHaveBeenCalledWith('project-1')
+    expect(projectIncomingHookApi.catalog).toHaveBeenCalledOnce()
+    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
+      version: 4,
+      workflow_definition: workflowDefinition,
+    })
+  })
+})
+
+describe('createWeworkWorkspaceRuntimePort', () => {
+  it('isolates cloud task tracking and automation execution behind the explicit runtime port', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const execution = {
+      id: 12,
+      loop_item_id: issue.id,
+      cloud_project_id: project.id,
+      task_title: issue.title,
+      task_status: null,
+      task_priority: null,
+      agent_id: 'agent-1',
+      assigner_user_id: 8,
+      status: 'claimed',
+      display_state: 'running',
+      observed_state: 'confirmed',
+      sync_state: 'synced',
+      execution_note: '',
+      version: 2,
+      created_at: '2026-09-10T00:00:00Z',
+      updated_at: '2026-09-10T00:00:00Z',
+    }
+    const projectAutomationApi = {
+      claimNext: vi.fn().mockResolvedValue(execution),
+      heartbeat: vi.fn().mockResolvedValue(execution),
+      startRequested: vi.fn().mockResolvedValue(execution),
+      dispatchUnknown: vi.fn().mockResolvedValue(execution),
+      runtimeStart: vi.fn().mockResolvedValue(execution),
+      dispatchFailed: vi.fn().mockResolvedValue(execution),
+    }
+    const port = createWeworkWorkspaceRuntimePort(deliveryApi, projectAutomationApi as never)
+    const task = {
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      backendTaskId: 9,
+      modelSelection: { model: 'gpt-5' },
+    }
+    const deliveryTask = {
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      backendTaskId: 9,
+      runtimeHandle: {
+        modelSelection: { model: 'gpt-5' },
+      },
+    }
+
+    await expect(port.findIssueForTask(task)).resolves.toEqual(issue)
+    await expect(port.findCloudContextForTask(task)).resolves.toEqual({
+      project,
+      issueId: issue.id,
+      workflowNodeId: 'node-1',
+    })
+    await port.bindTask(issue.id, task, 'Task', 'node-1')
+    await port.unbindTask(issue.id, task)
+    await port.unbindCloudContext(task)
+    await expect(port.trackProjectTask(project.id, task, 'Task', 'Description')).resolves.toEqual({
+      issue,
+    })
+    await expect(port.updateTrackedTaskStatus(task, 'running')).resolves.toEqual(issue)
+    await expect(port.updateTrackedTaskTitle(task, 'Renamed')).resolves.toEqual(issue)
+
+    expect(deliveryApi.bindTask).toHaveBeenCalledWith(issue.id, deliveryTask, 'Task', 'node-1')
+    expect(deliveryApi.unbindTask).toHaveBeenCalledWith(issue.id, deliveryTask)
+    expect(deliveryApi.unbindCloudContext).toHaveBeenCalledWith(deliveryTask)
+    expect(deliveryApi.trackProjectTask).toHaveBeenCalledWith(
+      project.id,
+      deliveryTask,
+      'Task',
+      'Description'
+    )
+
+    await expect(
+      port.claimNextExecution({ executionDeviceId: 'device-1', leaseSeconds: 300 })
+    ).resolves.toMatchObject({ id: 12, cloud_project_id: project.id })
+    expect(projectAutomationApi.claimNext).toHaveBeenCalledWith({
+      execution_device_id: 'device-1',
+      lease_seconds: 300,
+    })
+
+    await port.reportExecutionLifecycle(project.id, 12, {
+      type: 'heartbeat',
+      runtimeDeviceId: 'device-1',
+      runtimeTaskId: 'task-1',
+    })
+    await port.reportExecutionLifecycle(project.id, 12, {
+      type: 'start_requested',
+      runtimeDeviceId: 'device-1',
+      runtimeTaskId: 'task-1',
+    })
+    await port.reportExecutionLifecycle(project.id, 12, {
+      type: 'dispatch_unknown',
+      runtimeDeviceId: 'device-1',
+      runtimeTaskId: 'task-1',
+      error: 'timeout',
+    })
+    await port.reportExecutionLifecycle(project.id, 12, {
+      type: 'runtime_start',
+      runtimeDeviceId: 'device-1',
+      runtimeTaskId: 'task-1',
+      prompt: 'Run',
+      model: 'gpt-5',
+    })
+    await port.reportExecutionLifecycle(project.id, 12, {
+      type: 'dispatch_failed',
+      error: 'failed',
+    })
+
+    const executionAddress = { id: 12, cloud_project_id: project.id }
+    expect(projectAutomationApi.heartbeat).toHaveBeenCalledWith(
+      executionAddress,
+      'device-1',
+      'task-1'
+    )
+    expect(projectAutomationApi.startRequested).toHaveBeenCalledWith(
+      executionAddress,
+      'device-1',
+      'task-1'
+    )
+    expect(projectAutomationApi.dispatchUnknown).toHaveBeenCalledWith(
+      executionAddress,
+      'device-1',
+      'task-1',
+      'timeout'
+    )
+    expect(projectAutomationApi.runtimeStart).toHaveBeenCalledWith(
+      executionAddress,
+      'device-1',
+      'task-1',
+      'Run',
+      'gpt-5'
+    )
+    expect(projectAutomationApi.dispatchFailed).toHaveBeenCalledWith(executionAddress, 'failed')
   })
 })

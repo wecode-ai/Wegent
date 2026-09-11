@@ -1,5 +1,5 @@
-import { ArrowRight } from 'lucide-react'
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
+import { IssueStatusHistoryList } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AnchorPopover } from './AnchorPopover'
 import { memberNameById } from './todoShared'
@@ -46,49 +46,22 @@ export function StatusHistoryPopover({
       testId="cloud-todo-status-history-popover"
       onClose={onClose}
     >
-      {entries.map((entry, index) => {
-        const byName = memberNameById(projectMembers, entry.by_user_id)
-        const actor = byName ?? t('todo.status_history_system', '系统/机器人')
-        const toName = entry.to_status_name || t('todo.status_history_unset', '未设置')
-        const isCreate = entry.trigger === 'create'
-        const isAccept =
-          entry.trigger === 'user_update' &&
-          entry.from_status === 'in_review' &&
-          entry.to_status === 'completed'
-        const actionLabel = isAccept
-          ? t('todo.status_action_accept', '验收')
-          : t(STATUS_ACTION_KEYS[entry.trigger] ?? 'todo.status_action_user_update', entry.trigger)
-        return (
-          <div
-            key={`${entry.at}-${index}`}
-            className="rounded-md px-1.5 py-1.5"
-            data-testid={`cloud-todo-status-history-entry-${index}`}
-          >
-            <div className="flex items-center gap-1.5 text-xs text-text-primary">
-              <span className="shrink-0 font-medium">{actor}</span>
-              {isCreate ? (
-                <>
-                  <span className="shrink-0 text-text-muted">
-                    {t('todo.status_history_initial', '初始状态')}
-                  </span>
-                  <span className="min-w-0 truncate">{toName}</span>
-                </>
-              ) : (
-                <>
-                  <span className="min-w-0 truncate">
-                    {entry.from_status_name || t('todo.status_history_unset', '未设置')}
-                  </span>
-                  <ArrowRight className="h-3 w-3 shrink-0 text-text-muted" />
-                  <span className="min-w-0 truncate">{toName}</span>
-                </>
-              )}
-            </div>
-            <p className="mt-0.5 text-xs text-text-muted">
-              {actionLabel} · {new Date(entry.at).toLocaleString()}
-            </p>
-          </div>
-        )
-      })}
+      <IssueStatusHistoryList
+        entries={entries}
+        memberName={userId => memberNameById(projectMembers, userId)}
+        labels={{
+          system: t('todo.status_history_system', '系统/机器人'),
+          unset: t('todo.status_history_unset', '未设置'),
+          initial: t('todo.status_history_initial', '初始状态'),
+          accept: t('todo.status_action_accept', '验收'),
+          action: trigger =>
+            t(
+              STATUS_ACTION_KEYS[trigger as StatusHistoryEntry['trigger']] ??
+                'todo.status_action_user_update',
+              trigger
+            ),
+        }}
+      />
     </AnchorPopover>
   )
 }

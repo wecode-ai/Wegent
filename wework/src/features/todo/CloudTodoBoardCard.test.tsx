@@ -112,6 +112,46 @@ describe('CloudTodoBoardCard', () => {
     )
   })
 
+  it('fails closed for cloud card actions when can_edit is missing', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, can_edit: undefined, project_store: 'backend' }}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.queryByTestId('cloud-todo-card-more-WEG-85')).not.toBeInTheDocument()
+  })
+
+  it('keeps local card actions editable through the explicit local adapter marker', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, can_edit: undefined, project_store: 'local' }}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-more-WEG-85')).toBeInTheDocument()
+  })
+
   it('opens execution configuration from the blocking card action', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
     const onClick = vi.fn()
@@ -379,6 +419,41 @@ describe('CloudTodoBoardCard', () => {
     const priority = screen.getByText('普通')
     expect(priority.parentElement).not.toHaveClass('border-t')
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveClass('border-t')
+  })
+
+  it('renders the shared issue reference, tags, deadline and resolved assignee', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          due_at: '2026-09-12T03:00:00Z',
+          tags: ['frontend', 'shared', 'architecture'],
+          priority: 'high',
+          assignee_agent_id: 'agent-1',
+          assignee_agent_name: null,
+        }}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        agentNames={{ 'agent-1': 'Codex' }}
+        display={{
+          showAssignee: true,
+          showPriority: true,
+          showTags: true,
+          showDate: true,
+        }}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-WEG-85')
+    expect(card).toHaveTextContent('WEG-85')
+    expect(card).toHaveTextContent('高')
+    expect(card).toHaveTextContent('2026-09-12')
+    expect(card).toHaveTextContent('frontend')
+    expect(card).toHaveTextContent('shared')
+    expect(card).toHaveTextContent('+1')
+    expect(screen.getByTestId('cloud-todo-card-assignee-WEG-85')).toHaveTextContent('Codex')
   })
 
   it('does not open a progress preview when the card has no progress binding', async () => {

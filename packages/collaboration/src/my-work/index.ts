@@ -2,5 +2,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export * from './model'
-export * from './MyWorkView'
+export * from "./model";
+export * from "./MyWorkView";

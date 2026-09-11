@@ -2,63 +2,71 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Fragment, type ElementType, type ReactNode } from 'react'
+import { Fragment, type ElementType, type ReactNode } from "react";
 
 export interface KanbanDroppableState {
-  isOver: boolean
-  setNodeRef(node: HTMLElement | null): void
+  isOver: boolean;
+  setNodeRef(node: HTMLElement | null): void;
 }
 
 export interface KanbanDndAdapter {
-  DndContext: ElementType
-  DragOverlay: ElementType
-  useDroppable(args: { id: string }): KanbanDroppableState
+  DndContext: ElementType;
+  DragOverlay: ElementType;
+  useDroppable(args: { id: string }): KanbanDroppableState;
 }
 
 export interface KanbanEmptyAction {
-  ariaLabel: string
-  label: string
-  onClick(): void
+  ariaLabel: string;
+  label: string;
+  onClick(): void;
 }
 
 export interface KanbanEmptyState {
-  action?: KanbanEmptyAction
-  hint: string
+  action?: KanbanEmptyAction;
+  hint: string;
 }
 
 export interface KanbanBoardProps<TColumn, TItem> {
-  activeDragItemId: string | null
-  columns: readonly TColumn[]
-  dnd: KanbanDndAdapter
-  dndContextProps: Record<string, unknown>
-  dropIdPrefix: string
-  getColumnDotClassName(column: TColumn): string
-  getColumnDragHint(column: TColumn): string | undefined
-  getColumnEmptyState(column: TColumn, items: readonly TItem[]): KanbanEmptyState | undefined
-  getColumnItems(column: TColumn): readonly TItem[]
-  getColumnKey(column: TColumn): string
-  getColumnLabel(column: TColumn): string
-  getColumnWidthClassName(column: TColumn): string
-  getItemKey(item: TItem): string
-  renderAddIcon(): ReactNode
-  renderColumnFooter?(column: TColumn, items: readonly TItem[]): ReactNode
-  renderColumnHeaderActions?(column: TColumn, items: readonly TItem[]): ReactNode
-  renderDragOverlay(): ReactNode
-  renderItem(item: TItem, column: TColumn): ReactNode
-  renderItemsFooter?(column: TColumn, items: readonly TItem[]): ReactNode
-  testIdPrefix: string
+  activeDragItemId: string | null;
+  columns: readonly TColumn[];
+  dnd: KanbanDndAdapter;
+  dndContextProps: Record<string, unknown>;
+  dropIdPrefix: string;
+  getColumnDotClassName(column: TColumn): string;
+  getColumnDragHint(column: TColumn): string | undefined;
+  getColumnEmptyState(
+    column: TColumn,
+    items: readonly TItem[],
+  ): KanbanEmptyState | undefined;
+  getColumnItems(column: TColumn): readonly TItem[];
+  getColumnKey(column: TColumn): string;
+  getColumnLabel(column: TColumn): string;
+  getColumnWidthClassName(column: TColumn): string;
+  getItemKey(item: TItem): string;
+  renderAddIcon(): ReactNode;
+  renderColumnFooter?(column: TColumn, items: readonly TItem[]): ReactNode;
+  renderColumnHeaderActions?(
+    column: TColumn,
+    items: readonly TItem[],
+  ): ReactNode;
+  renderDragOverlay(): ReactNode;
+  renderItem(item: TItem, column: TColumn): ReactNode;
+  renderItemsFooter?(column: TColumn, items: readonly TItem[]): ReactNode;
+  testIdPrefix: string;
 }
 
-function classNames(...values: Array<string | false | null | undefined>): string {
-  return values.filter(Boolean).join(' ')
+function classNames(
+  ...values: Array<string | false | null | undefined>
+): string {
+  return values.filter(Boolean).join(" ");
 }
 
 interface KanbanColumnDropzoneProps {
-  children: ReactNode
-  dnd: KanbanDndAdapter
-  dragHint?: string
-  dropId: string
-  testId: string
+  children: ReactNode;
+  dnd: KanbanDndAdapter;
+  dragHint?: string;
+  dropId: string;
+  testId: string;
 }
 
 export function KanbanColumnDropzone({
@@ -68,20 +76,20 @@ export function KanbanColumnDropzone({
   dropId,
   testId,
 }: KanbanColumnDropzoneProps) {
-  const { isOver, setNodeRef } = dnd.useDroppable({ id: dropId })
+  const { isOver, setNodeRef } = dnd.useDroppable({ id: dropId });
 
   return (
     <div
       ref={setNodeRef}
       data-testid={testId}
       className={classNames(
-        'relative min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-2 pb-2 pt-2 transition-colors',
-        isOver && 'rounded-xl bg-muted ring-1 ring-inset ring-focus/50'
+        "relative min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-2 pb-2 pt-2 transition-colors",
+        isOver && "rounded-xl bg-muted ring-1 ring-inset ring-focus/50",
       )}
     >
       {isOver && dragHint ? (
         <div
-          data-testid={`${testId.replace('-dropzone-', '-drag-hint-')}`}
+          data-testid={`${testId.replace("-dropzone-", "-drag-hint-")}`}
           className="pointer-events-none sticky top-0 z-20 rounded-lg border border-border bg-background/95 px-2 py-1.5 text-center text-xs font-medium text-text-secondary shadow-sm"
         >
           {dragHint}
@@ -89,14 +97,14 @@ export function KanbanColumnDropzone({
       ) : null}
       {children}
     </div>
-  )
+  );
 }
 
 interface KanbanColumnProps<TColumn, TItem> extends Omit<
   KanbanBoardProps<TColumn, TItem>,
-  'columns' | 'dndContextProps' | 'renderDragOverlay'
+  "columns" | "dndContextProps" | "renderDragOverlay"
 > {
-  column: TColumn
+  column: TColumn;
 }
 
 export function KanbanColumn<TColumn, TItem>({
@@ -119,26 +127,37 @@ export function KanbanColumn<TColumn, TItem>({
   renderItemsFooter,
   testIdPrefix,
 }: KanbanColumnProps<TColumn, TItem>) {
-  const columnKey = getColumnKey(column)
-  const columnItems = getColumnItems(column)
-  const emptyState = columnItems.length === 0 ? getColumnEmptyState(column, columnItems) : undefined
+  const columnKey = getColumnKey(column);
+  const columnItems = getColumnItems(column);
+  const emptyState =
+    columnItems.length === 0
+      ? getColumnEmptyState(column, columnItems)
+      : undefined;
 
   return (
     <section
       data-testid={`${testIdPrefix}-column-${columnKey}`}
       className={classNames(
-        'group flex max-h-full shrink-0 flex-col rounded-2xl bg-muted p-0.5 transition-[width]',
+        "group flex max-h-full shrink-0 flex-col rounded-2xl bg-muted p-0.5 transition-[width]",
         getColumnWidthClassName(column),
-        activeDragItemId !== null && 'outline-dashed outline-1 -outline-offset-1 outline-border'
+        activeDragItemId !== null &&
+          "outline-dashed outline-1 -outline-offset-1 outline-border",
       )}
     >
       <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
         <span className="flex min-w-0 items-center">
           <span
-            className={classNames('mr-2 h-2 w-2 rounded-full', getColumnDotClassName(column))}
+            className={classNames(
+              "mr-2 h-2 w-2 rounded-full",
+              getColumnDotClassName(column),
+            )}
           />
-          <span className="text-sm font-semibold">{getColumnLabel(column)}</span>
-          <span className="ml-2 text-xs text-text-muted">{columnItems.length}</span>
+          <span className="text-sm font-semibold">
+            {getColumnLabel(column)}
+          </span>
+          <span className="ml-2 text-xs text-text-muted">
+            {columnItems.length}
+          </span>
         </span>
         <span className="flex items-center gap-1">
           {renderColumnHeaderActions?.(column, columnItems)}
@@ -150,7 +169,7 @@ export function KanbanColumn<TColumn, TItem>({
         testId={`${testIdPrefix}-column-dropzone-${columnKey}`}
         dragHint={getColumnDragHint(column)}
       >
-        {columnItems.map(item => (
+        {columnItems.map((item) => (
           <Fragment key={getItemKey(item)}>{renderItem(item, column)}</Fragment>
         ))}
         {renderItemsFooter?.(column, columnItems)}
@@ -178,7 +197,7 @@ export function KanbanColumn<TColumn, TItem>({
       </KanbanColumnDropzone>
       {renderColumnFooter?.(column, columnItems)}
     </section>
-  )
+  );
 }
 
 export function KanbanBoard<TColumn, TItem>({
@@ -188,12 +207,12 @@ export function KanbanBoard<TColumn, TItem>({
   renderDragOverlay,
   ...columnProps
 }: KanbanBoardProps<TColumn, TItem>) {
-  const { DndContext, DragOverlay } = dnd
+  const { DndContext, DragOverlay } = dnd;
 
   return (
     <DndContext {...dndContextProps}>
       <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
-        {columns.map(column => (
+        {columns.map((column) => (
           <KanbanColumn
             {...columnProps}
             column={column}
@@ -204,5 +223,5 @@ export function KanbanBoard<TColumn, TItem>({
       </div>
       <DragOverlay dropAnimation={null}>{renderDragOverlay()}</DragOverlay>
     </DndContext>
-  )
+  );
 }

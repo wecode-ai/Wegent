@@ -9,6 +9,7 @@ import { type CollaborationIssue, type CollaborationProject } from '@wegent/coll
 import { toast } from 'sonner'
 
 import { apiClient } from '@/apis/client'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -58,8 +59,6 @@ export function SendToCollaborationDialog({
       .catch(() => toast.error(t('collaboration.failed')))
   }, [api, open, projectId, t, targetKind])
 
-  if (!open) return null
-
   const canSubmit =
     Boolean(projectId) && (targetKind === 'new_issue' ? Boolean(title.trim()) : Boolean(issueId))
 
@@ -87,14 +86,12 @@ export function SendToCollaborationDialog({
   }
 
   return (
-    <div className="collaboration-dialog-backdrop">
-      <div
-        className="collaboration-dialog"
-        role="dialog"
-        aria-modal="true"
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="collaboration-dialog sm:max-w-lg"
         data-testid="send-to-collaboration-dialog"
       >
-        <h2>{t('collaboration.title')}</h2>
+        <DialogTitle>{t('collaboration.title')}</DialogTitle>
         <div className="grid gap-4">
           <label className="grid gap-1.5">
             {t('collaboration.project')}
@@ -187,7 +184,7 @@ export function SendToCollaborationDialog({
             {loading ? t('collaboration.sending') : t('collaboration.send')}
           </button>
         </footer>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

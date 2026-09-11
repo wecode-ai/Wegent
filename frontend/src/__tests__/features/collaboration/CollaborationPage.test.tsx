@@ -82,20 +82,25 @@ describe('CollaborationPage root routing', () => {
     localStorage.clear()
   })
 
-  it('opens My Work from the collaboration root', () => {
+  it('does not expose My Work as a web capability', () => {
     render(<CollaborationPage />)
 
     expect(capturedHost?.location.rootView).toBe('home')
+    expect(capturedHost?.capabilities).toEqual({
+      myWork: false,
+      automation: true,
+      dingtalkAitable: false,
+    })
     fireEvent.click(screen.getByTestId('open-my-work'))
-    expect(mockPush).toHaveBeenCalledWith('/collaboration?view=my-work')
+    expect(mockPush).toHaveBeenCalledWith('/collaboration')
   })
 
-  it('recognizes the My Work URL and returns to the project home', () => {
+  it('normalizes the legacy My Work URL to the project home', () => {
     mockSearchParams = new URLSearchParams('view=my-work')
 
     render(<CollaborationPage />)
 
-    expect(capturedHost?.location.rootView).toBe('my-work')
+    expect(capturedHost?.location.rootView).toBe('home')
     fireEvent.click(screen.getByTestId('back-home'))
     expect(mockPush).toHaveBeenCalledWith('/collaboration')
   })
