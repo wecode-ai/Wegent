@@ -827,6 +827,71 @@ async def test_runtime_task_update_releases_claim_when_delivery_fails(
 
 
 @pytest.mark.asyncio
+async def test_runtime_task_update_keeps_claim_when_reply_target_fails(
+    test_db: Session,
+    test_user,
+    fake_im_session_cache,
+    fake_notification_cache,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address = {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+    }
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9413,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task=address,
+    )
+    await im_session_service.enable_global_notification(test_db, session=session)
+    send_text = AsyncMock(
+        return_value={"success": True, "result": {"processQueryKey": "query-1"}}
+    )
+    monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
+    monkeypatch.setattr(
+        im_session_service,
+        "save_runtime_task_reply_target",
+        AsyncMock(side_effect=RuntimeError("reply target unavailable")),
+    )
+
+    delivered = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Same terminal reply",
+        source="codex_watcher",
+        turn_key="turn-1",
+    )
+
+    assert delivered["sent"] == 1
+    assert fake_notification_cache.values != {}
+
+    duplicate = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Same terminal reply",
+        source="codex_watcher",
+        turn_key="turn-1",
+    )
+
+    assert duplicate["skipped"] == "duplicate_turn"
+    send_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_runtime_task_update_without_turn_key_uses_short_claim_ttl(
     test_db: Session,
     test_user,

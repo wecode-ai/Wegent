@@ -271,11 +271,18 @@ class IMNotificationDispatcher:
                             session.session_key,
                         )
                     else:
-                        await im_session_service.save_runtime_task_reply_target(
-                            session=session,
-                            message_id=reply_reference,
-                            runtime_task=runtime_task,
-                        )
+                        try:
+                            await im_session_service.save_runtime_task_reply_target(
+                                session=session,
+                                message_id=reply_reference,
+                                runtime_task=runtime_task,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "[IMNotificationDispatcher] Failed to record runtime "
+                                "reply target: session_key=%s",
+                                session.session_key,
+                            )
         return {"sent": sent, "results": results}
 
     def _get_channel(self, db: Session, channel_id: int) -> Kind | None:
