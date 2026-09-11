@@ -851,7 +851,13 @@ class LoopItemService:
         ]
 
     def add_comment(
-        self, db: Session, item_id: str, user_id: int, body: str
+        self,
+        db: Session,
+        item_id: str,
+        user_id: int,
+        body: str,
+        *,
+        commit: bool = True,
     ) -> dict[str, object]:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, action=IssueAction.COMMENT)
@@ -864,7 +870,10 @@ class LoopItemService:
             status="active",
         )
         db.add(comment)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(comment)
         author = db.get(User, user_id)
         return {
@@ -1528,6 +1537,8 @@ class LoopItemService:
         values: LoopItemAssign,
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
+        assignment_comment_id: str | None = None,
+        commit: bool = True,
     ) -> LoopItem:
         """Assign a task to a project member, project robot, or Wegent Team.
 
@@ -1585,6 +1596,7 @@ class LoopItemService:
                 workflow_step=values.workflow_step,
                 notify=values.notify_assignee,
                 trigger=values.trigger,
+                comment_id=assignment_comment_id,
             )
             assignee_updates = {
                 "assignee_agent_id": agent.id,
@@ -1661,6 +1673,7 @@ class LoopItemService:
                 workflow_step=values.workflow_step,
                 notify=values.notify_assignee,
                 trigger=values.trigger,
+                comment_id=assignment_comment_id,
             )
             assignee_updates = {
                 "assignee_user_id": target_user_id,
@@ -1714,6 +1727,7 @@ class LoopItemService:
                 workflow_step=values.workflow_step,
                 notify=values.notify_assignee,
                 trigger=values.trigger,
+                comment_id=assignment_comment_id,
             )
             assignee_updates = {
                 "assignee_user_id": None,
@@ -1773,7 +1787,12 @@ class LoopItemService:
 
         metadata = advance_content_revision(metadata, actor_user_id=user_id)
         updated = self._versioned_metadata_update(
-            db, item, values.version, metadata, **assignee_updates
+            db,
+            item,
+            values.version,
+            metadata,
+            commit=commit,
+            **assignee_updates,
         )
         if cancelled_runs:
             from app.services.board_team_execution import (
@@ -1781,7 +1800,7 @@ class LoopItemService:
             )
 
             request_execution_cancellations(cancelled_runs)
-        if values.assignee_type == "agent":
+        if commit and values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
             if agent is not None and agent.created_by_user_id:
                 wake_robot_creator(
@@ -2829,6 +2848,8 @@ class LoopItemService:
         item: LoopItem,
         version: int,
         metadata: dict,
+        *,
+        commit: bool = True,
         **updates: object,
     ) -> LoopItem:
         updates = {**updates, "metadata_json": metadata}
@@ -2846,7 +2867,10 @@ class LoopItemService:
         if updated != 1:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(item)
         return item
 

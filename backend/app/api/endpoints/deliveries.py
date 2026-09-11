@@ -32,6 +32,7 @@ from app.models.delivery import (
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRule,
+    ProjectChatAgent,
     loop_datetime_is_unset,
 )
 from app.models.user import User
@@ -1375,19 +1376,12 @@ async def create_issue_assignment(
             "Assignment is already active for this workflow step",
         )
 
-    comment_values = None
-    if values.comment_body:
-        comment_values = (
-            external_loop_item_provider.add_comment(
-                db, item_id, current_user.id, values.comment_body
-            )
-            if is_external
-            else loop_item_service.add_comment(
-                db, item_id, current_user.id, values.comment_body
-            )
-        )
-
     if is_external:
+        comment_values = None
+        if values.comment_body:
+            comment_values = external_loop_item_provider.add_comment(
+                db, item_id, current_user.id, values.comment_body
+            )
         current_issue = external_loop_item_provider.get(db, item_id, current_user.id)
         external_loop_item_provider.assign(
             db,
@@ -1403,21 +1397,65 @@ async def create_issue_assignment(
             ),
         )
         issue_values = external_loop_item_provider.get(db, item_id, current_user.id)
-    else:
-        item = loop_item_service.assign(
+        assignment = issue_assignment_service.active(
             db,
-            project_id=int(project.id),
-            item_id=item_id,
-            user_id=current_user.id,
-            values=LoopItemAssign(
-                version=item.version,
-                assignee_type=legacy_type,
-                assignee_id=legacy_id,
-                workflow_step=values.workflow_step,
-                notify_assignee=values.notify_target,
-                trigger=values.trigger,
-            ),
+            issue_id=item_id,
+            member_type=values.target_type,
+            member_id=values.target_id,
+            workflow_step=values.workflow_step,
         )
+        if assignment is None:
+            raise RuntimeError("Assignment was not persisted")
+        if comment_values is not None:
+            assignment.comment_id = str(comment_values["id"])
+            db.commit()
+            db.refresh(assignment)
+    else:
+        try:
+            comment_values = (
+                loop_item_service.add_comment(
+                    db,
+                    item_id,
+                    current_user.id,
+                    values.comment_body,
+                    commit=False,
+                )
+                if values.comment_body
+                else None
+            )
+            item = loop_item_service.assign(
+                db,
+                project_id=int(project.id),
+                item_id=item_id,
+                user_id=current_user.id,
+                values=LoopItemAssign(
+                    version=item.version,
+                    assignee_type=legacy_type,
+                    assignee_id=legacy_id,
+                    workflow_step=values.workflow_step,
+                    notify_assignee=values.notify_target,
+                    trigger=values.trigger,
+                ),
+                assignment_comment_id=(
+                    str(comment_values["id"]) if comment_values is not None else None
+                ),
+                commit=False,
+            )
+            assignment = issue_assignment_service.active(
+                db,
+                issue_id=item_id,
+                member_type=values.target_type,
+                member_id=values.target_id,
+                workflow_step=values.workflow_step,
+            )
+            if assignment is None:
+                raise RuntimeError("Assignment was not persisted")
+            db.commit()
+            db.refresh(item)
+            db.refresh(assignment)
+        except Exception:
+            db.rollback()
+            raise
         issue_values = loop_item_service.response_values(db, item, current_user.id)
         publish_loop_item_changed(
             db,
@@ -1425,20 +1463,16 @@ async def create_issue_assignment(
             reason="assignment",
             actor_user_id=current_user.id,
         )
+        if values.target_type == "agent":
+            agent = db.get(ProjectChatAgent, values.target_id)
+            if agent is not None and agent.created_by_user_id:
+                from app.services.loop_item_executions.wake import wake_robot_creator
 
-    assignment = issue_assignment_service.active(
-        db,
-        issue_id=item_id,
-        member_type=values.target_type,
-        member_id=values.target_id,
-        workflow_step=values.workflow_step,
-    )
-    if assignment is None:
-        raise RuntimeError("Assignment was not persisted")
-    if comment_values is not None:
-        assignment.comment_id = str(comment_values["id"])
-        db.commit()
-        db.refresh(assignment)
+                wake_robot_creator(
+                    user_id=agent.created_by_user_id,
+                    project_id=str(project.id),
+                    agent_id=agent.id,
+                )
 
     if values.target_type == "agent":
         from app.services.board_team_execution import dispatch_board_team_assignment
