@@ -1,7 +1,28 @@
 import { render } from '@testing-library/react'
 import { useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
+import {
+  AutomationUiHostProvider,
+  AutomationWorkflowCanvas as SharedAutomationWorkflowCanvas,
+} from '@wegent/collaboration/automation-ui'
+
+const EmptyComponent = () => null
+const automationUiHost = {
+  useTranslation: () => ({ t: (key: string) => key }),
+  PopupMenu: EmptyComponent,
+  Tooltip: EmptyComponent,
+  EventSubscriptionPicker: EmptyComponent,
+}
+
+function AutomationWorkflowCanvas(
+  props: React.ComponentProps<typeof SharedAutomationWorkflowCanvas>
+) {
+  return (
+    <AutomationUiHostProvider host={automationUiHost}>
+      <SharedAutomationWorkflowCanvas {...props} />
+    </AutomationUiHostProvider>
+  )
+}
 
 const flowMocks = vi.hoisted(() => ({
   defaultViewport: null as { x: number; y: number; zoom: number } | null,

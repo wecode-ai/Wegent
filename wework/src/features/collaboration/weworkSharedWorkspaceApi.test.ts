@@ -291,7 +291,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       nextCursor: 'next',
       taskBindings: [
         {
-          id: 4,
+          id: '4',
           projectId: 'project-1',
           issueId: 'issue-1',
           taskUserId: 7,
