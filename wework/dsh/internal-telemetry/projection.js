@@ -1,11 +1,12 @@
-const DISTINCT_ID_PATTERN = /^wework:[0-9a-f]{64}$/
+const HASHED_DISTINCT_ID_PATTERN = /^wework:[0-9a-f]{64}$/
+const EMAIL_PREFIX_PATTERN = /^[^\s@]{1,128}$/
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const MAX_VALUE_LENGTH = 128
 const PLATFORM_VALUES = new Set(['mac', 'win', 'linux'])
 const SMART_APP_SOURCE_VALUES = new Set(['managed', 'linked', 'market'])
 
 export function projectEnvelope({ catalog, distinctId, envelope, runtime } = {}) {
-  if (!DISTINCT_ID_PATTERN.test(distinctId)) return rejected('invalid_identity')
+  if (!isDistinctId(distinctId)) return rejected('invalid_identity')
   if (!isObject(envelope) || typeof envelope.name !== 'string') return rejected('unknown_event')
 
   const catalogEvent = catalogEventFor(catalog, envelope.name)
@@ -105,6 +106,13 @@ function isRuntime(runtime) {
     boundedString(runtime.appVersion) &&
     boundedString(runtime.releaseChannel) &&
     PLATFORM_VALUES.has(runtime.platform)
+  )
+}
+
+function isDistinctId(value) {
+  return (
+    typeof value === 'string' &&
+    (HASHED_DISTINCT_ID_PATTERN.test(value) || EMAIL_PREFIX_PATTERN.test(value))
   )
 }
 

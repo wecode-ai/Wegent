@@ -177,6 +177,7 @@ describe('core DSH runtime', () => {
     ).toEqual({
       dshVersion: CORE_DSH_VERSION,
       managedUiPlugins: true,
+      internalTelemetry: false,
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
@@ -230,6 +231,37 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await root.remove()
+  })
+
+  test('includes internal telemetry in an enabled internal profile', async () => {
+    const root = await temporaryDirectory('core-dsh-internal-telemetry-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment: {
+        PATH: '/usr/bin',
+        WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+        WEWORK_INTERNAL_TELEMETRY: '1',
+        WEWORK_NODE_PATH: '/managed/node',
+      },
+      port: 3080,
+    })
+
+    const profileRoot = join(dataDirectory, 'dsh-core', 'profiles', 'wework-core')
+    await expect(readFile(join(profileRoot, 'package.json'), 'utf8')).resolves.toContain(
+      '"@wegent/dsh-internal-telemetry"'
+    )
+    await expect(
+      readFile(
+        join(profileRoot, 'node_modules', '@wegent', 'dsh-internal-telemetry', 'package.json'),
+        'utf8'
+      )
     ).resolves.toBe('{}')
     await root.remove()
   })
@@ -431,6 +463,7 @@ describe('core DSH runtime', () => {
     expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
       dshVersion: CORE_DSH_VERSION,
       managedUiPlugins: true,
+      internalTelemetry: false,
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
@@ -811,6 +844,7 @@ async function writeRuntime(
       ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
       ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
       ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+      ['@wegent/dsh-internal-telemetry', 'wework-internal-telemetry'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
       ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
       ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],

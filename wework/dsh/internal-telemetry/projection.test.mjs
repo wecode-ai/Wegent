@@ -67,6 +67,18 @@ test('projects an opened smart app with allowlisted runtime and app identity', (
   })
 })
 
+test('projects a cloud email prefix as the PostHog distinct id', () => {
+  const projected = projectEnvelope({
+    catalog: eventCatalog,
+    distinctId: 'cloud-user',
+    envelope: smartAppEnvelope(),
+    runtime: RUNTIME,
+  })
+
+  assert.equal(projected.ok, true)
+  assert.equal(projected.value.properties.distinct_id, 'cloud-user')
+})
+
 test('rejects unknown properties rather than silently forwarding them', () => {
   const envelope = smartAppEnvelope({
     properties: {

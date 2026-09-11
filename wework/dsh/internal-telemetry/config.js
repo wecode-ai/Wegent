@@ -164,8 +164,8 @@ function parsePrivateValues(values, environment) {
   const posthogProjectKey = nonEmptyString(values.WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY)
   if (!posthogProjectKey) return { error: 'missing_posthog_project_key' }
 
-  const identityHmacKey = nonEmptyString(values.WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY)
-  if (!identityHmacKey || utf8ByteLength(identityHmacKey) < 32) {
+  const identityHmacKey = nonEmptyString(values.WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY) ?? null
+  if (identityHmacKey && utf8ByteLength(identityHmacKey) < 32) {
     return { error: 'invalid_identity_hmac_key' }
   }
 

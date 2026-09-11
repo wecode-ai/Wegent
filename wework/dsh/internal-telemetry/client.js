@@ -1,5 +1,6 @@
 const BACKEND_ID = 'wework-internal-telemetry'
 const CATALOG_VERSION = 1
+const CLOUD_CONNECTION_STORAGE_KEY = 'wework.cloudConnection'
 const SINK_ID = 'wegent-internal-telemetry'
 const SINK_PROTOCOL = 'telemetry-sink/v1'
 
@@ -44,7 +45,10 @@ window.__ModuleLoader__.load({
             protocol: SINK_PROTOCOL,
             accept(envelope) {
               try {
-                Promise.resolve(backend.request('accept', { envelope })).catch(() => {})
+                const identity = readCloudIdentity(window.localStorage)
+                Promise.resolve(
+                  backend.request('accept', identity ? { envelope, identity } : { envelope })
+                ).catch(() => {})
               } catch {}
             },
           })
@@ -53,3 +57,27 @@ window.__ModuleLoader__.load({
     },
   }),
 })
+
+function readCloudIdentity(storage) {
+  try {
+    const serialized = storage?.getItem?.(CLOUD_CONNECTION_STORAGE_KEY)
+    if (typeof serialized !== 'string') return undefined
+    const email = JSON.parse(serialized)?.user?.email
+    if (typeof email !== 'string') return undefined
+    const emailPrefix = email.trim().split('@', 1)[0]
+    if (!isEmailPrefix(emailPrefix)) return undefined
+    return { emailPrefix }
+  } catch {
+    return undefined
+  }
+}
+
+function isEmailPrefix(value) {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !/\s/.test(value) &&
+    !value.includes('@')
+  )
+}

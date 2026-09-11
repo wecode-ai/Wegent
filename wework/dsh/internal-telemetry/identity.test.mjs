@@ -31,6 +31,10 @@ test('separates distinct ids for different users and HMAC keys', () => {
   )
 })
 
+test('uses the cloud email prefix directly as the distinct id', () => {
+  assert.equal(deriveDistinctId({ emailPrefix: 'cloud-user' }), 'cloud-user')
+})
+
 test('rejects missing or unsafe user identifiers with a stable reason', () => {
   for (const user of [
     null,

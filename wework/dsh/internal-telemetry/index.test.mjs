@@ -100,6 +100,38 @@ test('composes enabled runtime dependencies and queues a projected event without
   })
 })
 
+test('uses the browser-provided cloud email prefix when the event has only a local user', async () => {
+  const runtime = createHostRuntime()
+  const queuedEvents = []
+
+  await applyWithDependencies(runtime.context, {
+    createBatchQueue: () => fakeQueue(queuedEvents),
+    createPostHogClient: () => ({ sendBatch: async () => ({ status: 'accepted' }) }),
+    loadConfig: async () => enabledConfig({ identityHmacKey: null }),
+    platform: 'linux',
+  })
+
+  assert.deepEqual(
+    await runtime.registration.methods.accept({
+      envelope: smartAppEnvelope({
+        context: {
+          user: { id: 0, email: '', userName: 'backend' },
+          smartApp: {
+            key: 'example',
+            name: 'Example',
+            version: '1.0.0',
+            source: 'managed',
+          },
+        },
+      }),
+      identity: { emailPrefix: 'cloud-user' },
+    }),
+    { accepted: true }
+  )
+  assert.equal(queuedEvents.length, 1)
+  assert.equal(queuedEvents[0].properties.distinct_id, 'cloud-user')
+})
+
 test('rejects invalid envelopes and only returns privacy-safe aggregate status', async () => {
   const runtime = createHostRuntime()
   const queue = fakeQueue([])
@@ -239,7 +271,7 @@ function disabledConfig(error) {
   }
 }
 
-function enabledConfig() {
+function enabledConfig(privateOverrides = {}) {
   return {
     public: {
       enabled: true,
@@ -254,6 +286,7 @@ function enabledConfig() {
       posthogHost: 'https://telemetry.example.test',
       posthogProjectKey: 'phc_example',
       identityHmacKey: HMAC_KEY,
+      ...privateOverrides,
     },
   }
 }

@@ -95,12 +95,49 @@ test('forwards accepted envelopes without leaking backend failures to the applic
   )
 })
 
-async function loadClient() {
+test('forwards the connected cloud email prefix without exposing the full email', async () => {
+  const client = await loadClient({
+    'wework.cloudConnection': JSON.stringify({
+      user: { email: 'cloud-user@example.com', id: 42, user_name: 'cloud-user' },
+    }),
+  })
+  const envelope = {
+    eventId: '110ec58a-a0f2-4ac4-8393-c866d813b8d1',
+    name: 'smart_app_opened',
+  }
+  const runtime = createRuntime({
+    ready: Promise.resolve({
+      enabled: true,
+      protocol: 'telemetry-sink/v1',
+      catalogVersion: 1,
+    }),
+  })
+
+  client.apply(runtime.context)
+  await settle()
+  runtime.sinks[0].accept(envelope)
+  await settle()
+
+  assert.equal(
+    JSON.stringify(runtime.calls),
+    JSON.stringify([
+      ['ready', {}],
+      ['accept', { envelope, identity: { emailPrefix: 'cloud-user' } }],
+    ])
+  )
+})
+
+async function loadClient(localStorageValues = {}) {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let registration
   vm.runInNewContext(source, {
     Promise,
     window: {
+      localStorage: {
+        getItem(key) {
+          return localStorageValues[key] ?? null
+        },
+      },
       __ModuleLoader__: {
         load(value) {
           registration = value

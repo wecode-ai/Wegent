@@ -78,7 +78,7 @@ export async function applyWithDependencies(
     id: name,
     methods: {
       ready: () => readyStatus(),
-      accept: ({ envelope } = {}) => accept(envelope),
+      accept: params => accept(params),
       status: () => status(),
     },
   })
@@ -99,7 +99,7 @@ export async function applyWithDependencies(
     }
   }
 
-  function accept(envelope) {
+  function accept({ envelope, identity } = {}) {
     if (!active || !enabled || !queue || !runtime) {
       return { accepted: false, reason: 'disabled' }
     }
@@ -107,7 +107,10 @@ export async function applyWithDependencies(
     metrics.received += 1
     let distinctId
     try {
-      distinctId = deriveDistinctId(envelope?.context?.user, config.private.identityHmacKey)
+      distinctId = deriveDistinctId(
+        identity ?? envelope?.context?.user,
+        config.private.identityHmacKey
+      )
     } catch {
       metrics.rejected += 1
       return { accepted: false, reason: 'identity_unavailable' }

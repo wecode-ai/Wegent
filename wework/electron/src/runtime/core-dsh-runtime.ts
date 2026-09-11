@@ -16,6 +16,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+  ['@wegent/dsh-internal-telemetry', 'wework-internal-telemetry'],
   ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
@@ -29,7 +30,8 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
-const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
+const INTERNAL_TELEMETRY_PACKAGE = '@wegent/dsh-internal-telemetry'
+const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(9).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
@@ -42,7 +44,6 @@ const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
   '@wegent/dsh-transcript-sync',
-  ...(process.env.WEWORK_INTERNAL_TELEMETRY === '1' ? ['@wegent/dsh-internal-telemetry'] : []),
 ] as const
 const CORE_UI_BUNDLES = [
   '@wegent/dsh-conversation-export',
@@ -57,8 +58,6 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-home-developer',
   '@wegent/dsh-ui-git',
 ] as const
-const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
-
 interface RuntimeIdentity {
   dshVersion: string
   role: string
@@ -67,6 +66,7 @@ interface RuntimeIdentity {
 
 interface ProfileStamp extends RuntimeIdentity {
   managedUiPlugins: boolean
+  internalTelemetry: boolean
   corePluginsFingerprint: string
 }
 
@@ -121,6 +121,7 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
+  const internalTelemetry = options.environment.WEWORK_INTERNAL_TELEMETRY === '1'
   const corePluginsFingerprint =
     options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
     (await hashComponentPath(resolve(pluginsRoot)))
@@ -128,6 +129,7 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     runtime,
     dshHome,
     managedUiPlugins,
+    internalTelemetry,
     corePluginsFingerprint,
   })
   return {
@@ -212,6 +214,7 @@ async function prepareProfile(options: {
   runtime: CoreDshRuntime
   dshHome: string
   managedUiPlugins: boolean
+  internalTelemetry: boolean
   corePluginsFingerprint: string
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
@@ -221,11 +224,20 @@ async function prepareProfile(options: {
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
     managedUiPlugins: options.managedUiPlugins,
+    internalTelemetry: options.internalTelemetry,
     corePluginsFingerprint: options.corePluginsFingerprint,
   }
-  const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
+  const managedDependencies = managedCoreDependencies(
+    options.runtime,
+    options.managedUiPlugins,
+    options.internalTelemetry
+  )
   const managedDependencyNames = Object.keys(managedDependencies)
-  const managedBundles = options.managedUiPlugins ? CORE_BUNDLES : CORE_HOST_BUNDLES
+  const allManagedDependencyNames = new Set<string>(
+    CORE_PLUGIN_PACKAGES.map(([packageName]) => packageName)
+  )
+  const managedBundles = coreBundles(options.managedUiPlugins, options.internalTelemetry)
+  const allManagedBundles = coreBundles(true, true)
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
@@ -235,7 +247,7 @@ async function prepareProfile(options: {
     profileRoot,
     currentDependencies,
     currentBundles,
-    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
+    new Set([...allManagedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
   )
   const removedDependencies = new Set<string>(
     REMOVED_CORE_DEPENDENCIES.filter(
@@ -275,11 +287,11 @@ async function prepareProfile(options: {
   }
   const userDependencies = Object.fromEntries(
     Object.entries(currentDependencies).filter(
-      ([name]) => !managedDependencyNames.includes(name) && !removedDependencies.has(name)
+      ([name]) => !allManagedDependencyNames.has(name) && !removedDependencies.has(name)
     )
   )
   const userBundles = recoveredUserPlugins.bundles.filter(
-    bundle => !managedBundles.includes(bundle as never) && !removedDependencies.has(bundle)
+    bundle => !allManagedBundles.includes(bundle as never) && !removedDependencies.has(bundle)
   )
   await writeFile(
     join(profileRoot, 'package.json'),
@@ -462,15 +474,26 @@ function hasCurrentCoreDependencies(
 
 function managedCoreDependencies(
   runtime: CoreDshRuntime,
-  includeUiPlugins: boolean
+  includeUiPlugins: boolean,
+  includeInternalTelemetry: boolean
 ): Partial<Record<CorePluginPackage, string>> {
   return Object.fromEntries(
     Object.entries(runtime.pluginRoots)
       .filter(
-        ([packageName]) => includeUiPlugins || !CORE_UI_DEPENDENCIES.includes(packageName as never)
+        ([packageName]) =>
+          (includeUiPlugins || !CORE_UI_DEPENDENCIES.includes(packageName as never)) &&
+          (includeInternalTelemetry || packageName !== INTERNAL_TELEMETRY_PACKAGE)
       )
       .map(([packageName, root]) => [packageName, `file:${root}`])
   )
+}
+
+function coreBundles(includeUiPlugins: boolean, includeInternalTelemetry: boolean): string[] {
+  return [
+    ...CORE_HOST_BUNDLES,
+    ...(includeInternalTelemetry ? [INTERNAL_TELEMETRY_PACKAGE] : []),
+    ...(includeUiPlugins ? CORE_UI_BUNDLES : []),
+  ]
 }
 
 async function runtimeDirectories(root: string): Promise<string[]> {

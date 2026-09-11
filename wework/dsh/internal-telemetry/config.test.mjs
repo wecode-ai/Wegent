@@ -170,7 +170,7 @@ test('allows HTTP only for the explicitly configured private PostHog host', asyn
   assert.deepEqual(publicHost.public, publicConfig('invalid_posthog_host'))
 })
 
-test('rejects absent project keys and too-short HMAC keys', async () => {
+test('rejects absent project keys and configured HMAC keys that are too short', async () => {
   const missingProjectKey = await loadTelemetryConfig({
     environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_POSTHOG_PROJECT_KEY: '' }),
   })
@@ -180,6 +180,19 @@ test('rejects absent project keys and too-short HMAC keys', async () => {
 
   assert.deepEqual(missingProjectKey.public, publicConfig('missing_posthog_project_key'))
   assert.deepEqual(invalidHmacKey.public, publicConfig('invalid_identity_hmac_key'))
+})
+
+test('allows email-prefix telemetry without an HMAC key', async () => {
+  const config = await loadTelemetryConfig({
+    environment: enabledEnvironment({ WEWORK_INTERNAL_TELEMETRY_IDENTITY_HMAC_KEY: '' }),
+  })
+
+  assert.deepEqual(config.public, publicConfig(null))
+  assert.deepEqual(config.private, {
+    posthogHost: 'https://telemetry.example.test',
+    posthogProjectKey: 'project-key',
+    identityHmacKey: null,
+  })
 })
 
 test('accepts every numeric lower and upper boundary', async () => {
