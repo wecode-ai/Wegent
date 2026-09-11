@@ -125,6 +125,7 @@ export function SkillInstallDialog({
                 required
                 data-testid="skill-source"
                 className={fieldClass}
+                disabled={busy}
                 value={source}
                 onChange={e => setSource(e.target.value)}
                 list={kind === 'git' ? 'skill-repositories' : undefined}
@@ -145,6 +146,7 @@ export function SkillInstallDialog({
                   <input
                     data-testid="skill-git-ref"
                     className={fieldClass}
+                    disabled={busy}
                     value={gitRef}
                     onChange={e => setGitRef(e.target.value)}
                     placeholder={t('defaultBranch')}
@@ -154,6 +156,7 @@ export function SkillInstallDialog({
                   <input
                     type="checkbox"
                     data-testid="skill-remember-source"
+                    disabled={busy}
                     checked={remember}
                     onChange={e => setRemember(e.target.checked)}
                   />
@@ -167,6 +170,7 @@ export function SkillInstallDialog({
                   variant="outline"
                   size="sm"
                   data-testid="skill-choose-folder"
+                  disabled={busy}
                   onClick={() => void choose(true)}
                 >
                   {t('chooseFolder')}
@@ -176,6 +180,7 @@ export function SkillInstallDialog({
                   variant="outline"
                   size="sm"
                   data-testid="skill-choose-zip"
+                  disabled={busy}
                   onClick={() => void choose(false)}
                 >
                   {t('chooseZip')}

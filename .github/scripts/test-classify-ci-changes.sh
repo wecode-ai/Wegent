@@ -104,7 +104,7 @@ assert_desktop_case() {
 
   local output
   output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
-  if ! grep -Fq "$expected" "$output"; then
+  if ! grep -Fq -- "$expected" <<<"$output"; then
     printf 'Desktop case "%s" failed:\n%s\n' "$name" "$output" >&2
     exit 1
   fi

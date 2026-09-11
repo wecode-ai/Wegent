@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import * as api from '@/api/local/capabilities'
@@ -110,6 +111,71 @@ describe('Plugins capability workspace', () => {
     expect(screen.getByTestId('capability-tab-mcp')).toHaveAttribute('aria-selected', 'true')
     fireEvent.click(screen.getByTestId('capability-tab-plugins'))
     expect(screen.getByText('Existing marketplace')).toBeInTheDocument()
+  })
+  test('preserves marketplace state while another capability tab is active', () => {
+    function StatefulMarketplace() {
+      const [value, setValue] = useState('')
+      return (
+        <input
+          data-testid="marketplace-state"
+          value={value}
+          onChange={event => setValue(event.target.value)}
+        />
+      )
+    }
+    render(
+      <CapabilityWorkspace showPluginDetail={false}>
+        <StatefulMarketplace />
+      </CapabilityWorkspace>
+    )
+    fireEvent.change(screen.getByTestId('marketplace-state'), { target: { value: 'cached query' } })
+    fireEvent.click(screen.getByTestId('capability-tab-skills'))
+    expect(screen.getByTestId('capability-panel-skills')).toBeInTheDocument()
+    expect(screen.getByTestId('capability-panel-plugins')).toHaveAttribute('hidden')
+    fireEvent.click(screen.getByTestId('capability-tab-plugins'))
+    expect(screen.getByTestId('marketplace-state')).toHaveValue('cached query')
+  })
+  test('locks skill source controls while a preview is pending', async () => {
+    let resolvePreview: (preview: api.SkillPreview) => void = () => undefined
+    vi.mocked(api.previewSkills).mockReturnValue(
+      new Promise(resolve => {
+        resolvePreview = resolve
+      })
+    )
+    render(<SkillInstallDialog kind="git" projectPath="" onClose={vi.fn()} onInstalled={vi.fn()} />)
+    fireEvent.change(screen.getByTestId('skill-source'), {
+      target: { value: 'git@git.example.test:company/skills.git' },
+    })
+    fireEvent.click(screen.getByTestId('skill-install-submit'))
+    await waitFor(() => expect(api.previewSkills).toHaveBeenCalled())
+    expect(screen.getByTestId('skill-source')).toBeDisabled()
+    expect(screen.getByTestId('skill-git-ref')).toBeDisabled()
+    expect(screen.getByTestId('skill-remember-source')).toBeDisabled()
+    resolvePreview({ token: 'preview', skills: [] })
+    await waitFor(() => expect(screen.queryByTestId('skill-source')).not.toBeInTheDocument())
+  })
+  test('labels enabled skill switches with their disabling action', async () => {
+    vi.mocked(api.listStandaloneSkills).mockResolvedValue({
+      skills: [
+        {
+          name: 'weekly-report',
+          description: 'Weekly summary',
+          path: '/isolated/codex/skills/weekly-report/SKILL.md',
+          scope: 'user',
+          enabled: true,
+        },
+      ],
+      errors: [],
+    })
+    render(
+      <CapabilityWorkspace showPluginDetail={false}>
+        <div>Existing marketplace</div>
+      </CapabilityWorkspace>
+    )
+    fireEvent.click(screen.getByTestId('capability-tab-skills'))
+    expect(await screen.findByTestId('skill-toggle-0')).toHaveAccessibleName(
+      /Disable weekly-report|停用 weekly-report/
+    )
   })
   test('previews before installation and leaves conflicts visible for recovery', async () => {
     const onInstalled = vi.fn()

@@ -14,12 +14,14 @@ use std::{
     collections::HashSet,
     env, fs,
     path::{Component, Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
 const MAX_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_FILES: usize = 5000;
+const STAGE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+const STAGE_CREATED_AT_FILE: &str = ".created-at";
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,10 +104,53 @@ fn stage_path(home: &Path, token: &str) -> Result<PathBuf, String> {
 
 fn new_stage(home: &Path) -> Result<(String, PathBuf), String> {
     fs::create_dir_all(home).map_err(io_error)?;
+    cleanup_expired_stages(home)?;
     let token = Uuid::new_v4().to_string();
     let stage = stage_path(home, &token)?;
     fs::create_dir_all(stage.join("content")).map_err(io_error)?;
+    fs::write(
+        stage.join(STAGE_CREATED_AT_FILE),
+        unix_timestamp(SystemTime::now()).to_string(),
+    )
+    .map_err(io_error)?;
     Ok((token, stage))
+}
+
+fn unix_timestamp(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn cleanup_expired_stages(home: &Path) -> Result<(), String> {
+    let root = home.join("skill-imports");
+    if !root.exists() {
+        return Ok(());
+    }
+    let now = SystemTime::now();
+    for entry in fs::read_dir(root).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        let is_stage = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| Uuid::parse_str(name).is_ok());
+        if !entry.file_type().map_err(io_error)?.is_dir() || !is_stage {
+            continue;
+        }
+        let path = entry.path();
+        let created_at = fs::read_to_string(path.join(STAGE_CREATED_AT_FILE))
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+            .or_else(|| entry.metadata().ok()?.modified().ok());
+        let expired = created_at
+            .and_then(|created_at| now.duration_since(created_at).ok())
+            .is_some_and(|age| age > STAGE_RETENTION);
+        if expired {
+            fs::remove_dir_all(path).map_err(io_error)?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_git_source(source: &str) -> Result<(), String> {

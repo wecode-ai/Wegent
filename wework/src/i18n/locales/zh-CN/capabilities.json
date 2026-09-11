@@ -47,6 +47,7 @@
   "viewPath": "查看位置",
   "managePlugin": "管理插件",
   "enableSkill": "启用 {{name}}",
+  "disableSkill": "停用 {{name}}",
   "uninstall": "卸载",
   "removeSkillConfirm": "卸载 {{name}} 将移除本地安装目录及其内容。源仓库不会被修改。",
   "addServer": "添加服务器",

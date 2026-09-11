@@ -223,6 +223,15 @@ export async function reloadMcpServers() {
 }
 export async function saveMcpServer(name: string, config: McpConfig | null) {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error('Invalid MCP server name')
+  if (config?.bearer_token_env_var) {
+    let secureUrl = false
+    try {
+      secureUrl = Boolean(config.url && new URL(config.url).protocol === 'https:')
+    } catch {
+      // The caller displays this validation error without persisting the configuration.
+    }
+    if (!secureUrl) throw new Error('Bearer token authentication requires an HTTPS MCP URL')
+  }
   await rpc('config/value/write', {
     keyPath: `mcp_servers.${name}`,
     // Codex returns optional defaults as null, which TOML cannot serialize.

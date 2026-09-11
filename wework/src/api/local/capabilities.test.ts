@@ -168,6 +168,18 @@ describe('native capability management', () => {
       },
     })
   })
+  test('requires HTTPS when bearer-token authentication is configured', async () => {
+    await expect(
+      saveMcpServer('company', {
+        url: 'http://example.test/mcp',
+        bearer_token_env_var: 'COMPANY_MCP_TOKEN',
+      })
+    ).rejects.toThrow('HTTPS')
+    expect(requestLocalExecutor).not.toHaveBeenCalled()
+
+    await saveMcpServer('local-development', { url: 'http://127.0.0.1:3000/mcp' })
+    expect(requestLocalExecutor).toHaveBeenCalledTimes(1)
+  })
   test('plugin-owned and built-in skills cannot be independently removed', () => {
     const skill: StandaloneSkill = {
       name: 'report',

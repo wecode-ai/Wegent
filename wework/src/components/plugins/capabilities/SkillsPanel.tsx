@@ -235,7 +235,9 @@ export function SkillsPanel({ onManagePlugin }: { onManagePlugin: () => void }) 
                   role="switch"
                   type="button"
                   aria-checked={skill.enabled}
-                  aria-label={t('enableSkill', { name: skill.name })}
+                  aria-label={t(skill.enabled ? 'disableSkill' : 'enableSkill', {
+                    name: skill.name,
+                  })}
                   disabled={Boolean(pending)}
                   data-testid={`skill-toggle-${index}`}
                   className={`relative h-5 w-9 shrink-0 rounded-full focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 ${skill.enabled ? 'bg-text-primary' : 'bg-muted'}`}

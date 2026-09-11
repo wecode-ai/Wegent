@@ -47,6 +47,7 @@
   "viewPath": "View location",
   "managePlugin": "Manage plugin",
   "enableSkill": "Enable {{name}}",
+  "disableSkill": "Disable {{name}}",
   "uninstall": "Uninstall",
   "removeSkillConfirm": "Uninstalling {{name}} removes its local directory and contents. Its source repository is unchanged.",
   "addServer": "Add server",

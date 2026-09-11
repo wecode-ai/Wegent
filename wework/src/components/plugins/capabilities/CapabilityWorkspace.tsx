@@ -75,18 +75,36 @@ export function CapabilityWorkspace({
       </div>
       <div
         role="tabpanel"
-        id={`capability-panel-${active}`}
-        aria-labelledby={`capability-tab-${active}`}
-        className="flex min-h-0 flex-1 flex-col"
+        id="capability-panel-plugins"
+        data-testid="capability-panel-plugins"
+        aria-labelledby="capability-tab-plugins"
+        hidden={active !== 'plugins'}
+        className={active === 'plugins' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
       >
-        {active === 'plugins' ? (
-          children
-        ) : active === 'skills' ? (
-          <SkillsPanel onManagePlugin={() => setSelected('plugins')} />
-        ) : (
-          <McpPanel />
-        )}
+        {children}
       </div>
+      {active === 'skills' && (
+        <div
+          role="tabpanel"
+          id="capability-panel-skills"
+          data-testid="capability-panel-skills"
+          aria-labelledby="capability-tab-skills"
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <SkillsPanel onManagePlugin={() => setSelected('plugins')} />
+        </div>
+      )}
+      {active === 'mcp' && (
+        <div
+          role="tabpanel"
+          id="capability-panel-mcp"
+          data-testid="capability-panel-mcp"
+          aria-labelledby="capability-tab-mcp"
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <McpPanel />
+        </div>
+      )}
     </div>
   )
 }

@@ -19,6 +19,32 @@ fn fixture(root: &Path, name: &str) {
 fn request(value: Value) -> Request {
     serde_json::from_value(value).unwrap()
 }
+
+#[test]
+fn removes_expired_import_stages_before_creating_a_new_preview() {
+    let home = tempdir();
+    let imports = home.path().join("skill-imports");
+    let expired = imports.join(Uuid::new_v4().to_string());
+    let recent = imports.join(Uuid::new_v4().to_string());
+    let unrelated = imports.join("keep-me");
+    for stage in [&expired, &recent, &unrelated] {
+        fs::create_dir_all(stage.join("content")).unwrap();
+    }
+    fs::write(expired.join(STAGE_CREATED_AT_FILE), "0").unwrap();
+    fs::write(
+        recent.join(STAGE_CREATED_AT_FILE),
+        unix_timestamp(SystemTime::now()).to_string(),
+    )
+    .unwrap();
+
+    let (_, created) = new_stage(home.path()).unwrap();
+
+    assert!(!expired.exists());
+    assert!(recent.exists());
+    assert!(unrelated.exists());
+    assert!(created.exists());
+}
+
 #[test]
 fn previews_installs_and_removes_a_complete_skill_without_plugins() {
     let home = tempdir();
