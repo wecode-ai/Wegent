@@ -10,6 +10,7 @@ import { hashComponentPath } from '../../../scripts/lib/component-content-hash.m
 
 const TEST_TRAILER = Buffer.from('\nwework-e2e-differential-update\n')
 const UPDATE_CHANNEL = 'stable'
+const SIDEBAR_READY_STABILITY_MS = 750
 const electronPackage = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -181,7 +182,10 @@ export async function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
       }
-      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('clickWhenEnabled', '[data-testid="settings-button"]', {
+        stableMs: SIDEBAR_READY_STABILITY_MS,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="check-app-update-button"]')
       await control.command('waitFor', '[data-testid="app-update-error-details-button"]', {
         timeoutMs: uiTimeoutMs,
