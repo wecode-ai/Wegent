@@ -834,7 +834,7 @@ class K8sExecutor(Executor):
     ) -> Dict[str, Any]:
         """Dispatch first task request with retries and timeout controls."""
         max_retries = max(
-            int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "3")),
+            int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "1")),
             1,
         )
         retry_interval = max(
@@ -842,7 +842,7 @@ class K8sExecutor(Executor):
             0.0,
         )
         request_timeout = max(
-            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
+            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "30")),
             0.1,
         )
         last_error = "unknown error"
