@@ -11,7 +11,7 @@ import type {
   RuntimeTurnNavigationItem,
   TurnFileChangesSummary,
 } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
@@ -108,6 +108,7 @@ interface ScrollableMessageAreaProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onOpenSubagent?: (block: SubagentBlock) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
@@ -188,6 +189,7 @@ function areScrollableMessageAreaPropsEqual(
       ? 'onRequestUserInputIgnore'
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.onOpenSubagent !== next.onOpenSubagent ? 'onOpenSubagent' : null,
     previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
     previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
@@ -253,6 +255,7 @@ function ScrollableMessagePaneContent({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onOpenSubagent,
   onEditLastUserMessage,
   canEditLastUserMessage,
   onForkMessage,
@@ -337,6 +340,9 @@ function ScrollableMessagePaneContent({
         }
         if (block.type === 'file_changes') {
           return `${block.id}:${block.status}:${block.fileChanges.file_count}:${block.fileChanges.diff?.length ?? 0}`
+        }
+        if (block.type === 'subagent') {
+          return `${block.id}:${block.status}:${block.agentStatus ?? ''}:${block.output?.length ?? 0}:${block.summary?.length ?? 0}:${block.children?.length ?? 0}`
         }
         return `${block.id}:${block.status}:${String(block.toolOutput ?? '').length}`
       })
@@ -1432,6 +1438,7 @@ function ScrollableMessagePaneContent({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                onOpenSubagent={onOpenSubagent}
                 onEditLastUserMessage={onEditLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
                 onForkMessage={onForkMessage}

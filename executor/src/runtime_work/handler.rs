@@ -641,8 +641,9 @@ struct ActiveCodexTranscriptItems {
 struct RuntimeThreadEventRoute {
     local_task_id: String,
     request: ExecutionRequest,
-    event_mapper: CodexNotificationEventMapper,
+    event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
     active: bool,
+    nested: bool,
 }
 
 struct ScheduledTurnGuard {
@@ -701,8 +702,9 @@ impl RuntimeThreadEventRoute {
         Self {
             local_task_id,
             request,
-            event_mapper: CodexNotificationEventMapper::default(),
+            event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),
             active,
+            nested: false,
         }
     }
 }

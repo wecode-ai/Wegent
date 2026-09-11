@@ -5,6 +5,7 @@ set -euo pipefail
 core_segments=(
   remote-device-onboarding
   workspace-tabs
+  collaboration-shared-core
   cloud-space-mention
   priority-filter
   external-content-import
@@ -103,6 +104,7 @@ cloud_segments=(
   project-automation
   plugin-auto-update
   plugin-account-auth
+  plugin-task-token
   plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
@@ -122,7 +124,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-account-auth
+  plugin-account-auth,plugin-task-token
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -135,7 +137,7 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
-  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
+  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention,collaboration-shared-core
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
@@ -293,6 +295,10 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/plugin-task-token.scenario.mjs)
+      select_target "cloud:plugin-task-token"
+      return
+      ;;
     wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
@@ -479,6 +485,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
       select_target "core:cloud-space-mention"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs)
+      select_target "core:collaboration-shared-core"
       return
       ;;
     wework/e2e/desktop/scenarios/board-focus-view.scenario.mjs)
@@ -781,6 +791,10 @@ classify_path() {
   esac
 
   case "$path" in
+    executor/src/plugin_task_token/* | backend/app/services/auth/*task_token.py | \
+      backend/tests/api/test_runtime_task_token.py | backend/app/api/endpoints/mcp_identity.py)
+      select_target "cloud:plugin-task-token"
+      ;;
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
       executor/tests/plugin_account_auth_contract.rs | \
       backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \
@@ -832,6 +846,9 @@ classify_path() {
       backend/tests/services/test_runtime_work_service.py | \
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
+      ;;
+    packages/collaboration/*)
+      select_target "core:collaboration-shared-core"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites

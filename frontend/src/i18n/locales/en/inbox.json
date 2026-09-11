@@ -1,5 +1,9 @@
 {
   "title": "Inbox",
+  "legacy_notice": {
+    "description": "This is the legacy inbox. Manage new projects and issues in Collaboration.",
+    "open_collaboration": "Open Collaboration"
+  },
   "page_title": "Work Queue",
   "empty": "No messages",
   "empty_description": "Forwarded messages will appear here",
@@ -148,6 +152,20 @@
     "select_messages": "Select Messages",
     "select_all": "Select All",
     "deselect_all": "Deselect All"
+  },
+  "collaboration": {
+    "title": "Send to Collaboration",
+    "project": "Collaboration project",
+    "new_issue": "Create issue",
+    "existing_issue": "Append to existing issue",
+    "issue_title": "Issue title",
+    "issue": "Target issue",
+    "note": "Note",
+    "cancel": "Cancel",
+    "send": "Send",
+    "sending": "Sending…",
+    "success": "Message sent to Collaboration",
+    "failed": "Failed to send to Collaboration"
   },
   "settings": {
     "title": "Queue Settings",

@@ -41,6 +41,7 @@ export default function PublicTaskSidebar({
               width={20}
               height={20}
               className="object-container"
+              unoptimized
             />
             <span className="text-sm text-text-primary">Wegent</span>
           </div>

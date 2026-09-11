@@ -1,5 +1,3 @@
-import { defaultProjectSpaceContentRoute } from '@/features/todo/projectSpaceRoute'
-
 export type WorkspaceTabKind = 'task' | 'board' | 'agent' | 'auxiliary'
 
 export interface WorkspaceTab {
@@ -43,7 +41,7 @@ function newTabId(kind: WorkspaceTabKind): string {
 export function defaultContentRoute(kind: WorkspaceTabKind): string {
   switch (kind) {
     case 'board':
-      return defaultProjectSpaceContentRoute()
+      return '/todo'
     case 'agent':
       return '/app/wegent'
     case 'auxiliary':

@@ -7733,6 +7733,8 @@ describe('WorkbenchProvider runtime tasks', () => {
             weworkCloudModelNamespace: 'default',
             weworkCloudModelResourceUserId: '1',
             weworkCloudModelUpstreamApiFormat: 'openai-responses',
+            weworkCloudModelNativeToolSearch: 'true',
+            weworkCloudModelNativeNamespaceTools: 'true',
           },
         },
       })
@@ -14066,6 +14068,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const updateCloudTaskStatus = vi.fn().mockResolvedValue(null)
     const updateLocalTaskTitle = vi.fn().mockResolvedValue(null)
     const updateCloudTaskTitle = vi.fn().mockResolvedValue(null)
+    const updateLegacyCloudTaskTitle = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -14115,10 +14118,13 @@ describe('WorkbenchProvider runtime tasks', () => {
         },
         cloud: {
           updateTaskTrackingStatus: updateCloudTaskStatus,
-          updateTaskTrackingTitle: updateCloudTaskTitle,
+          updateTaskTrackingTitle: updateLegacyCloudTaskTitle,
         },
         defaultLocation: 'cloud',
       } as unknown as WorkbenchServices['projectSpaceApis'],
+      workspaceRuntimePort: {
+        updateTrackedTaskTitle: updateCloudTaskTitle,
+      } as unknown as WorkbenchServices['workspaceRuntimePort'],
     })
 
     renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
@@ -14146,6 +14152,8 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     expect(updateLocalTaskTitle).not.toHaveBeenCalled()
+    expect(updateCloudTaskStatus).not.toHaveBeenCalled()
+    expect(updateLegacyCloudTaskTitle).not.toHaveBeenCalled()
   })
 
   test('does not backfill historical runtime tasks into My Tasks during load', async () => {

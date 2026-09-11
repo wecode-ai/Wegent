@@ -696,7 +696,7 @@ async function runGitCommand(
 
   const response = await api.executeCommand(deviceId, request)
 
-  if (!response.success) {
+  if (!response.success || (response.exit_code != null && response.exit_code !== 0)) {
     throw new Error(
       [response.error, response.stderr].filter(Boolean).join('\n') || `${commandKey} failed`
     )

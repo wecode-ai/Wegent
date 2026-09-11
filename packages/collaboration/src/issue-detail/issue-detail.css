@@ -1,0 +1,222 @@
+.shared-issue-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  background: rgb(0 0 0 / 35%);
+  backdrop-filter: blur(4px);
+}
+
+.shared-issue-detail-surface {
+  display: flex;
+  width: min(760px, calc(100vw - 48px));
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--collaboration-border, rgb(var(--color-border)));
+  background: var(--collaboration-panel, rgb(var(--color-bg-base)));
+  box-shadow: 0 16px 36px rgb(0 0 0 / 22%);
+}
+
+.shared-issue-detail-header,
+.shared-issue-detail-footer {
+  display: flex;
+  min-height: 48px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  border-color: var(--collaboration-border, rgb(var(--color-border)));
+  padding: 8px 16px;
+}
+
+.shared-issue-detail-header {
+  border-bottom: 1px solid var(--collaboration-border, rgb(var(--color-border)));
+}
+
+.shared-issue-detail-footer {
+  border-top: 1px solid var(--collaboration-border, rgb(var(--color-border)));
+}
+
+.shared-issue-detail-layout {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.shared-issue-detail-main,
+.shared-issue-detail-aside {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.shared-issue-detail-main {
+  padding: 20px;
+}
+
+.shared-issue-detail-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.shared-issue-detail-activity,
+.shared-issue-detail-attachments {
+  margin-top: 24px;
+}
+
+.shared-issue-detail-section-header {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.shared-issue-detail-section-header h3 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.shared-issue-detail-section-header > span {
+  color: var(--collaboration-muted, rgb(var(--color-text-muted)));
+}
+
+.shared-issue-detail-attachment-body {
+  margin-top: 8px;
+}
+
+.shared-issue-detail-attachment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.shared-issue-detail-attachment-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--collaboration-border, rgb(var(--color-border)));
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.shared-issue-detail-attachment-open {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.shared-issue-detail-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-issue-detail-attachment-meta,
+.shared-issue-detail-attachment-empty {
+  color: var(--collaboration-muted, rgb(var(--color-text-muted)));
+}
+
+.shared-issue-detail-attachment-delete {
+  border: 0;
+  background: transparent;
+  color: var(--collaboration-muted, rgb(var(--color-text-muted)));
+  cursor: pointer;
+}
+
+.shared-issue-detail-attachment-dropzone {
+  display: flex;
+  min-height: 42px;
+  margin-top: 8px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--collaboration-border, rgb(var(--color-border)));
+  border-radius: 8px;
+  color: var(--collaboration-muted, rgb(var(--color-text-muted)));
+}
+
+.shared-issue-detail-file-input,
+.shared-issue-detail-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.shared-issue-detail-error {
+  color: var(--collaboration-danger, #dc2626);
+}
+
+.shared-issue-detail-cloud-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.shared-issue-detail-cloud-row,
+.shared-issue-detail-cloud-summary,
+.shared-issue-detail-delivery,
+.shared-issue-detail-delivery-detail header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shared-issue-detail-cloud-row,
+.shared-issue-detail-delivery,
+.shared-issue-detail-delivery-detail {
+  border: 1px solid var(--collaboration-border, rgb(var(--color-border)));
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.shared-issue-detail-cloud-row > span:first-child,
+.shared-issue-detail-delivery > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-issue-detail-cloud-add {
+  margin-top: 8px;
+}
+
+.shared-issue-detail-cloud-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.shared-issue-detail-cloud-items {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.shared-issue-detail-delivery {
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.shared-issue-detail-delivery-detail {
+  margin-top: 10px;
+}

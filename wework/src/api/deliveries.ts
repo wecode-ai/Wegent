@@ -636,7 +636,7 @@ export interface CloudProjectMember {
 }
 
 export interface LoopItemTaskBinding {
-  id: number
+  id: string | number
   cloud_project_id?: string | number
   loop_item_id: string | null
   task_user_id: number

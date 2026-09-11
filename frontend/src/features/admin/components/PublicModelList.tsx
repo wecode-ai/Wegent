@@ -204,13 +204,38 @@ const PublicModelList: React.FC = () => {
   }
 
   const handleConfigChange = (value: string) => {
+    const config = validateConfig(value)
     const configVisibility = getPublicModelVisibilityFromConfig(value)
     setFormData(current => ({
       ...current,
       config: value,
+      ...(config
+        ? {
+            modelGroup: getSpecValue(config, 'modelGroup'),
+            modelSubGroup: getSpecValue(config, 'modelSubGroup'),
+          }
+        : {}),
       ...(configVisibility === undefined ? {} : { is_visible: configVisibility }),
     }))
-    validateConfig(value)
+  }
+
+  const handleGroupChange = (key: 'modelGroup' | 'modelSubGroup', value: string) => {
+    const config = validateConfig(formData.config)
+    if (!config) return
+
+    const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
+    const trimmedValue = value.trim()
+    if (trimmedValue) {
+      spec[key] = trimmedValue
+    } else {
+      delete spec[key]
+    }
+
+    setFormData(current => ({
+      ...current,
+      [key]: value,
+      config: JSON.stringify({ ...config, spec }, null, 2),
+    }))
   }
 
   const handleVisibilityChange = (isVisible: boolean) => {
@@ -547,7 +572,7 @@ const PublicModelList: React.FC = () => {
                   id="model-group"
                   data-testid="public-model-group-input"
                   value={formData.modelGroup}
-                  onChange={e => setFormData({ ...formData, modelGroup: e.target.value })}
+                  onChange={e => handleGroupChange('modelGroup', e.target.value)}
                   placeholder={t('admin:public_models.form.model_group_placeholder')}
                 />
               </div>
@@ -559,7 +584,7 @@ const PublicModelList: React.FC = () => {
                   id="model-sub-group"
                   data-testid="public-model-sub-group-input"
                   value={formData.modelSubGroup}
-                  onChange={e => setFormData({ ...formData, modelSubGroup: e.target.value })}
+                  onChange={e => handleGroupChange('modelSubGroup', e.target.value)}
                   placeholder={t('admin:public_models.form.model_sub_group_placeholder')}
                 />
               </div>
@@ -658,7 +683,7 @@ const PublicModelList: React.FC = () => {
                   id="edit-model-group"
                   data-testid="edit-public-model-group-input"
                   value={formData.modelGroup}
-                  onChange={e => setFormData({ ...formData, modelGroup: e.target.value })}
+                  onChange={e => handleGroupChange('modelGroup', e.target.value)}
                   placeholder={t('admin:public_models.form.model_group_placeholder')}
                 />
               </div>
@@ -670,7 +695,7 @@ const PublicModelList: React.FC = () => {
                   id="edit-model-sub-group"
                   data-testid="edit-public-model-sub-group-input"
                   value={formData.modelSubGroup}
-                  onChange={e => setFormData({ ...formData, modelSubGroup: e.target.value })}
+                  onChange={e => handleGroupChange('modelSubGroup', e.target.value)}
                   placeholder={t('admin:public_models.form.model_sub_group_placeholder')}
                 />
               </div>

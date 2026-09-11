@@ -5,6 +5,10 @@ import '@/i18n'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import {
+  applyRuntimeConversationAction,
+  clearRuntimeConversationCacheForTests,
+} from '@/features/workbench/runtimeConversationCache'
 import { installDshUiTestContributions } from '@/test/setup'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
@@ -27,6 +31,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral,
     collapseComposerWhenIdle,
     runtimeContext,
+    initialScrollPosition,
     scrollOrigin,
   }: {
     initialAddress: {
@@ -38,6 +43,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral: boolean
     collapseComposerWhenIdle: boolean
     runtimeContext?: { cloudProjectId?: string }
+    initialScrollPosition?: 'restore' | 'latest'
     scrollOrigin?: 'top' | 'bottom'
   }) => (
     <section
@@ -48,6 +54,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-collapse-composer={String(collapseComposerWhenIdle)}
       data-cloud-project-id={runtimeContext?.cloudProjectId}
       data-model-name={initialAddress.runtimeHandle?.modelSelection?.modelName}
+      data-initial-scroll-position={initialScrollPosition}
       data-scroll-origin={scrollOrigin}
     >
       Shared task conversation
@@ -90,8 +97,29 @@ const snapshot: TaskChangeRequestSnapshot = {
   error: null,
 }
 
+function seedAssistantResponse(content: string, taskId = 'task-85') {
+  const address = { deviceId: 'local', taskId }
+  const turnId = `turn-${taskId}`
+  applyRuntimeConversationAction(address, {
+    type: 'assistant_started',
+    taskId,
+    subtaskId: turnId,
+  })
+  applyRuntimeConversationAction(address, {
+    type: 'assistant_chunk',
+    subtaskId: turnId,
+    itemId: `assistant-${taskId}`,
+    content,
+  })
+  applyRuntimeConversationAction(address, {
+    type: 'assistant_done',
+    subtaskId: turnId,
+  })
+}
+
 describe('CloudTodoBoardCard', () => {
   afterEach(() => {
+    clearRuntimeConversationCacheForTests()
     vi.useRealTimers()
   })
 
@@ -110,6 +138,57 @@ describe('CloudTodoBoardCard', () => {
           import('../../../dsh/ui-git/src/board-card-status'),
       }
     )
+  })
+
+  it('keeps cloud card details accessible when edit permission is missing', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+    const onClick = vi.fn()
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          can_edit: undefined,
+          can_view_detail: undefined,
+          project_store: 'backend',
+        }}
+        onClick={onClick}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.queryByTestId('cloud-todo-card-more-WEG-85')).not.toBeInTheDocument()
+    const detailButton = screen.getByTestId('cloud-todo-card-WEG-85')
+    expect(detailButton).not.toBeDisabled()
+    expect(detailButton).not.toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(detailButton)
+    expect(onClick).toHaveBeenCalledOnce()
+  })
+
+  it('keeps local card actions editable through the explicit local adapter marker', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, can_edit: undefined, project_store: 'local' }}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-more-WEG-85')).toBeInTheDocument()
   })
 
   it('opens execution configuration from the blocking card action', async () => {
@@ -311,6 +390,7 @@ describe('CloudTodoBoardCard', () => {
 
   it('aligns the pull request status as a trailing action beside compact progress', () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(snapshot)
+    seedAssistantResponse('已完成布局修复')
 
     render(
       <CloudTodoBoardCard
@@ -323,7 +403,6 @@ describe('CloudTodoBoardCard', () => {
             task_title: 'Fix the board popup',
             running: false,
             changeRequestTarget: snapshot.target,
-            finalResponsePreview: '已完成布局修复',
           },
         ]}
         onClick={vi.fn()}
@@ -362,7 +441,6 @@ describe('CloudTodoBoardCard', () => {
             task_id: 'task-85',
             task_title: 'Fix the board popup',
             running: false,
-            finalResponsePreview: '已完成布局修复',
           },
         ]}
         onClick={vi.fn()}
@@ -379,6 +457,41 @@ describe('CloudTodoBoardCard', () => {
     const priority = screen.getByText('普通')
     expect(priority.parentElement).not.toHaveClass('border-t')
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveClass('border-t')
+  })
+
+  it('renders the shared issue reference, tags, deadline and resolved assignee', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          due_at: '2026-09-12T03:00:00Z',
+          tags: ['frontend', 'shared', 'architecture'],
+          priority: 'high',
+          assignee_agent_id: 'agent-1',
+          assignee_agent_name: null,
+        }}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        agentNames={{ 'agent-1': 'Codex' }}
+        display={{
+          showAssignee: true,
+          showPriority: true,
+          showTags: true,
+          showDate: true,
+        }}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-WEG-85')
+    expect(card).toHaveTextContent('WEG-85')
+    expect(card).toHaveTextContent('高')
+    expect(card).toHaveTextContent('2026-09-12')
+    expect(card).toHaveTextContent('frontend')
+    expect(card).toHaveTextContent('shared')
+    expect(card).toHaveTextContent('+1')
+    expect(screen.getByTestId('cloud-todo-card-assignee-WEG-85')).toHaveTextContent('Codex')
   })
 
   it('does not open a progress preview when the card has no progress binding', async () => {
@@ -469,6 +582,9 @@ describe('CloudTodoBoardCard', () => {
   })
 
   it('mounts the shared task conversation in the hover preview', async () => {
+    seedAssistantResponse(
+      '第一行：完成布局\n第二行：保留工具层级\n第三行：展示完整回复\n第四行：展示验证结果\n第五行：展示提交状态\n第六行：等待确认'
+    )
     render(
       <CloudTodoBoardCard
         item={{ ...item, is_unread: true }}
@@ -479,8 +595,6 @@ describe('CloudTodoBoardCard', () => {
             task_id: 'task-85',
             task_title: 'Fix the board popup',
             running: false,
-            finalResponsePreview:
-              '第一行：完成布局\n第二行：保留工具层级\n第三行：展示完整回复\n第四行：展示验证结果\n第五行：展示提交状态\n第六行：等待确认',
           },
         ]}
         onClick={vi.fn()}
@@ -506,7 +620,45 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-send-ephemeral', 'false')
     expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
     expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
+    expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
     expect(conversation).toHaveAttribute('data-scroll-origin', 'bottom')
+  })
+
+  it('does not show an older response while a new task turn is starting', () => {
+    seedAssistantResponse('older completed response')
+    applyRuntimeConversationAction(
+      { deviceId: 'local', taskId: 'task-85' },
+      {
+        type: 'assistant_started',
+        taskId: 'task-85',
+        subtaskId: 'turn-new',
+      }
+    )
+
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, status: 'in_progress' }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: false,
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.queryByText('older completed response')).not.toBeInTheDocument()
   })
 
   it('marks an unread task as read after its conversation preview stays open for 3 seconds', async () => {
@@ -522,7 +674,6 @@ describe('CloudTodoBoardCard', () => {
             task_id: 'task-85',
             task_title: 'Fix the board popup',
             running: false,
-            finalResponsePreview: '已完成',
           },
         ]}
         onClick={vi.fn()}
@@ -562,7 +713,6 @@ describe('CloudTodoBoardCard', () => {
             task_id: 'task-85',
             task_title: 'Fix the board popup',
             running: false,
-            finalResponsePreview: '已完成',
           },
         ]}
         onClick={vi.fn()}
@@ -658,7 +808,6 @@ describe('CloudTodoBoardCard', () => {
             task_id: 'task-85',
             task_title: 'Fix the board popup model',
             running: false,
-            finalResponsePreview: '已完成',
             modelSelection: {
               modelName: 'gpt-5.6-sol',
               modelType: 'public',
@@ -720,7 +869,6 @@ describe('CloudTodoBoardCard', () => {
             task_id: 'task-85',
             task_title: 'Fix the board popup',
             running: true,
-            finalResponsePreview: '已定位第一个任务的当前回复',
           },
           {
             id: 86,
@@ -728,7 +876,6 @@ describe('CloudTodoBoardCard', () => {
             task_id: 'task-86',
             task_title: 'Verify the hover behavior',
             running: true,
-            finalResponsePreview: '正在校验第二个任务的运行过程',
           },
         ]}
         onClick={vi.fn()}

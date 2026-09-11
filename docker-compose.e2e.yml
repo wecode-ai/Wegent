@@ -29,6 +29,18 @@ services:
       timeout: 5s
       retries: 5
 
+  minio-test:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r0
+    environment:
+      MINIO_ROOT_USER: wegent-e2e
+      MINIO_ROOT_PASSWORD: wegent-e2e-secret
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+
   backend-test:
     build:
       context: ./backend
@@ -38,12 +50,19 @@ services:
       REDIS_URL: redis://redis-test:6379/0
       SECRET_KEY: test-secret-key-for-e2e
       ENVIRONMENT: test
+      ATTACHMENT_S3_ENDPOINT: minio-test:9000
+      ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+      ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+      ATTACHMENT_S3_USE_SSL: "false"
+      DELIVERY_S3_BUCKET: wegent-deliveries
     ports:
       - "8001:8000"
     depends_on:
       mysql-test:
         condition: service_healthy
       redis-test:
+        condition: service_healthy
+      minio-test:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]

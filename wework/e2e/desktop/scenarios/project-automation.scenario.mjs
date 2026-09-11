@@ -2221,14 +2221,14 @@ export function createDesktopScenario({
       timeoutMs: uiTimeoutMs,
     })
     const executionNodeSelector = '[data-testid^="execution-node-step-"]'
+    await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
+      visible: true,
+    })
     await control.command('waitFor', executionNodeSelector, {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
     await control.command('click', executionNodeSelector, {
-      visible: true,
-    })
-    await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
       visible: true,
     })
     await control.command('hover', executionNodeSelector, {
@@ -2852,10 +2852,33 @@ export function createDesktopScenario({
     },
 
     async handleHttp(request, response, url) {
-      if (request.method === 'POST' && url.pathname === '/v1/responses' && cloudApi) {
+      const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
+      if (
+        request.method === 'POST' &&
+        (url.pathname === '/v1/responses' || cloudResponsesProxy) &&
+        cloudApi
+      ) {
         const payload = await readJson(request)
         const responseId = `project-automation-real-${Date.now()}`
         const serialized = JSON.stringify(payload)
+        if (cloudResponsesProxy && payload.model === PROJECT_CHAT_REMOTE_MODEL_NAME) {
+          remoteProjectChatRequests.push(payload)
+          assert.equal(request.headers['x-wegent-model-type'], 'public')
+          assert.equal(request.headers['x-wegent-model-namespace'], 'default')
+          assert.equal(request.headers['x-wegent-model-user-id'], '0')
+          assert.ok(
+            serialized.includes(CHECKPOINT_TASK_PROMPT),
+            'The remote project-chat request lost the user prompt'
+          )
+          response.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          })
+          const stream = streamingTextEvents('project-chat-remote', CHECKPOINT_TASK_COMPLETION_TEXT)
+          response.end(createSse([...stream.start, ...stream.finish]))
+          return true
+        }
         upstreamResponseRequests.push(payload)
         const writeEvents = events => {
           response.writeHead(200, {
@@ -3308,29 +3331,6 @@ export function createDesktopScenario({
       if (request.method === 'GET' && url.pathname === '/api/models/unified') {
         modelRequests += 1
         json(response, 200, { data: [LOCAL_CODEX_MODEL, PROJECT_CHAT_REMOTE_MODEL, MODEL] })
-        return true
-      }
-      if (
-        request.method === 'POST' &&
-        url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
-      ) {
-        const payload = await readJson(request)
-        remoteProjectChatRequests.push(payload)
-        assert.equal(request.headers['x-wegent-model-type'], 'public')
-        assert.equal(request.headers['x-wegent-model-namespace'], 'default')
-        assert.equal(request.headers['x-wegent-model-user-id'], '0')
-        assert.equal(payload.model, PROJECT_CHAT_REMOTE_MODEL_NAME)
-        assert.ok(
-          JSON.stringify(payload).includes(CHECKPOINT_TASK_PROMPT),
-          'The remote project-chat request lost the user prompt'
-        )
-        response.writeHead(200, {
-          'content-type': 'text/event-stream; charset=utf-8',
-          'cache-control': 'no-cache',
-          connection: 'keep-alive',
-        })
-        const stream = streamingTextEvents('project-chat-remote', CHECKPOINT_TASK_COMPLETION_TEXT)
-        response.end(createSse([...stream.start, ...stream.finish]))
         return true
       }
       if (request.method === 'GET' && url.pathname === '/api/teams') {

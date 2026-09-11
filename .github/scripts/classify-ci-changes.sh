@@ -98,7 +98,7 @@ classify_path() {
       changed[frontend]=true
       changed[platform_e2e]=true
       ;;
-    packages/chat-core/*)
+    packages/chat-core/* | packages/collaboration/*)
       changed[frontend]=true
       changed[wework]=true
       changed[platform_e2e]=true

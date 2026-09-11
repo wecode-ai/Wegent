@@ -27,6 +27,11 @@ import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import {
+  SubagentConversationPanel,
+  SubagentEnvironmentSummary,
+  SubagentOverviewPanel,
+} from '@/components/chat/SubagentConversationPanel'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { updateAppPreferences } from '@/desktop/appPreferences'
@@ -226,7 +231,6 @@ import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
-import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import {
   SupervisorSuggestionCards,
   TaskSupervisorControl,
@@ -244,7 +248,8 @@ import type {
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
 } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
+import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
+import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
@@ -349,6 +354,16 @@ interface SelectedAssistantPlan {
   fallbackContent: string
 }
 
+interface SelectedSubagentPanel {
+  conversationId: string | null
+}
+
+interface SubagentTranscriptState {
+  loading: boolean
+  messages: WorkbenchMessage[]
+  error: string | null
+}
+
 interface WorkbenchPaneWorkspaceState {
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
@@ -398,6 +413,50 @@ function findSelectedAssistantPlanContent(
   }
 
   return null
+}
+
+function findSelectedSubagentConversation(
+  messages: WorkbenchMessage[],
+  selection: SelectedSubagentPanel | null
+): SubagentBlock | null {
+  if (!selection?.conversationId) return null
+
+  const getConversationId = (block: SubagentBlock) =>
+    block.agentThreadId ?? block.agentId ?? block.id
+  const findInBlocks = (blocks: SubagentBlock['children']): SubagentBlock | null => {
+    for (const block of blocks ?? []) {
+      if (block.type !== 'subagent') continue
+      if (getConversationId(block) === selection.conversationId) return block
+      const nested = findInBlocks(block.children)
+      if (nested) return nested
+    }
+    return null
+  }
+
+  for (const message of messages) {
+    const found = findInBlocks(
+      nestWorkbenchProcessingBlocks(projectWorkbenchSubagentActivity(message.blocks ?? []))
+    )
+    if (found) return found
+  }
+  return null
+}
+
+function collectSubagentConversations(messages: WorkbenchMessage[]): SubagentBlock[] {
+  const conversations = new Map<string, SubagentBlock>()
+  const collect = (blocks: SubagentBlock['children']) => {
+    for (const block of blocks ?? []) {
+      if (block.type !== 'subagent') continue
+      const conversationId = block.agentThreadId ?? block.agentId ?? block.id
+      conversations.set(conversationId, block)
+      collect(block.children)
+    }
+  }
+
+  for (const message of messages) {
+    collect(nestWorkbenchProcessingBlocks(projectWorkbenchSubagentActivity(message.blocks ?? [])))
+  }
+  return Array.from(conversations.values())
 }
 
 function createBottomPanelWorkspaceKey({
@@ -1017,7 +1076,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask, workspaceTabId } = useWorkbench()
+  const { services, openRuntimeTask, workspaceTabId, loadRuntimeTranscriptForPane } = useWorkbench()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
@@ -1432,6 +1491,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     workspaceTarget,
     workspaceTargetError,
     environmentInfo,
+    conversationSummaryIsGitRepository,
     projectWork: paneProjectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges,
@@ -1494,6 +1554,82 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
     () => initialWorkspaceState?.selectedAssistantPlan ?? null
   )
+  const [selectedSubagentPanel, setSelectedSubagentPanel] = useState<SelectedSubagentPanel | null>(
+    null
+  )
+  const [subagentTranscripts, setSubagentTranscripts] = useState<
+    Record<string, SubagentTranscriptState>
+  >({})
+  const requestedSubagentTranscriptIdsRef = useRef(new Set<string>())
+  const restoreEnvironmentInfoAfterSubagentRef = useRef(false)
+  const previousSubagentPanelOpenRef = useRef(false)
+  const subagentConversations = useMemo(
+    () => collectSubagentConversations(paneSession.messages),
+    [paneSession.messages]
+  )
+  const selectedSubagentBlock = useMemo(
+    () => findSelectedSubagentConversation(paneSession.messages, selectedSubagentPanel),
+    [paneSession.messages, selectedSubagentPanel]
+  )
+  const subagentPanelOpen = selectedSubagentPanel !== null
+  const selectedSubagentConversationId = selectedSubagentPanel?.conversationId ?? null
+  const selectedSubagentTranscript = selectedSubagentConversationId
+    ? subagentTranscripts[selectedSubagentConversationId]
+    : undefined
+  useEffect(() => {
+    if (
+      !currentRuntimeTask ||
+      !selectedSubagentConversationId ||
+      (selectedSubagentBlock?.status !== 'done' && selectedSubagentBlock?.status !== 'error') ||
+      requestedSubagentTranscriptIdsRef.current.has(selectedSubagentConversationId)
+    ) {
+      return
+    }
+
+    requestedSubagentTranscriptIdsRef.current.add(selectedSubagentConversationId)
+    setSubagentTranscripts(current => ({
+      ...current,
+      [selectedSubagentConversationId]: {
+        loading: true,
+        messages: [],
+        error: null,
+      },
+    }))
+    void loadRuntimeTranscriptForPane(
+      {
+        ...currentRuntimeTask,
+        threadId: selectedSubagentConversationId,
+      },
+      { includeFullContent: true }
+    )
+      .then(transcript => {
+        setSubagentTranscripts(current => ({
+          ...current,
+          [selectedSubagentConversationId]: {
+            loading: false,
+            messages: transcript.messages,
+            error: null,
+          },
+        }))
+      })
+      .catch(error => {
+        requestedSubagentTranscriptIdsRef.current.delete(selectedSubagentConversationId)
+        setSubagentTranscripts(current => ({
+          ...current,
+          [selectedSubagentConversationId]: {
+            loading: false,
+            messages: [],
+            error: error instanceof Error ? error.message : tChat('subagent.history_load_failed'),
+          },
+        }))
+      })
+  }, [
+    currentRuntimeTask,
+    loadRuntimeTranscriptForPane,
+    selectedSubagentBlock?.status,
+    selectedSubagentConversationId,
+    tChat,
+  ])
   const [rightPanelExtensionTabs, setRightPanelExtensionTabs] = useState<
     Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
   >(() => initialWorkspaceState?.rightPanelExtensionTabs ?? {})
@@ -1741,10 +1877,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [currentRuntimeTask?.taskId, paneActive, paneVisible, workbenchVisible])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const closeRightPanel = () => {
+    if (subagentPanelOpen) {
+      setSelectedSubagentPanel(null)
+      return
+    }
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
   }
+  const displayedRightPanelOpen = rightPanelOpen || subagentPanelOpen
+  const displayedRightPanelExpanded = subagentPanelOpen ? false : rightPanelExpanded
   const compactRightPanelOpen =
+    subagentPanelOpen ||
     (rightPanelTabs.length === 1 &&
       rightPanelTabs[0].startsWith('chat:') &&
       rightPanelView === rightPanelTabs[0]) ||
@@ -1761,10 +1904,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : undefined,
   })
   const rightPanelTransitionDisabled = splitMode || rightSplitResizing || rightPanelImmediateLayout
-  const chatColumnWidth = rightPanelOpen && !rightPanelExpanded ? rightSplitChatWidth : '100%'
+  const chatColumnWidth =
+    displayedRightPanelOpen && !displayedRightPanelExpanded ? rightSplitChatWidth : '100%'
   const chatColumnMaxWidth =
-    rightPanelOpen && !rightPanelExpanded ? `calc(100% - ${RIGHT_SPLIT_PANEL_MIN_WIDTH}px)` : '100%'
-  const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
+    displayedRightPanelOpen && !displayedRightPanelExpanded
+      ? `calc(100% - ${RIGHT_SPLIT_PANEL_MIN_WIDTH}px)`
+      : '100%'
+  const availableChatColumnWidth = displayedRightPanelOpen
+    ? rightSplitChatWidth
+    : workbenchContentWidth
   const environmentInfoDocked =
     Boolean(currentRuntimeTask) &&
     availableChatColumnWidth - DOCKED_ENVIRONMENT_INFO_WIDTH >=
@@ -1789,6 +1937,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setEnvironmentInfoTransitionEnabled,
     ]
   )
+  useEffect(() => {
+    if (
+      previousSubagentPanelOpenRef.current &&
+      !subagentPanelOpen &&
+      restoreEnvironmentInfoAfterSubagentRef.current
+    ) {
+      restoreEnvironmentInfoAfterSubagentRef.current = false
+      setEnvironmentInfoOpen(true)
+    }
+    previousSubagentPanelOpenRef.current = subagentPanelOpen
+  }, [setEnvironmentInfoOpen, subagentPanelOpen])
   const openSupervisorDialog = useCallback(() => {
     setSupervisorDialogTaskKey(supervisorDialogScopeKey)
     if (!environmentInfoDocked) {
@@ -1807,11 +1966,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onEnvironmentInfoVisibilityChange(paneId, { overlayOpen: false })
   }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoVisibilityChange, paneId])
 
-  const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
-  const rightPanelWidth = rightPanelExpanded ? '100%' : `calc(100% - ${rightSplitChatWidth}px)`
-  const rightPanelShellWidth = rightPanelOpen ? rightPanelWidth : '0px'
+  const paneTitleWidth = displayedRightPanelOpen ? chatColumnWidth : '100%'
+  const rightPanelWidth = displayedRightPanelExpanded
+    ? '100%'
+    : `calc(100% - ${rightSplitChatWidth}px)`
+  const rightPanelShellWidth = displayedRightPanelOpen ? rightPanelWidth : '0px'
   const rightPanelTabBarRightOffset = '0px'
-  const rightPanelTabBarWidth = rightPanelOpen
+  const rightPanelTabBarWidth = displayedRightPanelOpen
     ? `calc(${rightPanelWidth} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
@@ -1851,7 +2012,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : rightPanelView
   const temporaryChatExpanded =
     temporaryChatAvailable && rightPanelExpanded && rightPanelView.startsWith('chat:')
-  const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
+  const shouldRenderRightPanel = displayedRightPanelOpen || effectiveRightPanelTabs.length > 0
   const hasPersistentRightPanelResource =
     fileWorkspaceDirty ||
     rightPanelTabs.some(
@@ -2919,12 +3080,32 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
       if (options?.immediateLayout) setRightPanelImmediateLayout(true)
+      setSelectedSubagentPanel(null)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
     },
-    [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+    [setRightPanelOpen, setRightPanelTabs, setRightPanelView, setSelectedSubagentPanel]
   )
+  const openSubagentConversation = useCallback(
+    (block: SubagentBlock) => {
+      if (!subagentPanelOpen) {
+        restoreEnvironmentInfoAfterSubagentRef.current = environmentInfoOpen
+        if (environmentInfoOpen) setEnvironmentInfoOpen(false)
+      }
+      setSelectedSubagentPanel({
+        conversationId: block.agentThreadId ?? block.agentId ?? block.id,
+      })
+    },
+    [environmentInfoOpen, setEnvironmentInfoOpen, setSelectedSubagentPanel, subagentPanelOpen]
+  )
+  const openSubagentOverview = useCallback(() => {
+    if (!subagentPanelOpen) {
+      restoreEnvironmentInfoAfterSubagentRef.current = environmentInfoOpen
+      if (environmentInfoOpen) setEnvironmentInfoOpen(false)
+    }
+    setSelectedSubagentPanel({ conversationId: null })
+  }, [environmentInfoOpen, setEnvironmentInfoOpen, setSelectedSubagentPanel, subagentPanelOpen])
   const rightWorkspaceExtensionSessionId = currentRuntimeConversationSource
     ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
     : paneKey
@@ -3083,6 +3264,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       })
       setRightPanelImmediateLayout(true)
+      setSelectedSubagentPanel(null)
       setRightPanelOpen(true)
       setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
       setRightPanelView(tab)
@@ -3095,6 +3277,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       defaultEmbeddedBrowserLabel,
       syncActiveEmbeddedBrowserLabel,
       setRightPanelImmediateLayout,
+      setSelectedSubagentPanel,
     ]
   )
   const closeSmartAppDevelopmentPreviewBrowser = useCallback(
@@ -3437,6 +3620,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      setSelectedSubagentPanel(null)
       setRightPanelOpen(true)
       setRightPanelView(tab)
       if (isRightWorkspaceBrowserTab(tab)) {
@@ -3444,7 +3628,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (activeBrowserLabel) syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
       }
     },
-    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel]
+    [setRightPanelOpen, setRightPanelView, syncActiveEmbeddedBrowserLabel, setSelectedSubagentPanel]
   )
   const openTemporaryChatTab = useCallback(
     (initialInput?: string) => {
@@ -3949,7 +4133,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     openBrowserTab()
   }, [openBrowserTab])
   useEffect(() => {
-    if (!paneActive || !paneVisible || rightPanelOpen) return
+    if (!paneActive || !paneVisible || displayedRightPanelOpen) return
 
     const handleOpenBrowser = (event: KeyboardEvent) => {
       if (event.defaultPrevented || shouldIgnoreWorkbenchShortcut(event)) return
@@ -3966,7 +4150,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
     window.addEventListener('keydown', handleOpenBrowser, true)
     return () => window.removeEventListener('keydown', handleOpenBrowser, true)
-  }, [paneActive, paneVisible, rightPanelOpen, selectBrowserView])
+  }, [displayedRightPanelOpen, paneActive, paneVisible, selectBrowserView])
   const selectTerminalView = useCallback(() => {
     openRightPanelTab(allocateTerminalTab())
   }, [allocateTerminalTab, openRightPanelTab])
@@ -4201,6 +4385,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : null
 
   const toggleRightPanel = () => {
+    if (subagentPanelOpen) {
+      setSelectedSubagentPanel(null)
+      return
+    }
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
@@ -4290,17 +4478,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workspaceTarget={workspaceTarget}
       workspaceSessionApi={workspaceSessionApi}
       environmentInfo={environmentInfo}
+      conversationSummaryIsGitRepository={conversationSummaryIsGitRepository}
+      conversationMessages={paneMessages}
       environmentInfoPopoverContainer={environmentInfoPopoverContainer}
       environmentInfoVisible={Boolean(currentRuntimeTask)}
       environmentInfoDocked={forceEnvironmentInfoDocked ?? environmentInfoDocked}
       environmentInfoOpen={environmentInfoOpen}
       onEnvironmentInfoOpenChange={setEnvironmentInfoOpen}
-      environmentInfoFloatingFooter={
-        !(forceEnvironmentInfoDocked ?? environmentInfoDocked) &&
-        (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
-          <div data-testid="workbench-subagent-status-row" className="flex flex-wrap gap-2">
-            <SubagentStatusIndicator statuses={paneSession.subagentStatuses} />
-          </div>
+      environmentInfoFooter={
+        subagentConversations.length > 0 ? (
+          <SubagentEnvironmentSummary
+            blocks={subagentConversations}
+            onOpen={openSubagentOverview}
+          />
         ) : undefined
       }
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
@@ -4313,6 +4503,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onGenerateEnvironmentBranch={branchNameApi ? generateBranchName : undefined}
       environmentBranchNameSource={workbenchTitle ?? undefined}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
+      onOpenConversationWorkspaceFile={path => void openWorkspaceFileFromMessage(path)}
       onDeliver={
         experimentalFeaturesEnabled &&
         currentRuntimeTask &&
@@ -4331,8 +4522,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onRunSupervisorNow={
         supervisorFeatureAvailable && supervisor ? runTaskSupervisorNow : undefined
       }
-      rightPanelOpen={rightPanelOpen}
-      rightPanelExpanded={rightPanelExpanded}
+      rightPanelOpen={displayedRightPanelOpen}
+      rightPanelExpanded={displayedRightPanelExpanded}
       bottomPanelOpen={bottomPanelOpen}
       onToggleRightPanel={toggleRightPanel}
       onToggleRightPanelExpanded={toggleRightPanelExpanded}
@@ -4394,7 +4585,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ) : undefined
   const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
   const showPageTopBar = !isDesktop && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
-  const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(
     experimentalFeaturesEnabled &&
     currentRuntimeTask &&
@@ -4535,7 +4725,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="titlebar-main-actions"
         className={cn(
           'electron-titlebar-interactive-region relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1',
-          rightPanelExpanded && 'invisible'
+          displayedRightPanelExpanded && 'invisible'
         )}
       >
         <div
@@ -4560,7 +4750,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         className={cn(
           'pointer-events-none absolute top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden',
           background.imagePath && background.inTopBar ? 'bg-transparent' : 'bg-background/95',
-          rightPanelOpen && !rightPanelExpanded ? 'border-l border-border/60' : undefined,
+          displayedRightPanelOpen && !displayedRightPanelExpanded
+            ? 'border-l border-border/60'
+            : undefined,
           rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
@@ -4791,7 +4983,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     externalScrollRef={workbenchScrollRef}
                     turnNavigationPortalTarget={turnNavigationPortalTarget}
                     scrollerClassName="min-h-full overflow-visible"
-                    contentClassName={rightPanelExpanded ? 'invisible' : undefined}
+                    contentClassName={displayedRightPanelExpanded ? 'invisible' : undefined}
                     messageListClassName={cn(
                       DESKTOP_MESSAGE_LIST_CLASS,
                       chatContentResizing && 'transition-none'
@@ -4821,7 +5013,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         ? 'from-transparent via-transparent'
                         : 'from-background via-background',
                       chatContentResizing && 'transition-none',
-                      rightPanelExpanded && 'z-critical'
+                      displayedRightPanelExpanded && 'z-critical'
                     )}
                     stickyFooter={
                       temporaryChatExpanded || isCreatingWorktree ? null : (
@@ -4839,7 +5031,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             className={cn(
                               DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
                               chatContentResizing && 'transition-none',
-                              rightPanelExpanded && 'z-critical'
+                              displayedRightPanelExpanded && 'z-critical'
                             )}
                             data-testid="desktop-floating-composer-layer"
                           >
@@ -4847,7 +5039,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                               className="pointer-events-auto"
                               data-testid="desktop-floating-composer-card"
                             >
-                              {rightPanelExpanded && (
+                              {displayedRightPanelExpanded && (
                                 <button
                                   type="button"
                                   data-testid="restore-conversation-from-expanded-workspace-button"
@@ -4867,7 +5059,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   }}
                                   onCancel={connectorAuthGate.clearPending}
                                 />
-                              ) : !rightPanelExpanded ? (
+                              ) : !displayedRightPanelExpanded ? (
                                 <>
                                   {showConversationDeviceBanner ? (
                                     <ConversationDeviceOfflineBanner
@@ -5099,9 +5291,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                     onAddSelectionToConversation={addSelectionToConversation}
                     onAskSelectionInSidebar={askSelectionInSidebar}
+                    onOpenSubagent={openSubagentConversation}
                   />
                 </div>
-              ) : rightPanelExpanded ? null : (
+              ) : displayedRightPanelExpanded ? null : (
                 <DesktopEmptyTaskLauncher
                   projectName={currentProject?.name}
                   onOpenProjectSelector={anchorElement => {
@@ -5110,7 +5303,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   }}
                   onSelectSuggestion={selectTaskSuggestion}
                   composer={
-                    rightPanelExpanded ? null : (
+                    displayedRightPanelExpanded ? null : (
                       <>
                         <DeviceStatusPrompt
                           devices={devices}
@@ -5304,17 +5497,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             )}
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
-            {environmentInfoDocked && hasSubagentStatuses && (
-              <div
-                data-testid="workbench-subagent-status-row"
-                className="ml-2 mt-3 flex w-[300px] flex-wrap gap-2"
-              >
-                <SubagentStatusIndicator statuses={paneSession.subagentStatuses} />
-              </div>
-            )}
           </aside>
         </div>
-        {rightPanelOpen && !rightPanelExpanded && (
+        {displayedRightPanelOpen && !displayedRightPanelExpanded && (
           <div
             data-testid="right-workspace-resize-handle"
             role="separator"
@@ -5333,33 +5518,50 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           data-testid="right-workspace-panel-shell"
           className={cn(
             'z-popover flex h-full min-h-0 min-w-0 shrink-0 overflow-hidden',
-            rightPanelExpanded ? 'absolute inset-y-0 right-0' : 'relative',
-            rightPanelExpanded
+            displayedRightPanelExpanded ? 'absolute inset-y-0 right-0' : 'relative',
+            displayedRightPanelExpanded
               ? 'bg-background'
               : hasMainBackground
                 ? 'bg-background/20'
                 : 'bg-background',
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
-            rightPanelOpen
+            displayedRightPanelOpen
               ? cn(
                   'pointer-events-auto opacity-100',
-                  !rightPanelExpanded && 'border-l border-border/60'
+                  !displayedRightPanelExpanded && 'border-l border-border/60'
                 )
               : 'pointer-events-none opacity-0'
           )}
           style={{
             minWidth:
-              rightPanelOpen && !rightPanelExpanded ? RIGHT_SPLIT_PANEL_MIN_WIDTH : undefined,
+              displayedRightPanelOpen && !displayedRightPanelExpanded
+                ? RIGHT_SPLIT_PANEL_MIN_WIDTH
+                : undefined,
             width: rightPanelShellWidth,
           }}
-          aria-hidden={!rightPanelOpen}
+          aria-hidden={!displayedRightPanelOpen}
         >
-          {shouldRenderRightPanel && (
+          {selectedSubagentBlock ? (
+            <SubagentConversationPanel
+              block={selectedSubagentBlock}
+              onBack={() => setSelectedSubagentPanel({ conversationId: null })}
+              onOpenSubagent={openSubagentConversation}
+              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+              transcriptMessages={selectedSubagentTranscript?.messages}
+              transcriptLoading={selectedSubagentTranscript?.loading}
+              transcriptError={selectedSubagentTranscript?.error}
+            />
+          ) : subagentPanelOpen ? (
+            <SubagentOverviewPanel
+              blocks={subagentConversations}
+              onSelect={openSubagentConversation}
+            />
+          ) : shouldRenderRightPanel ? (
             <RightWorkspacePanel
-              showWorkbenchBackground={hasMainBackground && !rightPanelExpanded}
-              visible={paneVisible && workbenchVisible && rightPanelOpen}
+              showWorkbenchBackground={hasMainBackground && !displayedRightPanelExpanded}
+              visible={paneVisible && workbenchVisible && displayedRightPanelOpen}
               renderTabsInAppTitlebar={!splitMode}
-              expanded={rightPanelExpanded}
+              expanded={displayedRightPanelExpanded}
               activeView={effectiveRightPanelView}
               openTabs={effectiveRightPanelTabs}
               allowTemporaryChat={temporaryChatAvailable}
@@ -5456,7 +5658,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 })
               }}
             />
-          )}
+          ) : null}
         </div>
       </div>
       {bottomPanelContextsToRender.map(context => {

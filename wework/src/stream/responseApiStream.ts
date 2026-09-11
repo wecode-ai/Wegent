@@ -566,6 +566,18 @@ function emitResponseBlockUpdated(
   const toolOutputTruncated = updates.toolOutputTruncated ?? updates.tool_output_truncated
   const toolOutputOriginalBytes =
     updates.toolOutputOriginalBytes ?? updates.tool_output_original_bytes
+  const parentToolUseId =
+    stringField(updates, 'parentToolUseId') ?? stringField(updates, 'parent_tool_use_id')
+  const agentStatus =
+    updates.agentStatus === 'running' ||
+    updates.agentStatus === 'done' ||
+    updates.agentStatus === 'interrupted'
+      ? updates.agentStatus
+      : updates.agent_status === 'running' ||
+          updates.agent_status === 'done' ||
+          updates.agent_status === 'interrupted'
+        ? updates.agent_status
+        : undefined
   const completedAt =
     optionalNumberField(updates, 'completedAt') ?? optionalNumberField(updates, 'completed_at')
   const durationMs =
@@ -593,6 +605,10 @@ function emitResponseBlockUpdated(
       ...(toolInput && { toolInput }),
       ...(renderPayload !== undefined && { renderPayload }),
       ...(fileChanges && { fileChanges: fileChanges as unknown as ChatBlock['fileChanges'] }),
+      ...(typeof updates.output === 'string' && { output: updates.output }),
+      ...(typeof updates.summary === 'string' && { summary: updates.summary }),
+      ...(parentToolUseId && { parentToolUseId }),
+      ...(agentStatus && { agentStatus }),
       ...(typeof updates.status === 'string' && {
         status: updates.status as ChatBlock['status'],
       }),

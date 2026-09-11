@@ -63,6 +63,7 @@ EXTERNAL_BOARD_STATUSES = {
     "completed",
 }
 ISSUE_LIST_PAGE_SIZE = 100
+MAX_EXTERNAL_COMMENT_PAGES = 100
 ISSUE_PAGE_CACHE_SECONDS = 30
 GITLAB_PROVIDER_UPLOAD_PATTERN = re.compile(
     r"(?P<image>!)?\[(?P<name>[^\]]+)\]\((?P<url>[^)]*/uploads/[^)]+)\)"
@@ -1335,6 +1336,18 @@ class ExternalLoopItemProvider:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         return self._create_comment(project, number, body)
 
+    def list_comments(
+        self, db: Session, item_id: str, user_id: int
+    ) -> list[dict[str, object]]:
+        project, number = self._resolve_project(db, item_id)
+        access = require_cloud_project_role(
+            db, project.id, user_id, BaseRole.RestrictedAnalyst
+        )
+        issue = self._get_issue(project, number)
+        if not self._response(db, project, issue, access, user_id)["can_view_detail"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        return self._list_comments(project, number)
+
     def _response(
         self,
         db: Session,
@@ -1881,6 +1894,45 @@ class ExternalLoopItemProvider:
             path,
             json={"body": body},
         )
+        return self._comment_response(project, response)
+
+    def _list_comments(
+        self, project: CloudProject, number: int
+    ) -> list[dict[str, object]]:
+        repository = self._repository(project)
+        path = (
+            f"/repos/{repository}/issues/{number}/comments"
+            if project.task_provider == "github"
+            else f"/projects/{quote(repository, safe='')}/issues/{number}/notes"
+        )
+        comments: list[dict[str, object]] = []
+        for page in range(1, MAX_EXTERNAL_COMMENT_PAGES + 2):
+            params: dict[str, object] = {
+                "per_page": ISSUE_LIST_PAGE_SIZE,
+                "page": page,
+            }
+            if project.task_provider == "github":
+                params.update({"sort": "created", "direction": "asc"})
+            else:
+                params.update({"order_by": "created_at", "sort": "asc"})
+            batch = self._request(project, "GET", path, params=params)
+            if page > MAX_EXTERNAL_COMMENT_PAGES:
+                if batch:
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY,
+                        "Provider comment list exceeds the supported page limit",
+                    )
+                break
+            comments.extend(
+                self._comment_response(project, comment) for comment in batch
+            )
+            if len(batch) < ISSUE_LIST_PAGE_SIZE:
+                break
+        return comments
+
+    def _comment_response(
+        self, project: CloudProject, response: dict[str, Any]
+    ) -> dict[str, object]:
         return {
             "id": str(response.get("id") or ""),
             "body": str(response.get("body") or ""),

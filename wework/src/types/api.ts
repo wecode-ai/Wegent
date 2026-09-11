@@ -2687,6 +2687,7 @@ export type ChatBlockType =
   | 'plan'
   | 'error'
   | 'guidance'
+  | 'subagent'
   | 'file_changes'
 
 export interface ChatBlock {
@@ -2701,6 +2702,23 @@ export interface ChatBlock {
   tool_output?: unknown
   tool_output_truncated?: boolean
   tool_output_original_bytes?: number
+  parent_tool_use_id?: string
+  parentToolUseId?: string
+  agent_type?: string
+  agentType?: string
+  agent_id?: string
+  agentId?: string
+  agent_thread_id?: string
+  agentThreadId?: string
+  agent_path?: string
+  agentPath?: string
+  agent_status?: 'running' | 'done' | 'interrupted'
+  agentStatus?: 'running' | 'done' | 'interrupted'
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: ChatBlock[]
   render_payload?: unknown
   renderPayload?: unknown
   file_changes?: TurnFileChangesSummary
@@ -2736,6 +2754,10 @@ export interface ChatBlockUpdatedPayload {
   toolInput?: Record<string, unknown>
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
+  output?: string
+  summary?: string
+  parentToolUseId?: string
+  agentStatus?: 'running' | 'done' | 'interrupted'
   status?: ChatBlock['status'] | 'running'
   completedAt?: number
   durationMs?: number

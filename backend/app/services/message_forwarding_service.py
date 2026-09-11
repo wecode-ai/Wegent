@@ -41,7 +41,7 @@ class MessageForwardingService:
         """Get database session."""
         return SessionLocal()
 
-    def _get_message_content_snapshot(self, subtask: Subtask) -> MessageContentSnapshot:
+    def build_content_snapshot(self, subtask: Subtask) -> MessageContentSnapshot:
         """Create a content snapshot from a subtask."""
         # Build attachment info
         attachments = []
@@ -117,9 +117,7 @@ class MessageForwardingService:
                 raise NotFoundException("No messages to forward")
 
             # Create content snapshots
-            content_snapshots = [
-                self._get_message_content_snapshot(s) for s in subtasks
-            ]
+            content_snapshots = [self.build_content_snapshot(s) for s in subtasks]
             subtask_ids = [s.id for s in subtasks]
 
             # Forward to each recipient
