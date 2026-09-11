@@ -432,9 +432,18 @@ def _finalize_external_source_on_success(
     if not document.has_external_identity:
         return
 
-    document.update_external_source_config(
-        last_success_at=datetime.now(timezone.utc).isoformat(),
-    )
+    external = document.external_source_config
+    sync = external.get("sync")
+    updates: dict[str, object] = {
+        "last_success_at": datetime.now(timezone.utc).isoformat()
+    }
+    if isinstance(sync, dict) and sync.get("enabled"):
+        sync = dict(sync)
+        sync["indexed_version"] = sync.get("content_version")
+        sync["last_synced_at"] = datetime.now(timezone.utc).isoformat()
+        sync.pop("last_error_code", None)
+        updates["sync"] = sync
+    document.update_external_source_config(**updates)
 
 
 @trace_sync(
@@ -511,7 +520,7 @@ def mark_document_index_succeeded(
 @trace_sync(
     span_name="knowledge.mark_document_index_failed",
     tracer_name="knowledge.state_machine",
-    extract_attributes=lambda db, document_id, generation: {
+    extract_attributes=lambda db, document_id, generation, **_: {
         "knowledge.document_id": document_id,
         "knowledge.index_generation": generation,
     },
@@ -522,11 +531,13 @@ def mark_document_index_failed(
     generation: int,
     *,
     error: Optional[DocumentProcessingError] = None,
+    preserve_active_sync_index: bool = False,
 ) -> bool:
-    """Persist a failed indexing result for the active generation.
+    """Persist a failed processing result for the active generation.
 
     The document itself is never deleted by a failure, so the user can retry
-    the initial import on the same record.
+    the initial import on the same record. A synchronized document can keep a
+    previously successful active index when only its remote source disappeared.
     """
     document = (
         db.query(KnowledgeDocument)
@@ -565,23 +576,46 @@ def mark_document_index_failed(
             stage=DocumentProcessingStage.SYSTEM,
         )
 
-    document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
-    document.index_status = DocumentIndexStatus.FAILED
+    external = document.external_source_config
+    sync = external.get("sync")
+    has_active_sync_index = bool(
+        preserve_active_sync_index
+        and document.is_active
+        and document.attachment_id
+        and isinstance(sync, dict)
+        and sync.get("enabled")
+    )
+    if has_active_sync_index:
+        document.clear_processing_error_payload()
+        document.index_status = DocumentIndexStatus.SUCCESS
+    else:
+        document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
+        document.index_status = DocumentIndexStatus.FAILED
     document.updated_at = _utcnow()
-    if (
-        document.has_external_identity
-        and persisted_error.code == "external_source_unavailable"
-    ):
-        document.update_external_source_config(
-            status="inaccessible", last_error=persisted_error.message
-        )
+    if document.has_external_identity and persisted_error.code in {
+        "external_source_unavailable",
+        "external_source_missing",
+    }:
+        updates: dict[str, object] = {
+            "status": "inaccessible",
+            "last_error": persisted_error.message,
+        }
+        if isinstance(sync, dict) and sync.get("enabled"):
+            sync = dict(sync)
+            sync["last_error_code"] = persisted_error.code
+            updates["sync"] = sync
+        document.update_external_source_config(**updates)
 
     db.commit()
     _record_transition(
         "knowledge.index.finalize.failed",
         document_id=document_id,
         generation=generation,
-        reason="finalized",
+        reason=(
+            "source_unavailable_active_index_preserved"
+            if has_active_sync_index
+            else "finalized"
+        ),
     )
     return True
 

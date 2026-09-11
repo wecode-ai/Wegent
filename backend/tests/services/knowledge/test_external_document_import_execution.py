@@ -23,6 +23,7 @@ from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
+    KnowledgeDocumentResponse,
     KnowledgeDocumentUpdate,
 )
 from app.services.knowledge.external_document_import import (
@@ -271,7 +272,9 @@ class TestRunExternalDocumentImport:
     ) -> None:
         document = self._create_placeholder(test_db, test_user)
         provider = SimpleNamespace(
-            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+            fetch_content=AsyncMock(
+                side_effect=ExternalDocumentFetchError("无法连接 Wiki 站点")
+            ),
         )
         monkeypatch.setattr(
             "app.services.knowledge.external_document_import"
@@ -286,8 +289,62 @@ class TestRunExternalDocumentImport:
         error = document.processing_error_payload
         assert error is not None
         assert error["code"] == "external_import_failed"
+        assert error["message"] == "无法连接 Wiki 站点"
         assert error["retryable"] is True
         assert error["generation"] == 0
+        response = KnowledgeDocumentResponse.model_validate(document)
+        assert response.processing_error is not None
+        assert response.processing_error.message == "无法连接 Wiki 站点"
+
+    def test_missing_wiki_source_keeps_existing_successful_index(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document.external_source.external_provider = "wiki"
+        document.external_source.external_resource_id = "v1:conn-primary:42"
+        document.source_config = {
+            "external": {
+                "provider": "wiki",
+                "title": "Wiki Runbook",
+                "sync": {
+                    "enabled": True,
+                    "connection_id": "conn-primary",
+                    "resource_id": "42",
+                    "content_version": "2026-09-08T01:00:00Z",
+                    "indexed_version": "2026-09-08T01:00:00Z",
+                },
+            }
+        }
+        document.attachment_id = 321
+        document.is_active = True
+        document.status = DocumentStatus.ENABLED
+        test_db.commit()
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(
+                side_effect=ExternalSourceUnavailableError(
+                    "Wiki source document no longer exists",
+                    error_code="external_source_missing",
+                )
+            )
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        test_db.refresh(document)
+        external = document.source_config["external"]
+        assert document.index_status == DocumentIndexStatus.SUCCESS
+        assert document.is_active is True
+        assert document.processing_error_payload is None
+        assert external["status"] == "inaccessible"
+        assert external["sync"]["last_error_code"] == "external_source_missing"
 
     def test_new_attempt_after_attachment_landing_is_not_replaced_by_old_handoff(
         self, test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch

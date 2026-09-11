@@ -6,7 +6,13 @@ import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
-export function ExternalDocumentBadge({ className }: { className?: string }) {
+export function ExternalDocumentBadge({
+  className,
+  syncedWiki = false,
+}: {
+  className?: string
+  syncedWiki?: boolean
+}) {
   const { t } = useTranslation('knowledge')
   return (
     <Badge
@@ -14,7 +20,7 @@ export function ExternalDocumentBadge({ className }: { className?: string }) {
       size="sm"
       className={cn('bg-amber-500/10 text-amber-600 border-amber-500/20', className)}
     >
-      {t('document.document.type.external')}
+      {syncedWiki ? t('wikiSection.synced_badge') : t('document.document.type.external')}
     </Badge>
   )
 }

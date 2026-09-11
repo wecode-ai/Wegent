@@ -641,3 +641,44 @@ class TestBeginExternalImportAttempt:
         assert external["status"] == "inaccessible"
         assert external["last_success_at"]
         assert external["last_error"] == "old failure"
+
+
+def test_mark_document_index_succeeded_promotes_synced_external_version(
+    test_db: Session, test_user: User
+) -> None:
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=2,
+    )
+    document.source_type = "external"
+    document.source_config = {
+        "external": {
+            "provider": "wiki",
+            "title": "Runbook",
+            "sync": {
+                "enabled": True,
+                "content_version": "2026-09-06T02:00:00Z",
+                "indexed_version": "2026-09-06T01:00:00Z",
+                "last_error_code": "previous_failure",
+            },
+        }
+    }
+    document.external_source = KnowledgeDocumentExternalSource(
+        kind_id=knowledge_base.id,
+        external_provider="wiki",
+        external_resource_id="v1:conn-primary:42",
+    )
+    test_db.commit()
+
+    finalized = mark_document_index_succeeded(test_db, document.id, 2)
+
+    test_db.refresh(document)
+    sync = document.source_config["external"]["sync"]
+    assert finalized is True
+    assert sync["indexed_version"] == "2026-09-06T02:00:00Z"
+    assert sync["last_synced_at"]
+    assert "last_error_code" not in sync

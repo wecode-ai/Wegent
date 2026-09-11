@@ -14,7 +14,7 @@ export type MemberRole = BaseRole
 
 export type DocumentStatus = 'enabled' | 'disabled'
 
-export type DocumentSourceType = 'file' | 'text' | 'table' | 'web' | 'external'
+export type DocumentSourceType = 'file' | 'text' | 'table' | 'web' | 'external' | 'external_wiki'
 
 export type DocumentIndexStatus =
   | 'not_indexed'

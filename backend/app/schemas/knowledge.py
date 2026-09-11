@@ -69,6 +69,9 @@ class DocumentSourceType(str, Enum):
     # Document imported from an external provider (e.g. DingTalk) through the
     # external import path, not the regular upload API.
     EXTERNAL = "external"
+    # Live-bound external wiki page. Its content remains at the provider and is
+    # retrieved by the wiki preview endpoint.
+    EXTERNAL_WIKI = "external_wiki"
 
 
 def reject_internal_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
@@ -88,6 +91,10 @@ def reject_internal_source_type(value: "DocumentSourceType") -> "DocumentSourceT
     if value == DocumentSourceType.EXTERNAL:
         raise ValueError(
             "'external' documents are written through the external import API"
+        )
+    if value == DocumentSourceType.EXTERNAL_WIKI:
+        raise ValueError(
+            "'external_wiki' documents are written through the wiki binding API"
         )
     return value
 

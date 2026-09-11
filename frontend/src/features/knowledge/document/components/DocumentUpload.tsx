@@ -13,6 +13,9 @@ import {
   ClipboardPaste,
   Globe,
   BookOpen,
+  ExternalLink as BookExternalLinkIcon,
+  Maximize2,
+  Minimize2,
   X,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -45,6 +48,11 @@ import { MULTIMODAL_EXTENSIONS } from '@/features/knowledge/multimodal/constants
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { DingtalkDocumentImport, type DingtalkBatchImportSummary } from './DingtalkDocumentImport'
+import {
+  WikiDocumentImport,
+  type WikiBindImportSummary,
+  type WikiImportOptions,
+} from './WikiDocumentImport'
 import { DocumentUploadFooter } from './DocumentUploadFooter'
 import { UploadFileList } from './UploadFileList'
 import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
@@ -72,13 +80,14 @@ function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
   }
 }
 
-type UploadMode = 'file' | 'text' | 'web' | 'dingtalk'
+type UploadMode = 'file' | 'text' | 'web' | 'dingtalk' | 'wiki'
 
 const SOURCE_HEIGHT: Record<UploadMode, string> = {
   file: 'h-[540px] md:h-[480px]',
   web: 'h-[440px] md:h-[344px]',
   text: 'h-[580px]',
   dingtalk: 'h-[720px]',
+  wiki: 'h-[680px]',
 }
 
 const WEB_ERROR_KEYS = {
@@ -100,6 +109,7 @@ interface DocumentUploadProps {
   ) => Promise<DocumentCreationResult[]>
   onWebAdd?: (url: string, name?: string) => Promise<void>
   onDingtalkImport?: (resourceIds: string[]) => Promise<DingtalkBatchImportSummary>
+  onWikiImport?: (paths: string[], options: WikiImportOptions) => Promise<WikiBindImportSummary>
   canManageDocuments?: boolean
   /** Deprecated compatibility props. kb_type no longer limits uploads. */
   kbType?: string
@@ -124,6 +134,7 @@ function DocumentUploadSession({
   onUploadComplete,
   onWebAdd,
   onDingtalkImport,
+  onWikiImport,
   canManageDocuments = true,
   folderId = 0,
   folderOptions = [],
@@ -163,6 +174,9 @@ function DocumentUploadSession({
   const [uploadMode, setUploadMode] = useState<UploadMode>('file')
   const [dingtalkVisited, setDingtalkVisited] = useState(false)
   const [dingtalkHasDraft, setDingtalkHasDraft] = useState(false)
+  const [wikiVisited, setWikiVisited] = useState(false)
+  const [wikiHasDraft, setWikiHasDraft] = useState(false)
+  const [wikiFullscreen, setWikiFullscreen] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState<UploadMode | null>(null)
@@ -182,6 +196,7 @@ function DocumentUploadSession({
     text: Boolean(textContent.trim() || textFileName.trim()),
     web: Boolean(webUrl.trim()),
     dingtalk: dingtalkHasDraft,
+    wiki: wikiHasDraft,
   }
   const sources = [
     { id: 'file' as const, label: t('document.upload.sources.file'), icon: Upload },
@@ -191,6 +206,15 @@ function DocumentUploadSession({
     { id: 'text' as const, label: t('document.upload.sources.text'), icon: ClipboardPaste },
     ...(onDingtalkImport
       ? [{ id: 'dingtalk' as const, label: t('document.upload.dingtalk.entry'), icon: BookOpen }]
+      : []),
+    ...(onWikiImport
+      ? [
+          {
+            id: 'wiki' as const,
+            label: t('document.upload.wiki.entry'),
+            icon: BookExternalLinkIcon,
+          },
+        ]
       : []),
   ]
 
@@ -379,12 +403,24 @@ function DocumentUploadSession({
     }
   }
 
+  const handleWikiImport = async (paths: string[], options: WikiImportOptions) => {
+    if (!onWikiImport || !beginSubmit('wiki'))
+      throw new Error(t('document.upload.wiki.noPermission'))
+    try {
+      return await onWikiImport(paths, options)
+    } finally {
+      endSubmit()
+    }
+  }
+
   const selectSource = (value: string) => {
     if (busy || submissionLock.current) return
     const next = sources.find(s => s.id === value)
     if (!next) return
     setUploadMode(next.id)
     if (next.id === 'dingtalk') setDingtalkVisited(true)
+    if (next.id === 'wiki') setWikiVisited(true)
+    else setWikiFullscreen(false)
   }
 
   const footer = (source: UploadMode, action: ReactNode, status?: ReactNode) =>
@@ -441,8 +477,11 @@ function DocumentUploadSession({
     >
       <DialogContent
         className={cn(
-          'top-[5dvh] flex max-h-[90dvh] w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl',
-          SOURCE_HEIGHT[uploadMode]
+          'flex flex-col gap-0 overflow-hidden p-0',
+          wikiFullscreen
+            ? 'left-0 top-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 rounded-none sm:max-w-none sm:rounded-none'
+            : 'top-[5dvh] max-h-[90dvh] w-[calc(100%-2rem)] translate-y-0 sm:max-w-3xl',
+          !wikiFullscreen && SOURCE_HEIGHT[uploadMode]
         )}
         data-testid="document-upload-dialog"
         hideCloseButton
@@ -452,17 +491,40 @@ function DocumentUploadSession({
       >
         <DialogHeader className="shrink-0 flex-row items-center justify-between space-y-0 px-5 py-4 text-left">
           <DialogTitle>{t('document.document.upload')}</DialogTitle>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-11 w-11"
-            onClick={requestClose}
-            disabled={busy}
-            aria-label={t('common:actions.close')}
-            data-testid="document-upload-close"
-          >
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {uploadMode === 'wiki' && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-11 w-11"
+                onClick={() => setWikiFullscreen(value => !value)}
+                disabled={busy}
+                aria-label={
+                  wikiFullscreen
+                    ? t('document.document.detail.exitFullscreen')
+                    : t('document.document.detail.fullscreen')
+                }
+                data-testid="document-upload-wiki-fullscreen"
+              >
+                {wikiFullscreen ? (
+                  <Minimize2 className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-11 w-11"
+              onClick={requestClose}
+              disabled={busy}
+              aria-label={t('common:actions.close')}
+              data-testid="document-upload-close"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </DialogHeader>
         <Tabs
           value={uploadMode}
@@ -749,6 +811,23 @@ function DocumentUploadSession({
                 onDone={() => sourceCompleted('dingtalk')}
                 onDraftChange={setDingtalkHasDraft}
                 renderFooter={(action, status) => footer('dingtalk', action, status)}
+                canManageDocuments={canManageDocuments}
+              />
+            </TabsContent>
+          )}
+          {onWikiImport && wikiVisited && (
+            <TabsContent
+              value="wiki"
+              forceMount
+              hidden={uploadMode !== 'wiki'}
+              className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
+            >
+              <WikiDocumentImport
+                knowledgeBaseId={knowledgeBaseId}
+                onImport={handleWikiImport}
+                onDone={() => sourceCompleted('wiki')}
+                onDraftChange={setWikiHasDraft}
+                renderFooter={(action, status) => footer('wiki', action, status)}
                 canManageDocuments={canManageDocuments}
               />
             </TabsContent>

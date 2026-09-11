@@ -86,7 +86,16 @@ jest.mock('@/features/knowledge/document/hooks/useColumnResize', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
-  DocumentDetailDialog: () => null,
+  DocumentDetailDialog: ({
+    open,
+    document,
+  }: {
+    open: boolean
+    document: KnowledgeDocument | null
+  }) =>
+    open && document ? (
+      <div data-testid="document-detail-preview">{`${document.source_type}:${document.id}`}</div>
+    ) : null,
 }))
 jest.mock('@/features/knowledge/document/components/DocumentUpload', () => ({
   DocumentUpload: ({
@@ -127,17 +136,23 @@ jest.mock('@/features/knowledge/document/components/FolderTree', () => ({
     selectedIds: Set<number>
     isSelectionDisabled?: (document: KnowledgeDocument) => boolean
     onSelect?: (document: KnowledgeDocument, selected: boolean) => void
+    onViewDetail?: (document: KnowledgeDocument) => void
   }) => {
     mockFolderTree(props)
     return (
       <div>
         {props.documents.map(document => (
-          <button
-            key={document.id}
-            data-testid={`compact-select-document-${document.id}`}
-            disabled={props.isSelectionDisabled?.(document)}
-            onClick={() => props.onSelect?.(document, !props.selectedIds.has(document.id))}
-          />
+          <div key={document.id}>
+            <button
+              data-testid={`compact-select-document-${document.id}`}
+              disabled={props.isSelectionDisabled?.(document)}
+              onClick={() => props.onSelect?.(document, !props.selectedIds.has(document.id))}
+            />
+            <button
+              data-testid={`open-document-${document.id}`}
+              onClick={() => props.onViewDetail?.(document)}
+            />
+          </div>
         ))}
       </div>
     )
@@ -351,6 +366,26 @@ describe('DocumentList summary header', () => {
     render(<DocumentList knowledgeBase={createKnowledgeBase({ document_count: 1 })} />)
 
     expect(screen.queryByTestId('expand-all-toggle')).not.toBeInTheDocument()
+  })
+
+  it('opens live wiki documents in the standard document preview', () => {
+    mockDocuments = [
+      createDocument({
+        source_type: 'external_wiki',
+        source_config: {
+          wiki: {
+            path: 'operations/handbook',
+            resource_url: 'https://wiki.example.com/operations/handbook',
+          },
+        },
+      }),
+    ]
+
+    render(<DocumentList knowledgeBase={createKnowledgeBase({ document_count: 1 })} compact />)
+
+    fireEvent.click(screen.getByTestId('open-document-10'))
+
+    expect(screen.getByTestId('document-detail-preview')).toHaveTextContent('external_wiki:10')
   })
 
   it('shows expand-all when the knowledge base has folders and fewer than 200 documents', () => {

@@ -29,7 +29,11 @@ from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.knowledge import (
+    DocumentIndexStatus,
+    DocumentSourceType,
+    KnowledgeDocument,
+)
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -881,12 +885,30 @@ class KnowledgeOrchestrator:
     @staticmethod
     def _assert_external_document_previewable(document: KnowledgeDocument) -> None:
         """Reject placeholders; stored content does not depend on index health."""
-        from app.models.knowledge import DocumentSourceType
-
         if document.source_type != DocumentSourceType.EXTERNAL.value:
             return
         if not document.attachment_id:
             raise ValueError("Document content is not ready for preview")
+
+    @staticmethod
+    async def _read_live_wiki_content(
+        db: Session,
+        document: KnowledgeDocument,
+        offset: int,
+        limit: int,
+    ) -> tuple[str, int, bool]:
+        """Read a paged slice from the latest live wiki page body."""
+        from app.services.wiki.connector import WikiApiError
+        from app.services.wiki.service import fetch_live_wiki_document_page
+
+        _validate_document_read_paging(offset=offset, limit=limit)
+        try:
+            page = await fetch_live_wiki_document_page(db, document)
+        except WikiApiError as exc:
+            raise ValueError(exc.message) from exc
+        content = page.content or ""
+        end = min(offset + limit, len(content))
+        return content[offset:end], len(content), offset > 0 or end < len(content)
 
     def read_document_content(
         self,
@@ -964,7 +986,7 @@ class KnowledgeOrchestrator:
         limit: int = MAX_DOCUMENT_READ_LIMIT,
     ) -> DocumentDetailResponse:
         """Aggregate optional document content and summary into a detail response."""
-        self._get_document_with_access_or_raise(
+        document = self._get_document_with_access_or_raise(
             db=db,
             user=user,
             document_id=document_id,
@@ -976,16 +998,21 @@ class KnowledgeOrchestrator:
         summary = None
 
         if include_content:
-            paged = self.read_document_content(
-                db=db,
-                user=user,
-                document_id=document_id,
-                offset=offset,
-                limit=limit,
-            )
-            content = paged.content
-            content_length = paged.total_length
-            truncated = (paged.offset > 0) or paged.has_more
+            if document.source_type == DocumentSourceType.EXTERNAL_WIKI.value:
+                content, content_length, truncated = await self._read_live_wiki_content(
+                    db, document, offset, limit
+                )
+            else:
+                paged = self.read_document_content(
+                    db=db,
+                    user=user,
+                    document_id=document_id,
+                    offset=offset,
+                    limit=limit,
+                )
+                content = paged.content
+                content_length = paged.total_length
+                truncated = (paged.offset > 0) or paged.has_more
 
         if include_summary:
             from app.services.knowledge.summary_service import get_summary_service
@@ -1851,9 +1878,15 @@ class KnowledgeOrchestrator:
 
         # Refresh the provider-owned source metadata; never touch the user's
         # own document name or folder.
+        existing_external = document.external_source_config
+        incoming_external = dict(content.metadata or {})
+        existing_sync = existing_external.get("sync")
+        incoming_sync = incoming_external.get("sync")
+        if isinstance(existing_sync, dict) and isinstance(incoming_sync, dict):
+            incoming_external["sync"] = {**existing_sync, **incoming_sync}
         merged_external = {
-            **document.external_source_config,
-            **dict(content.metadata or {}),
+            **existing_external,
+            **incoming_external,
             "status": "accessible",
         }
         # Reading the source succeeded even if later conversion/indexing fails.
@@ -1870,6 +1903,9 @@ class KnowledgeOrchestrator:
             KnowledgeDocument.source_config: merged_source_config,
             KnowledgeDocument.updated_at: now,
         }
+        sync_config = merged_external.get("sync")
+        if isinstance(sync_config, dict) and sync_config.get("enabled"):
+            update_fields[KnowledgeDocument.name] = content.name[:255]
 
         updated = (
             db.query(KnowledgeDocument)

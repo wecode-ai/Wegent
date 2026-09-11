@@ -390,6 +390,9 @@ export function DocumentList({
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
+  const openDocument = useCallback((document: KnowledgeDocument) => {
+    setViewingDoc(document)
+  }, [])
   const currentViewingDoc = useMemo(
     () => resolveCurrentDocumentSnapshot(viewingDoc, documents),
     [documents, viewingDoc]
@@ -447,6 +450,7 @@ export function DocumentList({
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
   // Track which document is being reindexed
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
+  const [syncingDocId, setSyncingDocId] = useState<number | null>(null)
   // Track selected upload folder
   const [selectedUploadFolderId, setSelectedUploadFolderId] = useState(0)
   // Track document being moved
@@ -532,7 +536,7 @@ export function DocumentList({
       initialDocumentId !== undefined ? doc.id === initialDocumentId : doc.name === initialDocPath
     )
     if (targetDoc) {
-      setViewingDoc(targetDoc)
+      openDocument(targetDoc)
       setInitialDocPathHandled(true)
       return
     }
@@ -550,7 +554,7 @@ export function DocumentList({
             controller.signal
           )
           if (!controller.signal.aborted && found) {
-            setViewingDoc(found)
+            openDocument(found)
           }
         } catch {
           // Silently ignore - auto-open is best-effort
@@ -572,6 +576,7 @@ export function DocumentList({
     documents,
     paginationEnabled,
     knowledgeBase.id,
+    openDocument,
   ])
 
   // Notebook view starts with no explicit document filter. Users can select
@@ -741,6 +746,24 @@ export function DocumentList({
     }
   }
 
+  const handleWikiImport = async (
+    paths: string[],
+    options: { connectionId?: string; sync: boolean }
+  ) => {
+    const { wikiApis } = await import('@/apis/wiki')
+
+    const result = await wikiApis.bindKbWikiDocuments(knowledgeBase.id, paths, {
+      connectionId: options.connectionId,
+      sync: options.sync,
+      folderId: selectedUploadFolderId || 0,
+    })
+
+    await refresh()
+    onDocumentsChanged?.()
+
+    return { createdCount: result.documents.length, notes: result.notes }
+  }
+
   const handleDelete = async () => {
     if (!deletingDoc) return
     try {
@@ -841,7 +864,8 @@ export function DocumentList({
     setReindexingDocId(doc.id)
     try {
       let successMessage = t('document.document.reindexSuccess')
-      if (doc.source_type === 'external') {
+      const external = doc.source_config?.external as { sync?: { enabled?: boolean } } | undefined
+      if (doc.source_type === 'external' && !external?.sync?.enabled) {
         const { retryExternalDocumentImport } = await import('@/apis/knowledge')
         await retryExternalDocumentImport(doc.id)
         successMessage = t('document.document.retryImportSuccess')
@@ -899,6 +923,24 @@ export function DocumentList({
       if (isMountedRef.current) {
         setReindexingDocId(null)
       }
+    }
+  }
+
+  const handleSyncDocument = async (doc: KnowledgeDocument) => {
+    setSyncingDocId(doc.id)
+    try {
+      const { synchronizeExternalDocument } = await import('@/apis/knowledge')
+      await synchronizeExternalDocument(doc.id)
+      toast({ description: t('document.document.resyncSuccess') })
+      await refresh()
+      onDocumentsChanged?.()
+    } catch {
+      toast({
+        variant: 'destructive',
+        description: t('document.document.resyncFailed'),
+      })
+    } finally {
+      setSyncingDocId(null)
     }
   }
 
@@ -1485,15 +1527,17 @@ export function DocumentList({
                 folders={directFolders}
                 documents={documents}
                 compact={true}
-                onViewDetail={setViewingDoc}
+                onViewDetail={openDocument}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
                 onRefresh={handleRefreshWebDocument}
                 onReindex={handleReindexDocument}
+                onSync={handleSyncDocument}
                 onReanalyze={setReanalyzeDoc}
                 onMove={handleMoveDocument}
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
+                syncingDocId={syncingDocId}
                 canManage={canManageDocument}
                 canSelect={canSelectDocument}
                 isSelectionDisabled={isDocumentSelectionDisabled}
@@ -1545,15 +1589,17 @@ export function DocumentList({
                 isPartialSelected={isPartialSelected}
                 onSelectAll={handleSelectAll}
                 selectAllLabel={t('document.document.batch.selectCurrentPage')}
-                onViewDetail={setViewingDoc}
+                onViewDetail={openDocument}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
                 onRefresh={handleRefreshWebDocument}
                 onReindex={handleReindexDocument}
+                onSync={handleSyncDocument}
                 onReanalyze={setReanalyzeDoc}
                 onMove={handleMoveDocument}
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
+                syncingDocId={syncingDocId}
                 canManage={canManageDocument}
                 canSelect={canSelectDocument}
                 selectedDocumentIds={selectedDocumentIds}
@@ -1616,7 +1662,7 @@ export function DocumentList({
         <DocAutoOpener
           documents={documents}
           loading={loading}
-          onOpen={setViewingDoc}
+          onOpen={openDocument}
           knowledgeBaseId={knowledgeBase.id}
           paginationEnabled={paginationEnabled}
         />
@@ -1641,6 +1687,7 @@ export function DocumentList({
         onUploadComplete={handleUploadComplete}
         onWebAdd={handleWebAdd}
         onDingtalkImport={handleDingtalkImport}
+        onWikiImport={handleWikiImport}
         canManageDocuments={canUploadDocuments}
         kbType={documentViewOf(knowledgeBase.kb_type) ?? undefined}
         folderId={selectedUploadFolderId}

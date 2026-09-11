@@ -102,6 +102,21 @@ export interface ExternalDocumentSourceInfo {
   last_success_at?: string
   /** Last reason the source was reported inaccessible. */
   last_error?: string
+  sync?: ExternalDocumentSyncInfo
+}
+
+export interface ExternalDocumentSyncInfo {
+  enabled: boolean
+  connection_id?: string
+  resource_id?: string
+  path?: string
+  locale?: string
+  observed_version?: string
+  content_version?: string
+  indexed_version?: string
+  last_checked_at?: string
+  last_synced_at?: string
+  last_error_code?: string
 }
 
 /**
@@ -134,5 +149,85 @@ export function getExternalSourceInfo(
     status: source.status as string | undefined,
     last_success_at: source.last_success_at as string | undefined,
     last_error: source.last_error as string | undefined,
+    sync:
+      source.sync && typeof source.sync === 'object'
+        ? (source.sync as ExternalDocumentSyncInfo)
+        : undefined,
   }
+}
+
+export function isSyncedWikiDocument(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): boolean {
+  const source = getExternalSourceInfo(document)
+  return (
+    document.source_type === 'external' && source?.provider === 'wiki' && !!source.sync?.enabled
+  )
+}
+
+/** Live-bound wiki page metadata stored in source_config.wiki. */
+export interface WikiDocumentSourceInfo {
+  path?: string
+  resourceUrl?: string
+  pageUpdatedAt?: string
+}
+
+/**
+ * Read the wiki source metadata of a live-bound external wiki document.
+ *
+ * Returns null for non-wiki documents and for rows whose metadata payload
+ * is absent or malformed. Field types are validated strictly so callers can
+ * format without defensive checks.
+ */
+export function getWikiDocumentSourceInfo(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config'>
+): WikiDocumentSourceInfo | null {
+  if (document.source_type !== 'external_wiki') return null
+  const wiki = document.source_config?.wiki
+  if (!wiki || typeof wiki !== 'object') return null
+  const source = wiki as Record<string, unknown>
+  if (
+    ['path', 'resource_url', 'page_updated_at'].some(
+      field => source[field] !== undefined && typeof source[field] !== 'string'
+    )
+  ) {
+    return null
+  }
+  return {
+    path: source.path as string | undefined,
+    resourceUrl: source.resource_url as string | undefined,
+    pageUpdatedAt: source.page_updated_at as string | undefined,
+  }
+}
+
+/** True when the value parses as a valid timestamp. */
+function isValidTimestamp(value: string): boolean {
+  return !Number.isNaN(Date.parse(value))
+}
+
+/**
+ * The update timestamp a document list should display.
+ *
+ * External wiki rows prefer the wiki page's own update time (also written to
+ * the standard updated_at column by the backend after backfill); invalid or
+ * missing values fall back to updated_at. Regular documents keep the
+ * existing rule: unmodified rows (updated_at === created_at) display '-'
+ * via the null return.
+ */
+export function getDocumentDisplayUpdatedAt(
+  document: Pick<KnowledgeDocument, 'source_type' | 'source_config' | 'updated_at' | 'created_at'>
+): string | null {
+  if (document.source_type === 'external_wiki') {
+    const pageUpdatedAt = getWikiDocumentSourceInfo(document)?.pageUpdatedAt
+    if (pageUpdatedAt && isValidTimestamp(pageUpdatedAt)) {
+      return pageUpdatedAt
+    }
+    return document.updated_at || null
+  }
+  if (isSyncedWikiDocument(document)) {
+    const observed = getExternalSourceInfo(document)?.sync?.observed_version
+    if (observed && isValidTimestamp(observed)) return observed
+  }
+  if (document.updated_at === document.created_at) return null
+  return document.updated_at || null
 }

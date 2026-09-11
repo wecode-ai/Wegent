@@ -308,7 +308,9 @@
         "pendingConversion": "待转换",
         "pendingConversionHint": "文档正在等待转换为可检索的格式。",
         "failed": "失败",
-        "failedHint": "文档处理失败，请重新索引；若持续失败，请联系管理员。"
+        "failedHint": "文档处理失败，请重新索引；若持续失败，请联系管理员。",
+        "live": "实时",
+        "liveHint": "外部 Wiki 文档：内容实时读取，不参与向量索引"
       },
       "processingError": {
         "stage": {
@@ -345,6 +347,9 @@
       "reindexFailed": "启动重新索引失败",
       "retryImportSuccess": "已开始重试导入",
       "retryImportFailed": "启动导入重试失败",
+      "resync": "重新同步",
+      "resyncSuccess": "已开始从 Wiki 重新同步",
+      "resyncFailed": "启动 Wiki 重新同步失败",
       "excelFileSizeExceeded": "文件大小超过限制：Excel 文件（{{extension}}）必须小于等于 {{limit}}MB 才能索引。当前文件大小：{{size}}MB。请减小文件大小或拆分为多个小文件。",
       "openLink": "打开链接",
       "download": "下载",
@@ -362,10 +367,13 @@
       "type": {
         "table": "表格",
         "web": "网页",
-        "external": "外部"
+        "external": "外部",
+        "wiki": "外部 Wiki"
       },
       "sourceInaccessible": "来源不可访问",
       "sourceInaccessibleHint": "外部来源已被删除或失去访问权限；恢复访问后可重试导入",
+      "wikiSourceMissing": "Wiki 源文档不存在",
+      "wikiSourceMissingHint": "Wiki 页面已被删除，知识库继续使用最近一次成功同步的索引内容",
       "externalSource": {
         "lastImportedAt": "最近导入 {{time}}",
         "accessible": "来源正常"
@@ -651,7 +659,11 @@
       "discardTitle": "放弃未提交的内容？",
       "discardDescription": "关闭会清除所有来源中未提交的内容。已添加的资料不受影响。",
       "keepEditing": "继续编辑",
-      "discard": "放弃并关闭"
+      "discard": "放弃并关闭",
+      "wiki": {
+        "entry": "外部 Wiki",
+        "noPermission": "没有绑定外部 Wiki 文档的权限"
+      }
     },
     "permission": {
       "noAccess": "您没有操作权限",
@@ -1296,5 +1308,36 @@
       "worker_abandoned": "执行进程失联，该次运行已被回收",
       "publish_refused": "版本已写好，但发布被闸门拒绝"
     }
+  },
+  "wikiSection": {
+    "badge": "实时",
+    "synced_badge": "同步 Wiki",
+    "connection": "Wiki 连接",
+    "sync_label": "同步到知识库",
+    "sync_hint": "保存页面快照并向量索引，每天自动检查更新",
+    "loading": "正在加载 Wiki 绑定…",
+    "load_failed": "加载 Wiki 绑定失败",
+    "add_failed": "绑定失败",
+    "remove_failed": "解绑失败",
+    "unbind": "解除绑定",
+    "bound_by": "由 {{name}} 添加",
+    "tree_empty": "绑定范围内没有已发布页面",
+    "load_tree_failed": "加载 Wiki 页面失败",
+    "connection_failed_tooltip": "连接失败：{{message}}",
+    "bind_scope_success": "已绑定「{{name}}」",
+    "need_connection": "请先在「设置 → 集成」配置外部 Wiki 连接",
+    "bound_title": "已绑定文档",
+    "bound_empty": "尚未绑定 Wiki 文档",
+    "picker_title": "选择要绑定的 Wiki 页面（可多选）",
+    "picker_search": "搜索标题或路径",
+    "select_all": "全选",
+    "clear_selection": "取消全选",
+    "select_directory": "选择目录“{{name}}”",
+    "clear_directory_selection": "取消选择目录“{{name}}”",
+    "expand_directory": "展开目录“{{name}}”",
+    "collapse_directory": "收起目录“{{name}}”",
+    "already_bound": "已绑定",
+    "bind_selected": "绑定选中（{{count}}）",
+    "bind_scope_success_n": "已绑定 {{count}} 个 Wiki 文档"
   }
 }

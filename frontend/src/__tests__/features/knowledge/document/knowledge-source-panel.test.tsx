@@ -16,6 +16,10 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+jest.mock('@/features/theme/ThemeProvider', () => ({
+  useTheme: () => ({ theme: 'light' }),
+}))
+
 jest.mock('@/features/knowledge/document/components/WorkspaceSidePanel', () => ({
   WorkspaceSidePanel: (props: {
     children: React.ReactNode

@@ -61,6 +61,8 @@ SYSTEM_MCP_MOUNT_PATH = "/mcp/system"
 SYSTEM_MCP_TRANSPORT_PATH = "/"
 KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
 KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
+WIKI_MCP_MOUNT_PATH = "/mcp/wiki"
+WIKI_MCP_TRANSPORT_PATH = "/sse"
 EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge-external"
 EXTERNAL_KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
 EXTERNAL_KNOWLEDGE_PUBLIC_PATHS = frozenset({"", "/", "/health"})
@@ -244,6 +246,24 @@ external_knowledge_mcp_server = FastMCP(
     transport_security=_build_transport_security_settings(),
 )
 
+# Wiki bridge MCP: read-only live access to external wiki sites through
+# delegated KB bindings (design: tmp/2026-09-03-wikijs-mcp-knowledge-design.md)
+wiki_mcp_server = FastMCP(
+    "wegent-wiki-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for wiki MCP request context (used by McpAppSpec)
+_wiki_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_wiki_request_token_info", default=None)
+)
+
+# Flag to track if wiki tools have been registered
+_wiki_tools_registered = False
+
 # Store for knowledge MCP request context (used by McpAppSpec)
 _knowledge_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
     contextvars.ContextVar("_knowledge_request_token_info", default=None)
@@ -347,6 +367,28 @@ def ensure_knowledge_tools_registered() -> None:
     all @mcp_tool decorated endpoints as MCP tools.
     """
     _register_knowledge_tools()
+
+
+def _register_wiki_tools() -> None:
+    """Register wiki bridge tools from @mcp_tool decorated endpoints."""
+    global _wiki_tools_registered
+    if _wiki_tools_registered:
+        return
+
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        wiki,
+    )
+
+    count = register_tools_to_server(wiki_mcp_server, "wiki")
+    logger.info(f"[MCP:Wiki] Registered {count} tools from decorated endpoints")
+    _wiki_tools_registered = True
+
+
+def ensure_wiki_tools_registered() -> None:
+    """Ensure wiki bridge MCP tools are registered."""
+    if settings.WIKI_MCP_ENABLED:
+        _register_wiki_tools()
 
 
 def _register_external_knowledge_tools() -> None:
@@ -675,6 +717,17 @@ _KNOWLEDGE_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_WIKI_MCP_SPEC = McpAppSpec(
+    name="wiki",
+    service_name="wegent-wiki-mcp",
+    mount_path=WIKI_MCP_MOUNT_PATH,
+    transport_path=WIKI_MCP_TRANSPORT_PATH,
+    server=wiki_mcp_server,
+    token_context=_wiki_request_token_info,
+    log_prefix="Wiki",
+    include_root_metadata=True,
+)
+
 _INTERACTIVE_FORM_MCP_SPEC = McpAppSpec(
     name="interactive_form_question",
     service_name="wegent-interactive-form-question-mcp",
@@ -752,6 +805,11 @@ _WEWORK_SPACE_MCP_SPEC = McpAppSpec(
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
+    *(
+        (_WIKI_MCP_SPEC,)
+        if settings.WIKI_MCP_ENABLED
+        else ()  # wiki bridge is deployment-switchable (WIKI_MCP_ENABLED)
+    ),
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
@@ -764,6 +822,7 @@ MCP_APP_SPECS = (
 MCP_CONTEXT_SERVER_NAMES = frozenset(
     {
         "knowledge",
+        "wiki",  # decorator-based wiki tools inject token_info via get_mcp_context
         "interactive_form_question",
         "prompt_optimization",
         "subscription",
@@ -827,6 +886,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     # Ensure tools are registered before creating the app
     if spec.name == "knowledge":
         ensure_knowledge_tools_registered()
+    elif spec.name == "wiki":
+        ensure_wiki_tools_registered()
     elif spec.name == "interactive_form_question":
         ensure_interactive_form_question_tools_registered()
     elif spec.name == "prompt_optimization":

@@ -64,7 +64,11 @@ import {
 } from '@/utils/languageDetection'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
-import { isDocumentEditable, getExternalSourceInfo } from '../utils/documentUtils'
+import {
+  getExternalSourceInfo,
+  getWikiDocumentSourceInfo,
+  isDocumentEditable,
+} from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
@@ -176,6 +180,17 @@ export function DocumentDetailDialog({
     () => (document ? getExternalSourceInfo(document) : null),
     [document]
   )
+  const sourceInfo = useMemo(() => {
+    if (externalSourceInfo) return externalSourceInfo
+    if (!document) return null
+    const wiki = getWikiDocumentSourceInfo(document)
+    if (!wiki) return null
+    return {
+      provider: 'wiki',
+      title: document.name,
+      url: wiki.resourceUrl,
+    }
+  }, [document, externalSourceInfo])
   const externalLastImportedAt = useMemo(() => {
     if (!externalSourceInfo?.last_success_at) return null
     const date = parseUTCDate(externalSourceInfo.last_success_at)
@@ -400,24 +415,22 @@ export function DocumentDetailDialog({
                         </span>
                       </DialogDescription>
                     )}
-                    {!isFullscreen && externalSourceInfo && (
+                    {!isFullscreen && sourceInfo && (
                       <div
                         className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"
                         data-testid="external-source-info"
                       >
-                        <span className="capitalize">{externalSourceInfo.provider}</span>
+                        <span className="capitalize">{sourceInfo.provider}</span>
                         <span>•</span>
-                        {externalSourceInfo.url && (
+                        {sourceInfo.url && (
                           <a
-                            href={externalSourceInfo.url}
+                            href={sourceInfo.url}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex min-h-[44px] min-w-[44px] items-center gap-1 text-primary hover:underline md:min-h-0 md:min-w-0"
                             data-testid="external-source-link"
                           >
-                            <span className="truncate">
-                              {externalSourceInfo.title || externalSourceInfo.url}
-                            </span>
+                            <span className="truncate">{sourceInfo.title || sourceInfo.url}</span>
                             <ExternalLink className="h-3 w-3 flex-shrink-0" />
                           </a>
                         )}
@@ -431,16 +444,18 @@ export function DocumentDetailDialog({
                             </span>
                           </>
                         )}
-                        {externalSourceInfo.status === 'inaccessible' ? (
+                        {sourceInfo.status === 'inaccessible' ? (
                           <Badge
                             variant="default"
                             size="sm"
                             className="bg-red-500/10 text-red-600 border-red-500/20"
                             data-testid="external-source-inaccessible"
                           >
-                            {t('document.document.sourceInaccessible')}
+                            {sourceInfo.sync?.last_error_code === 'external_source_missing'
+                              ? t('document.document.wikiSourceMissing')
+                              : t('document.document.sourceInaccessible')}
                           </Badge>
-                        ) : externalSourceInfo.status === 'accessible' ? (
+                        ) : sourceInfo.status === 'accessible' ? (
                           <Badge
                             variant="default"
                             size="sm"

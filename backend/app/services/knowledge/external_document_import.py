@@ -151,12 +151,149 @@ class ExternalDocumentImportService:
             )
 
         db.refresh(document)
-        document.is_active = False
+        from app.services.knowledge.external_sync_providers import (
+            is_synchronized_external_document,
+        )
+
+        if not is_synchronized_external_document(document):
+            document.is_active = False
         document.update_external_source_config(**external_meta)
         db.commit()
         db.refresh(document)
         self._dispatch_import_task(db, document)
         return ExternalDocumentRefreshResult(document, started=True)
+
+    def import_resolved_documents(
+        self,
+        db: Session,
+        user: User,
+        knowledge_base_id: int,
+        provider_id: str,
+        resolved_documents: list[object],
+        folder_id: int = 0,
+    ) -> ExternalDocumentBatchImportResult:
+        """Import metadata already resolved by a trusted async provider adapter.
+
+        Existing import callers keep their synchronous resolve contract. This
+        narrow entry lets an async source such as Wiki validate remote pages
+        before reusing the same placeholder and worker pipeline.
+        """
+        provider = self._validate_import_context(
+            db, user, knowledge_base_id, provider_id
+        )
+        if len(resolved_documents) > MAX_EXTERNAL_BATCH_IMPORT:
+            raise ExternalDocumentImportError(
+                f"At most {MAX_EXTERNAL_BATCH_IMPORT} documents can be imported "
+                "in one batch"
+            )
+        if folder_id:
+            assert_document_can_be_placed_in_folder(
+                db, knowledge_base_id, folder_id, content_origin=ContentOrigin.USER
+            )
+
+        created: list[KnowledgeDocument] = []
+        updated: list[KnowledgeDocument] = []
+        processing: list[KnowledgeDocument] = []
+        seen: set[str] = set()
+        for resolved in resolved_documents:
+            resource_id = str(getattr(resolved, "encoded_resource_id"))
+            if resource_id in seen:
+                continue
+            seen.add(resource_id)
+            metadata = dict(getattr(resolved, "external_metadata")())
+            existing = self._find_existing_document(
+                db, knowledge_base_id, provider.provider_id, resource_id
+            )
+            if existing:
+                from app.services.knowledge.external_sync_providers import (
+                    is_synchronized_external_document,
+                )
+
+                if not is_synchronized_external_document(existing):
+                    raise ExternalDocumentImportError(
+                        "This external resource is already bound in another mode",
+                        status_code=409,
+                    )
+                if self._is_processing(existing):
+                    processing.append(existing)
+                    continue
+                refresh = self._refresh_existing_document(db, existing, metadata)
+                (updated if refresh.started else processing).append(refresh.document)
+                continue
+            try:
+                document = KnowledgeService.create_external_document(
+                    db=db,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user.id,
+                    name=_external_document_name(metadata),
+                    external_provider=provider.provider_id,
+                    external_resource_id=resource_id,
+                    folder_id=folder_id,
+                    external_meta=metadata,
+                )
+            except IntegrityError:
+                db.rollback()
+                concurrent = self._find_existing_document(
+                    db, knowledge_base_id, provider.provider_id, resource_id
+                )
+                if concurrent is None:
+                    raise ExternalDocumentImportError(
+                        "This external document could not be imported; please retry"
+                    ) from None
+                processing.append(concurrent)
+                continue
+            self._dispatch_import_task(db, document)
+            created.append(document)
+        return ExternalDocumentBatchImportResult(
+            created=created,
+            updated=updated,
+            processing=processing,
+            requested_count=len(seen),
+        )
+
+    def request_source_refresh(
+        self, db: Session, user: User, document_id: int
+    ) -> KnowledgeDocument:
+        """Force a synchronized external document to fetch its source again."""
+        document = db.get(KnowledgeDocument, document_id)
+        if document is None:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db, knowledge_base_id=document.kind_id, user_id=user.id
+        )
+        if not kb or not has_access:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, document.kind_id, user.id
+        ):
+            raise ExternalDocumentImportError(
+                "You do not have permission to manage documents in this knowledge base",
+                status_code=403,
+            )
+        from app.services.knowledge.external_sync_providers import (
+            is_synchronized_external_document,
+        )
+
+        if not document.has_external_identity or not is_synchronized_external_document(
+            document
+        ):
+            raise ExternalDocumentImportError(
+                "Only synchronized external documents can be synchronized"
+            )
+        refresh = self.queue_source_refresh(db, document)
+        if not refresh.started:
+            raise ExternalDocumentImportError(
+                "This document is still being processed; retry later", status_code=409
+            )
+        return refresh.document
+
+    def queue_source_refresh(
+        self, db: Session, document: KnowledgeDocument
+    ) -> ExternalDocumentRefreshResult:
+        """Queue a refresh after the caller has established authorization."""
+        return self._refresh_existing_document(
+            db, document, document.external_source_config
+        )
 
     def import_documents(
         self,
@@ -534,7 +671,24 @@ def run_external_document_import(
             generation,
         )
     except ExternalSourceUnavailableError as exc:
-        _mark_external_source_unavailable(db, document_id, provider_id, generation)
+        _mark_external_source_unavailable(
+            db,
+            document_id,
+            provider_id,
+            generation,
+            message=(
+                _external_fetch_error_message(
+                    exc,
+                    fallback="Wiki source document no longer exists",
+                )
+                if exc.error_code == "external_source_missing"
+                else (
+                    "The external source is no longer accessible. Restore access "
+                    "and retry the import."
+                )
+            ),
+            error_code=exc.error_code,
+        )
         logger.warning(
             "[External Import] Source of document %s is no longer accessible: %s",
             document_id,
@@ -542,7 +696,18 @@ def run_external_document_import(
         )
     except Exception as exc:
         db.rollback()
-        _mark_external_import_failed(db, document_id, provider_id, generation)
+        _mark_external_import_failed(
+            db,
+            document_id,
+            provider_id,
+            generation,
+            message=_external_fetch_error_message(
+                exc,
+                fallback=(
+                    "The external document could not be imported. Please retry later."
+                ),
+            ),
+        )
         logger.error(
             "[External Import] Failed to import document %s: %s",
             document_id,
@@ -556,6 +721,9 @@ def _mark_external_source_unavailable(
     document_id: int,
     provider_id: str,
     generation: int,
+    *,
+    message: str,
+    error_code: str,
 ) -> None:
     """Mark the source inaccessible and record the initial import failure.
 
@@ -569,15 +737,13 @@ def _mark_external_source_unavailable(
         generation=generation,
         error=build_processing_error(
             stage=DocumentProcessingStage.SYSTEM,
-            code="external_source_unavailable",
-            message=(
-                "The external source is no longer accessible. Restore access "
-                "and retry the import."
-            ),
+            code=error_code,
+            message=message,
             retryable=True,
             generation=generation,
             provider=provider_id,
         ),
+        preserve_active_sync_index=True,
     )
 
 
@@ -586,6 +752,8 @@ def _mark_external_import_failed(
     document_id: int,
     provider_id: str,
     generation: int,
+    *,
+    message: str,
 ) -> None:
     """Record the fetch failure on the document without deleting it."""
     mark_document_index_failed(
@@ -595,14 +763,20 @@ def _mark_external_import_failed(
         error=build_processing_error(
             stage=DocumentProcessingStage.SYSTEM,
             code="external_import_failed",
-            message=(
-                "The external document could not be imported. Please retry later."
-            ),
+            message=message,
             retryable=True,
             generation=generation,
             provider=provider_id,
         ),
     )
+
+
+def _external_fetch_error_message(exc: Exception, *, fallback: str) -> str:
+    """Return provider-vetted fetch text without exposing internal failures."""
+    if not isinstance(exc, ExternalDocumentFetchError):
+        return fallback
+    message = str(exc).strip()
+    return message[:1000] if message else fallback
 
 
 external_document_import_service = ExternalDocumentImportService()

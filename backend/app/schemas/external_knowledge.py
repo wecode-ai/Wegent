@@ -25,5 +25,10 @@ class ExternalKnowledgeRef(BaseModel):
     parent_id: Optional[str] = None
     target_name: Optional[str] = None
     resource_url: Optional[str] = None
+    # Server-written credential owner for delegated wiki refs. The API layer
+    # overwrites any client-supplied value; it never carries the key itself.
+    bound_by_user_id: Optional[int] = Field(
+        None, ge=1, description="User id whose wiki connection this ref delegates"
+    )
     boundBy: Optional[str] = None
     boundAt: Optional[str] = None

@@ -92,7 +92,29 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 ),
             },
         },
-    }
+    },
+    # Backend-hosted wiki bridge: credentials stay in backend and are consumed
+    # through delegated KB bindings (services/wiki_service.py). The skill's
+    # mcpServers point at the fixed bridge URL, so `server_name` here is a
+    # label only. message_keywords is intentionally empty: a bare "wiki"
+    # keyword would collide with the existing code-wiki feature and the
+    # wiki_submit skill in unrelated conversations.
+    "wiki": {
+        "provider_id": "wiki",
+        "display_name": "外部 Wiki",
+        "configuration_mode": "user",
+        "message_keywords": (),
+        "services": {
+            "site": {
+                "service_id": "site",
+                "server_name": "external_wiki",
+                "detail_url": "https://docs.requarks.io/dev/api",
+                "skill_name": "external-wiki",
+                "display_name": "外部 Wiki",
+                "message_keywords": (),
+            },
+        },
+    },
 }
 
 

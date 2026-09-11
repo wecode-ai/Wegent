@@ -81,6 +81,18 @@ def test_a_client_cannot_create_an_external_import_record(schema, extra):
 @pytest.mark.parametrize(
     "schema, extra",
     [
+        (KnowledgeDocumentCreate, {"name": "x", "file_extension": "md"}),
+        (KnowledgeDocumentCreateV1, {"knowledge_base_id": 1, "name": "x"}),
+    ],
+)
+def test_a_client_cannot_create_a_live_wiki_record(schema, extra):
+    with pytest.raises(ValidationError, match="wiki binding API"):
+        schema(source_type="external_wiki", **extra)
+
+
+@pytest.mark.parametrize(
+    "schema, extra",
+    [
         (KnowledgeDocumentCreate, {"name": "x", "file_extension": "py"}),
         (KnowledgeDocumentCreateV1, {"knowledge_base_id": 1, "name": "x"}),
     ],
@@ -90,9 +102,30 @@ def test_the_ordinary_source_types_are_untouched(schema, extra):
         assert schema(source_type=source_type, **extra).source_type == source_type
 
 
-def test_a_stored_code_document_still_deserialises():
-    """The read model must keep the value: refusing it on the way out would break
-    reading back anything the indexer writes, which is the opposite of the point."""
+def test_stored_internal_document_types_still_deserialise():
+    """The read model must preserve values written by their dedicated flows."""
+    from datetime import datetime, timezone
+
     from app.schemas.knowledge import DocumentSourceType, KnowledgeDocumentResponse
 
-    assert DocumentSourceType("code") == DocumentSourceType.CODE
+    payload = {
+        "id": 1,
+        "kind_id": 1,
+        "name": "wiki page",
+        "file_extension": "md",
+        "file_size": 0,
+        "status": "enabled",
+        "user_id": 1,
+        "is_active": True,
+        "index_status": "not_indexed",
+        "index_generation": 0,
+        "folder_id": 0,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+    for source_type in ("code", "external_wiki"):
+        response = KnowledgeDocumentResponse.model_validate(
+            {**payload, "source_type": source_type}
+        )
+        assert response.source_type == DocumentSourceType(source_type)

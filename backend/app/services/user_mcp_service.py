@@ -27,6 +27,11 @@ MCP_SERVICES_KEY = "services"
 MCP_CREDENTIALS_KEY = "credentials"
 MCP_URL_KEY = "url"
 
+# Providers whose MCP server is hosted by this backend (wiki bridge). Their
+# stored credentials are consumed server-side only: they must not leak into
+# the task_data.user_mcps placeholder view shipped to executors.
+BACKEND_HOSTED_MCP_PROVIDERS = frozenset({"wiki"})
+
 
 class UserMCPService:
     """Helper service for reading and writing user-scoped MCP settings."""
@@ -145,6 +150,54 @@ class UserMCPService:
         return mcps
 
     @staticmethod
+    def get_provider_service_credentials(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, str]:
+        """Return all decrypted credential values of a provider service.
+
+        Unlike ``get_provider_service_config`` this exposes every stored
+        credential key (url, api_key, ...) for server-side connectors that
+        need more than an MCP URL.
+        """
+        prefs = UserMCPService.load_preferences(preferences)
+        service = (
+            ((prefs.get(MCP_ROOT_KEY) or {}).get(provider_id) or {})
+            .get(MCP_SERVICES_KEY, {})
+            .get(service_id)
+        ) or {}
+        credentials = service.get(MCP_CREDENTIALS_KEY)
+        if not isinstance(credentials, dict):
+            return {}
+
+        decrypted: dict[str, str] = {}
+        for key, value in credentials.items():
+            if not isinstance(value, str) or not value:
+                continue
+            if is_data_encrypted(value):
+                decrypted[key] = decrypt_sensitive_data(value) or ""
+            else:
+                decrypted[key] = value
+        return decrypted
+
+    @staticmethod
+    def get_provider_service_connector(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> str | None:
+        """Return the connector type marker stored on a provider service."""
+        prefs = UserMCPService.load_preferences(preferences)
+        service = (
+            ((prefs.get(MCP_ROOT_KEY) or {}).get(provider_id) or {})
+            .get(MCP_SERVICES_KEY, {})
+            .get(service_id)
+        ) or {}
+        connector = service.get("connector")
+        return str(connector) if connector else None
+
+    @staticmethod
     def get_enabled_decrypted_mcp_preferences(
         preferences: str | dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -153,6 +206,8 @@ class UserMCPService:
         enabled_mcps: dict[str, Any] = {}
 
         for provider_id, provider in mcps.items():
+            if provider_id in BACKEND_HOSTED_MCP_PROVIDERS:
+                continue
             provider_definition = get_mcp_provider(provider_id)
             if (
                 not provider_definition
@@ -231,8 +286,15 @@ class UserMCPService:
         service_id: str,
         enabled: bool,
         url: str,
+        extra_credentials: dict[str, str] | None = None,
+        connector: str | None = None,
     ) -> dict[str, Any]:
-        """Update a provider MCP service config inside user preferences."""
+        """Update a provider MCP service config inside user preferences.
+
+        ``extra_credentials`` stores additional encrypted credential values
+        (api_key, ...) beside the url; empty values remove their key, mirroring
+        the url semantics. ``connector`` marks server-side connectors (wiki).
+        """
         if not UserMCPService.get_provider_service_definition(
             preferences,
             provider_id,
@@ -259,7 +321,20 @@ class UserMCPService:
         else:
             credentials.pop(MCP_URL_KEY, None)
 
+        for key, value in (extra_credentials or {}).items():
+            cleaned = value.strip() if isinstance(value, str) else ""
+            if cleaned:
+                credentials[key] = (
+                    cleaned
+                    if is_data_encrypted(cleaned)
+                    else encrypt_sensitive_data(cleaned)
+                )
+            else:
+                credentials.pop(key, None)
+
         service["enabled"] = enabled
+        if connector:
+            service["connector"] = connector
         if credentials:
             service[MCP_CREDENTIALS_KEY] = credentials
         else:

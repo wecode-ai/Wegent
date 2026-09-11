@@ -26,6 +26,7 @@ Beat Scheduler Storage:
 import logging
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import (
     after_setup_logger,
     after_setup_task_logger,
@@ -50,6 +51,7 @@ celery_app = Celery(
     include=[
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
+        "app.tasks.external_document_sync_tasks",
         "app.tasks.robot_queue_tasks",
         "app.tasks.project_automation_tasks",
         "app.tasks.plugin_marketplace_tasks",
@@ -115,6 +117,10 @@ celery_app.conf.update(
         "scan-stale-index-tasks": {
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes
+        },
+        "sync-external-documents": {
+            "task": "app.tasks.external_document_sync_tasks.sync_external_documents",
+            "schedule": crontab.from_string(settings.EXTERNAL_DOC_SYNC_CRON),
         },
         "sync-plugin-upstreams": {
             "task": "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams",

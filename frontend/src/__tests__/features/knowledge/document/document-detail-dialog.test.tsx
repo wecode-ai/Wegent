@@ -260,6 +260,36 @@ describe('DocumentDetailDialog external source info', () => {
     expect(screen.getByTestId('external-source-inaccessible')).toBeInTheDocument()
   })
 
+  it('identifies a deleted synchronized wiki source', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          external_provider: 'wiki',
+          source_config: {
+            external: {
+              ...externalMeta,
+              provider: 'wiki',
+              status: 'inaccessible',
+              sync: {
+                enabled: true,
+                last_error_code: 'external_source_missing',
+              },
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible')).toHaveTextContent(
+      'document.document.wikiSourceMissing'
+    )
+  })
+
   it('hides the source info for regular documents', () => {
     render(
       <DocumentDetailDialog
@@ -272,6 +302,33 @@ describe('DocumentDetailDialog external source info', () => {
     )
 
     expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
+
+  it('shows the original source link for a live wiki document', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...baseDocument,
+          source_type: 'external_wiki',
+          source_config: {
+            wiki: {
+              path: 'operations/handbook',
+              resource_url: 'https://wiki.example.com/operations/handbook',
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-info')).toHaveTextContent('wiki')
+    expect(screen.getByTestId('external-source-link')).toHaveAttribute(
+      'href',
+      'https://wiki.example.com/operations/handbook'
+    )
   })
 
   it.each([

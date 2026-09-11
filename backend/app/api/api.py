@@ -66,6 +66,7 @@ from app.api.endpoints import (
     work_queue,
 )
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
+from app.api.endpoints.external_wiki import router as external_wiki_router
 from app.core.config import settings
 
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
@@ -389,6 +390,10 @@ api_router.include_router(
 # RAG internal router is conditionally registered based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:
     api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
+
+# External wiki bridge (connection settings, KB bindings, browse/preview)
+if settings.WIKI_MCP_ENABLED:
+    api_router.include_router(external_wiki_router, tags=["external-wiki"])
 
 api_router.include_router(
     knowledge_router, prefix="/internal", tags=["internal-knowledge"]

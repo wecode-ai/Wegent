@@ -65,6 +65,15 @@ class ExternalSourceUnavailableError(ExternalDocumentFetchError):
     failure and the failed initial import may be retried.
     """
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "external_source_unavailable",
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
 
 class ExternalImportLostWriteError(RuntimeError):
     """The import attempt lost its write right before attaching content.
@@ -450,7 +459,16 @@ def get_external_document_provider(
     provider_id: str,
 ) -> ExternalDocumentProvider | None:
     """Return the registered adapter for a provider ID, or None."""
-    return _EXTERNAL_DOCUMENT_PROVIDERS.get((provider_id or "").strip().lower())
+    normalized = (provider_id or "").strip().lower()
+    if normalized == "wiki" and normalized not in _EXTERNAL_DOCUMENT_PROVIDERS:
+        # Import lazily so the provider-neutral base contract remains usable on
+        # its own while the Wiki adapter can implement both provider seams.
+        from app.services.knowledge.external_sync_providers import (  # noqa: PLC0415
+            wiki_external_sync_provider,
+        )
+
+        register_external_document_provider(wiki_external_sync_provider)
+    return _EXTERNAL_DOCUMENT_PROVIDERS.get(normalized)
 
 
 register_external_document_provider(DingTalkExternalDocumentProvider())

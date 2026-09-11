@@ -51,10 +51,12 @@ interface FolderTreeProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onSync?: (doc: KnowledgeDocument) => void
   onReanalyze?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   refreshingDocId?: number | null
   reindexingDocId?: number | null
+  syncingDocId?: number | null
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   isSelectionDisabled?: (doc: KnowledgeDocument) => boolean
@@ -402,10 +404,12 @@ interface FolderTreeNodeProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onSync?: (doc: KnowledgeDocument) => void
   onReanalyze?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   isRefreshing?: (docId: number) => boolean
   isReindexing?: (docId: number) => boolean
+  isSyncing?: (docId: number) => boolean
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   isSelectionDisabled?: (doc: KnowledgeDocument) => boolean
@@ -440,10 +444,12 @@ function FolderTreeNode({
   onDelete,
   onRefresh,
   onReindex,
+  onSync,
   onReanalyze,
   onMove,
   isRefreshing,
   isReindexing,
+  isSyncing,
   canManage,
   canSelect,
   isSelectionDisabled,
@@ -486,10 +492,12 @@ function FolderTreeNode({
             onDelete={onDelete ? () => onDelete(doc) : undefined}
             onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
             onReindex={onReindex ? () => onReindex(doc) : undefined}
+            onSync={onSync ? () => onSync(doc) : undefined}
             onReanalyze={onReanalyze ? () => onReanalyze(doc) : undefined}
             onMove={onMove ? () => onMove(doc) : undefined}
             isRefreshing={isRefreshing?.(doc.id) ?? false}
             isReindexing={isReindexing?.(doc.id) ?? false}
+            isSyncing={isSyncing?.(doc.id) ?? false}
             canManage={canManage?.(doc) ?? true}
             canSelect={canSelect?.(doc) ?? false}
             selectionDisabled={isSelectionDisabled?.(doc) ?? false}
@@ -516,10 +524,12 @@ function FolderTreeNode({
         onDelete={onDelete ? () => onDelete(doc) : undefined}
         onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
         onReindex={onReindex ? () => onReindex(doc) : undefined}
+        onSync={onSync ? () => onSync(doc) : undefined}
         onReanalyze={onReanalyze ? () => onReanalyze(doc) : undefined}
         onMove={onMove ? () => onMove(doc) : undefined}
         isRefreshing={isRefreshing?.(doc.id) ?? false}
         isReindexing={isReindexing?.(doc.id) ?? false}
+        isSyncing={isSyncing?.(doc.id) ?? false}
         canManage={canManage?.(doc) ?? true}
         canSelect={canSelect?.(doc) ?? false}
         selectionDisabled={isSelectionDisabled?.(doc) ?? false}
@@ -581,10 +591,12 @@ function FolderTreeNode({
               onDelete={onDelete}
               onRefresh={onRefresh}
               onReindex={onReindex}
+              onSync={onSync}
               onReanalyze={onReanalyze}
               onMove={onMove}
               isRefreshing={isRefreshing}
               isReindexing={isReindexing}
+              isSyncing={isSyncing}
               canManage={canManage}
               canSelect={canSelect}
               isSelectionDisabled={isSelectionDisabled}
@@ -621,10 +633,12 @@ export function FolderTree({
   onDelete,
   onRefresh,
   onReindex,
+  onSync,
   onReanalyze,
   onMove,
   refreshingDocId,
   reindexingDocId,
+  syncingDocId,
   canManage,
   canSelect,
   isSelectionDisabled,
@@ -757,10 +771,12 @@ export function FolderTree({
             onDelete={onDelete}
             onRefresh={onRefresh}
             onReindex={onReindex}
+            onSync={onSync}
             onReanalyze={onReanalyze}
             onMove={onMove}
             isRefreshing={id => refreshingDocId === id}
             isReindexing={id => reindexingDocId === id}
+            isSyncing={id => syncingDocId === id}
             canManage={canManage}
             canSelect={canSelect}
             isSelectionDisabled={isSelectionDisabled}
@@ -799,10 +815,12 @@ export function FolderTree({
       onDelete={onDelete}
       onRefresh={onRefresh}
       onReindex={onReindex}
+      onSync={onSync}
       onReanalyze={onReanalyze}
       onMove={onMove}
       isRefreshing={id => refreshingDocId === id}
       isReindexing={id => reindexingDocId === id}
+      isSyncing={id => syncingDocId === id}
       canManage={canManage}
       canSelect={canSelect}
       isSelectionDisabled={isSelectionDisabled}
