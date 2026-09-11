@@ -143,11 +143,11 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}
 wework_desktop_macos_inspector_e2e=false' \
   "wework/src/components/plugins/PluginsWorkspace.tsx"
-
 assert_checkpoint_runtime_failure_rejected() {
   local temp_dir
   temp_dir="$(mktemp -d)"
   printf '#!/bin/sh\nexit 23\n' > "$temp_dir/node"
+  chmod +x "$temp_dir/node"
   chmod +x "$temp_dir/node"
   if PATH="$temp_dir:$PATH" GITHUB_OUTPUT="$temp_dir/output" "$desktop_classifier" --all \
     >"$temp_dir/stdout" 2>"$temp_dir/stderr"; then
@@ -850,13 +850,13 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "executor/src/runtime_work/codex_transcript_page.rs"
 
-assert_desktop_case "plugin files select plugin lifecycle and project plugin coverage" \
+assert_desktop_case "generic plugin files select plugin lifecycle and project plugin coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"project-ai-settings"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
-  "wework/src/components/plugins/PluginsWorkspace.tsx"
+  "wework/src/components/plugins/PluginMarketplaceWorkspace.tsx"
 
 assert_desktop_case "Core DSH plugin files select their desktop checkpoint" \
   'wework_desktop_e2e=true
