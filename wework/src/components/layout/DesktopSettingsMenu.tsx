@@ -60,6 +60,7 @@ interface DesktopSettingsMenuProps {
   onLogout: () => void
   onLogin?: () => void
   showLogout?: boolean
+  placement?: 'above' | 'below-right'
 }
 
 export function DesktopSettingsMenu({
@@ -68,6 +69,7 @@ export function DesktopSettingsMenu({
   onLogout,
   onLogin,
   showLogout,
+  placement = 'above',
 }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
   const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
@@ -220,7 +222,11 @@ export function DesktopSettingsMenu({
   return (
     <div
       data-testid="settings-menu"
-      className="absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl"
+      className={
+        placement === 'below-right'
+          ? 'absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl'
+          : 'absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl'
+      }
     >
       {onLogin ? (
         <>

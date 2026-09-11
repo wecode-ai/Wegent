@@ -2,8 +2,315 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  CollaborationPlatformApp,
+  type CollaborationPlatformLocation,
+  type CollaborationProject,
+  type SharedWorkspaceApi,
+} from '@wegent/collaboration'
+import { ArrowLeft, HardDrive, X } from 'lucide-react'
+import type { CloudProject } from '@/api/deliveries'
+import { DesktopSidebarAccount } from '@/components/layout/DesktopSidebarAccount'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { openExternalUrl } from '@/lib/external-links'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import type { RuntimeProjectSpaceRef } from '@/types/api'
+import { cn } from '@/lib/utils'
+import {
+  toWeworkCloudExecutionProject,
+  useWeworkCollaborationIssueTaskHost,
+  type WeworkIssueTaskStartFailure,
+} from '@/features/collaboration/WeworkCollaborationIssueTaskHost'
 import { CloudTodoWorkspace, type CloudTodoWorkspaceProps } from './CloudTodoWorkspace'
 
+const rootLocation: CollaborationPlatformLocation = {
+  platformView: 'spaces',
+  workspaceId: null,
+  workspaceView: 'home',
+  projectId: null,
+  projectView: 'board',
+  issueId: null,
+}
+
+function platformLocationForProject(
+  project: CollaborationProject,
+  issueId: string | null = null
+): CollaborationPlatformLocation {
+  return {
+    platformView: 'spaces',
+    workspaceId: project.workspace_id ?? null,
+    workspaceView: 'projects',
+    projectId: project.id,
+    projectView: 'board',
+    issueId,
+  }
+}
+
+function SharedCollaborationWorkspace({
+  api,
+  ...props
+}: CloudTodoWorkspaceProps & { api: SharedWorkspaceApi }) {
+  const { t, i18n } = useTranslation('common')
+  const { onActiveProjectChange, onFocusedItemHandled } = props
+  const localProjectApi = props.services.projectSpaceApis?.local
+  const [location, setLocation] = useState<CollaborationPlatformLocation>(rootLocation)
+  const [localProjects, setLocalProjects] = useState<CloudProject[]>([])
+  const [localProjectRef, setLocalProjectRef] = useState<RuntimeProjectSpaceRef | null>(null)
+  const [failedRouteProjectId, setFailedRouteProjectId] = useState<string | null>(null)
+  const [issueTaskError, setIssueTaskError] = useState<string | null>(null)
+  const activeProjectControlled = props.activeProjectRef !== undefined
+  const activeProjectStore = props.activeProjectRef?.projectStore
+  const activeProjectId = props.activeProjectRef?.projectId
+
+  useEffect(() => {
+    let active = true
+    if (!localProjectApi) return
+    void localProjectApi
+      .listCloudProjects()
+      .then(response => {
+        if (active) setLocalProjects(response.items)
+      })
+      .catch(() => {
+        if (active) setLocalProjects([])
+      })
+    return () => {
+      active = false
+    }
+  }, [localProjectApi])
+
+  useEffect(() => {
+    if (!activeProjectControlled || activeProjectStore !== 'backend' || !activeProjectId || !api)
+      return
+    let active = true
+    void api.projects.get(activeProjectId).then(
+      project => {
+        if (!active) return
+        setFailedRouteProjectId(null)
+        setLocation(
+          platformLocationForProject(
+            project,
+            typeof props.focusedItemId === 'string' ? props.focusedItemId : null
+          )
+        )
+      },
+      () => {
+        if (!active) return
+        setFailedRouteProjectId(activeProjectId)
+        setLocation(rootLocation)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [activeProjectControlled, activeProjectId, activeProjectStore, api, props.focusedItemId])
+
+  const navigate = useCallback(
+    (next: CollaborationPlatformLocation) => {
+      setLocation(next)
+      setLocalProjectRef(null)
+      if (location.issueId && !next.issueId) onFocusedItemHandled?.()
+      if (!next.projectId) {
+        onActiveProjectChange?.(null)
+        return
+      }
+      if (!api || next.projectId === location.projectId) return
+      void api.projects.get(next.projectId).then(project => {
+        onActiveProjectChange?.(toWeworkCloudExecutionProject(project))
+      })
+    },
+    [api, location.issueId, location.projectId, onActiveProjectChange, onFocusedItemHandled]
+  )
+
+  const handleIssueTaskError = useCallback(
+    (failure: WeworkIssueTaskStartFailure) => {
+      setIssueTaskError(
+        failure.kind === 'runtime_unavailable'
+          ? t('todo.run_unavailable', '运行服务当前不可用')
+          : failure.cause.message ||
+              t('workbench.issue_task_prepare_failed', '无法准备本地任务，请重试')
+      )
+    },
+    [t]
+  )
+  const { onCreateTask, launcher } = useWeworkCollaborationIssueTaskHost({
+    api,
+    services: props.services,
+    localProjects: props.localProjects,
+    runtimeWork: props.runtimeWork,
+    onOpenRuntimeTask: props.onOpenRuntimeTask,
+    onError: handleIssueTaskError,
+  })
+  const startIssueTask = useCallback(
+    async (...args: Parameters<typeof onCreateTask>) => {
+      setIssueTaskError(null)
+      await onCreateTask(...args)
+    },
+    [onCreateTask]
+  )
+  const revealReadyWorkspace = useCallback(() => {
+    if (!props.startupActive || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the ready collaboration space', error)
+    })
+  }, [props.startupActive])
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
+  const host = useMemo(
+    () => ({
+      location,
+      capabilities: {
+        automation: false,
+        dingtalkAitable: false,
+      },
+      navigate,
+      openExternal: (url: string) => {
+        void openExternalUrl(url)
+      },
+    }),
+    [location, navigate]
+  )
+
+  const openLocalProject = useCallback(
+    (projectId: string) => {
+      const project = localProjects.find(candidate => String(candidate.id) === projectId)
+      if (!project) return
+      const ref: RuntimeProjectSpaceRef = {
+        projectStore: 'local',
+        projectId: String(project.id),
+      }
+      setLocalProjectRef(ref)
+      onActiveProjectChange?.({ ...project, location: 'local' })
+    },
+    [localProjects, onActiveProjectChange]
+  )
+
+  const externallySelectedLocalProjectRef =
+    activeProjectControlled && activeProjectStore === 'local' && activeProjectId
+      ? {
+          projectStore: activeProjectStore,
+          projectId: activeProjectId,
+        }
+      : null
+  const legacyProjectRef = externallySelectedLocalProjectRef ?? localProjectRef
+  const resolvingRoute =
+    activeProjectControlled &&
+    activeProjectStore === 'backend' &&
+    Boolean(activeProjectId) &&
+    failedRouteProjectId !== activeProjectId &&
+    location.projectId !== activeProjectId
+
+  return (
+    <div
+      className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background text-text-primary"
+      data-testid="wework-collaboration-platform"
+    >
+      <header className="electron-titlebar-interactive-region flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {legacyProjectRef ? (
+            <button
+              type="button"
+              data-testid="wework-collaboration-back-to-platform"
+              className="flex h-7 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              onClick={() => {
+                setLocalProjectRef(null)
+                onActiveProjectChange?.(null)
+              }}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              {t('workbench.back_to_collaboration', '返回协作空间')}
+            </button>
+          ) : (
+            <span className="truncate text-sm font-medium">
+              {t('workbench.workspace_tab_board', '协作')}
+            </span>
+          )}
+        </div>
+        <div className="electron-titlebar-interactive-region flex items-center gap-2">
+          {localProjectApi && localProjects.length > 0 && !legacyProjectRef ? (
+            <label className="flex items-center gap-1.5 text-sm text-text-secondary">
+              <HardDrive className="h-4 w-4" />
+              <span>{t('workbench.local_project_spaces', '本地项目')}</span>
+              <select
+                data-testid="wework-local-project-space-select"
+                className={cn(
+                  'h-7 max-w-48 rounded-lg border border-border bg-background px-2 text-sm text-text-primary',
+                  'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus'
+                )}
+                value=""
+                onChange={event => openLocalProject(event.target.value)}
+              >
+                <option value="">{t('todo.select_local_project', '选择项目')}</option>
+                {localProjects.map(project => (
+                  <option key={project.id} value={String(project.id)}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {props.onOpenSettings && props.onLogout ? (
+            <DesktopSidebarAccount
+              compact
+              user={props.user}
+              onOpenSettings={props.onOpenSettings}
+              onLogout={props.onLogout}
+            />
+          ) : null}
+        </div>
+      </header>
+      <div className="relative flex min-h-0 flex-1">
+        {legacyProjectRef ? (
+          <CloudTodoWorkspace
+            {...props}
+            embedded
+            activeProjectRef={legacyProjectRef}
+            defaultProjectRequested={false}
+            focusedItemId={props.focusedItemId}
+            onFocusedItemHandled={() => undefined}
+          />
+        ) : resolvingRoute ? (
+          <div
+            className="flex flex-1 items-center justify-center text-sm text-text-muted"
+            data-testid="wework-collaboration-route-loading"
+          >
+            {t('common.loading', '加载中…')}
+          </div>
+        ) : (
+          <CollaborationPlatformApp
+            api={api}
+            host={host}
+            locale={locale}
+            onCreateTask={startIssueTask}
+            onReady={revealReadyWorkspace}
+          />
+        )}
+        {issueTaskError ? (
+          <div
+            role="alert"
+            data-testid="wework-collaboration-issue-task-error"
+            className="absolute left-1/2 top-3 z-popover flex max-w-[560px] -translate-x-1/2 items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm text-danger shadow-lg"
+          >
+            <span className="min-w-0 flex-1">{issueTaskError}</span>
+            <button
+              type="button"
+              data-testid="wework-collaboration-issue-task-error-dismiss"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+              aria-label={t('common.close', '关闭')}
+              onClick={() => setIssueTaskError(null)}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
+        {launcher}
+      </div>
+    </div>
+  )
+}
+
 export function CollaborationWorkspace(props: CloudTodoWorkspaceProps) {
-  return <CloudTodoWorkspace {...props} />
+  const api = props.services.sharedWorkspaceApi
+  if (!api) return <CloudTodoWorkspace {...props} />
+  return <SharedCollaborationWorkspace {...props} api={api} />
 }

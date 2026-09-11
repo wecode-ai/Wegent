@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createSharedWorkspaceHttpApi,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
@@ -14,7 +15,6 @@ import {
 import type {
   CollaborationAgent,
   CollaborationAttachment,
-  CollaborationComment,
   CollaborationIssue,
   CollaborationMember,
   CollaborationProject,
@@ -27,7 +27,6 @@ import type {
   WorkspaceAutomationRule,
   WorkspaceAutomationRun,
   WorkspaceIncomingHook,
-  WorkspaceProjectAgent,
   WorkspaceRuntimeProfile,
   WorkspaceRuntimeTaskAddress,
   WorkspaceMyWorkItem,
@@ -41,7 +40,6 @@ import type {
 } from '@/api/deliveries'
 import type { HttpClient } from '@/api/http'
 import type { createProjectAutomationApi } from '@/api/projectAutomations'
-import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 import type { createRuntimeProfileApi } from '@/api/runtimeProfiles'
 import type { Attachment } from '@/types/api'
@@ -49,7 +47,6 @@ import type { RuntimeTaskAddress } from '@/types/api'
 
 type DeliveryApi = ReturnType<typeof createDeliveryApi>
 type ProjectAutomationApi = ReturnType<typeof createProjectAutomationApi>
-type ProjectChatAgentApi = ReturnType<typeof createProjectChatAgentApi>
 type ProjectIncomingHookApi = ReturnType<typeof createProjectIncomingHookApi>
 type RuntimeProfileApi = ReturnType<typeof createRuntimeProfileApi>
 
@@ -172,7 +169,6 @@ export interface WeworkSharedWorkspaceApiDependencies {
   projectAutomationApi: ProjectAutomationApi
   projectIncomingHookApi: ProjectIncomingHookApi
   runtimeProfileApi: RuntimeProfileApi
-  projectChatAgentApi: ProjectChatAgentApi
 }
 
 function toProject(project: CloudProject): CollaborationProject {
@@ -368,12 +364,6 @@ function toRuntimeProfile(
   profile: Awaited<ReturnType<RuntimeProfileApi['create']>>
 ): WorkspaceRuntimeProfile {
   return { ...profile }
-}
-
-function toProjectAgent(
-  agent: Awaited<ReturnType<ProjectChatAgentApi['create']>>
-): WorkspaceProjectAgent {
-  return { ...agent }
 }
 
 function toDeliveryFile(file: ProjectDeliveryFile): WorkspaceDeliveryFile {
@@ -867,20 +857,48 @@ export function createWeworkWorkspaceRuntimePort(
   }
 }
 
-export function createWeworkSharedWorkspaceApi({
+export function createWeworkSharedWorkspaceApi<
+  Dependencies extends WeworkSharedWorkspaceApiDependencies,
+>({
   client,
   deliveryApi,
   projectAutomationApi,
   projectIncomingHookApi,
   runtimeProfileApi,
-  projectChatAgentApi,
-}: WeworkSharedWorkspaceApiDependencies): SharedWorkspaceApi {
+}: Dependencies): SharedWorkspaceApi {
   const delivery = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+  const sharedHttpApi = createSharedWorkspaceHttpApi(client)
 
   return {
     ...delivery,
+    workspaces: sharedHttpApi.workspaces,
+    resources: sharedHttpApi.resources,
     projects: {
       ...delivery.projects,
+      async list(workspaceId) {
+        if (!workspaceId) return delivery.projects.list()
+        const response = await client.get<{ items: CloudProject[] }>(
+          `/v1/workspaces/${encodeURIComponent(workspaceId)}/projects`
+        )
+        return response.items.map(toProject)
+      },
+      async create(input) {
+        if (!input.workspaceId) return delivery.projects.create(input)
+        const { workspaceId, ...projectInput } = input
+        return toProject(
+          await client.post<CloudProject>(
+            `/v1/workspaces/${encodeURIComponent(workspaceId)}/projects`,
+            withoutUndefined({
+              project_key: projectInput.projectKey,
+              name: projectInput.name,
+              description: projectInput.description,
+              task_provider: projectInput.taskProvider,
+              visibility: projectInput.visibility,
+              provider_config: projectInput.providerConfig,
+            })
+          )
+        )
+      },
       get(projectId) {
         return client.get<CloudProject>(`/v1/cloud-projects/${encodeURIComponent(projectId)}`)
       },
@@ -899,19 +917,8 @@ export function createWeworkSharedWorkspaceApi({
         )
       },
     },
-    comments: {
-      list(issueId) {
-        return client.get<CollaborationComment[]>(
-          `/v1/loop-items/${encodeURIComponent(issueId)}/comments`
-        )
-      },
-      create(issueId, body) {
-        return client.post<CollaborationComment>(
-          `/v1/loop-items/${encodeURIComponent(issueId)}/comments`,
-          { body }
-        )
-      },
-    },
+    comments: sharedHttpApi.comments,
+    assignments: sharedHttpApi.assignments,
     automations: {
       ...createWeworkAutomationsApi(projectAutomationApi),
       async runWorkflowNode(projectId, issueId, workflowNodeId, automationId) {
@@ -967,27 +974,6 @@ export function createWeworkSharedWorkspaceApi({
         )
       },
     },
-    agents: {
-      async list(projectId) {
-        return (await projectChatAgentApi.list(projectId)).map(toProjectAgent)
-      },
-      async create(projectId, input) {
-        return toProjectAgent(
-          await projectChatAgentApi.create(
-            projectId,
-            input as unknown as Parameters<ProjectChatAgentApi['create']>[1]
-          )
-        )
-      },
-      async update(projectId, agentId, input) {
-        return toProjectAgent(
-          await projectChatAgentApi.update(
-            projectId,
-            agentId,
-            input as unknown as Parameters<ProjectChatAgentApi['update']>[2]
-          )
-        )
-      },
-    },
+    agents: sharedHttpApi.agents,
   }
 }

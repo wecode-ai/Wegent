@@ -36,6 +36,7 @@ export interface CollaborationStatus {
 
 export interface CollaborationProject {
   id: CollaborationProjectId;
+  workspace_id?: string | null;
   public_id: string;
   project_key: string;
   name: string;
@@ -123,6 +124,66 @@ export interface CollaborationIssue {
   execution_error?: string | null;
   source_record_id?: string | null;
   source_cells?: Record<string, unknown>;
+}
+
+export type CollaborationAssignmentTargetType = "human" | "agent";
+
+export interface CollaborationAssignment {
+  id: string;
+  issue_id: string;
+  target_type: CollaborationAssignmentTargetType;
+  target_id: string;
+  target_name: string;
+  workflow_step: string | null;
+  comment_id: string | null;
+  created_by_user_id: number;
+  created_by_user_name: string | null;
+  status: "active" | "completed" | "cancelled";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollaborationWorkspace {
+  id: string;
+  name: string;
+  description: string;
+  access_role: CollaborationRole | "Member";
+  member_count: number;
+  agent_count: number;
+  execution_environment_count: number;
+  project_count: number;
+  created_by_user_id: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollaborationExecutionEnvironment {
+  id: string;
+  device_id?: number;
+  device_key?: string;
+  name: string;
+  kind: "local_device" | "cloud_host";
+  owner_type: "user" | "workspace";
+  owner_id: string;
+  owner_name: string;
+  status: "online" | "offline" | "provisioning" | "error";
+  workspace_ids: string[];
+  updated_at: string;
+}
+
+export interface CollaborationOwnedAgent extends CollaborationAgent {
+  owner_type: "user" | "workspace";
+  owner_id: string;
+  owner_name: string;
+  status: "available" | "unavailable";
+  execution_environment_ids: string[];
+  workspace_ids: string[];
+}
+
+export interface CollaborationPlatformResources {
+  agents: CollaborationOwnedAgent[];
+  execution_environments: CollaborationExecutionEnvironment[];
 }
 
 export type EditableLocalCollaborationIssue = CollaborationIssue & {
@@ -251,7 +312,12 @@ export interface CollaborationCapabilities {
   dingtalkAitable: boolean;
 }
 
-export type CollaborationView = "board" | "files" | "automation" | "manage";
+export type CollaborationView =
+  | "board"
+  | "table"
+  | "files"
+  | "automation"
+  | "manage";
 export type CollaborationRootView = "home" | "my-work";
 
 export interface CollaborationLocation {

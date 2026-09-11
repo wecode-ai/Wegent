@@ -30,6 +30,7 @@ from app.models.delivery import (
 )
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.issue_assignment import IssueAssignment
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeDocumentExternalSource
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
@@ -92,6 +93,11 @@ from app.models.work_queue import (
     RecentContact,
     TriggerMode,
 )
+from app.models.workspace import (
+    Workspace,
+    WorkspaceAgentBinding,
+    WorkspaceExecutionEnvironment,
+)
 from app.schemas.namespace import GroupRole
 
 __all__ = [
@@ -101,6 +107,7 @@ __all__ = [
     "CloudProjectFile",
     "LoopItemTaskBinding",
     "LoopItemExecution",
+    "IssueAssignment",
     "LoopItem",
     "LoopItemAttachment",
     "LoopItemCollaborator",
@@ -161,6 +168,9 @@ __all__ = [
     "GroupRole",
     "ResourceRole",
     "MemberStatus",
+    "Workspace",
+    "WorkspaceAgentBinding",
+    "WorkspaceExecutionEnvironment",
     # Work Queue models
     "QueueMessage",
     "RecentContact",

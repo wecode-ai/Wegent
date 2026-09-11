@@ -219,9 +219,10 @@ describe("CollaborationApp API boundary", () => {
     expect(location.rootView).toBe("my-work");
   });
 
-  it("uses the original Wework project view set without Web-only pages", () => {
+  it("keeps the shared project view set free of host-only pages", () => {
     expect(collaborationProjectViewIds).toEqual([
       "board",
+      "table",
       "files",
       "automation",
       "manage",

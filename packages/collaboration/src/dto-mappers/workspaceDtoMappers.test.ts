@@ -5,7 +5,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
+  mapCollaborationOwnedAgentDto,
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
@@ -14,6 +16,48 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("preserves resource identifiers required for workspace authorization", () => {
+    expect(
+      mapCollaborationOwnedAgentDto({
+        id: "binding-1",
+        team_id: "12",
+        name: "Codex",
+        owner_type: "user",
+        owner_id: "7",
+        owner_name: "李明",
+        status: "available",
+        workspace_ids: [],
+        execution_environment_ids: ["22"],
+      }),
+    ).toMatchObject({
+      id: "binding-1",
+      team_id: 12,
+      owner_type: "user",
+      execution_environment_ids: ["22"],
+    });
+    expect(
+      mapCollaborationExecutionEnvironmentDto({
+        id: "binding-2",
+        device_id: "22",
+        device_key: "device-cloud-runner",
+        name: "Cloud Runner",
+        kind: "cloud_host",
+        owner_type: "workspace",
+        owner_id: "workspace-1",
+        owner_name: "研发空间",
+        status: "online",
+        workspace_ids: ["workspace-1"],
+        updated_at: "2026-09-11T00:00:00Z",
+      }),
+    ).toMatchObject({
+      id: "binding-2",
+      device_id: 22,
+      device_key: "device-cloud-runner",
+      kind: "cloud_host",
+      owner_type: "workspace",
+    });
+  });
+
   it("normalizes task bindings and uses the request project context when needed", () => {
     expect(
       mapWorkspaceTaskBindingDto(

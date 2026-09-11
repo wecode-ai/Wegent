@@ -51,6 +51,12 @@ class LoopNode(Base):
         nullable=True,
         index=True,
     )
+    workspace_id = Column(
+        big_integer_id_type(),
+        ForeignKey("collaboration_workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     parent_id = Column(
         String(64),
         ForeignKey("loop_items.id", ondelete="CASCADE"),

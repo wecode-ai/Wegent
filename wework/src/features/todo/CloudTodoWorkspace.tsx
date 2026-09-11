@@ -60,6 +60,7 @@ import { ApiError } from '@/api/http'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
   CollaborationProjectViewShell,
+  ProjectIssueTable,
   ProjectCreateDialog,
   ProjectSpaceSidebar,
   projectCreateLabels,
@@ -154,7 +155,6 @@ import type {
 } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
-import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
 import {
   effectiveWorkflowNodeExecutionConfig,
   itemNeedsExecutionConfiguration,
@@ -1714,33 +1714,6 @@ export function CloudTodoWorkspace({
     selectedProject?.location === 'cloud'
       ? cloudWorkspace.state.externalPageLoading
       : localExternalPageLoading
-  // Stable handle for the automation queue: the cloud executions API is
-  // wrapped once per selected project API instead of being recreated on every
-  // render, so unrelated workspace re-renders do not restart the queue load
-  // (which flashed the loading state).
-  const automationExecutionApi = useMemo(() => {
-    if (selectedProjectLocation === 'local') {
-      const local = selectedProjectServices?.loopItemExecutionApi
-      if (!local) return undefined
-      return {
-        ...local,
-        stop: (_projectId: string, executionId: number) =>
-          stopLocalRobotQueueExecution(local, services.runtimeWorkApi, executionId),
-      }
-    }
-    if (!cloudWorkspaceApi) return undefined
-    return {
-      list: (projectId: string, options: { agent_id?: string; status?: string }) =>
-        cloudWorkspaceApi.executions.list(projectId, options),
-      stop: (projectId: string, executionId: number) =>
-        cloudWorkspaceApi.executions.stop(projectId, executionId),
-    }
-  }, [
-    cloudWorkspaceApi,
-    selectedProjectLocation,
-    services.runtimeWorkApi,
-    selectedProjectServices?.loopItemExecutionApi,
-  ])
   const selectedProjectAgents = selectedProjectKey
     ? (collaborationProjectAgents[selectedProjectKey] ?? [])
     : []
@@ -4489,29 +4462,19 @@ export function CloudTodoWorkspace({
               view={projectView}
               labels={{
                 board: '看板',
+                table: t('todo.table_view', '数据视图'),
                 files: '文件',
                 automation: '自动化',
                 manage: '管理',
               }}
               testIds={{
                 board: 'cloud-project-board-view',
+                table: 'cloud-project-table-view',
                 files: 'cloud-project-files-view',
                 automation: 'cloud-project-automation-view',
                 manage: 'cloud-project-manage-view',
               }}
               automationSupported={selectedProjectAutomationSupported}
-              extensions={[
-                {
-                  id: 'table',
-                  label: '数据视图',
-                  testId: 'cloud-project-table-view',
-                  available: isAITableProject && Boolean(aitableApi),
-                  content:
-                    isAITableProject && aitableApi ? (
-                      <AITableView api={aitableApi} project={selectedProject} />
-                    ) : null,
-                },
-              ]}
               compactSwitcherIcon={<ChevronDown className="h-3 w-3" />}
               onViewChange={view => setProjectView(view as ProjectView)}
               assistantAction={{
@@ -4703,6 +4666,24 @@ export function CloudTodoWorkspace({
                 )
               }
               slots={{
+                table:
+                  isAITableProject && aitableApi ? (
+                    <AITableView api={aitableApi} project={selectedProject} />
+                  ) : (
+                    <ProjectIssueTable
+                      issues={selectedProjectBoardItems}
+                      emptyLabel={t('todo.issue_table_empty', '暂无 Issue')}
+                      issueLabel={t('todo.issue_column', 'Issue')}
+                      statusLabel={t('todo.status', '状态')}
+                      assignmentsLabel={t('todo.assignments', '分配')}
+                      updatedLabel={t('todo.updated_at', '更新时间')}
+                      onOpen={item => {
+                        if (item.can_view_detail !== false) {
+                          setSelectedItem(item as LocatedLoopItem)
+                        }
+                      }}
+                    />
+                  ),
                 files: (
                   selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
                 ) ? (
@@ -4734,7 +4715,6 @@ export function CloudTodoWorkspace({
                           : undefined
                       }
                       runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
-                      executionApi={automationExecutionApi}
                       deviceApi={selectedProjectServices.deviceApi}
                       modelApi={services.modelApi}
                       teamApi={selectedProjectServices?.teamApi}

@@ -30,6 +30,8 @@ from app.schemas.cloud_project import (
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
+from app.services.workspaces import workspace_service
+from app.services.workspaces.access import require_workspace_role
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,15 @@ class CloudProjectService:
     def create(
         self, db: Session, user_id: int, values: CloudProjectCreate
     ) -> CloudProject:
+        if values.workspace_id is None:
+            workspace = workspace_service.get_or_create_default(db, user_id)
+        else:
+            workspace = require_workspace_role(
+                db,
+                int(values.workspace_id),
+                user_id,
+                BaseRole.Developer,
+            ).workspace
         public_id = str(uuid.uuid4())
         try:
             provider_config = store_provider_config(
@@ -106,6 +117,7 @@ class CloudProjectService:
         except ValueError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
         project = CloudProject(
+            workspace_id=workspace.id,
             public_id=public_id,
             project_key=values.project_key
             or self._generate_project_key(db, values.name),
@@ -125,6 +137,12 @@ class CloudProjectService:
         db.add(project)
         try:
             db.flush()
+            workspace_service.ensure_human_member(
+                db,
+                workspace_id=workspace.id,
+                user_id=user_id,
+                role=BaseRole.Developer,
+            )
             db.add(
                 ResourceMember.create(
                     resource_type=ResourceType.CLOUD_PROJECT.value,
@@ -144,22 +162,34 @@ class CloudProjectService:
         db.refresh(project)
         return project
 
-    def list_accessible(self, db: Session, user_id: int) -> list[CloudProject]:
+    def list_accessible(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        workspace_id: int | None = None,
+    ) -> list[CloudProject]:
+        if workspace_id is not None:
+            require_workspace_role(db, workspace_id, user_id)
         member_project_ids = select(ResourceMember.resource_id).where(
             ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
             ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
+        query = db.query(CloudProject).filter(
+            CloudProject.status == "active",
+            or_(
+                CloudProject.created_by_user_id == user_id,
+                CloudProject.id.in_(member_project_ids),
+                CloudProject.metadata_json["visibility"].as_string() == "public",
+            ),
+        )
+        if workspace_id is not None:
+            query = query.filter(CloudProject.workspace_id == workspace_id)
         return (
-            db.query(CloudProject)
-            .filter(
+            query.filter(
                 CloudProject.status == "active",
-                or_(
-                    CloudProject.created_by_user_id == user_id,
-                    CloudProject.id.in_(member_project_ids),
-                    CloudProject.metadata_json["visibility"].as_string() == "public",
-                ),
             )
             .order_by(CloudProject.updated_at.desc())
             .all()
@@ -457,6 +487,13 @@ class CloudProjectService:
         else:
             member.role = values.role.value
             member.status = MemberStatus.APPROVED.value
+        if project.workspace_id is not None:
+            workspace_service.ensure_human_member(
+                db,
+                workspace_id=int(project.workspace_id),
+                user_id=target.id,
+                role=BaseRole.Reporter,
+            )
         self._set_member_capability(project, target.id, values.capability_description)
         db.commit()
         db.refresh(member)

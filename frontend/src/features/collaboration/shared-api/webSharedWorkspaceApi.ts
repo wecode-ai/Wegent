@@ -4,6 +4,7 @@
 
 import {
   buildInstalledPluginProjectCatalog,
+  createSharedWorkspaceHttpApi,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
@@ -53,6 +54,23 @@ export interface WebWorkspaceCapability {
 }
 
 export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[] = [
+  { capability: 'workspaces.list', status: 'supported', endpoint: 'GET /v1/workspaces' },
+  { capability: 'workspaces.get', status: 'supported', endpoint: 'GET /v1/workspaces/{id}' },
+  {
+    capability: 'workspaces.create',
+    status: 'supported',
+    endpoint: 'POST /v1/workspaces',
+  },
+  {
+    capability: 'workspaces.update',
+    status: 'supported',
+    endpoint: 'PATCH /v1/workspaces/{id}',
+  },
+  {
+    capability: 'resources.list',
+    status: 'supported',
+    endpoint: 'GET /v1/resources',
+  },
   { capability: 'projects.list', status: 'supported', endpoint: 'GET /v1/cloud-projects' },
   { capability: 'projects.get', status: 'supported', endpoint: 'GET /v1/cloud-projects/{id}' },
   { capability: 'projects.create', status: 'supported', endpoint: 'POST /v1/cloud-projects' },
@@ -125,6 +143,16 @@ export const WEB_SHARED_WORKSPACE_CAPABILITIES: readonly WebWorkspaceCapability[
     capability: 'comments.create',
     status: 'supported',
     endpoint: 'POST /v1/loop-items/{id}/comments',
+  },
+  {
+    capability: 'assignments.list',
+    status: 'supported',
+    endpoint: 'GET /v1/loop-items/{id}/assignments',
+  },
+  {
+    capability: 'assignments.create',
+    status: 'supported',
+    endpoint: 'POST /v1/loop-items/{id}/assignments',
   },
   {
     capability: 'attachments.list',
@@ -621,17 +649,28 @@ export function createWebSharedWorkspaceApi(
   client: WebWorkspaceHttpClient = apiClient,
   binaryTransport: WebWorkspaceBinaryTransport = createDefaultBinaryTransport()
 ): SharedWorkspaceApi {
+  const sharedHttpApi = createSharedWorkspaceHttpApi(client)
+
   return {
+    workspaces: sharedHttpApi.workspaces,
+    resources: sharedHttpApi.resources,
     projects: {
-      async list() {
-        const response = await client.get<{ items: CollaborationProject[] }>('/v1/cloud-projects')
+      async list(workspaceId) {
+        const endpoint = workspaceId
+          ? `/v1/workspaces/${encoded(workspaceId)}/projects`
+          : '/v1/cloud-projects'
+        const response = await client.get<{ items: CollaborationProject[] }>(endpoint)
         return response.items
       },
       get(projectId) {
         return client.get(`/v1/cloud-projects/${encoded(projectId)}`)
       },
       create(input) {
-        return client.post('/v1/cloud-projects', keysToSnakeCase(input))
+        const { workspaceId, ...projectInput } = input
+        return client.post(
+          workspaceId ? `/v1/workspaces/${encoded(workspaceId)}/projects` : '/v1/cloud-projects',
+          keysToSnakeCase(projectInput)
+        )
       },
       update(projectId, input) {
         return client.patch(`/v1/cloud-projects/${encoded(projectId)}`, keysToSnakeCase(input))
@@ -752,14 +791,8 @@ export function createWebSharedWorkspaceApi(
         return client.post(`/v1/loop-items/${encoded(issueId)}/read`)
       },
     },
-    comments: {
-      list(issueId) {
-        return client.get(`/v1/loop-items/${encoded(issueId)}/comments`)
-      },
-      create(issueId, body) {
-        return client.post(`/v1/loop-items/${encoded(issueId)}/comments`, { body })
-      },
-    },
+    comments: sharedHttpApi.comments,
+    assignments: sharedHttpApi.assignments,
     attachments: {
       list(issueId) {
         return client.get(`/v1/loop-items/${encoded(issueId)}/attachments`)
@@ -1147,22 +1180,6 @@ export function createWebSharedWorkspaceApi(
         return mapCollaborationExecutionDto(response)
       },
     },
-    agents: {
-      list(projectId) {
-        return client.get(`/v1/cloud-projects/${encoded(projectId)}/chat-agents`)
-      },
-      create(projectId, input) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/chat-agents`,
-          keysToSnakeCase(input)
-        )
-      },
-      update(projectId, agentId, input) {
-        return client.patch(
-          `/v1/cloud-projects/${encoded(projectId)}/chat-agents/${encoded(agentId)}`,
-          keysToSnakeCase(input)
-        )
-      },
-    },
+    agents: sharedHttpApi.agents,
   }
 }

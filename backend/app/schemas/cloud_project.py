@@ -73,6 +73,7 @@ def normalize_provider_config(
 
 
 class CloudProjectCreate(BaseModel):
+    workspace_id: SnowflakeId | None = None
     project_key: str | None = Field(
         default=None, min_length=2, max_length=16, pattern=r"^[A-Za-z0-9]+$"
     )
@@ -218,6 +219,7 @@ class CloudProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: SnowflakeId
+    workspace_id: SnowflakeId | None = None
     public_id: str
     project_key: str
     name: str

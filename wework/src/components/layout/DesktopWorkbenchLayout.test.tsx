@@ -83,6 +83,53 @@ const deliveryApiMock = vi.hoisted(() => ({
   trackProjectTask: vi.fn(),
 }))
 const sharedWorkspaceApiMock = {
+  workspaces: {
+    async list() {
+      const response = await deliveryApiMock.listCloudProjects()
+      const workspaceIds = [
+        ...new Set(
+          response.items.flatMap(project =>
+            typeof project.workspace_id === 'string' ? [project.workspace_id] : []
+          )
+        ),
+      ]
+      return workspaceIds.map(workspaceId => ({
+        id: workspaceId,
+        name: 'Test Workspace',
+        description: '',
+        owner_user_id: 1,
+        current_user_role: 'Owner',
+        member_count: 1,
+        agent_count: 0,
+        execution_environment_count: 0,
+        project_count: response.items.filter(project => project.workspace_id === workspaceId)
+          .length,
+        version: 1,
+        created_at: '2026-09-11T00:00:00Z',
+        updated_at: '2026-09-11T00:00:00Z',
+      }))
+    },
+    async get(workspaceId: string) {
+      const workspaces = await this.list()
+      const workspace = workspaces.find(candidate => candidate.id === workspaceId)
+      if (!workspace) throw new Error(`Workspace ${workspaceId} was not found`)
+      return workspace
+    },
+    async listMembers() {
+      return []
+    },
+    async listAgents() {
+      return []
+    },
+    async listExecutionEnvironments() {
+      return []
+    },
+  },
+  resources: {
+    async list() {
+      return { agents: [], execution_environments: [] }
+    },
+  },
   projects: {
     async list() {
       const response = await deliveryApiMock.listCloudProjects()
@@ -1702,6 +1749,7 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.available = true
     const project = {
       id: 'project-1',
+      workspace_id: 'workspace-1',
       public_id: 'public-project-1',
       project_key: 'PROJECT-1',
       name: 'Retained Project',
@@ -1767,8 +1815,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    await userEvent.click(screen.getByTestId('collaboration-tab-table'))
+    expect(screen.getByTestId('collaboration-tab-table')).toHaveClass('bg-background')
 
     view.rerender(
       <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
@@ -1777,7 +1825,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByTestId('collaboration-tab-table')).toHaveClass('bg-background')
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -1787,7 +1835,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(screen.getByTestId('collaboration-tab-table')).toHaveClass('bg-background')
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -1815,7 +1863,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('returns to the exact previous workspace route after opening settings', async () => {
@@ -1844,7 +1892,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(window.location.pathname).toBe('/todo')
     expect(window.location.search).toContain('projectId=project-1')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('returns to the previous page after opening settings through direct navigation', async () => {
@@ -1871,7 +1919,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('keeps the active task return route when an inactive project space is retained', () => {
@@ -1967,7 +2015,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('keeps the settings return path when the layout remounts at the settings route', async () => {
@@ -2026,7 +2074,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
   })
 
   test('uses the independent board tab instead of a work-items sidebar destination', () => {

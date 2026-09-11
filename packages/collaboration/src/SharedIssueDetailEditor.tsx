@@ -573,6 +573,12 @@ export type TodoEditorProps = {
   showPanelControls?: boolean;
   showChildren?: boolean;
   showCurrentTaskOnly?: boolean;
+  showAssignee?: boolean;
+  /**
+   * Starting work is independent from editing the Issue. A visible Issue may
+   * start a host execution even when its content is read-only.
+   */
+  canStartWork?: boolean;
   taskRefreshKey?: string | number;
   headerActions?: ReactNode;
   selectedTaskId?: string | null;
@@ -603,9 +609,12 @@ export function TodoEditor(props: TodoEditorProps) {
     [t],
   );
   const showChildren = props.showChildren !== false;
+  const showAssignee = props.showAssignee !== false;
   const createProps = props.mode === "create" ? props : null;
   const editProps = props.mode === "edit" ? props : null;
   const isCreate = createProps !== null;
+  const canStartWork =
+    !isCreate && props.canStartWork !== false && Boolean(props.onCreateTask);
   const editable = isCreate || editProps?.editable === true;
   const workspacePanel = props.presentation === "workspace-panel";
   const showPanelControls = props.showPanelControls !== false;
@@ -1810,26 +1819,30 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusChip}
       {statusHistoryTrigger}
       {priorityChip}
-      <span
-        className={cn(
-          propChipClass,
-          !assignee && !assigneeAgent && !assigneeTeam && "text-text-muted",
-        )}
-      >
-        {assigneeAgent || assigneeTeam ? (
-          <Bot className="h-3.5 w-3.5 text-violet-600" />
-        ) : (
-          <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-        )}
-        <span className="text-text-muted">{t("todo.assignee", "负责人")}</span>
-        {assigneeTeam?.displayName ??
-          assigneeTeam?.name ??
-          assigneeAgent?.name ??
-          assignee?.user_name ??
-          t("common.add", "添加")}
-        <ChevronDown className="h-3 w-3 text-text-muted" />
-        {assigneeSelect}
-      </span>
+      {showAssignee ? (
+        <span
+          className={cn(
+            propChipClass,
+            !assignee && !assigneeAgent && !assigneeTeam && "text-text-muted",
+          )}
+        >
+          {assigneeAgent || assigneeTeam ? (
+            <Bot className="h-3.5 w-3.5 text-violet-600" />
+          ) : (
+            <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
+          )}
+          <span className="text-text-muted">
+            {t("todo.assignee", "负责人")}
+          </span>
+          {assigneeTeam?.displayName ??
+            assigneeTeam?.name ??
+            assigneeAgent?.name ??
+            assignee?.user_name ??
+            t("common.add", "添加")}
+          <ChevronDown className="h-3 w-3 text-text-muted" />
+          {assigneeSelect}
+        </span>
+      ) : null}
       {item && (
         <span
           data-testid="cloud-todo-detail-creator"
@@ -2172,25 +2185,29 @@ export function TodoEditor(props: TodoEditorProps) {
               ) : null}
               {workspacePanel && item ? (
                 <div className="task-detail-workspace-meta-row">
-                  <span className="task-detail-workspace-meta-pill relative">
-                    {assigneeAgent || assigneeTeam ? (
-                      <Bot className="h-3.5 w-3.5 text-violet-600" />
-                    ) : (
-                      <span className="task-detail-workspace-mini-avatar">
-                        {(assignee?.user_name ?? "?").slice(0, 1).toUpperCase()}
+                  {showAssignee ? (
+                    <span className="task-detail-workspace-meta-pill relative">
+                      {assigneeAgent || assigneeTeam ? (
+                        <Bot className="h-3.5 w-3.5 text-violet-600" />
+                      ) : (
+                        <span className="task-detail-workspace-mini-avatar">
+                          {(assignee?.user_name ?? "?")
+                            .slice(0, 1)
+                            .toUpperCase()}
+                        </span>
+                      )}
+                      <span>{t("todo.assignee", "负责人")}</span>
+                      <span className="text-text-primary">
+                        {assignee?.user_name ??
+                          assigneeTeam?.displayName ??
+                          assigneeTeam?.name ??
+                          assigneeAgent?.name ??
+                          t("todo.unassigned", "未指派")}
                       </span>
-                    )}
-                    <span>{t("todo.assignee", "负责人")}</span>
-                    <span className="text-text-primary">
-                      {assignee?.user_name ??
-                        assigneeTeam?.displayName ??
-                        assigneeTeam?.name ??
-                        assigneeAgent?.name ??
-                        t("todo.unassigned", "未指派")}
+                      <ChevronDown className="h-3 w-3" />
+                      {assigneeSelect}
                     </span>
-                    <ChevronDown className="h-3 w-3" />
-                    {assigneeSelect}
-                  </span>
+                  ) : null}
                   <span className="task-detail-workspace-meta-pill relative">
                     <Calendar className="h-3.5 w-3.5" />
                     <span>{t("todo.due_date", "截止时间")}</span>
@@ -2264,45 +2281,47 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {twoColumn && !workspacePanel ? (
                 <div className="task-detail-meta-line">
-                  <span className="task-detail-meta-item relative cursor-pointer">
-                    {assigneeAgent || assigneeTeam ? (
-                      <Bot className="h-3.5 w-3.5 text-violet-600" />
-                    ) : (
-                      <CircleUserRound className="h-3.5 w-3.5" />
-                    )}
-                    {t("todo.assignee", "负责人")}
-                    <span className="text-text-primary">
-                      {assignee?.user_name ??
-                        assigneeTeam?.displayName ??
-                        assigneeTeam?.name ??
-                        assigneeAgent?.name ??
-                        t("todo.unassigned", "未指派")}
+                  {showAssignee ? (
+                    <span className="task-detail-meta-item relative cursor-pointer">
+                      {assigneeAgent || assigneeTeam ? (
+                        <Bot className="h-3.5 w-3.5 text-violet-600" />
+                      ) : (
+                        <CircleUserRound className="h-3.5 w-3.5" />
+                      )}
+                      {t("todo.assignee", "负责人")}
+                      <span className="text-text-primary">
+                        {assignee?.user_name ??
+                          assigneeTeam?.displayName ??
+                          assigneeTeam?.name ??
+                          assigneeAgent?.name ??
+                          t("todo.unassigned", "未指派")}
+                      </span>
+                      <ChevronDown className="h-3 w-3" />
+                      {assigneeSelect}
+                      {item?.assignment_history?.length ? (
+                        <button
+                          ref={assignmentChainTriggerRef}
+                          type="button"
+                          data-testid="cloud-todo-assignment-chain-trigger"
+                          aria-label={t(
+                            "todo.assignment_chain_trigger",
+                            "查看指派详情",
+                          )}
+                          aria-expanded={assignmentChainOpen}
+                          title={t(
+                            "todo.assignment_chain_trigger",
+                            "查看指派详情",
+                          )}
+                          onClick={() =>
+                            setAssignmentChainOpen((current) => !current)
+                          }
+                          className="relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
+                        >
+                          <Waypoints className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
                     </span>
-                    <ChevronDown className="h-3 w-3" />
-                    {assigneeSelect}
-                    {item?.assignment_history?.length ? (
-                      <button
-                        ref={assignmentChainTriggerRef}
-                        type="button"
-                        data-testid="cloud-todo-assignment-chain-trigger"
-                        aria-label={t(
-                          "todo.assignment_chain_trigger",
-                          "查看指派详情",
-                        )}
-                        aria-expanded={assignmentChainOpen}
-                        title={t(
-                          "todo.assignment_chain_trigger",
-                          "查看指派详情",
-                        )}
-                        onClick={() =>
-                          setAssignmentChainOpen((current) => !current)
-                        }
-                        className="relative z-10 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
-                      >
-                        <Waypoints className="h-3.5 w-3.5" />
-                      </button>
-                    ) : null}
-                  </span>
+                  ) : null}
                   <span className="task-detail-meta-item relative cursor-pointer">
                     <Calendar className="h-3.5 w-3.5" />
                     {t("todo.due_date", "截止时间")}
@@ -2546,9 +2565,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       >
                         {displayedWorkflow?.nodes?.length ?? executionTaskCount}
                       </span>
-                      {editable &&
-                      props.onCreateTask &&
-                      !displayedWorkflow?.nodes?.length ? (
+                      {canStartWork && !displayedWorkflow?.nodes?.length ? (
                         <button
                           type="button"
                           data-testid="cloud-todo-create-task"
@@ -2573,7 +2590,9 @@ export function TodoEditor(props: TodoEditorProps) {
                             .get(delivery.id)
                             .then(setSelectedDelivery)
                         }
-                        onCreateTask={editable ? props.onCreateTask : undefined}
+                        onCreateTask={
+                          canStartWork ? props.onCreateTask : undefined
+                        }
                         onRunAutomation={
                           editable
                             ? async (workflowNodeId, automationRuleId) => {
@@ -2874,33 +2893,38 @@ export function TodoEditor(props: TodoEditorProps) {
                         </span>
                       </RailProp>
                       {railProps}
-                      <RailProp
-                        label={t("todo.assignment", "指派")}
-                        clickable={false}
-                      >
-                        {item.assignment_history?.length ? (
-                          <button
-                            ref={assignmentChainTriggerRef}
-                            type="button"
-                            data-testid="cloud-todo-assignment-chain-trigger"
-                            aria-label={t(
-                              "todo.assignment_chain_trigger",
-                              "查看指派详情",
-                            )}
-                            aria-expanded={assignmentChainOpen}
-                            onClick={() =>
-                              setAssignmentChainOpen((current) => !current)
-                            }
-                            className="task-detail-workspace-prop-link"
-                          >
-                            {t("todo.assignment_chain_trigger", "查看指派详情")}
-                          </button>
-                        ) : (
-                          <span className="text-text-muted">
-                            {t("todo.none", "暂无")}
-                          </span>
-                        )}
-                      </RailProp>
+                      {showAssignee ? (
+                        <RailProp
+                          label={t("todo.assignment", "指派")}
+                          clickable={false}
+                        >
+                          {item.assignment_history?.length ? (
+                            <button
+                              ref={assignmentChainTriggerRef}
+                              type="button"
+                              data-testid="cloud-todo-assignment-chain-trigger"
+                              aria-label={t(
+                                "todo.assignment_chain_trigger",
+                                "查看指派详情",
+                              )}
+                              aria-expanded={assignmentChainOpen}
+                              onClick={() =>
+                                setAssignmentChainOpen((current) => !current)
+                              }
+                              className="task-detail-workspace-prop-link"
+                            >
+                              {t(
+                                "todo.assignment_chain_trigger",
+                                "查看指派详情",
+                              )}
+                            </button>
+                          ) : (
+                            <span className="text-text-muted">
+                              {t("todo.none", "暂无")}
+                            </span>
+                          )}
+                        </RailProp>
+                      ) : null}
                     </div>
                   </details>
 

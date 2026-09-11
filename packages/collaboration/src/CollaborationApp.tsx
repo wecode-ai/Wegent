@@ -34,6 +34,7 @@ import {
 import type { AutomationProject } from "./automation";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
+import { ProjectIssueTable } from "./platform";
 
 interface CollaborationAppProps {
   api: SharedWorkspaceApi;
@@ -42,6 +43,11 @@ interface CollaborationAppProps {
   pollIntervalMs?: number;
   automationUiHost?: AutomationUiHost;
   createProjectRequestKey?: number;
+  onCreateTask?(
+    project: CollaborationProject,
+    issue: CollaborationIssue,
+    workflowStep?: string,
+  ): void;
 }
 
 function projectStatuses(
@@ -84,6 +90,7 @@ export function CollaborationApp({
   pollIntervalMs = 15_000,
   automationUiHost,
   createProjectRequestKey = 0,
+  onCreateTask,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
   const translate = useMemo(
@@ -111,6 +118,8 @@ export function CollaborationApp({
     agents,
     selectedIssue,
     comments,
+    assignments,
+    executions,
     loading,
     error,
   } = state;
@@ -224,12 +233,14 @@ export function CollaborationApp({
           view={host.location.view}
           labels={{
             board: messages.board,
+            table: messages.table,
             files: messages.files,
             automation: messages.automation,
             manage: messages.settings,
           }}
           testIds={{
             board: "collaboration-tab-board",
+            table: "collaboration-tab-table",
             files: "collaboration-tab-files",
             automation: "collaboration-tab-automation",
             manage: "collaboration-tab-manage",
@@ -368,6 +379,25 @@ export function CollaborationApp({
                 }
               />
             ),
+            table: (
+              <div className="collaboration-project-content">
+                <ProjectIssueTable
+                  issues={issues}
+                  emptyLabel={messages.noIssues}
+                  issueLabel={messages.issueTitle}
+                  statusLabel={messages.issueStatus}
+                  assignmentsLabel={messages.assignments}
+                  updatedLabel={messages.updatedAt}
+                  onOpen={(issue) =>
+                    host.navigate({
+                      projectId: project.id,
+                      issueId: issue.id,
+                      view: "table",
+                    })
+                  }
+                />
+              </div>
+            ),
             files: (
               <div className="collaboration-project-content">
                 <CollaborationFilesAdapter
@@ -491,6 +521,10 @@ export function CollaborationApp({
           issue={selectedIssue}
           allIssues={issues}
           comments={comments}
+          assignments={assignments}
+          executions={executions}
+          members={members}
+          agents={agents}
           messages={messages}
           translate={translate}
           onClose={() => {
@@ -503,6 +537,13 @@ export function CollaborationApp({
           }}
           onChange={commands.replaceIssue}
           onCommentsChange={commands.replaceComments}
+          onAssignmentsChange={commands.replaceAssignments}
+          onCreateTask={
+            onCreateTask
+              ? (workflowStep) =>
+                  onCreateTask(project, selectedIssue, workflowStep)
+              : undefined
+          }
           onConflict={commands.refreshSelectedIssue}
           onError={() => commands.reportError(messages.saveFailed)}
         />

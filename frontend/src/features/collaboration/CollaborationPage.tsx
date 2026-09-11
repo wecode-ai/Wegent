@@ -5,13 +5,14 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
-  CollaborationApp,
-  type CollaborationHostAdapter,
+  CollaborationPlatformApp,
   type CollaborationLocale,
-  type CollaborationProject,
+  type CollaborationPlatformHostAdapter,
+  type CollaborationPlatformLocation,
   type CollaborationView,
+  type CollaborationWorkspaceView,
 } from '@wegent/collaboration'
 import { toast } from 'sonner'
 
@@ -25,58 +26,120 @@ import {
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
-import { CollaborationProjectSection } from './CollaborationProjectSection'
 
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
-const COLLABORATION_VIEWS = new Set<CollaborationView>(['board', 'files', 'automation', 'manage'])
+const PROJECT_VIEWS = new Set<CollaborationView>([
+  'board',
+  'table',
+  'files',
+  'automation',
+  'manage',
+])
+
+function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
+  if (pathname.endsWith('/projects')) return 'projects'
+  if (pathname.endsWith('/members')) return 'members'
+  if (pathname.endsWith('/agents')) return 'agents'
+  if (pathname.endsWith('/execution-environments')) return 'execution-environments'
+  if (pathname.endsWith('/settings')) return 'settings'
+  return 'home'
+}
+
+export function collaborationLocationPath(location: CollaborationPlatformLocation): string {
+  if (!location.workspaceId) {
+    return location.platformView === 'resources' ? '/collaboration/resources' : '/collaboration'
+  }
+  const workspaceBase = `/collaboration/workspaces/${encodeURIComponent(location.workspaceId)}`
+  if (!location.projectId) {
+    const suffix: Record<CollaborationWorkspaceView, string> = {
+      home: '',
+      projects: '/projects',
+      members: '/members',
+      agents: '/agents',
+      'execution-environments': '/execution-environments',
+      settings: '/settings',
+    }
+    return `${workspaceBase}${suffix[location.workspaceView]}`
+  }
+  const projectBase = `${workspaceBase}/projects/${encodeURIComponent(location.projectId)}`
+  const query = location.projectView === 'board' ? '' : `?view=${location.projectView}`
+  return location.issueId
+    ? `${projectBase}/issues/${encodeURIComponent(location.issueId)}${query}`
+    : `${projectBase}${query}`
+}
 
 export function CollaborationPage() {
   const router = useRouter()
-  const params = useParams<{ projectId?: string; itemId?: string }>()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const { getCurrentLanguage } = useTranslation()
   const isMobile = useIsMobile()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
-  const [collaborationProjects, setCollaborationProjects] = useState<CollaborationProject[]>([])
-  const [createProjectRequestKey, setCreateProjectRequestKey] = useState(0)
+  const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
 
   useEffect(() => {
     setIsCollapsed(localStorage.getItem('task-sidebar-collapsed') === 'true')
   }, [])
 
+  const segments = pathname.split('/').filter(Boolean)
+  const workspaceRoute = segments[1] === 'workspaces'
+  const workspaceId = workspaceRoute && segments[2] ? decodeURIComponent(segments[2]) : null
+  const projectRoute = workspaceRoute && segments[3] === 'projects'
+  const projectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
+  const issueId =
+    projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
+  const legacyProjectId =
+    !workspaceRoute && segments[1] && segments[1] !== 'resources'
+      ? decodeURIComponent(segments[1])
+      : null
   const rawView = searchParams.get('view')
-  const view: CollaborationView =
-    rawView && COLLABORATION_VIEWS.has(rawView as CollaborationView)
+  const projectView: CollaborationView =
+    rawView && PROJECT_VIEWS.has(rawView as CollaborationView)
       ? (rawView as CollaborationView)
       : 'board'
-  const projectId = params.projectId ?? null
-  const issueId = params.itemId ?? null
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
+  const location: CollaborationPlatformLocation = {
+    platformView: pathname === '/collaboration/resources' ? 'resources' : 'spaces',
+    workspaceId,
+    workspaceView: workspaceViewFromPath(pathname),
+    projectId,
+    projectView,
+    issueId,
+  }
 
-  const api = useMemo(() => createWebSharedWorkspaceApi(apiClient), [])
-  const host = useMemo<CollaborationHostAdapter>(
+  useEffect(() => {
+    if (!legacyProjectId) return
+    let active = true
+    void api.projects.get(legacyProjectId).then(
+      project => {
+        if (!active) return
+        router.replace(
+          project.workspace_id
+            ? `/collaboration/workspaces/${encodeURIComponent(project.workspace_id)}/projects/${encodeURIComponent(project.id)}`
+            : '/collaboration'
+        )
+      },
+      () => {
+        if (active) router.replace('/collaboration')
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [api, legacyProjectId, router])
+
+  const host = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
       capabilities: {
-        myWork: false,
         automation: true,
         dingtalkAitable: false,
       },
-      location: { projectId, issueId, view, rootView: 'home' },
-      onProjectsChange: setCollaborationProjects,
-      navigate(location) {
-        const nextView = location.view === 'board' ? '' : `?view=${location.view}`
-        if (!location.projectId) {
-          router.push('/collaboration')
-        } else if (location.issueId) {
-          router.push(
-            `/collaboration/${encodeURIComponent(location.projectId)}/issues/${encodeURIComponent(location.issueId)}${nextView}`
-          )
-        } else {
-          router.push(`/collaboration/${encodeURIComponent(location.projectId)}${nextView}`)
-        }
+      location,
+      navigate(nextLocation) {
+        router.push(collaborationLocationPath(nextLocation))
       },
       openExternal(url) {
         window.open(url, '_blank', 'noopener,noreferrer')
@@ -86,7 +149,7 @@ export function CollaborationPage() {
         else toast.error(message)
       },
     }),
-    [issueId, projectId, router, view]
+    [location, router]
   )
 
   const toggleCollapsed = () => {
@@ -112,27 +175,21 @@ export function CollaborationPage() {
           pageType="collaboration"
           isCollapsed={isCollapsed}
           onToggleCollapsed={toggleCollapsed}
-          projectSection={
-            <CollaborationProjectSection
-              locale={locale}
-              onAdd={() => setCreateProjectRequestKey(current => current + 1)}
-              onSelect={nextProjectId =>
-                router.push(`/collaboration/${encodeURIComponent(nextProjectId)}`)
-              }
-              projects={collaborationProjects}
-              selectedProjectId={projectId}
-            />
-          }
         />
       </ResizableSidebar>
-      <main className="min-w-0 flex-1 overflow-auto">
-        <CollaborationApp
-          api={api}
-          host={host}
-          locale={locale}
-          automationUiHost={webAutomationUiHost}
-          createProjectRequestKey={createProjectRequestKey}
-        />
+      <main className="min-w-0 flex-1 overflow-hidden">
+        {legacyProjectId ? (
+          <div className="flex h-full items-center justify-center text-sm text-text-muted">
+            Loading…
+          </div>
+        ) : (
+          <CollaborationPlatformApp
+            api={api}
+            host={host}
+            locale={locale}
+            automationUiHost={webAutomationUiHost}
+          />
+        )}
       </main>
     </div>
   )

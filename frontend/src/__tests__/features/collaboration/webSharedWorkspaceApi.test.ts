@@ -395,8 +395,8 @@ describe('createWebSharedWorkspaceApi', () => {
 
     expect(unsupported).toEqual([])
     expect(partial).toEqual([])
-    expect(supported).toHaveLength(91)
-    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(91)
+    expect(supported).toHaveLength(98)
+    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(98)
     expect(
       WEB_SHARED_WORKSPACE_CAPABILITIES.some(
         capability =>

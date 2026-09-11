@@ -174,6 +174,14 @@ class LoopItemAssign(ProjectChatSchema):
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent"]
     assignee_id: str = Field(min_length=1, max_length=128)
+    workflow_step: str | None = Field(default=None, max_length=128)
+    trigger: Literal[
+        "manual",
+        "rule",
+        "workflow",
+        "automation",
+        "mention",
+    ] = "manual"
 
 
 class LoopItemApproval(ProjectChatSchema):
@@ -253,6 +261,7 @@ class LoopItemExecutionCancel(ProjectChatSchema):
 
 class LoopItemExecutionView(ProjectChatSchema):
     id: int
+    workspace_id: str | None = None
     loop_item_id: str
     cloud_project_id: str
     task_title: str

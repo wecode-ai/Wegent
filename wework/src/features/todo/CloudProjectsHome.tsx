@@ -1,5 +1,4 @@
 import { WorkspaceProjectsHome, type WorkspaceProjectsHomeHost } from '@wegent/collaboration'
-import '@wegent/collaboration/styles.css'
 import { Check, Cloud, Copy, HardDrive, Plus, Search, Settings2 } from 'lucide-react'
 import type { CloudLoopItem, CloudMyWorkItem, CloudProjectMember } from '@/api/deliveries'
 import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTime'

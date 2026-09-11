@@ -220,7 +220,7 @@ class ProjectChatService:
         project_id: str,
         request: ProjectChatAgentCreate,
     ) -> ProjectChatAgentView:
-        self._require_scope(
+        project = self._require_scope(
             db,
             user_id=user_id,
             project_id=project_id,
@@ -229,8 +229,15 @@ class ProjectChatService:
         )
         if request.runtime == "wegent":
             from app.services.project_automation_domain import runnable_wegent_team
+            from app.services.workspaces import workspace_service
 
-            runnable_wegent_team(db, user_id, request.wegent_team_id)
+            team = runnable_wegent_team(db, user_id, request.wegent_team_id)
+            if project.workspace_id is not None:
+                workspace_service.require_agent_authorized(
+                    db,
+                    workspace_id=int(project.workspace_id),
+                    team_id=int(team.id),
+                )
         elif request.default_runtime_profile_id:
             from app.services.runtime_profiles import runtime_profile_service
 
@@ -242,6 +249,14 @@ class ProjectChatService:
             status="ready",
         )
         if request.runtime == "codex":
+            if project.workspace_id is not None and request.execution_device_id:
+                from app.services.workspaces import workspace_service
+
+                workspace_service.require_execution_environment_authorized(
+                    db,
+                    workspace_id=int(project.workspace_id),
+                    execution_device_id=request.execution_device_id,
+                )
             workspace_binding = (
                 normalize_workspace_binding(
                     db,
@@ -336,8 +351,16 @@ class ProjectChatService:
         )
         if runtime == "wegent":
             from app.services.project_automation_domain import runnable_wegent_team
+            from app.services.workspaces import workspace_service
 
-            runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
+            team = runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
+            project = db.get(CloudProject, project_id)
+            if project is not None and project.workspace_id is not None:
+                workspace_service.require_agent_authorized(
+                    db,
+                    workspace_id=int(project.workspace_id),
+                    team_id=int(team.id),
+                )
             row.device_id = None
             row.local_project_id = None
             metadata[BOT_RUNTIME_PROFILE_ID_KEY] = None
@@ -387,6 +410,15 @@ class ProjectChatService:
                 or BOT_DEFAULT_EXECUTION_ENVIRONMENT
             )
             device_id = str(row.device_id or "")
+            project = db.get(CloudProject, project_id)
+            if project is not None and project.workspace_id is not None and device_id:
+                from app.services.workspaces import workspace_service
+
+                workspace_service.require_execution_environment_authorized(
+                    db,
+                    workspace_id=int(project.workspace_id),
+                    execution_device_id=device_id,
+                )
             if "workspace_binding" in request.model_fields_set:
                 binding_input = (
                     request.workspace_binding

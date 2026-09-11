@@ -107,6 +107,37 @@ describe('TodoEditor external item sync', () => {
     expect(updateLoopItem).not.toHaveBeenCalled()
   })
 
+  it('uses the shared execution entry for an accessible Issue assigned to someone else', async () => {
+    const onCreateTask = vi.fn()
+    const assignedToSomeoneElse = {
+      ...baseItem,
+      can_view_detail: true,
+      can_edit: false,
+      assignee_user_id: 42,
+      assignee_agent_id: null,
+      project_store: 'backend' as const,
+    }
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={assignedToSomeoneElse}
+        project={{ ...project, project_store: 'backend' }}
+        allItems={[assignedToSomeoneElse]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        api={api}
+        currentUserId={1}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveAttribute('readonly')
+    await userEvent.click(await screen.findByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledWith()
+  })
+
   it('keeps trusted local Issue editing enabled through an explicit local marker', async () => {
     const user = userEvent.setup()
     const localItem = {

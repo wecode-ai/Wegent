@@ -216,10 +216,15 @@ def create_cloud_project(
 
 @router.get("", response_model=CloudProjectListResponse)
 def list_cloud_projects(
+    workspace_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectListResponse:
-    projects = cloud_project_service.list_accessible(db, current_user.id)
+    projects = cloud_project_service.list_accessible(
+        db,
+        current_user.id,
+        workspace_id=workspace_id,
+    )
     return CloudProjectListResponse(
         items=[_project_response(db, project, current_user) for project in projects]
     )

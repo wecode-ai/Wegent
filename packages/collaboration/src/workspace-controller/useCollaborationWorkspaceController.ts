@@ -15,15 +15,18 @@ import type {
   WorkspaceProjectUpdateInput,
 } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationAssignment,
   CollaborationAttachment,
   CollaborationAgent,
   CollaborationComment,
+  CollaborationExecution,
   CollaborationIssue,
   CollaborationLocation,
   CollaborationMember,
   CollaborationProject,
   CollaborationStatus,
 } from "../types";
+import { legacyIssueAssignmentProjection } from "../dto-mappers";
 
 export interface CollaborationWorkspaceControllerState {
   projects: CollaborationProject[];
@@ -44,6 +47,8 @@ export interface CollaborationWorkspaceControllerState {
   selectedIssue: CollaborationIssue | null;
   attachments: CollaborationAttachment[];
   comments: CollaborationComment[];
+  assignments: CollaborationAssignment[];
+  executions: CollaborationExecution[];
   loading: boolean;
   error: string | null;
   errorSource: "load" | "save" | "conflict" | null;
@@ -125,6 +130,7 @@ export interface CollaborationWorkspaceControllerCommands {
   replaceIssue(issue: CollaborationIssue): void;
   replaceAttachments(attachments: CollaborationAttachment[]): void;
   replaceComments(comments: CollaborationComment[]): void;
+  replaceAssignments(assignments: CollaborationAssignment[]): void;
   reportError(message: string): void;
 }
 
@@ -160,6 +166,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     replaceIssue: () => undefined,
     replaceAttachments: () => undefined,
     replaceComments: () => undefined,
+    replaceAssignments: () => undefined,
     reportError: () => undefined,
   };
 
@@ -216,6 +223,8 @@ export type CollaborationWorkspaceControllerAction =
       issue: CollaborationIssue;
       attachments: CollaborationAttachment[];
       comments: CollaborationComment[];
+      assignments: CollaborationAssignment[];
+      executions: CollaborationExecution[];
     }
   | { type: "clear-project" }
   | { type: "clear-selected-issue" }
@@ -226,7 +235,11 @@ export type CollaborationWorkspaceControllerAction =
   | { type: "replace-issue"; issue: CollaborationIssue }
   | { type: "remove-issue"; issueId: string }
   | { type: "replace-attachments"; attachments: CollaborationAttachment[] }
-  | { type: "replace-comments"; comments: CollaborationComment[] };
+  | { type: "replace-comments"; comments: CollaborationComment[] }
+  | {
+      type: "replace-assignments";
+      assignments: CollaborationAssignment[];
+    };
 
 export const initialCollaborationWorkspaceControllerState: CollaborationWorkspaceControllerState =
   {
@@ -248,6 +261,8 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     selectedIssue: null,
     attachments: [],
     comments: [],
+    assignments: [],
+    executions: [],
     loading: true,
     error: null,
     errorSource: null,
@@ -413,6 +428,8 @@ export function collaborationWorkspaceControllerReducer(
         selectedIssue: action.issue,
         attachments: action.attachments,
         comments: action.comments,
+        assignments: action.assignments,
+        executions: action.executions,
       };
     case "clear-project":
       return {
@@ -428,9 +445,18 @@ export function collaborationWorkspaceControllerReducer(
         selectedIssue: null,
         attachments: [],
         comments: [],
+        assignments: [],
+        executions: [],
       };
     case "clear-selected-issue":
-      return { ...state, selectedIssue: null, attachments: [], comments: [] };
+      return {
+        ...state,
+        selectedIssue: null,
+        attachments: [],
+        comments: [],
+        assignments: [],
+        executions: [],
+      };
     case "replace-project":
       return {
         ...state,
@@ -509,6 +535,8 @@ export function collaborationWorkspaceControllerReducer(
       return { ...state, attachments: action.attachments };
     case "replace-comments":
       return { ...state, comments: action.comments };
+    case "replace-assignments":
+      return { ...state, assignments: action.assignments };
   }
 }
 
@@ -988,8 +1016,31 @@ export function createCollaborationWorkspaceControllerCommands({
           api.attachments.list(issueId),
           api.comments.list(issueId),
         ]);
+        const [loadedAssignments, executions] = await Promise.all([
+          api.assignments ? api.assignments.list(issueId) : Promise.resolve([]),
+          api.executions?.list
+            ? api.executions
+                .list(issue.cloud_project_id)
+                .then((items) =>
+                  items.filter(
+                    (execution) => execution.loop_item_id === issueId,
+                  ),
+                )
+            : Promise.resolve([]),
+        ]);
+        const assignments =
+          loadedAssignments.length > 0
+            ? loadedAssignments
+            : legacyIssueAssignmentProjection(issue);
         if (revision !== selectedIssueLoadRevision) return null;
-        dispatch({ type: "issue-loaded", issue, attachments, comments });
+        dispatch({
+          type: "issue-loaded",
+          issue,
+          attachments,
+          comments,
+          assignments,
+          executions,
+        });
         return issue;
       } catch {
         if (revision !== selectedIssueLoadRevision) return null;
@@ -1189,6 +1240,8 @@ export function createCollaborationWorkspaceControllerCommands({
       dispatch({ type: "replace-attachments", attachments }),
     replaceComments: (comments) =>
       dispatch({ type: "replace-comments", comments }),
+    replaceAssignments: (assignments) =>
+      dispatch({ type: "replace-assignments", assignments }),
     reportError,
   };
 }
@@ -1310,6 +1363,8 @@ export function useCollaborationWorkspaceController({
           selectedIssue: null,
           attachments: [],
           comments: [],
+          assignments: [],
+          executions: [],
         };
 
   return {

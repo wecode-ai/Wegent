@@ -120,6 +120,7 @@ def _execution_view(
             "id": row.id,
             "loop_item_id": row.loop_item_id,
             "cloud_project_id": row.cloud_project_id,
+            "workspace_id": row.workspace_id,
             "task_title": (item.title or item.name or "") if item else "",
             "task_status": item.status if item else None,
             "task_priority": item.priority if item else None,
