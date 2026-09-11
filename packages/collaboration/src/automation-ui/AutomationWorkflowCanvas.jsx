@@ -1074,13 +1074,10 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
     const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const panelOpened =
       previousRightPanelInset.current === 0 && rightPanelInset > 0;
-    const addedNestedNode = nodes.find(
-      (node) => node.parentId && !previousIds.has(node.id),
-    );
     const addedNode =
       selectedNode.type === "step" && !previousIds.has(selectedNode.id)
         ? nodes.find((node) => node.id === selectedNode.id)
-        : nodes.find((node) => !node.parentId && !previousIds.has(node.id));
+        : nodes.find((node) => !previousIds.has(node.id));
     const selectedId = selectedCanvasNodeId(selectedNode);
     const selectedAfterDeletion =
       priorSelectedId !== null &&
@@ -1094,10 +1091,6 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
     previousNodeIds.current = new Set(nodes.map((node) => node.id));
     previousRightPanelInset.current = rightPanelInset;
     previousSelectedId.current = selectedId;
-    if (addedNestedNode) {
-      void setViewport(getViewport(), { duration: 0 });
-      return undefined;
-    }
     if (!targetNode) return undefined;
 
     const canvas = canvasRef.current;

@@ -312,6 +312,93 @@ describe('AutomationWorkflowCanvas viewport', () => {
     )
   })
 
+  test('reveals a newly inserted nested branch while keeping its owner selected', () => {
+    const firstBranch = {
+      id: 'branch-1',
+      nodeType: 'branch',
+      x: 240,
+      y: 0,
+      dependencies: ['loop-start'],
+      branchConditions: [],
+    }
+    const draft = {
+      ...emptyDraft,
+      steps: [
+        {
+          id: 'loop-step',
+          kind: 'loop',
+          x: 500,
+          y: 180,
+          dependencies: [],
+          subgraph: {
+            nodes: [
+              {
+                id: 'loop-start',
+                nodeType: 'loopStart',
+                x: 0,
+                y: 0,
+                dependencies: [],
+              },
+              firstBranch,
+            ],
+          },
+        },
+      ],
+    }
+    const selectedNode = {
+      type: 'loopBody' as const,
+      loopId: 'loop-step',
+      bodyId: firstBranch.id,
+    }
+    const view = render(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={draft}
+        selectedNode={selectedNode}
+        rightPanelInset={412}
+      />
+    )
+
+    flowMocks.setViewport.mockClear()
+    view.rerender(
+      <AutomationWorkflowCanvas
+        {...baseProps}
+        draft={{
+          ...draft,
+          steps: [
+            {
+              ...draft.steps[0],
+              subgraph: {
+                nodes: [
+                  ...draft.steps[0].subgraph.nodes,
+                  {
+                    id: 'branch-2',
+                    nodeType: 'branch',
+                    x: 500,
+                    y: 0,
+                    dependencies: [firstBranch.id],
+                    branchConditions: [],
+                  },
+                ],
+              },
+            },
+          ],
+        }}
+        selectedNode={selectedNode}
+        rightPanelInset={412}
+      />
+    )
+
+    expect(flowMocks.setViewport).toHaveBeenCalledWith(
+      {
+        x: 394 - 1136 * 0.99,
+        y: 400 - 304 * 0.99,
+        zoom: 0.99,
+      },
+      { duration: 240 }
+    )
+  })
+
   test('does not treat a nested selection as deleted when selecting its parent', () => {
     const draft = {
       ...emptyDraft,

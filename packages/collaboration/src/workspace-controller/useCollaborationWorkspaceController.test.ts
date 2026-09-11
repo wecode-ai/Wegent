@@ -206,6 +206,30 @@ describe("collaboration workspace controller", () => {
     expect(state.error).toBeNull();
   });
 
+  it("keeps a successful project catalog when My Work fails", async () => {
+    const api = createApi();
+    api.myWork!.list = vi
+      .fn()
+      .mockRejectedValue(new Error("My Work unavailable"));
+    const { commands, notify } = createController(
+      api,
+      vi.fn(),
+      {
+        parentId: null,
+        pageSize: 100,
+        eager: true,
+      },
+      true,
+    );
+
+    await commands.loadProjects();
+
+    expect(state.projects).toEqual([project]);
+    expect(state.error).toBe("load failed");
+    expect(state.errorSource).toBe("load");
+    expect(notify).toHaveBeenCalledWith("load failed", "error");
+  });
+
   it("does not request or retain My Work when the capability is disabled", async () => {
     const api = createApi();
     api.myWork!.list = vi.fn().mockResolvedValue([

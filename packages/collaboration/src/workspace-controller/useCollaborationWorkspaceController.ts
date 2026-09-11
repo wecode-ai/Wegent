@@ -807,12 +807,16 @@ export function createCollaborationWorkspaceControllerCommands({
       try {
         homeMyWorkLoad =
           myWorkEnabled && api.myWork ? api.myWork.list() : Promise.resolve([]);
-        const [projects, myWork] = await Promise.all([
-          api.projects.list(),
-          homeMyWorkLoad,
-        ]);
+        const myWorkResult = homeMyWorkLoad.then(
+          (items) => ({ status: "fulfilled" as const, items }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        );
+        const projects = await api.projects.list();
         catalogProjects = projects;
         dispatch({ type: "project-catalog-loaded", projects });
+        const myWorkOutcome = await myWorkResult;
+        if (myWorkOutcome.status === "rejected") throw myWorkOutcome.error;
+        const myWork = myWorkOutcome.items;
         const snapshots = preloadHomeSnapshots
           ? await Promise.all(
               projects.map(async (project) => ({

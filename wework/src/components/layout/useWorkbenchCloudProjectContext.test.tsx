@@ -1316,6 +1316,18 @@ describe('useWorkbenchCloudProjectContext', () => {
       },
       fixed: true,
     },
+    {
+      description: 'unresolved fixed collaboration tab',
+      boardTabId: 'fixed-board',
+      boardRoute: '/todo',
+      cloudProject: {
+        ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+        project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+        name: '我的任务',
+        metadata: { system_kind: 'default_work_items' },
+      },
+      fixed: true,
+    },
   ])('reuses the $description when opening a bound work item', async setup => {
     const { boardRoute, boardTabId, cloudProject, fixed } = setup
     const item = loopItem(cloudProject.id)
