@@ -116,10 +116,54 @@ test('merges streamed child content into the canonical persisted subagent projec
   expect(projected).toHaveLength(1)
   expect(projected[0]).toMatchObject({
     id: 'subagent-agent-1',
+    anchorBlockId: 'spawn-1',
     type: 'subagent',
     status: 'streaming',
     children: [{ content: 'Partial child output' }]
   })
+})
+
+test('anchors merged subagent activity at the original spawn block', () => {
+  const projected = projectWorkbenchSubagentActivity([
+    {
+      id: 'spawn-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'spawnAgent',
+      toolInput: { prompt: 'Inspect the stream' },
+      toolOutput: { agentId: 'agent-1' },
+      status: 'done',
+      createdAt: 1
+    },
+    {
+      id: 'assistant-progress',
+      subtaskId: 'turn-1',
+      type: 'text',
+      content: 'Continuing parent work',
+      status: 'streaming',
+      createdAt: 2
+    },
+    {
+      id: 'subagent-agent-1',
+      subtaskId: 'turn-1',
+      type: 'subagent',
+      agentThreadId: 'agent-1',
+      status: 'streaming',
+      createdAt: 3
+    }
+  ])
+
+  expect(projected).toEqual([
+    expect.objectContaining({
+      id: 'subagent-agent-1',
+      anchorBlockId: 'spawn-1',
+      agentThreadId: 'agent-1'
+    }),
+    expect.objectContaining({
+      id: 'assistant-progress',
+      type: 'text'
+    })
+  ])
 })
 
 describe('reduceWorkbenchMessages', () => {
