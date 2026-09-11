@@ -1504,8 +1504,8 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'project-automation-board-hover-running-stop-ready.png')
       await control.command('pointerDown', moonshotPopupPause)
+      await captureScreenshot(control, 'project-automation-board-hover-running-stop-ready.png')
       await control.command('click', moonshotPopupPause, { visible: true })
       const moonshotPopupStoppedNotice = `${moonshotPopupConversation} [data-testid="assistant-stopped-notice"]`
       await control.command('waitFor', moonshotPopupStoppedNotice, {
