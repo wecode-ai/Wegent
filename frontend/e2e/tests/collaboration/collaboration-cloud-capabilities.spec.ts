@@ -375,12 +375,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`cloud-sidebar-project-${project.id}`)).toContainText(
         project.name
       )
-      await expect(
-        page
-          .getByTestId('collaboration-root')
-          .locator('.collaboration-project-summary-title')
-          .filter({ hasText: project.name })
-      ).toBeVisible()
+      await expect(page.getByTestId('cloud-project-header-title')).toContainText(project.name)
       await expect(page.getByTestId('cloud-projects-home-my-work')).toHaveCount(0)
 
       const sidebarProject = page.getByTestId(`cloud-sidebar-project-${project.id}`)

@@ -636,7 +636,10 @@ async function verifyBackgroundCompletionRestore({
     JSON.parse(await control.command('snapshot', 'body')),
     'board'
   )
-  const { boardContentSelector } = await openProjectWorkspaceTab(control, existingBoardTabIds)
+  const { boardContentSelector, boardTabId } = await openProjectWorkspaceTab(
+    control,
+    existingBoardTabIds
+  )
   const myWorkButton = `${boardContentSelector} [data-testid="cloud-my-work"]`
   const myWorkView = `${boardContentSelector} [data-testid="cloud-my-work-view"]`
   await control.command('waitFor', myWorkButton, {
@@ -658,6 +661,8 @@ async function verifyBackgroundCompletionRestore({
     false,
     'My Work revived a completed task from the stale running transcript'
   )
+  await control.command('click', `[data-testid="workspace-tab-close-${boardTabId}"]`)
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

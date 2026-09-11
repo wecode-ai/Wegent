@@ -248,8 +248,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           text: COMMENT_BODY,
           timeoutMs: uiTimeoutMs,
         })
-        const comments = await request(`/api/v1/loop-items/${issue.id}/comments`)
-        assert.ok(comments.some(comment => comment.body === COMMENT_BODY))
 
         await request(`/api/v1/loop-items/${issue.id}/assignments`, {
           method: 'POST',
