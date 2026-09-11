@@ -182,11 +182,17 @@ async fn start_proxy(
         .and_then(Value::as_str)
         .ok_or("TaskToken MCP requires an HTTP URL")?;
     let url = reqwest::Url::parse(url).map_err(|_| "Invalid TaskToken MCP URL")?;
-    if !matches!(url.scheme(), "http" | "https")
-        || !url.username().is_empty()
-        || url.password().is_some()
-    {
-        return Err("TaskToken MCP requires an HTTP URL without embedded credentials".into());
+    let loopback = match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    };
+    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
+        return Err("TaskToken MCP requires HTTPS for non-loopback URLs".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("TaskToken MCP URL must not embed credentials".into());
     }
     let mut headers = HeaderMap::new();
     for (key, value) in server["headers"]

@@ -23,7 +23,7 @@ Wework 插件可使用现有 Wegent TaskToken 识别当前用户和任务，无�
 
 ## 业务服务校验
 
-业务 MCP 将收到的 Bearer Token 原样转交给签发它的 Wegent 后端：
+业务 MCP 仅通过 HTTPS 将收到的 Bearer Token 原样转交给签发它的 Wegent 后端；加入凭证前必须拒绝 HTTP 后端地址：
 
 ```http
 GET /api/external/mcp-identity/userinfo
@@ -55,6 +55,6 @@ Authorization: Bearer <received-task-token>
 - 真实 Token 只保留在 Executor 内存，出站请求时加入 Header，并在临近过期时续签。插件源 MCP 声明和共享能力清单不保存真实 Token。
 - 原生运行时使用任务专属的 loopback MCP 地址。Claude 使用执行专属临时配置；Codex 续聊时更新会话配置。任务结束后关闭该入口。
 - 原生插件缓存中的 manifest 和 Claude 自动加载的 `.mcp.json` 会过滤掉由 Executor 接管的服务，以避免重复加载；缓存内保留带占位符的原始声明，源插件包不变。插件其他组件照常由原生运行时加载。此功能要求使用实际复制的插件缓存，不修改指向源目录的符号链接。
-- 未登录、签发失败或连接被替换时明确失败，不降级为其他凭证。不会自动跟随携带 Token 的服务重定向。
+- 未登录、签发失败或连接被替换时明确失败，不降级为其他凭证。携带 Token 的 MCP 上游必须使用 HTTPS，本机 loopback 开发地址除外；不会自动跟随携带 Token 的服务重定向。
 
 部署时先更新后端，再更新 Executor/桌面。无需数据库迁移。桌面回归位于现有 `plugin-task-token` checkpoint，覆盖 Claude/Codex、本机/远程、续聊身份和业务按任务拒绝访问。

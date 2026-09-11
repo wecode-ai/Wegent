@@ -4,6 +4,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Mutex as StdMutex,
 };
+use tokio::sync::Barrier;
 
 type TestFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>>;
@@ -36,6 +37,108 @@ impl LocalBackendTransport for Transport {
     fn on(&self, _: &str, _: EventHandler) {
         panic!("no subscriptions")
     }
+}
+
+#[derive(Clone)]
+struct ConcurrentTransport {
+    barrier: Arc<Barrier>,
+}
+
+impl LocalBackendTransport for ConcurrentTransport {
+    fn connect<'a>(&'a self, _: &'a LocalBackendConfig) -> TestFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn disconnect<'a>(&'a self) -> TestFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn call<'a>(&'a self, _: &'a str, payload: Value, _: Duration) -> TestFuture<'a, Value> {
+        let barrier = self.barrier.clone();
+        Box::pin(async move {
+            barrier.wait().await;
+            Ok(json!({
+                "success": true,
+                "auth_token": format!("task-{}", payload["task_id"].as_str().unwrap()),
+                "expires_in": 86400
+            }))
+        })
+    }
+    fn emit<'a>(&'a self, _: &'a str, _: Value) -> TestFuture<'a, ()> {
+        panic!("no broadcast")
+    }
+    fn on(&self, _: &str, _: EventHandler) {
+        panic!("no subscriptions")
+    }
+}
+
+#[tokio::test]
+async fn issuer_exchanges_distinct_executions_concurrently() {
+    let registration = issuer::spawn(
+        ConcurrentTransport {
+            barrier: Arc::new(Barrier::new(2)),
+        },
+        Arc::new(AtomicBool::new(true)),
+    );
+
+    let issued = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(
+            registration.issuer.issue("first"),
+            registration.issuer.issue("second")
+        )
+    })
+    .await
+    .expect("independent exchanges should not block the issuer queue");
+
+    assert_eq!(issued.0.unwrap().value, "task-first");
+    assert_eq!(issued.1.unwrap().value, "task-second");
+}
+
+#[tokio::test]
+async fn task_token_upstreams_require_https_except_for_loopback() {
+    let registration = issuer::spawn(
+        Transport {
+            calls: Arc::new(AtomicUsize::new(0)),
+        },
+        Arc::new(AtomicBool::new(true)),
+    );
+    let request = ExecutionRequest {
+        task_id: "secure".into(),
+        ..Default::default()
+    };
+    let server = |url: &str| {
+        BTreeMap::from([(
+            "business".into(),
+            json!({
+                "url": url,
+                "headers": {"Authorization": "Bearer ${{task_token}}"}
+            }),
+        )])
+    };
+
+    let error = match prepare_servers(
+        &request,
+        server("http://business.example/mcp"),
+        Ok(registration.issuer.clone()),
+    )
+    .await
+    {
+        Ok(_) => panic!("non-loopback HTTP should be rejected"),
+        Err(error) => error,
+    };
+    assert!(error.contains("requires HTTPS"));
+    assert!(prepare_servers(
+        &request,
+        server("http://localhost:3000/mcp"),
+        Ok(registration.issuer.clone()),
+    )
+    .await
+    .is_ok());
+    assert!(prepare_servers(
+        &request,
+        server("https://business.example/mcp"),
+        Ok(registration.issuer.clone()),
+    )
+    .await
+    .is_ok());
 }
 
 #[tokio::test]

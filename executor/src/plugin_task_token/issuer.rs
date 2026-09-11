@@ -8,6 +8,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
 
 pub(super) struct Token {
     pub value: String,
@@ -70,14 +71,29 @@ pub(super) fn spawn<T: LocalBackendTransport>(
     let (sender, mut requests) = mpsc::channel::<Request>(32);
     let issuer = Issuer(sender, Arc::new(AtomicBool::new(true)));
     let worker = tokio::spawn(async move {
-        while let Some(request) = requests.recv().await {
-            let result = if connected.load(Ordering::Acquire) {
-                exchange(&transport, &request.task_id).await
-            } else {
-                Err("Plugin TaskToken requires a connected Wegent account".into())
-            };
-            let _ = request.reply.send(result);
+        let mut exchanges = JoinSet::new();
+        loop {
+            tokio::select! {
+                request = requests.recv() => {
+                    let Some(request) = request else {
+                        break;
+                    };
+                    if !connected.load(Ordering::Acquire) {
+                        let _ = request.reply.send(Err(
+                            "Plugin TaskToken requires a connected Wegent account".into(),
+                        ));
+                        continue;
+                    }
+                    let transport = transport.clone();
+                    exchanges.spawn(async move {
+                        let result = exchange(&transport, &request.task_id).await;
+                        let _ = request.reply.send(result);
+                    });
+                }
+                Some(_) = exchanges.join_next(), if !exchanges.is_empty() => {}
+            }
         }
+        while exchanges.join_next().await.is_some() {}
     });
     Registration { issuer, worker }
 }
