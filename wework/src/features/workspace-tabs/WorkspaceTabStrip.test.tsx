@@ -26,7 +26,7 @@ vi.mock('@/api/local/harnessApps', () => ({
 
 const labels = {
   task: '任务',
-  board: '项目空间',
+  board: '协作',
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
@@ -97,7 +97,7 @@ describe('WorkspaceTabStrip', () => {
         .map(tab => tab.textContent)
     ).toEqual([
       expect.stringContaining('任务'),
-      expect.stringContaining('项目空间'),
+      expect.stringContaining('协作'),
       expect.stringContaining('智能体'),
     ])
 
@@ -106,7 +106,7 @@ describe('WorkspaceTabStrip', () => {
 
     expect(within(tablist).getAllByRole('tab')).toHaveLength(4)
     const activeBoardTab = within(tablist)
-      .getAllByRole('tab', { name: '项目空间' })
+      .getAllByRole('tab', { name: '协作' })
       .find(tab => tab.getAttribute('aria-selected') === 'true')
     expect(activeBoardTab).toBeDefined()
     expect(activeBoardTab?.parentElement).toHaveClass('bg-white/55', 'rounded-md')
@@ -128,7 +128,7 @@ describe('WorkspaceTabStrip', () => {
       'true'
     )
     expect(window.location.pathname).toBe('/todo')
-    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('default-work-items')
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBeNull()
     expect(screen.queryByTestId('workspace-tab-close-fixed-board')).not.toBeInTheDocument()
 
     fireEvent.keyDown(window, { key: 'w', metaKey: true })
@@ -159,6 +159,20 @@ describe('WorkspaceTabStrip', () => {
     expect(new URLSearchParams(window.location.search).get('projectId')).toBe('project-1')
   })
 
+  test('keeps the selected project when returning to an inactive fixed project-space tab', async () => {
+    const user = userEvent.setup()
+    renderStrip('', undefined, '/', true, '/todo?projectStore=local&projectId=default-work-items')
+
+    await user.click(screen.getByTestId('workspace-tab-select-fixed-board'))
+
+    expect(screen.getByTestId('workspace-tab-select-fixed-board')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(new URLSearchParams(window.location.search).get('projectStore')).toBe('local')
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('default-work-items')
+  })
+
   test('hides the project-space tab and add action when board is not available', async () => {
     const user = userEvent.setup()
     renderStrip('', ['task', 'agent', 'auxiliary'] satisfies WorkspaceTabKind[])
@@ -169,7 +183,7 @@ describe('WorkspaceTabStrip', () => {
         .getAllByRole('tab')
         .map(tab => tab.textContent)
     ).toEqual([expect.stringContaining('任务'), expect.stringContaining('智能体')])
-    expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '协作' })).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('workspace-tab-add'))
     expect(screen.getByTestId('workspace-tab-add-menu')).toBeInTheDocument()
@@ -296,7 +310,7 @@ describe('WorkspaceTabStrip', () => {
 
     const tablist = screen.getByTestId('workspace-tab-strip')
     await waitFor(() => {
-      expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('tab', { name: '协作' })).not.toBeInTheDocument()
       expect(within(tablist).getAllByRole('tab')).toHaveLength(1)
     })
     expect(within(tablist).getByRole('tab', { name: '任务' })).toHaveAttribute(
@@ -312,7 +326,7 @@ describe('WorkspaceTabStrip', () => {
     await user.click(screen.getByTestId('workspace-tab-add'))
     await user.click(screen.getByTestId('workspace-tab-add-board'))
     const openedTab = screen
-      .getAllByRole('tab', { name: '项目空间' })
+      .getAllByRole('tab', { name: '协作' })
       .find(tab => tab.getAttribute('aria-selected') === 'true')?.parentElement
     expect(openedTab).toBeDefined()
     fireEvent.keyDown(window, { key: 'w', metaKey: true })
@@ -377,7 +391,7 @@ describe('WorkspaceTabStrip', () => {
     await user.click(screen.getByTestId('workspace-tab-add-board'))
 
     const taskTab = screen.getByRole('tab', { name: '任务' })
-    const boardTab = screen.getAllByRole('tab', { name: '项目空间' })[0]
+    const boardTab = screen.getAllByRole('tab', { name: '协作' })[0]
     const dataTransfer = {
       effectAllowed: 'none',
       setData: vi.fn(),
@@ -388,10 +402,10 @@ describe('WorkspaceTabStrip', () => {
 
     expect(dataTransfer.getData).not.toHaveBeenCalled()
     expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
-      expect.stringContaining('项目空间'),
+      expect.stringContaining('协作'),
       expect.stringContaining('任务'),
       expect.stringContaining('智能体'),
-      expect.stringContaining('项目空间'),
+      expect.stringContaining('协作'),
     ])
   })
 

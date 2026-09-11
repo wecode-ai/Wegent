@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { mergeProjectPluginCatalogs } from '@wegent/collaboration'
 import type { InstalledPlugin } from '@/types/api'
-import { buildProjectPluginCatalog, mergeProjectPluginCatalogs } from './projectPluginCatalog'
+import { buildProjectPluginCatalog } from './projectPluginCatalog'
 
 function installedPlugin(
   pluginName: string,
@@ -91,6 +92,22 @@ describe('projectPluginCatalog', () => {
         pluginName: 'gmail',
         marketplaceId: 'openai',
         displayName: 'Gmail',
+      },
+    ])
+  })
+
+  it('keeps upload plugins by falling back to provider identity', () => {
+    const plugin = installedPlugin('local-tools', 'codex-local')
+    plugin.spec.source.type = 'upload'
+    plugin.spec.source.marketplace = null
+    plugin.spec.source.catalogItemId = null
+
+    expect(buildProjectPluginCatalog([plugin])).toEqual([
+      {
+        id: 'local-tools@codex-local',
+        pluginName: 'local-tools',
+        marketplaceId: 'codex-local',
+        displayName: 'local-tools',
       },
     ])
   })

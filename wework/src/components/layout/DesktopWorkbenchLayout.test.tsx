@@ -26,6 +26,7 @@ import type {
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   WorkspaceTabsContext,
   type WorkspaceTabsContextValue,
@@ -81,6 +82,35 @@ const deliveryApiMock = vi.hoisted(() => ({
   findCloudContextForTask: vi.fn(),
   trackProjectTask: vi.fn(),
 }))
+const sharedWorkspaceApiMock = {
+  projects: {
+    async list() {
+      const response = await deliveryApiMock.listCloudProjects()
+      return response.items.map(project => ({ ...project, id: String(project.id) }))
+    },
+    async get(projectId: string) {
+      const response = await deliveryApiMock.listCloudProjects()
+      const project = response.items.find(candidate => String(candidate.id) === projectId)
+      if (!project) throw new Error(`Project ${projectId} was not found`)
+      return { ...project, id: String(project.id) }
+    },
+  },
+  issues: {
+    async getBoardSnapshot(projectId: string) {
+      const response = await deliveryApiMock.listLoopItems(projectId)
+      return {
+        items: response.items.map(item => ({
+          ...item,
+          id: String(item.id),
+          cloud_project_id: String(item.cloud_project_id),
+        })),
+        taskBindings: [],
+        members: [],
+        agents: [],
+      }
+    },
+  },
+} as unknown as SharedWorkspaceApi
 const embeddedBrowserMocks = vi.hoisted(() => ({
   closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
@@ -1267,6 +1297,7 @@ describe('DesktopWorkbenchLayout', () => {
                 findCloudContextForTask: deliveryApiMock.findCloudContextForTask,
                 trackProjectTask: deliveryApiMock.trackProjectTask,
               },
+              sharedWorkspaceApi: sharedWorkspaceApiMock,
             }
           : {}),
         attachmentApi: {
@@ -1679,6 +1710,7 @@ describe('DesktopWorkbenchLayout', () => {
       task_provider: 'local',
       provider_config: {},
       created_by_user_id: 1,
+      access_role: 'Owner',
       status: 'active',
       tags: [],
       version: 1,

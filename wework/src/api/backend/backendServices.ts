@@ -20,12 +20,16 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
+import { buildInstalledPluginProjectCatalog } from '@wegent/collaboration'
 import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import { createProjectAutomationApi } from '@/api/projectAutomations'
 import { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 import { createPluginApi } from '@/api/plugins'
-import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
+import {
+  createWeworkSharedWorkspaceApi,
+  createWeworkWorkspaceRuntimePort,
+} from '@/features/collaboration'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
@@ -79,11 +83,20 @@ export function createBackendWorkbenchServices(
   const projectAutomationApi = createProjectAutomationApi(client)
   const runtimeProfileApi = createRuntimeProfileApi(client)
   const projectIncomingHookApi = createProjectIncomingHookApi(client)
+  const sharedWorkspaceApi = createWeworkSharedWorkspaceApi({
+    client,
+    deliveryApi,
+    projectAutomationApi,
+    projectIncomingHookApi,
+    runtimeProfileApi,
+    projectChatAgentApi,
+  })
+  const workspaceRuntimePort = createWeworkWorkspaceRuntimePort(deliveryApi, projectAutomationApi)
   const cloudPluginApi = createPluginApi(client, apiBaseUrl)
   const pluginApi = {
     async listPlugins(deviceId: string) {
       const response = await cloudPluginApi.listInstalledPlugins(deviceId)
-      return buildProjectPluginCatalog(response.items)
+      return buildInstalledPluginProjectCatalog(response.items)
     },
   }
 
@@ -96,6 +109,8 @@ export function createBackendWorkbenchServices(
     taskApi,
     deviceApi,
     deliveryApi,
+    sharedWorkspaceApi,
+    workspaceRuntimePort,
     feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl) : undefined,
     projectSpaceApis: {
       cloud: deliveryApi,

@@ -6,7 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   createWorkflowDeliverableRequirement,
   workflowDeliverableTypeLabel,
-} from './workflowDeliverables'
+} from '@wegent/collaboration'
 
 interface WorkflowDeliverableRequirementsDialogProps {
   requirements: DeliverableRequirement[]

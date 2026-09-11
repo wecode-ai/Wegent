@@ -1,5 +1,9 @@
 {
   "title": "待办",
+  "legacy_notice": {
+    "description": "这是旧版待办。新的项目与 Issue 请在“协作”中管理。",
+    "open_collaboration": "前往协作"
+  },
   "page_title": "工作队列",
   "empty": "暂无消息",
   "empty_description": "收到的转发消息将显示在这里",
@@ -148,6 +152,20 @@
     "select_messages": "选择消息",
     "select_all": "全选",
     "deselect_all": "取消全选"
+  },
+  "collaboration": {
+    "title": "发送到协作",
+    "project": "协作项目",
+    "new_issue": "新建 Issue",
+    "existing_issue": "追加到已有 Issue",
+    "issue_title": "Issue 标题",
+    "issue": "目标 Issue",
+    "note": "备注",
+    "cancel": "取消",
+    "send": "发送",
+    "sending": "发送中…",
+    "success": "消息已发送到协作",
+    "failed": "发送到协作失败"
   },
   "settings": {
     "title": "队列设置",

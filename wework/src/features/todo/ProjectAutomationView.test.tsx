@@ -4,9 +4,31 @@ import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { AutomationRulesView } from './AutomationRulesView.jsx'
+import {
+  AutomationRulesView as SharedAutomationRulesView,
+  AutomationUiHostProvider,
+} from '@wegent/collaboration/automation-ui'
+import { PopupMenu } from '@/components/common/MenuSelect'
+import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { EventSubscriptionPicker } from './EventSubscriptionManager'
 import { automationRuleFromBackend } from './automationRuleBackend'
 import { ProjectAutomationView } from './ProjectAutomationView'
+
+const automationUiHost = {
+  useTranslation,
+  PopupMenu,
+  Tooltip,
+  EventSubscriptionPicker,
+}
+
+function AutomationRulesView(props: React.ComponentProps<typeof SharedAutomationRulesView>) {
+  return (
+    <AutomationUiHostProvider host={automationUiHost}>
+      <SharedAutomationRulesView {...props} />
+    </AutomationUiHostProvider>
+  )
+}
 
 const localExecutorMocks = vi.hoisted(() => ({
   getLocalExecutorStatus: vi.fn(),
@@ -268,11 +290,12 @@ function renderView({
       },
     ]),
   }
+  const deliveryApi = {} as NonNullable<WorkbenchServices['deliveryApi']>
   const projectAutomationView = (
     updatedCallback: ((project: CloudProject) => void) | undefined = onProjectUpdated
   ) => (
     <ProjectAutomationView
-      api={{} as NonNullable<WorkbenchServices['deliveryApi']>}
+      api={deliveryApi}
       project={viewProject}
       projectAutomationApi={projectAutomationApi}
       projectIncomingHookApi={incomingHookApi}
