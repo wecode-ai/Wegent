@@ -15,14 +15,15 @@ $passwordText = [Convert]::ToBase64String(
 $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
 $credential = [PSCredential]::new("$env:COMPUTERNAME\$userName", $password)
 $workspace = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
-$profileRoot = Join-Path $workspace "wework/test-results/windows-standard-user"
+$userSid = $null
 
 try {
-  New-LocalUser `
+  $user = New-LocalUser `
     -Name $userName `
     -Password $password `
     -AccountNeverExpires `
-    -PasswordNeverExpires | Out-Null
+    -PasswordNeverExpires
+  $userSid = $user.SID.Value
   Add-LocalGroupMember -Group "Users" -Member $userName
 
   if (
@@ -32,11 +33,28 @@ try {
     throw "The Windows E2E account unexpectedly has administrator membership"
   }
 
-  New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
   & icacls.exe $workspace /grant "${env:COMPUTERNAME}\${userName}:(OI)(CI)M" /Q
   if ($LASTEXITCODE -ne 0) {
     throw "Failed to grant the Windows E2E account access to the workspace"
   }
+
+  $profileBootstrap = Start-Process `
+    -FilePath $env:ComSpec `
+    -ArgumentList "/d", "/c", "exit", "0" `
+    -Credential $credential `
+    -LoadUserProfile `
+    -NoNewWindow `
+    -Wait `
+    -PassThru
+  if ($profileBootstrap.ExitCode -ne 0) {
+    throw "Failed to initialize the Windows E2E account profile"
+  }
+  $profile = Get-CimInstance -ClassName Win32_UserProfile |
+    Where-Object { $_.SID -eq $userSid }
+  if (-not $profile -or -not $profile.LocalPath) {
+    throw "The Windows E2E account profile was not created"
+  }
+  $profileRoot = $profile.LocalPath
 
   $env:USERNAME = $userName
   $env:USERPROFILE = $profileRoot
@@ -55,11 +73,17 @@ try {
     -FilePath (Resolve-Path -LiteralPath $FilePath).Path `
     -ArgumentList $ArgumentList `
     -Credential $credential `
+    -LoadUserProfile `
     -WorkingDirectory $workspace `
     -NoNewWindow `
     -Wait `
     -PassThru
   exit $process.ExitCode
 } finally {
+  if ($userSid) {
+    Get-CimInstance -ClassName Win32_UserProfile -ErrorAction SilentlyContinue |
+      Where-Object { $_.SID -eq $userSid } |
+      Remove-CimInstance -ErrorAction SilentlyContinue
+  }
   Remove-LocalUser -Name $userName -ErrorAction SilentlyContinue
 }
