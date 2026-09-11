@@ -16,7 +16,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
     event,
     inspect,
     or_,
@@ -136,7 +135,6 @@ class LoopNode(Base):
     content_type = Column(String(255), nullable=True)
     size_bytes = Column(big_integer_id_type(), nullable=True)
     sha256 = Column(String(64), nullable=True)
-    source_context_id = Column(big_integer_id_type(), nullable=True)
     source_task_binding_id = Column(String(64), nullable=True)
     source_task_snapshot = Column(JSON, nullable=True)
     markdown_object_key = Column(String(1024), nullable=True)
@@ -158,11 +156,6 @@ class LoopNode(Base):
         Index("idx_loop_items_parent_type", "parent_id", "resource_type", "sort_order"),
         Index("idx_loop_items_project_path", "cloud_project_id", "path"),
         Index("idx_loop_items_assignee_agent_id", "assignee_agent_id"),
-        UniqueConstraint(
-            "loop_item_id",
-            "source_context_id",
-            name="uniq_loop_item_attachment_source_context",
-        ),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
