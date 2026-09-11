@@ -27,6 +27,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral,
     collapseComposerWhenIdle,
     runtimeContext,
+    initialScrollPosition,
     scrollOrigin,
   }: {
     initialAddress: {
@@ -38,6 +39,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     sendEphemeral: boolean
     collapseComposerWhenIdle: boolean
     runtimeContext?: { cloudProjectId?: string }
+    initialScrollPosition?: 'restore' | 'latest'
     scrollOrigin?: 'top' | 'bottom'
   }) => (
     <section
@@ -48,6 +50,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-collapse-composer={String(collapseComposerWhenIdle)}
       data-cloud-project-id={runtimeContext?.cloudProjectId}
       data-model-name={initialAddress.runtimeHandle?.modelSelection?.modelName}
+      data-initial-scroll-position={initialScrollPosition}
       data-scroll-origin={scrollOrigin}
     >
       Shared task conversation
@@ -506,6 +509,7 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-send-ephemeral', 'false')
     expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
     expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
+    expect(conversation).toHaveAttribute('data-initial-scroll-position', 'latest')
     expect(conversation).toHaveAttribute('data-scroll-origin', 'bottom')
   })
 

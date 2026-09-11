@@ -29,7 +29,7 @@ interface EnvironmentInfoPopoverProps {
   docked?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
-  floatingFooter?: ReactNode
+  footer?: ReactNode
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
   onCommitChanges?: (message: string) => Promise<void>
@@ -84,7 +84,7 @@ export function EnvironmentInfoPopover({
   docked = true,
   open,
   onOpenChange,
-  floatingFooter,
+  footer,
   devices = [],
   onRefresh,
   onCommitChanges,
@@ -280,10 +280,7 @@ export function EnvironmentInfoPopover({
                 )}
               </div>
             )}
-
-            {!docked && floatingFooter && (
-              <div className="mt-3 border-t border-border pt-3">{floatingFooter}</div>
-            )}
+            {footer && <div className="mt-3 border-t border-border pt-3">{footer}</div>}
           </div>,
           popoverPortalContainer
         )}

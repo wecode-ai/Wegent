@@ -1,5 +1,6 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { defaultRangeExtractor } from '@tanstack/react-virtual'
+import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
   CSSProperties,
@@ -37,6 +38,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ProcessingBlock,
   RuntimeAssistantDisplayItem,
+  SubagentBlock,
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
@@ -124,6 +126,7 @@ interface MessageListProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onOpenSubagent?: (block: SubagentBlock) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
@@ -221,6 +224,7 @@ export const MessageList = memo(function MessageList({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onOpenSubagent,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
   onForkMessage,
@@ -636,6 +640,7 @@ export const MessageList = memo(function MessageList({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                onOpenSubagent={onOpenSubagent}
                 onLoadFullTranscript={onLoadFullTranscript}
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
@@ -762,6 +767,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onRequestUserInputIgnore'
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.onOpenSubagent !== next.onOpenSubagent ? 'onOpenSubagent' : null,
     previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
@@ -1898,19 +1904,23 @@ function getDisplayProcessingBlocks(
 ): ProcessingBlock[] {
   if (!blocks?.length) return []
 
-  return blocks
-    .map(block =>
-      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
-        ? { ...block, status: 'done' as const }
-        : block
-    )
-    .filter(block => {
-      if (block.type === 'thinking') return false
-      if (block.type !== 'text') return true
+  return nestWorkbenchProcessingBlocks(
+    projectWorkbenchSubagentActivity(
+      blocks
+        .map(block =>
+          settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
+            ? { ...block, status: 'done' as const }
+            : block
+        )
+        .filter(block => {
+          if (block.type === 'thinking') return false
+          if (block.type !== 'text') return true
 
-      const content = block.content.trim()
-      return Boolean(content) && content !== finalContent.trim()
-    })
+          const content = block.content.trim()
+          return Boolean(content) && content !== finalContent.trim()
+        })
+    )
+  )
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1934,6 +1944,7 @@ export function AssistantMessage({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onOpenSubagent,
   onLoadFullTranscript,
   loadingFullTranscript,
   hideRequestUserInputBlocks,
@@ -1965,6 +1976,7 @@ export function AssistantMessage({
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onOpenSubagent?: (block: SubagentBlock) => void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
@@ -2089,6 +2101,7 @@ export function AssistantMessage({
           onRequestUserInputSubmit={onRequestUserInputSubmit}
           onRequestUserInputIgnore={onRequestUserInputIgnore}
           onOpenAssistantPlan={onOpenAssistantPlan}
+          onOpenSubagent={onOpenSubagent}
           onLoadFullTranscript={onLoadFullTranscript}
           loadingFullTranscript={loadingFullTranscript}
           hideRequestUserInputBlocks={hideRequestUserInputBlocks}
@@ -2146,6 +2159,7 @@ export function AssistantMessage({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                onOpenSubagent={onOpenSubagent}
                 onLoadFullTranscript={onLoadFullTranscript}
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}

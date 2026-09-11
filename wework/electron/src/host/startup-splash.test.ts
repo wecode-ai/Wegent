@@ -141,6 +141,8 @@ describe('StartupSplash', () => {
     expect(script).toContain("runRecoveryAction('retry')")
     expect(script).toContain("showConfirmation('recover')")
     expect(script).toContain("showConfirmation('resetAppState')")
+    expect(script).toContain("runRecoveryAction('disablePlugin', failedPluginName)")
+    expect(script).toContain('屏蔽 ${failedPluginName} 并重启')
     expect(script).toMatch(
       /requestAnimationFrame\(\(\) => \{\s+requestAnimationFrame\(\(\) => \{\s+document\.documentElement\.dataset\.animationReady = 'true'/
     )
@@ -245,6 +247,17 @@ describe('StartupSplash', () => {
 
     expect(target.webContents.executeJavaScript).toHaveBeenLastCalledWith(
       expect.stringContaining('wework-startup-error')
+    )
+  })
+
+  test('includes the failed plugin in the startup error event', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+
+    await splash.showError('@wegent/ai-fleet-defense')
+
+    expect(target.webContents.executeJavaScript).toHaveBeenLastCalledWith(
+      expect.stringContaining('"@wegent/ai-fleet-defense"')
     )
   })
 

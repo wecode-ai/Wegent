@@ -60,7 +60,7 @@ interface WorkspacePanelActionsProps {
   environmentInfoDocked?: boolean
   environmentInfoOpen: boolean
   onEnvironmentInfoOpenChange: (open: boolean) => void
-  environmentInfoFloatingFooter?: ReactNode
+  environmentInfoFooter?: ReactNode
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
   onCommitAndPushEnvironmentChanges: (message: string) => Promise<void>
@@ -100,7 +100,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   environmentInfoDocked = true,
   environmentInfoOpen,
   onEnvironmentInfoOpenChange,
-  environmentInfoFloatingFooter,
+  environmentInfoFooter,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
   onCommitAndPushEnvironmentChanges,
@@ -322,7 +322,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           docked={environmentInfoDocked}
           open={environmentInfoOpen}
           onOpenChange={onEnvironmentInfoOpenChange}
-          floatingFooter={environmentInfoFloatingFooter}
+          footer={environmentInfoFooter}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
           onCommitChanges={onCommitEnvironmentChanges}
