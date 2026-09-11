@@ -368,7 +368,12 @@ def upgrade() -> None:
         )
     op.add_column(
         "loop_item_executions",
-        sa.Column("workspace_id", bigint, nullable=True),
+        sa.Column(
+            "workspace_id",
+            bigint,
+            nullable=False,
+            server_default="0",
+        ),
     )
     op.create_index(
         "idx_exec_workspace_status",

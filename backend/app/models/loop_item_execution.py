@@ -40,8 +40,10 @@ class LoopItemExecution(Base):
     cloud_project_id = Column(String(64), nullable=False, default="", server_default="")
     workspace_id = Column(
         big_integer_id_type(),
-        nullable=True,
-        comment="Owning collaboration Workspace; derived from the Project",
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Owning collaboration Workspace; 0 means no Workspace",
     )
     executor_owner_user_id = Column(
         Integer, nullable=False, default=0, server_default="0"
@@ -286,3 +288,5 @@ def _adapt_optional_execution_ids(
         target.team_id = 0
     if target.backend_task_id is None:
         target.backend_task_id = 0
+    if target.workspace_id is None:
+        target.workspace_id = 0

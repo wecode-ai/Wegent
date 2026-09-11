@@ -5,11 +5,10 @@
 """Schemas for shared cloud projects and local execution bindings."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     field_validator,
@@ -20,8 +19,8 @@ from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
+from app.schemas.types import SnowflakeId
 
-SnowflakeId = Annotated[str, BeforeValidator(str)]
 TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
 ProjectVisibility = Literal["private", "public"]
 

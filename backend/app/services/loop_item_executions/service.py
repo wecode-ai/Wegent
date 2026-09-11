@@ -895,7 +895,7 @@ class LoopItemExecutionService:
         row = LoopItemExecution(
             loop_item_id=loop_item_id,
             cloud_project_id=cloud_project_id,
-            workspace_id=project.workspace_id if project is not None else None,
+            workspace_id=project.workspace_id if project is not None else 0,
             executor_owner_user_id=owner_user_id,
             agent_id=agent_id,
             team_id=team_id,

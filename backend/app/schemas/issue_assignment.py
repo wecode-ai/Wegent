@@ -4,13 +4,13 @@
 """Schemas for non-exclusive Issue assignments."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, Field
 
 from app.schemas.delivery import LoopItemCommentResponse, LoopItemResponse
+from app.schemas.types import SnowflakeId
 
-SnowflakeId = Annotated[str, BeforeValidator(str)]
 AssignmentTrigger = Literal[
     "manual",
     "rule",

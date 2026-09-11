@@ -4,13 +4,13 @@
 """Schemas for collaboration Workspaces and shared capabilities."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.base_role import BaseRole
+from app.schemas.types import SnowflakeId
 
-SnowflakeId = Annotated[str, BeforeValidator(str)]
 ResourceOwnerType = Literal["user", "workspace"]
 
 

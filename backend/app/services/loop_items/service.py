@@ -1757,7 +1757,6 @@ class LoopItemService:
                 or automation_context is not None
                 or values.notify_self
             )
-            and assignment_created
             and previous_assignee_user_id != target_user_id
         ):
             assigner = db.get(User, user_id)
