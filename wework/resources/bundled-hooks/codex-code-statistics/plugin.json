@@ -3,5 +3,6 @@
   "id": "codex-code-statistics",
   "name": "Codex code statistics",
   "description": "Reports authenticated Codex file changes using the wecode CLI contract.",
-  "version": "3.0.1"
+  "version": "3.0.1",
+  "subscriptions": ["codex_rollout"]
 }
