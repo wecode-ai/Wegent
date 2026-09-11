@@ -88,8 +88,14 @@ fn declarations(root: &Path, claude: bool) -> Result<Map<String, Value>, String>
     let source_path = root.join(format!(".wegent-task-mcp-source-{runtime}.json"));
     let native = format!("./.wegent-native-mcp-{runtime}.json");
     let manifest = read(&path)?;
-    let source = if manifest["mcpServers"].as_str() == Some(&native) {
-        read(&source_path)?
+    let migrated = manifest["mcpServers"].as_str() == Some(&native);
+    let source = if migrated {
+        // An upgraded Executor may find a runtime cache that was materialized
+        // by an older release. The runtime cache is not authoritative; fall
+        // back to the unmodified default source while rebuilding the snapshot.
+        read(&source_path).or_else(|_| {
+            default_source(root, runtime).map(|servers| json!({"mcpServers": servers}))
+        })?
     } else {
         manifest.get("mcpServers").cloned().unwrap_or_else(|| {
             if root.join(".mcp.json").is_file() {
@@ -100,12 +106,39 @@ fn declarations(root: &Path, claude: bool) -> Result<Map<String, Value>, String>
         })
     };
     let mut all = if claude && root.join(".mcp.json").is_file() {
-        servers(root, &json!("./.mcp.json"))?
+        default_source(root, runtime)?
     } else {
         Map::new()
     };
     all.extend(servers(root, &source)?);
     Ok(all)
+}
+
+fn default_source(root: &Path, runtime: &str) -> Result<Map<String, Value>, String> {
+    let default_path = root.join(".mcp.json");
+    if default_path.is_file() {
+        servers(root, &json!("./.mcp.json"))
+    } else {
+        let native_path = root.join(format!(".wegent-native-mcp-{runtime}.json"));
+        let path = if root.join(DEFAULT_SOURCE).is_file() {
+            root.join(DEFAULT_SOURCE)
+        } else {
+            native_path
+        };
+        read(&path)
+            .and_then(|value| {
+                value
+                    .get("mcpServers")
+                    .cloned()
+                    .ok_or_else(|| "Invalid plugin MCP server map".into())
+            })
+            .and_then(|value| {
+                value
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| "Invalid plugin MCP server map".into())
+            })
+    }
 }
 
 pub(crate) fn requires_native_proxy(root: &Path, claude: bool) -> Result<bool, String> {
