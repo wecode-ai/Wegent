@@ -1,129 +1,99 @@
-import { describe, expect, it } from 'vitest'
-import {
-  finalAssistantMessagesText,
-  finalAssistantMessagesPreview,
-  finalAssistantTranscriptText,
-  finalAssistantTranscriptPreview,
-} from './runtimeTaskResponsePreview'
+import { describe, expect, test } from 'vitest'
+import type { RuntimeConversationTurn } from '@/types/workbench'
+import { getRuntimeTaskResponsePreview } from './runtimeTaskResponsePreview'
 
 describe('runtimeTaskResponsePreview', () => {
-  it('uses the latest non-empty assistant response when a trailing placeholder is empty', () => {
-    expect(
-      finalAssistantMessagesPreview([
-        {
-          role: 'assistant',
-          content: '第一行\n第二行\n第三行\n第四行',
-        },
-        {
-          role: 'assistant',
-          content: '',
-        },
-      ])
-    ).toBe('第四行')
-  })
-
-  test('keeps the full final assistant response for expanded progress details', () => {
-    const messages = [
+  test('reads only the latest response line from canonical turns', () => {
+    const turns: RuntimeConversationTurn[] = [
       {
-        role: 'assistant',
-        content: '第一行\n第二行\n第三行\n第四行',
+        id: 'turn-1',
+        status: 'streaming',
+        items: [
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'functions.apply_patch',
+              toolInput: { patch: 'x'.repeat(100_000) },
+              status: 'done',
+              createdAt: 1,
+            },
+          },
+          {
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'older response line\nlatest response line',
+            createdAt: '2026-09-11T00:00:00Z',
+          },
+        ],
       },
     ]
 
-    expect(finalAssistantMessagesText(messages)).toBe('第一行\n第二行\n第三行\n第四行')
-    expect(
-      finalAssistantTranscriptText({
-        messages: [],
-        turns: [
-          {
-            items: [
-              {
-                type: 'assistant_text',
-                content: '第一行\n第二行\n第三行\n第四行',
-              },
-            ],
-          },
-        ],
-      })
-    ).toBe('第一行\n第二行\n第三行\n第四行')
+    expect(getRuntimeTaskResponsePreview(turns, true)).toBe('latest response line')
   })
 
-  it('falls back to canonical assistant turn items', () => {
-    expect(
-      finalAssistantTranscriptPreview({
-        messages: [],
-        turns: [
+  test('does not fall back to an older turn while the latest turn is active', () => {
+    const turns: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
           {
-            items: [
-              {
-                type: 'assistant_text',
-                content: '完成修复\n测试通过',
-              },
-            ],
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'older response',
+            createdAt: '2026-09-11T00:00:00Z',
           },
         ],
-      })
-    ).toBe('测试通过')
+      },
+      {
+        id: 'turn-2',
+        status: 'streaming',
+        items: [
+          {
+            id: 'tool-2',
+            type: 'block',
+            block: {
+              id: 'tool-2',
+              subtaskId: 'turn-2',
+              type: 'tool',
+              toolName: 'functions.exec_command',
+              status: 'streaming',
+              createdAt: 2,
+            },
+          },
+        ],
+      },
+    ]
+
+    expect(getRuntimeTaskResponsePreview(turns, true)).toBe('')
   })
 
-  it('uses the final response from the latest turn instead of an older message', () => {
-    expect(
-      finalAssistantTranscriptText({
-        messages: [
+  test('uses the latest completed text block when there is no assistant text item', () => {
+    const turns: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
           {
-            role: 'assistant',
-            content: '几轮之前的 final content',
+            id: 'text-1',
+            type: 'block',
+            block: {
+              id: 'text-1',
+              subtaskId: 'turn-1',
+              type: 'text',
+              content: 'completed response',
+              status: 'done',
+              createdAt: 1,
+            },
           },
         ],
-        turns: [
-          {
-            items: [
-              {
-                type: 'assistant_text',
-                content: '旧一轮回复',
-              },
-            ],
-          },
-          {
-            items: [
-              {
-                type: 'assistant_text',
-                content: '最后一轮回复',
-              },
-            ],
-          },
-        ],
-      })
-    ).toBe('最后一轮回复')
-  })
+      },
+    ]
 
-  it('does not fall back to an older response when the latest turn has no final content', () => {
-    expect(
-      finalAssistantTranscriptText({
-        messages: [
-          {
-            role: 'assistant',
-            content: '几轮之前的 final content',
-          },
-        ],
-        turns: [
-          {
-            items: [
-              {
-                type: 'assistant_text',
-                content: '旧一轮回复',
-              },
-            ],
-          },
-          {
-            items: [
-              {
-                type: 'block',
-              },
-            ],
-          },
-        ],
-      })
-    ).toBeNull()
+    expect(getRuntimeTaskResponsePreview(turns, false)).toBe('completed response')
   })
 })

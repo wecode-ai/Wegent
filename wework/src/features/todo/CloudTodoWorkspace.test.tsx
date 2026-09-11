@@ -1549,7 +1549,20 @@ describe('CloudTodoWorkspace', () => {
           created_at: '2026-08-23T00:02:00Z',
         },
       ],
-      turns: [],
+      turns: [
+        {
+          id: 'turn-output',
+          status: 'done',
+          items: [
+            {
+              id: 'assistant-output',
+              type: 'assistant_text' as const,
+              content: '已经定位问题\n正在验证修复',
+              createdAt: '2026-08-23T00:02:00Z',
+            },
+          ],
+        },
+      ],
     }))
     workbenchServices.runtimeWorkApi = {
       getRuntimeTranscript,
@@ -1600,7 +1613,7 @@ describe('CloudTodoWorkspace', () => {
       expect.objectContaining({
         deviceId: 'local-device',
         taskId: 'runtime-in-progress',
-        limit: 50,
+        limit: 20,
       })
     )
 
@@ -5180,7 +5193,7 @@ describe('CloudTodoWorkspace', () => {
       expect.objectContaining({
         deviceId: 'local-device',
         taskId: 'stopped-task',
-        limit: 50,
+        limit: 20,
       })
     )
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
