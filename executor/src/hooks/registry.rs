@@ -146,6 +146,7 @@ impl HookRegistryStore {
                 loaded.push(plugin);
             }
         }
+        let mut registry_changed = false;
         for plugin in &mut loaded {
             if ids.get(&plugin.manifest.id).copied().unwrap_or_default() > 1 {
                 plugin.health = HookHealth::DuplicatePluginId;
@@ -153,14 +154,21 @@ impl HookRegistryStore {
             registry
                 .plugins
                 .entry(plugin.manifest.id.clone())
-                .or_insert_with(|| RegistryEntry {
-                    enabled: plugin.enabled,
-                    source: plugin.source,
-                    install_path: plugin.directory.clone(),
-                    policy: plugin.policy.clone(),
+                .or_insert_with(|| {
+                    registry_changed = true;
+                    RegistryEntry {
+                        enabled: plugin.enabled,
+                        source: plugin.source,
+                        install_path: plugin.directory.clone(),
+                        policy: plugin.policy.clone(),
+                    }
                 });
         }
-        let _ = self.write_registry(&registry);
+        // Discovery also serves the background rollout observer, so it must not
+        // rewrite the registry file unless a plugin was actually registered.
+        if registry_changed {
+            let _ = self.write_registry(&registry);
+        }
         loaded
     }
 

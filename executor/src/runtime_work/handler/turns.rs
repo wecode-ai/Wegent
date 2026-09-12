@@ -1405,30 +1405,42 @@ impl RuntimeWorkRpcHandler {
         let Some(workspace_path) = request.cwd() else {
             return;
         };
-        if infer_workspace_kind(workspace_path) == "chat" {
-            return;
+        if infer_workspace_kind(workspace_path) != "chat" {
+            match register_codex_global_thread_workspace_root(
+                thread_id,
+                workspace_path,
+                request.runtime_project_key.as_deref(),
+            ) {
+                Ok(Some(workspace_root)) => {
+                    log_executor_event(
+                        "runtime work codex thread workspace root registered",
+                        &[
+                            ("thread_id", thread_id.to_owned()),
+                            ("workspace_root", workspace_root),
+                        ],
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    log_executor_event(
+                        "runtime work codex thread workspace root registration failed",
+                        &[("thread_id", thread_id.to_owned()), ("error", error)],
+                    );
+                }
+            }
         }
-        match register_codex_global_thread_workspace_root(
+        // The rollout observer needs every thread it started, including
+        // standalone chats, because subagent rollouts are matched to it.
+        if let Err(error) = self.hook_service.rollout.register_root(
             thread_id,
-            workspace_path,
-            request.runtime_project_key.as_deref(),
+            hook_user(request),
+            PathBuf::from(workspace_path),
+            string_field(&request.model_config, "model_id"),
         ) {
-            Ok(Some(workspace_root)) => {
-                log_executor_event(
-                    "runtime work codex thread workspace root registered",
-                    &[
-                        ("thread_id", thread_id.to_owned()),
-                        ("workspace_root", workspace_root),
-                    ],
-                );
-            }
-            Ok(None) => {}
-            Err(error) => {
-                log_executor_event(
-                    "runtime work codex thread workspace root registration failed",
-                    &[("thread_id", thread_id.to_owned()), ("error", error)],
-                );
-            }
+            log_executor_event(
+                "runtime work codex rollout thread registration failed",
+                &[("thread_id", thread_id.to_owned()), ("error", error)],
+            );
         }
     }
 }
