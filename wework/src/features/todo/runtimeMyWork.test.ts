@@ -125,7 +125,7 @@ describe('runtimeMyWorkItems', () => {
     })
   })
 
-  it('projects successful and failed terminal states into completed and confirmation', () => {
+  it('projects successful and failed terminal states into confirmation', () => {
     const items = runtimeMyWorkItems(
       runtimeWork([
         task({ taskId: 'completed', running: false, completedAt: 1_700_000_000 }),
@@ -140,7 +140,7 @@ describe('runtimeMyWorkItems', () => {
     )
 
     expect(items.map(item => [item.runtime_address.taskId, item.status])).toEqual([
-      ['completed', 'completed'],
+      ['completed', 'in_review'],
       ['failed', 'in_review'],
     ])
   })

@@ -54,7 +54,7 @@ function taskBoardStatus(
   }
   const state = runtimeTaskBoardState(lifecycle?.task ?? task)
   if (state === 'active') return { status: 'in_progress', execution_state: 'running' }
-  if (state === 'completed') return { status: 'completed', execution_state: null }
+  if (state === 'completed') return { status: 'in_review', execution_state: null }
   if (state === 'queued') return { status: 'pending', execution_state: null }
   return { status: 'in_review', execution_state: null }
 }
