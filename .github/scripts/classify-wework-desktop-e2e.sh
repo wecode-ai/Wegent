@@ -84,6 +84,7 @@ cloud_worktree_segments=(
 )
 cloud_segments=(
   cloud-project-creation
+  cloud-device-lifecycle
   core-task-flow
   "${cloud_worktree_segments[@]}"
   model-routing
@@ -122,7 +123,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-account-auth
+  plugin-account-auth,cloud-device-lifecycle
   cloud-worktree-queued-cancel
   plugin-auto-update,plugin-workspace-publication,workspace-attachments
 )
@@ -293,6 +294,14 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    # Cloud device restart and upgrade actions require the managed Nevis fixture.
+    wework/src/components/settings/ConnectionsSettingsPage* | \
+      wework/src/components/settings/DeviceVersionBadge* | \
+      wework/src/features/cloud-devices/* | \
+      wework/e2e/desktop/modules/cloud-device-lifecycle-flow.mjs)
+      select_target "cloud:cloud-device-lifecycle"
+      return
+      ;;
     wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
       wework/e2e/desktop/modules/dws-account-auth.mjs | \
