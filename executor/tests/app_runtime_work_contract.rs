@@ -401,7 +401,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     assert_eq!(turns_list_count, 3);
     assert_eq!(items_list_count, 3);
     assert!(calls.iter().all(|call| {
-        call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "summary"
+        call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "notLoaded"
     }));
     assert!(calls.iter().any(|call| {
         call["method"] == "thread/turns/list"
@@ -446,13 +446,13 @@ async fn app_runtime_pages_codex_turn_items_before_older_turns() {
         .as_str()
         .expect("partial turn should return an item cursor");
     assert!(item_cursor.starts_with("wework-codex-items:"));
-    assert_eq!(latest["messages"][0]["content"], "new prompt");
+    assert_eq!(latest["messages"][0]["content"], "new answer");
     assert_eq!(
         latest["turns"][0]["items"]
             .as_array()
             .expect("latest turn items")
             .len(),
-        3
+        100
     );
 
     let older_items = handler
@@ -1236,6 +1236,28 @@ done
 fn write_fake_incremental_items_codex(log_path: &Path) -> PathBuf {
     let path = temp_path("fake-codex-app-runtime-item-pagination", "sh");
     let _ = fs::remove_file(log_path);
+    let mut recent_entries = vec![json!({
+        "turnId": "turn-new",
+        "item": {
+            "id": "agent-new",
+            "type": "agentMessage",
+            "text": "new answer",
+            "phase": "final_answer",
+        },
+    })];
+    recent_entries.extend((0..99).map(|index| {
+        json!({
+            "turnId": "turn-new",
+            "item": {
+                "id": format!("tool-new-{index}"),
+                "type": "commandExecution",
+                "command": format!("newer-tool-{index}"),
+                "status": "completed",
+                "aggregatedOutput": "new",
+            },
+        })
+    }));
+    let recent_entries = serde_json::to_string(&recent_entries).unwrap();
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
@@ -1252,18 +1274,19 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","turns":[]}}}}}}'
       ;;
     *'"method":"thread/turns/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"summary","items":[{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}},{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/items/list"'*'"cursor":"older-items"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"tool-old","type":"commandExecution","command":"older-tool","status":"completed","aggregatedOutput":"old"}}}},{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}}],"nextCursor":null,"backwardsCursor":"newer-items"}}}}'
       ;;
     *'"method":"thread/items/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}},{{"turnId":"turn-new","item":{{"id":"tool-new","type":"commandExecution","command":"newer-tool","status":"completed","aggregatedOutput":"new"}}}}],"nextCursor":"older-items","backwardsCursor":null}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":{recent_entries},"nextCursor":"older-items","backwardsCursor":null}}}}'
       ;;
   esac
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        recent_entries = recent_entries,
     );
     fs::write(&path, content).unwrap();
     #[cfg(unix)]
