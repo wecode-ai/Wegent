@@ -371,7 +371,7 @@ export function createDesktopScenario({
         await waitForEmbeddedSelector(
           bridge,
           '[data-testid="collaboration-platform-root"]',
-          uiTimeoutMs
+          workbenchReadyTimeoutMs
         )
         await waitForEmbeddedSelector(
           bridge,
