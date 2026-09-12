@@ -5,6 +5,7 @@
 """Browser terminal Socket.IO namespace."""
 
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -16,7 +17,16 @@ from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.core.config import settings
 from app.core.socketio import get_sio
+from app.core.terminal_socketio_manager import target_location
 from app.services.chat.access import get_token_expiry, verify_jwt_token
+from app.services.device.terminal_diagnostics import (
+    TerminalTrace,
+    bind_terminal_trace,
+    create_terminal_trace,
+    is_target_device,
+    record_terminal_trace,
+    with_terminal_trace_bytes,
+)
 from app.services.device.terminal_metrics import record_terminal_event
 from app.services.device.terminal_protocol import (
     TerminalAttachRequest,
@@ -130,6 +140,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
     @trace_async(span_name="terminal.attach", tracer_name=__name__)
     async def on_terminal_attach(self, sid: str, data: dict) -> dict:
         """Attach a browser socket to an existing backend-created terminal session."""
+        total_started = time.perf_counter_ns()
         session = await self.get_session(sid)
         if await self._check_token_expiry(session):
             return await self._handle_token_expired(sid)
@@ -157,6 +168,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
         except ValueError as exc:
             return {"error": str(exc)}
 
+        authorization_started = time.perf_counter_ns()
         try:
             record = await terminal_session_service.authorize(
                 session_id,
@@ -169,23 +181,48 @@ class TerminalNamespace(socketio.AsyncNamespace):
             }
         if not record:
             return {"error": "Terminal session not found or access denied"}
+        authorization_ms = _elapsed_ms(authorization_started)
+        trace = create_terminal_trace(
+            device_id=record.device_id,
+            session_id=record.session_id,
+            event="terminal:attach",
+            direction="browser_to_device",
+            protocol_version=offered,
+        )
 
+        target_lookup_started = time.perf_counter_ns()
         executor_socket_id = await _active_executor_socket(record)
+        target_lookup_ms = _elapsed_ms(target_lookup_started)
         if not executor_socket_id:
+            record_terminal_trace(
+                trace,
+                stage="namespace.relay",
+                result="target_unavailable",
+                authorization_ms=authorization_ms,
+                target_lookup_ms=target_lookup_ms,
+                total_ms=_elapsed_ms(total_started),
+                target_namespace=DEVICE_NAMESPACE,
+                target_location="remote_or_absent",
+                reason_code="terminal_executor_offline",
+            )
             return {"error": "Terminal executor is offline"}
         await self.enter_room(sid, _terminal_room(session_id))
+        call_started = time.perf_counter_ns()
         try:
-            attach_result = await get_sio().call(
-                "terminal:attach",
-                request.payload(
-                    record.session_id,
-                    offered,
-                    browser_socket_id=sid,
-                ),
-                to=executor_socket_id,
-                namespace=DEVICE_NAMESPACE,
-                timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
-            )
+            sio = get_sio()
+            with bind_terminal_trace(trace):
+                attach_result = await sio.call(
+                    "terminal:attach",
+                    request.payload(
+                        record.session_id,
+                        offered,
+                        browser_socket_id=sid,
+                    ),
+                    to=executor_socket_id,
+                    namespace=DEVICE_NAMESPACE,
+                    timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
+                )
+            call_total_ms = _elapsed_ms(call_started)
         except Exception as exc:
             if previous_session_id != session_id:
                 await self.leave_room(sid, _terminal_room(session_id))
@@ -194,6 +231,18 @@ class TerminalNamespace(socketio.AsyncNamespace):
                 record.session_id,
                 record.device_id,
                 exc,
+            )
+            record_terminal_trace(
+                trace,
+                stage="namespace.relay",
+                result="call_failed",
+                authorization_ms=authorization_ms,
+                target_lookup_ms=target_lookup_ms,
+                call_total_ms=_elapsed_ms(call_started),
+                total_ms=_elapsed_ms(total_started),
+                target_namespace=DEVICE_NAMESPACE,
+                target_location=_executor_target_location(executor_socket_id),
+                reason_code="executor_attach_call_failed",
             )
             return {"error": "Failed to attach terminal executor"}
 
@@ -208,6 +257,18 @@ class TerminalNamespace(socketio.AsyncNamespace):
                 if isinstance(attach_result, dict)
                 else "Invalid executor response"
             )
+            record_terminal_trace(
+                trace,
+                stage="namespace.relay",
+                result="rejected",
+                authorization_ms=authorization_ms,
+                target_lookup_ms=target_lookup_ms,
+                call_total_ms=call_total_ms,
+                total_ms=_elapsed_ms(total_started),
+                target_namespace=DEVICE_NAMESPACE,
+                target_location=_executor_target_location(executor_socket_id),
+                reason_code="executor_attach_rejected",
+            )
             return {"error": str(error or "Failed to attach terminal executor")}
 
         try:
@@ -215,9 +276,21 @@ class TerminalNamespace(socketio.AsyncNamespace):
         except ValueError as exc:
             if previous_session_id != session_id:
                 await self.leave_room(sid, _terminal_room(session_id))
+            _record_attach_relay(
+                trace,
+                result="rejected",
+                total_started=total_started,
+                authorization_ms=authorization_ms,
+                target_lookup_ms=target_lookup_ms,
+                call_total_ms=call_total_ms,
+                executor_socket_id=executor_socket_id,
+                reason_code="protocol_negotiation_failed",
+            )
             return {"error": str(exc)}
 
+        session_store_ms = 0.0
         if executor_socket_id != record.socket_id:
+            session_store_started = time.perf_counter_ns()
             try:
                 rebound = await terminal_session_service.rebind_socket(
                     record,
@@ -226,6 +299,17 @@ class TerminalNamespace(socketio.AsyncNamespace):
             except TerminalSessionAuthorizationUnavailable:
                 if previous_session_id != session_id:
                     await self.leave_room(sid, _terminal_room(session_id))
+                _record_attach_relay(
+                    trace,
+                    result="session_store_failed",
+                    total_started=total_started,
+                    authorization_ms=authorization_ms,
+                    target_lookup_ms=target_lookup_ms,
+                    call_total_ms=call_total_ms,
+                    executor_socket_id=executor_socket_id,
+                    session_store_ms=_elapsed_ms(session_store_started),
+                    reason_code="terminal_session_authorization_unavailable",
+                )
                 return {
                     "error": (
                         "Terminal session authorization is temporarily unavailable"
@@ -234,8 +318,20 @@ class TerminalNamespace(socketio.AsyncNamespace):
             if not rebound:
                 if previous_session_id != session_id:
                     await self.leave_room(sid, _terminal_room(session_id))
+                _record_attach_relay(
+                    trace,
+                    result="session_store_failed",
+                    total_started=total_started,
+                    authorization_ms=authorization_ms,
+                    target_lookup_ms=target_lookup_ms,
+                    call_total_ms=call_total_ms,
+                    executor_socket_id=executor_socket_id,
+                    session_store_ms=_elapsed_ms(session_store_started),
+                    reason_code="terminal_session_rebind_failed",
+                )
                 return {"error": "Terminal session could not be rebound"}
             record = rebound
+            session_store_ms = _elapsed_ms(session_store_started)
 
         if (
             isinstance(previous_session_id, str)
@@ -248,8 +344,37 @@ class TerminalNamespace(socketio.AsyncNamespace):
         session["terminal_protocol_version"] = selected
         session["terminal_consumer_id"] = request.consumer_id if selected == 2 else None
         session["terminal_authorization"] = record
-        await self.save_session(sid, session)
+        session_store_started = time.perf_counter_ns()
+        try:
+            await self.save_session(sid, session)
+        except Exception:
+            session_store_ms += _elapsed_ms(session_store_started)
+            _record_attach_relay(
+                trace,
+                result="session_store_failed",
+                total_started=total_started,
+                authorization_ms=authorization_ms,
+                target_lookup_ms=target_lookup_ms,
+                call_total_ms=call_total_ms,
+                executor_socket_id=executor_socket_id,
+                session_store_ms=session_store_ms,
+                reason_code="browser_session_save_failed",
+            )
+            raise
+        session_store_ms += _elapsed_ms(session_store_started)
         record_terminal_event(source="browser", event="attach")
+        record_terminal_trace(
+            trace,
+            stage="namespace.relay",
+            result="handler_accepted",
+            authorization_ms=authorization_ms,
+            target_lookup_ms=target_lookup_ms,
+            call_total_ms=call_total_ms,
+            session_store_ms=session_store_ms,
+            total_ms=_elapsed_ms(total_started),
+            target_namespace=DEVICE_NAMESPACE,
+            target_location=_executor_target_location(executor_socket_id),
+        )
 
         return {
             "success": True,
@@ -262,33 +387,66 @@ class TerminalNamespace(socketio.AsyncNamespace):
 
     async def on_terminal_ack(self, sid: str, data: dict) -> dict:
         """Relay a browser output acknowledgement to the owning executor."""
-        record, consumer_id, error = await self._authorize_attached_session(sid, data)
+        total_started = time.perf_counter_ns()
+        session = await self.get_session(sid)
+        trace = _trace_for_attached_event(session, data, "terminal:ack")
+        authorization_started = time.perf_counter_ns()
+        record, consumer_id, error = await self._authorize_attached_session(
+            sid, data, session=session
+        )
+        authorization_ms = _elapsed_ms(authorization_started)
         if error:
+            _record_browser_relay_error(trace, error, authorization_ms, total_started)
             return error
 
         if not consumer_id:
+            _record_browser_relay_error(
+                trace,
+                {"error": "Terminal ACK requires protocol v2"},
+                authorization_ms,
+                total_started,
+            )
             return {"error": "Terminal ACK requires protocol v2"}
         sequence = get_sequence(data, "sequence")
         if sequence is None:
-            return {"error": "Invalid terminal sequence"}
-        try:
-            ack_result = await get_sio().call(
-                "terminal:ack",
-                {
-                    "session_id": record.session_id,
-                    "consumer_id": consumer_id,
-                    "sequence": sequence,
-                },
-                to=record.socket_id,
-                namespace=DEVICE_NAMESPACE,
-                timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
+            _record_browser_relay_error(
+                trace,
+                {"error": "Invalid terminal sequence"},
+                authorization_ms,
+                total_started,
             )
+            return {"error": "Invalid terminal sequence"}
+        call_started = time.perf_counter_ns()
+        try:
+            sio = get_sio()
+            with bind_terminal_trace(trace):
+                ack_result = await sio.call(
+                    "terminal:ack",
+                    {
+                        "session_id": record.session_id,
+                        "consumer_id": consumer_id,
+                        "sequence": sequence,
+                    },
+                    to=record.socket_id,
+                    namespace=DEVICE_NAMESPACE,
+                    timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
+                )
+            call_total_ms = _elapsed_ms(call_started)
         except Exception as exc:
             logger.warning(
                 "[Terminal WS] Executor ACK failed session=%s device=%s: %s",
                 record.session_id,
                 record.device_id,
                 exc,
+            )
+            _record_browser_relay(
+                trace,
+                result="call_failed",
+                record=record,
+                authorization_ms=authorization_ms,
+                total_started=total_started,
+                call_total_ms=_elapsed_ms(call_started),
+                reason_code="executor_ack_call_failed",
             )
             return {"error": "Failed to acknowledge terminal output"}
         if not isinstance(ack_result, dict) or not ack_result.get("success"):
@@ -297,74 +455,188 @@ class TerminalNamespace(socketio.AsyncNamespace):
                 if isinstance(ack_result, dict)
                 else "Invalid executor response"
             )
+            _record_browser_relay(
+                trace,
+                result="rejected",
+                record=record,
+                authorization_ms=authorization_ms,
+                total_started=total_started,
+                call_total_ms=call_total_ms,
+                reason_code="executor_ack_rejected",
+            )
             return {"error": str(error or "Failed to acknowledge terminal output")}
         record_terminal_event(source="browser", event="ack")
+        _record_browser_relay(
+            trace,
+            result="handler_accepted",
+            record=record,
+            authorization_ms=authorization_ms,
+            total_started=total_started,
+            call_total_ms=call_total_ms,
+        )
         return {"success": True}
 
     async def on_terminal_input(self, sid: str, data: dict) -> dict:
         """Relay browser terminal input to the owning executor socket."""
-        record, consumer_id, error = await self._authorize_attached_session(sid, data)
+        total_started = time.perf_counter_ns()
+        session = await self.get_session(sid)
+        trace = _trace_for_attached_event(session, data, "terminal:input")
+        authorization_started = time.perf_counter_ns()
+        record, consumer_id, error = await self._authorize_attached_session(
+            sid, data, session=session
+        )
+        authorization_ms = _elapsed_ms(authorization_started)
         if error:
+            _record_browser_relay_error(trace, error, authorization_ms, total_started)
             return error
 
         text = data.get("data")
         if not isinstance(text, str):
+            _record_browser_relay_error(
+                trace,
+                {"error": "Invalid terminal input"},
+                authorization_ms,
+                total_started,
+            )
             return {"error": "Invalid terminal input"}
-        await get_sio().emit(
-            "terminal:input",
-            {
-                **_control_payload(record.session_id, consumer_id),
-                "data": text,
-            },
-            to=record.socket_id,
-            namespace=DEVICE_NAMESPACE,
-        )
+        relay_started = time.perf_counter_ns()
+        sio = get_sio()
+        try:
+            with bind_terminal_trace(trace):
+                await sio.emit(
+                    "terminal:input",
+                    {
+                        **_control_payload(record.session_id, consumer_id),
+                        "data": text,
+                    },
+                    to=record.socket_id,
+                    namespace=DEVICE_NAMESPACE,
+                )
+            relay_ms = _elapsed_ms(relay_started)
+        except Exception:
+            _record_browser_relay(
+                trace,
+                result="relay_failed",
+                record=record,
+                authorization_ms=authorization_ms,
+                total_started=total_started,
+                relay_ms=_elapsed_ms(relay_started),
+                reason_code="executor_input_relay_failed",
+            )
+            raise
         record_terminal_event(source="browser", event="input")
+        _record_browser_relay(
+            trace,
+            result="handler_accepted",
+            record=record,
+            authorization_ms=authorization_ms,
+            total_started=total_started,
+            relay_ms=relay_ms,
+        )
         return {"success": True}
 
     async def on_terminal_resize(self, sid: str, data: dict) -> dict:
         """Relay terminal resize events to the owning executor socket."""
-        record, consumer_id, error = await self._authorize_attached_session(sid, data)
+        total_started = time.perf_counter_ns()
+        session = await self.get_session(sid)
+        trace = _trace_for_attached_event(session, data, "terminal:resize")
+        authorization_started = time.perf_counter_ns()
+        record, consumer_id, error = await self._authorize_attached_session(
+            sid, data, session=session
+        )
+        authorization_ms = _elapsed_ms(authorization_started)
         if error:
+            _record_browser_relay_error(trace, error, authorization_ms, total_started)
             return error
 
         rows = _get_positive_int(data, "rows")
         cols = _get_positive_int(data, "cols")
         if rows is None or cols is None:
+            _record_browser_relay_error(
+                trace,
+                {"error": "Invalid terminal dimensions"},
+                authorization_ms,
+                total_started,
+            )
             return {"error": "Invalid terminal dimensions"}
-        await get_sio().emit(
-            "terminal:resize",
-            {
-                **_control_payload(record.session_id, consumer_id),
-                "rows": rows,
-                "cols": cols,
-            },
-            to=record.socket_id,
-            namespace=DEVICE_NAMESPACE,
-        )
+        relay_started = time.perf_counter_ns()
+        sio = get_sio()
+        try:
+            with bind_terminal_trace(trace):
+                await sio.emit(
+                    "terminal:resize",
+                    {
+                        **_control_payload(record.session_id, consumer_id),
+                        "rows": rows,
+                        "cols": cols,
+                    },
+                    to=record.socket_id,
+                    namespace=DEVICE_NAMESPACE,
+                )
+            relay_ms = _elapsed_ms(relay_started)
+        except Exception:
+            _record_browser_relay(
+                trace,
+                result="relay_failed",
+                record=record,
+                authorization_ms=authorization_ms,
+                total_started=total_started,
+                relay_ms=_elapsed_ms(relay_started),
+                reason_code="executor_resize_relay_failed",
+            )
+            raise
         record_terminal_event(source="browser", event="resize")
+        _record_browser_relay(
+            trace,
+            result="handler_accepted",
+            record=record,
+            authorization_ms=authorization_ms,
+            total_started=total_started,
+            relay_ms=relay_ms,
+        )
         return {"success": True}
 
     async def on_terminal_close(self, sid: str, data: dict) -> dict:
         """Close the executor PTY and remove the backend session record."""
-        record, consumer_id, error = await self._authorize_attached_session(sid, data)
+        total_started = time.perf_counter_ns()
+        session = await self.get_session(sid)
+        trace = _trace_for_attached_event(session, data, "terminal:close")
+        authorization_started = time.perf_counter_ns()
+        record, consumer_id, error = await self._authorize_attached_session(
+            sid, data, session=session
+        )
+        authorization_ms = _elapsed_ms(authorization_started)
         if error:
+            _record_browser_relay_error(trace, error, authorization_ms, total_started)
             return error
 
+        call_started = time.perf_counter_ns()
         try:
-            close_result = await get_sio().call(
-                "terminal:close",
-                _control_payload(record.session_id, consumer_id),
-                to=record.socket_id,
-                namespace=DEVICE_NAMESPACE,
-                timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
-            )
+            sio = get_sio()
+            with bind_terminal_trace(trace):
+                close_result = await sio.call(
+                    "terminal:close",
+                    _control_payload(record.session_id, consumer_id),
+                    to=record.socket_id,
+                    namespace=DEVICE_NAMESPACE,
+                    timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
+                )
+            call_total_ms = _elapsed_ms(call_started)
         except Exception as exc:
             logger.warning(
                 "[Terminal WS] Executor close failed session=%s device=%s: %s",
                 record.session_id,
                 record.device_id,
                 exc,
+            )
+            _record_browser_relay(
+                trace,
+                result="call_failed",
+                record=record,
+                authorization_ms=authorization_ms,
+                total_started=total_started,
+                call_total_ms=_elapsed_ms(call_started),
+                reason_code="executor_close_call_failed",
             )
             return {"error": "Failed to close terminal executor"}
         if not isinstance(close_result, dict) or not close_result.get("success"):
@@ -373,7 +645,17 @@ class TerminalNamespace(socketio.AsyncNamespace):
                 if isinstance(close_result, dict)
                 else "Invalid executor response"
             )
+            _record_browser_relay(
+                trace,
+                result="rejected",
+                record=record,
+                authorization_ms=authorization_ms,
+                total_started=total_started,
+                call_total_ms=call_total_ms,
+                reason_code="executor_close_rejected",
+            )
             return {"error": str(error or "Failed to close terminal executor")}
+        session_store_started = time.perf_counter_ns()
         try:
             await terminal_session_service.delete(record.session_id)
         except Exception as exc:
@@ -381,6 +663,16 @@ class TerminalNamespace(socketio.AsyncNamespace):
                 "[Terminal WS] Failed to revoke terminal session=%s: %s",
                 record.session_id,
                 exc,
+            )
+            _record_browser_relay(
+                trace,
+                result="session_store_failed",
+                record=record,
+                authorization_ms=authorization_ms,
+                total_started=total_started,
+                call_total_ms=call_total_ms,
+                session_store_ms=_elapsed_ms(session_store_started),
+                reason_code="terminal_session_delete_failed",
             )
             return {"error": "Failed to close terminal session"}
         await self.leave_room(sid, _terminal_room(record.session_id))
@@ -392,14 +684,26 @@ class TerminalNamespace(socketio.AsyncNamespace):
             session["terminal_authorization"] = None
             await self.save_session(sid, session)
         record_terminal_event(source="browser", event="close")
+        _record_browser_relay(
+            trace,
+            result="handler_accepted",
+            record=record,
+            authorization_ms=authorization_ms,
+            total_started=total_started,
+            call_total_ms=call_total_ms,
+            session_store_ms=_elapsed_ms(session_store_started),
+        )
         return {"success": True}
 
     async def _authorize_attached_session(
         self,
         sid: str,
         data: dict,
+        *,
+        session: Optional[dict[str, Any]] = None,
     ) -> tuple[Optional[TerminalSessionRecord], str, Optional[dict]]:
-        session = await self.get_session(sid)
+        if session is None:
+            session = await self.get_session(sid)
         if await self._check_token_expiry(session):
             return None, "", await self._handle_token_expired(sid)
 
@@ -516,6 +820,136 @@ def _control_payload(session_id: str, consumer_id: str) -> dict:
 
 def _terminal_room(session_id: str) -> str:
     return f"terminal:{session_id}"
+
+
+def _trace_for_attached_event(
+    session: dict, data: dict, event: str
+) -> Optional[TerminalTrace]:
+    """Create a trace only from the trusted, already-attached session record."""
+    session_id = _get_session_id(data)
+    record = session.get("terminal_authorization")
+    if (
+        not session_id
+        or session.get("terminal_session_id") != session_id
+        or not isinstance(record, TerminalSessionRecord)
+        or record.session_id != session_id
+        or record.user_id != session.get("user_id")
+        or not is_target_device(record.device_id)
+    ):
+        return None
+    trace = create_terminal_trace(
+        device_id=record.device_id,
+        session_id=session_id,
+        event=event,
+        direction="browser_to_device",
+        protocol_version=session.get("terminal_protocol_version"),
+        sequence=get_sequence(data, "sequence"),
+    )
+    text = data.get("data") if event == "terminal:input" else None
+    return with_terminal_trace_bytes(trace, text)
+
+
+def _record_browser_relay_error(
+    trace: Optional[TerminalTrace],
+    error: dict,
+    authorization_ms: float,
+    total_started: int,
+) -> None:
+    record_terminal_trace(
+        trace,
+        stage="namespace.relay",
+        result="rejected",
+        authorization_ms=authorization_ms,
+        total_ms=_elapsed_ms(total_started),
+        target_namespace=DEVICE_NAMESPACE,
+        target_location="unknown",
+        reason_code=_terminal_error_reason(error),
+    )
+
+
+def _record_attach_relay(
+    trace: Optional[TerminalTrace],
+    *,
+    result: str,
+    total_started: int,
+    authorization_ms: float,
+    target_lookup_ms: float,
+    call_total_ms: float,
+    executor_socket_id: str,
+    **fields: object,
+) -> None:
+    record_terminal_trace(
+        trace,
+        stage="namespace.relay",
+        result=result,
+        authorization_ms=authorization_ms,
+        target_lookup_ms=target_lookup_ms,
+        call_total_ms=call_total_ms,
+        total_ms=_elapsed_ms(total_started),
+        target_namespace=DEVICE_NAMESPACE,
+        target_location=_executor_target_location(executor_socket_id),
+        **fields,
+    )
+
+
+def _record_browser_relay(
+    trace: Optional[TerminalTrace],
+    *,
+    result: str,
+    record: TerminalSessionRecord,
+    authorization_ms: float,
+    total_started: int,
+    **fields: object,
+) -> None:
+    try:
+        location = target_location(get_sio(), record.socket_id, DEVICE_NAMESPACE)
+    except Exception:
+        location = "unknown"
+    record_terminal_trace(
+        trace,
+        stage="namespace.relay",
+        result=result,
+        authorization_ms=authorization_ms,
+        total_ms=_elapsed_ms(total_started),
+        target_namespace=DEVICE_NAMESPACE,
+        target_location=location,
+        **fields,
+    )
+
+
+def _terminal_error_reason(error: dict) -> str:
+    message = error.get("error")
+    reasons = {
+        "Token expired": "token_expired",
+        "Not authenticated": "not_authenticated",
+        "Missing session_id": "terminal_session_id_missing",
+        "Terminal session is not attached": "terminal_session_not_attached",
+        "Terminal session must be reattached": "terminal_session_reattach_required",
+        "Terminal protocol does not match attachment": "protocol_mismatch",
+        "Terminal ACK requires protocol v2": "ack_requires_v2",
+        "Terminal consumer is no longer active": "consumer_inactive",
+        "Terminal consumer does not match attachment": "consumer_mismatch",
+        "Terminal session not found or access denied": "authorization_denied",
+        "Terminal session expired": "terminal_session_expired",
+        "Terminal session authorization is temporarily unavailable": (
+            "terminal_session_authorization_unavailable"
+        ),
+        "Invalid terminal sequence": "invalid_sequence",
+        "Invalid terminal input": "invalid_input",
+        "Invalid terminal dimensions": "invalid_dimensions",
+    }
+    return reasons.get(message, "terminal_request_rejected")
+
+
+def _elapsed_ms(started_ns: int) -> float:
+    return (time.perf_counter_ns() - started_ns) / 1_000_000
+
+
+def _executor_target_location(socket_id: str) -> str:
+    try:
+        return target_location(get_sio(), socket_id, DEVICE_NAMESPACE)
+    except Exception:
+        return "unknown"
 
 
 async def _active_executor_socket(record: TerminalSessionRecord) -> str:

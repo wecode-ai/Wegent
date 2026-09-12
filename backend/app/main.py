@@ -48,6 +48,10 @@ from app.models import *  # noqa: F401,F403
 from app.services.auth.internal_service_token import (
     require_internal_service_token_configured,
 )
+from app.services.device.terminal_diagnostics import (
+    start_event_loop_lag_sampler,
+    stop_event_loop_lag_sampler,
+)
 from app.services.jobs import start_background_jobs, stop_background_jobs
 from shared.telemetry.context.large_data import log_json_body
 
@@ -79,6 +83,15 @@ SENSITIVE_HTTP_BODY_PATHS = {
 setup_logging()
 log_registered_pool_configurations()
 _logger = logging.getLogger(__name__)
+
+
+def _start_terminal_diagnostics(app: FastAPI) -> None:
+    """Keep a strong reference to the optional process-owned sampler."""
+    app.state.terminal_diagnostics_task = start_event_loop_lag_sampler()
+
+
+async def _stop_terminal_diagnostics() -> None:
+    await stop_event_loop_lag_sampler()
 
 
 def _truncate_logged_header_value(value: str) -> str:
@@ -508,6 +521,10 @@ async def lifespan(app: FastAPI):
     await terminal_session_service.start()
     logger.info("✓ Terminal session invalidation listener started")
 
+    _start_terminal_diagnostics(app)
+    if app.state.terminal_diagnostics_task is not None:
+        logger.info("✓ Terminal backend diagnostic event-loop sampler started")
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -596,6 +613,9 @@ async def lifespan(app: FastAPI):
 
         await terminal_session_service.stop()
         logger.info("✓ Terminal session invalidation listener stopped")
+
+        await _stop_terminal_diagnostics()
+        logger.info("✓ Terminal backend diagnostic event-loop sampler stopped")
 
         from app.services.loop_items.external_provider import (
             external_loop_item_provider,
