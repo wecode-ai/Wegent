@@ -163,6 +163,7 @@ export interface RuntimeConversationTurn {
   error?: string
   errorType?: string
   stoppedNotice?: boolean | null
+  contentTruncated?: boolean
   streamingThinkingContent?: string
   fileChanges?: TurnFileChangesSummary
   references?: CodexReference[]

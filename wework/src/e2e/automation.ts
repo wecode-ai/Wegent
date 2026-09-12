@@ -1717,14 +1717,61 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
-      const processMemory = navigator.platform.toLowerCase().includes('mac')
-        ? await invokeDesktopHost('e2e.getProcessSnapshot')
-        : null
+      const debugSnapshot = getWorkbenchDebugSnapshot()
+      const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
+      const runtimeMessages = currentRuntimeTask
+        ? getRuntimeConversationMessagesForLogicalAddress({
+            deviceId: currentRuntimeTask.deviceId,
+            taskId: currentRuntimeTask.taskId,
+            threadId: currentRuntimeTask.threadId,
+            workspacePath: currentRuntimeTask.workspacePath,
+          })
+        : []
+      const activeAssistantMessage = runtimeMessages.findLast(
+        message => message.role === 'assistant'
+      )
+      const narrativeBlocks =
+        activeAssistantMessage?.blocks?.filter(
+          block => block.type === 'thinking' || block.type === 'text' || block.type === 'plan'
+        ) ?? []
+      const assistantContentElements = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
+      )
+      const [processMemory, rendererHeap] = await Promise.all([
+        navigator.platform.toLowerCase().includes('mac')
+          ? invokeDesktopHost('e2e.getProcessSnapshot')
+          : null,
+        invokeDesktopHost('e2e.getRendererHeapUsage'),
+      ])
       return JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
+        assistantDom: {
+          contentElementCount: assistantContentElements.length,
+          textChars: assistantContentElements.reduce(
+            (total, element) => total + (element.textContent?.length ?? 0),
+            0
+          ),
+          markdownChunkCount: document.querySelectorAll('[data-markdown-window-chunk]').length,
+        },
+        activeRuntimeAssistant: activeAssistantMessage
+          ? {
+              contentChars: activeAssistantMessage.content.length,
+              contentOriginalChars: activeAssistantMessage.contentOriginalChars ?? null,
+              contentTruncated: activeAssistantMessage.contentTruncated === true,
+              displayItemCount: activeAssistantMessage.runtimeDisplayItems?.length ?? 0,
+              maxNarrativeBlockChars: Math.max(
+                0,
+                ...narrativeBlocks.map(block => block.content.length)
+              ),
+              truncatedNarrativeBlockCount: narrativeBlocks.filter(
+                block => block.contentTruncated === true
+              ).length,
+            }
+          : null,
         runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
+        rendererHeap,
       })
     }
     case 'focusMainWindow':

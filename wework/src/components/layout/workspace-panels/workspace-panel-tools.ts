@@ -10,10 +10,16 @@ export interface WorkspacePanelMenuAction {
   visible: boolean
   disabled: boolean
   title?: string
+}
+
+export interface RunnableWorkspacePanelMenuAction extends WorkspacePanelMenuAction {
   run: () => Promise<void>
 }
 
-export type WorkspacePanelMenuActions = Record<WorkspacePanelMenuTool, WorkspacePanelMenuAction>
+export type WorkspacePanelMenuActions = {
+  terminal: WorkspacePanelMenuAction
+  desktop: RunnableWorkspacePanelMenuAction
+}
 
 export type WorkspaceTerminalSessionBase = ProjectDeviceSessionResponse & {
   cwd?: string

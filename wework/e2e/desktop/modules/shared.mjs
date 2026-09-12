@@ -69,6 +69,20 @@ function readPositiveTimeout(value, fallback, name) {
   return timeoutMs
 }
 
+function readPositiveInteger(value, fallback, name) {
+  if (value === undefined) return fallback
+  const parsed = Number(value)
+  assert.ok(Number.isInteger(parsed) && parsed > 0, `${name} must be a positive integer`)
+  return parsed
+}
+
+function readNonNegativeNumber(value, fallback, name) {
+  if (value === undefined) return fallback
+  const parsed = Number(value)
+  assert.ok(Number.isFinite(parsed) && parsed >= 0, `${name} must be a finite non-negative number`)
+  return parsed
+}
+
 function readOptionalPort(value, name) {
   if (value === undefined) return 0
   const port = Number(value)
@@ -255,6 +269,11 @@ const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
 )
 const MEMORY_MAX_SETTLED_DOM_NODE_GROWTH = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODE_GROWTH ?? 512
+)
+const MEMORY_MAX_JS_HEAP_BYTES = readNonNegativeNumber(
+  process.env.WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES,
+  200 * 1024 * 1024,
+  'WEWORK_E2E_MEMORY_MAX_JS_HEAP_BYTES'
 )
 const MEMORY_MIN_BASELINE_SAMPLES = 5
 const MEMORY_MAX_BASELINE_SAMPLES = 15
@@ -1519,6 +1538,8 @@ export {
   DESKTOP_CONTROL_RESULT_GRACE_MS,
   QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS,
   readPositiveTimeout,
+  readPositiveInteger,
+  readNonNegativeNumber,
   readOptionalPort,
   TASK_PROMPT,
   COMPLETION_TEXT,
@@ -1639,6 +1660,7 @@ export {
   MEMORY_MAX_PEAK_GROWTH_KIB,
   MEMORY_MAX_SETTLED_GROWTH_KIB,
   MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
+  MEMORY_MAX_JS_HEAP_BYTES,
   MEMORY_MIN_BASELINE_SAMPLES,
   MEMORY_MAX_BASELINE_SAMPLES,
   MEMORY_MIN_SETTLED_SAMPLES,
