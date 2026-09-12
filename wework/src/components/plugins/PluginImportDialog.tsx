@@ -20,7 +20,7 @@ function issueGuidance(
     ),
     manifest_missing: t(
       'workbench.plugins_import_issue_manifest_missing',
-      '这不是标准 Wework 插件包。Skill 和 MCP 也需要先放入插件目录，并在 ZIP 根目录提供 .codex-plugin/plugin.json。'
+      '此 ZIP 缺少 .codex-plugin/plugin.json。独立 Skill 请到 Skills 页签导入，MCP 服务请到 MCP 页签添加。'
     ),
     manifest_version_invalid: t(
       'workbench.plugins_import_issue_version',

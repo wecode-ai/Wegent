@@ -2297,7 +2297,7 @@
     "plugins_import_risk_title": "This plugin contains executable capabilities",
     "plugins_import_risk_confirm": "I trust the source of this plugin and allow it to be installed.",
     "plugins_import_issue_manifest_not_at_root": "The ZIP contains an extra top-level directory. Zip the contents of the plugin directory so .codex-plugin/plugin.json is at the ZIP root.",
-    "plugins_import_issue_manifest_missing": "This is not a standard Wework plugin package. Package Skills and MCP servers inside a plugin and add .codex-plugin/plugin.json at the ZIP root.",
+    "plugins_import_issue_manifest_missing": "This ZIP is missing .codex-plugin/plugin.json. Import standalone skills in the Skills tab, or add servers in the MCP tab.",
     "plugins_import_issue_version": "Change plugin.json version to SemVer, for example 0.1.0.",
     "plugins_import_issue_name": "Use lowercase letters, numbers, hyphens, or underscores for plugin.json name, for example my-plugin.",
     "plugins_import_issue_manifest_fields": "Use the example package to complete the required plugin.json field shown below.",

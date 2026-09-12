@@ -2255,8 +2255,8 @@ describe('App plugins route', () => {
     )
     expect(screen.getByTestId('plugins-search-input')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-installed-strip')).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '技能' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'MCP' })).toBeInTheDocument()
   })
 
   test('collapses and expands the desktop sidebar on plugin routes', async () => {
@@ -2270,7 +2270,7 @@ describe('App plugins route', () => {
     )
 
     expect(screen.getByTestId('auxiliary-expand-sidebar-button')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
+    expect(screen.getByTestId('plugins-page-content')).toHaveClass('px-5', 'py-6', 'md:px-10')
 
     await userEvent.click(screen.getByTestId('auxiliary-expand-sidebar-button'))
     expect(await screen.findByTestId('plugins-button')).toBeInTheDocument()
@@ -2286,7 +2286,7 @@ describe('App plugins route', () => {
 
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
     expect(screen.getByTestId('macos-traffic-light-spacer')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
+    expect(screen.getByTestId('plugins-page-content')).toHaveClass('px-5', 'py-6', 'md:px-10')
     expect(screen.getByTestId('plugins-page-content').style.paddingLeft).toBe('')
     expect(screen.getByTestId('app-shell')).toHaveClass('fixed', 'inset-0')
     expect(screen.getByTestId('app-shell').style.width).toBe('')

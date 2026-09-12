@@ -2295,7 +2295,7 @@
     "plugins_import_risk_title": "此插件包含可执行能力",
     "plugins_import_risk_confirm": "我信任该插件的来源并允许安装。",
     "plugins_import_issue_manifest_not_at_root": "ZIP 多包了一层目录。请进入插件目录后压缩其中的内容，确保 .codex-plugin/plugin.json 位于 ZIP 根目录。",
-    "plugins_import_issue_manifest_missing": "这不是标准 Wework 插件包。Skill 和 MCP 也需要先放入插件目录，并在 ZIP 根目录提供 .codex-plugin/plugin.json。",
+    "plugins_import_issue_manifest_missing": "此 ZIP 缺少 .codex-plugin/plugin.json。独立 Skill 请到 Skills 页签导入，MCP 服务请到 MCP 页签添加。",
     "plugins_import_issue_version": "请把 plugin.json 的 version 改为 SemVer，例如 0.1.0。",
     "plugins_import_issue_name": "plugin.json 的 name 应使用小写字母、数字、连字符或下划线，例如 my-plugin。",
     "plugins_import_issue_manifest_fields": "请参照示例包补齐 plugin.json 中标出的必填字段。",
