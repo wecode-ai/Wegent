@@ -24,6 +24,12 @@ export function issueActivityEntries(
   comments: CollaborationComment[],
   executions: CollaborationExecution[],
 ): ActivityEntry[] {
+  const assignmentEventIds = new Set(
+    assignments.flatMap((assignment) => [
+      assignment.id,
+      ...(assignment.comment_id ? [assignment.comment_id] : []),
+    ]),
+  );
   return [
     ...assignments.map(
       (assignment): ActivityEntry => ({
@@ -32,13 +38,15 @@ export function issueActivityEntries(
         assignment,
       }),
     ),
-    ...comments.map(
-      (comment): ActivityEntry => ({
-        kind: "comment",
-        at: comment.created_at,
-        comment,
-      }),
-    ),
+    ...comments
+      .filter((comment) => !assignmentEventIds.has(comment.id))
+      .map(
+        (comment): ActivityEntry => ({
+          kind: "comment",
+          at: comment.created_at,
+          comment,
+        }),
+      ),
     ...executions.map(
       (run): ActivityEntry => ({
         kind: "run",
@@ -197,6 +205,7 @@ export function IssueActivityPanel({
                     ? ` · ${translate("todo.workflow_step", "流程步骤")}：${entry.assignment.workflow_step}`
                     : ""}
                 </p>
+                {entry.assignment.body ? <p>{entry.assignment.body}</p> : null}
                 <time>
                   {entry.assignment.created_at.slice(0, 16).replace("T", " ")}
                 </time>

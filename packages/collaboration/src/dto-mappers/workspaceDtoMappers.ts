@@ -13,7 +13,6 @@ import type {
   CollaborationAssignment,
   CollaborationExecution,
   CollaborationExecutionEnvironment,
-  CollaborationIssue,
   CollaborationOwnedAgent,
   CollaborationPlatformResources,
   CollaborationWorkspace,
@@ -33,8 +32,9 @@ function nullableNumber(value: unknown): number | null {
   return value == null ? null : Number(value);
 }
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(String) : [];
+function finiteNullableNumber(value: unknown): number | null {
+  const number = nullableNumber(value);
+  return number != null && Number.isFinite(number) ? number : null;
 }
 
 function camelOrSnake(
@@ -278,26 +278,27 @@ export function mapCollaborationExecutionEnvironmentDto(
   input: WorkspaceDto,
 ): CollaborationExecutionEnvironment {
   const row = asRecord(input);
+  const resourceId = nullableString(row.resource_id ?? row.resourceId);
+  const deviceId = finiteNullableNumber(
+    row.device_id ?? row.deviceId ?? row.resource_id ?? row.resourceId,
+  );
+  const deviceKey = nullableString(row.device_key ?? row.deviceKey);
+  const ownerType =
+    (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
   return {
-    id: String(row.id),
-    ...((row.device_id ?? row.deviceId)
-      ? { device_id: Number(row.device_id ?? row.deviceId) }
-      : {}),
-    ...((row.device_key ?? row.deviceKey)
-      ? { device_key: String(row.device_key ?? row.deviceKey) }
-      : {}),
+    id: String(resourceId ?? deviceId ?? deviceKey ?? row.id),
+    ...(deviceId == null ? {} : { device_id: deviceId }),
+    ...(deviceKey == null ? {} : { device_key: deviceKey }),
     name: String(row.name ?? ""),
     kind:
       (row.kind ?? row.environment_type ?? row.environmentType) === "cloud_host"
         ? "cloud_host"
         : "local_device",
-    owner_type:
-      (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user",
+    owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
     status: (row.status ??
       "offline") as CollaborationExecutionEnvironment["status"],
-    workspace_ids: stringArray(row.workspace_ids ?? row.workspaceIds),
     updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
   };
 }
@@ -306,27 +307,34 @@ export function mapCollaborationOwnedAgentDto(
   input: WorkspaceDto,
 ): CollaborationOwnedAgent {
   const row = asRecord(input);
+  const resourceId = nullableString(row.resource_id ?? row.resourceId);
+  const teamId = finiteNullableNumber(
+    row.team_id ?? row.teamId ?? row.resource_id ?? row.resourceId,
+  );
+  const ownerType =
+    (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
   return {
-    id: String(row.id),
+    id: String(resourceId ?? teamId ?? row.id),
     name: String(row.name ?? ""),
     ...((row.agent_id ?? row.agentId)
       ? { agent_id: String(row.agent_id ?? row.agentId) }
       : {}),
-    ...((row.team_id ?? row.teamId)
-      ? { team_id: Number(row.team_id ?? row.teamId) }
-      : {}),
-    owner_type:
-      (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user",
+    ...(teamId == null ? {} : { team_id: teamId }),
+    owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
     status:
       (row.status ?? "unavailable") === "available"
         ? "available"
         : "unavailable",
-    execution_environment_ids: stringArray(
+    execution_environment_ids: Array.isArray(
       row.execution_environment_ids ?? row.executionEnvironmentIds,
-    ),
-    workspace_ids: stringArray(row.workspace_ids ?? row.workspaceIds),
+    )
+      ? (
+          (row.execution_environment_ids ??
+            row.executionEnvironmentIds) as unknown[]
+        ).map(String)
+      : [],
   };
 }
 
@@ -355,6 +363,7 @@ export function mapCollaborationAssignmentDto(
 ): CollaborationAssignment {
   const row = asRecord(input);
   const rawType = row.target_type ?? row.targetType;
+  const createdAt = String(row.created_at ?? row.createdAt ?? "");
   return {
     id: String(row.id),
     issue_id: String(row.issue_id ?? row.issueId ?? row.loop_item_id ?? ""),
@@ -362,6 +371,7 @@ export function mapCollaborationAssignmentDto(
     target_id: String(row.target_id ?? row.targetId ?? ""),
     target_name: String(row.target_name ?? row.targetName ?? ""),
     workflow_step: nullableString(row.workflow_step ?? row.workflowStep),
+    body: String(row.body ?? ""),
     comment_id: nullableString(row.comment_id ?? row.commentId),
     created_by_user_id: Number(
       row.created_by_user_id ?? row.createdByUserId ?? 0,
@@ -373,57 +383,7 @@ export function mapCollaborationAssignmentDto(
       row.status === "completed" || row.status === "cancelled"
         ? row.status
         : "active",
-    created_at: String(row.created_at ?? row.createdAt ?? ""),
-    updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
+    created_at: createdAt,
+    updated_at: String(row.updated_at ?? row.updatedAt ?? createdAt),
   };
-}
-
-/**
- * Reads the old exclusive assignee projection as one active assignment.
- * New writes always use the non-exclusive assignments API.
- */
-export function legacyIssueAssignmentProjection(
-  issue: CollaborationIssue,
-): CollaborationAssignment[] {
-  const agentId =
-    issue.assignee_agent_id ??
-    (issue.assignee_team_id == null ? null : String(issue.assignee_team_id));
-  if (agentId) {
-    return [
-      {
-        id: `legacy-agent:${issue.id}:${agentId}`,
-        issue_id: issue.id,
-        target_type: "agent",
-        target_id: agentId,
-        target_name:
-          issue.assignee_agent_name ?? issue.assignee_team_name ?? "Agent",
-        workflow_step: null,
-        comment_id: null,
-        created_by_user_id: issue.created_by_user_id,
-        created_by_user_name: issue.created_by_user_name ?? null,
-        status: "active",
-        created_at: issue.updated_at,
-        updated_at: issue.updated_at,
-      },
-    ];
-  }
-  if (issue.assignee_user_id != null) {
-    return [
-      {
-        id: `legacy-human:${issue.id}:${issue.assignee_user_id}`,
-        issue_id: issue.id,
-        target_type: "human",
-        target_id: String(issue.assignee_user_id),
-        target_name: issue.assignee_name ?? "Member",
-        workflow_step: null,
-        comment_id: null,
-        created_by_user_id: issue.created_by_user_id,
-        created_by_user_name: issue.created_by_user_name ?? null,
-        status: "active",
-        created_at: issue.updated_at,
-        updated_at: issue.updated_at,
-      },
-    ];
-  }
-  return [];
 }

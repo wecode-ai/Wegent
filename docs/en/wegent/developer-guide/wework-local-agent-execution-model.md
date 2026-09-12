@@ -13,6 +13,32 @@ The goal is not to force every local conversation into the cloud. It is to make
 local execution that participates in a collaboration Project use the same Agent
 definition, Run protocol, and capability snapshot as Wegent cloud execution.
 
+## Product hosting boundary
+
+The collaboration management UI has one implementation owned by Wegent Web.
+Like the fixed Agent tab, the fixed Collaboration tab in Wework opens Wegent
+Web in the built-in browser:
+
+```text
+Wework fixed Collaboration tab
+→ Wegent Web /collaboration
+→ Workspace / Project / Issue / Member / Agent / Execution Environment
+```
+
+Wework no longer implements the all-workspaces or workspace-resource
+management pages. Its local surface retains only execution-domain capabilities:
+
+- the My Work aggregate view;
+- notifications and Issue deep links;
+- the local execution entry for a concrete Issue;
+- LocalTask creation, Issue/Run binding, execution, and deliverable sync.
+
+The fixed Collaboration tab therefore uses the cloud page, while a concrete
+project task opened from My Work or a notification can still use the Wework
+local execution surface. Both paths use the same cloud data and
+`packages/collaboration` domain components rather than duplicating Workspace
+management state.
+
 ## Current execution path
 
 The current local board-robot path is approximately:

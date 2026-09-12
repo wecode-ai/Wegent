@@ -188,31 +188,15 @@ export function createSharedWorkspaceHttpApi(
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/agents`,
         );
-        return response.items.map((item) => {
-          const row = record(item);
-          return mapCollaborationOwnedAgentDto({
-            ...row,
-            workspace_ids: row.workspace_ids ??
-              row.workspaceIds ?? [workspaceId],
-          });
-        });
+        return response.items.map((item) =>
+          mapCollaborationOwnedAgentDto(record(item)),
+        );
       },
       async addAgent(workspaceId, input) {
         return mapCollaborationOwnedAgentDto(
           await transport.post(
             `/v1/workspaces/${encoded(workspaceId)}/agents`,
-            workspaceHttpRequestBody({
-              teamId: input.teamId,
-              ownerType: input.ownerType ?? "user",
-            }),
-          ),
-        );
-      },
-      async updateAgent(workspaceId, teamId, input) {
-        return mapCollaborationOwnedAgentDto(
-          await transport.patch(
-            `/v1/workspaces/${encoded(workspaceId)}/agents/${encoded(teamId)}`,
-            workspaceHttpRequestBody(input),
+            workspaceHttpRequestBody({ teamId: input.teamId }),
           ),
         );
       },
@@ -225,23 +209,15 @@ export function createSharedWorkspaceHttpApi(
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
         );
-        return response.items.map((item) => {
-          const row = record(item);
-          return mapCollaborationExecutionEnvironmentDto({
-            ...row,
-            workspace_ids: row.workspace_ids ??
-              row.workspaceIds ?? [workspaceId],
-          });
-        });
+        return response.items.map((item) =>
+          mapCollaborationExecutionEnvironmentDto(record(item)),
+        );
       },
       async addExecutionEnvironment(workspaceId, input) {
         return mapCollaborationExecutionEnvironmentDto(
           await transport.post(
             `/v1/workspaces/${encoded(workspaceId)}/execution-environments`,
-            workspaceHttpRequestBody({
-              deviceId: input.deviceId,
-              ownerType: input.ownerType ?? "user",
-            }),
+            workspaceHttpRequestBody({ deviceId: input.deviceId }),
           ),
         );
       },
@@ -289,11 +265,16 @@ export function createSharedWorkspaceHttpApi(
           `/v1/loop-items/${encoded(issueId)}/assignments`,
           workspaceHttpRequestBody(input),
         );
+        const assignment = mapCollaborationAssignmentDto(
+          record(response.assignment),
+        );
+        const comment =
+          response.comment && response.comment.id !== assignment.id
+            ? response.comment
+            : null;
         return {
-          assignment: mapCollaborationAssignmentDto(
-            record(response.assignment),
-          ),
-          comment: response.comment,
+          assignment,
+          comment,
           issue: response.issue,
         };
       },

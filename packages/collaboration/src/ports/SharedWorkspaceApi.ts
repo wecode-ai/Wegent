@@ -167,16 +167,10 @@ export interface WorkspaceMemberUpdateInput {
 
 export interface WorkspaceAgentCreateInput {
   teamId: number;
-  ownerType?: "user" | "workspace";
-}
-
-export interface WorkspaceAgentUpdateInput {
-  ownerType: "user" | "workspace";
 }
 
 export interface WorkspaceExecutionEnvironmentCreateInput {
   deviceId: number;
-  ownerType?: "user" | "workspace";
 }
 
 export interface WorkspaceIssueCollaborator {
@@ -436,11 +430,6 @@ export interface SharedCollaborationWorkspacesApi {
   addAgent(
     workspaceId: string,
     input: WorkspaceAgentCreateInput,
-  ): Promise<CollaborationOwnedAgent>;
-  updateAgent(
-    workspaceId: string,
-    teamId: number,
-    input: WorkspaceAgentUpdateInput,
   ): Promise<CollaborationOwnedAgent>;
   removeAgent(workspaceId: string, teamId: number): Promise<void>;
   listExecutionEnvironments(

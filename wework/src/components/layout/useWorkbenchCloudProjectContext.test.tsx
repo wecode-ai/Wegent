@@ -1328,7 +1328,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       },
       fixed: true,
     },
-  ])('reuses the $description when opening a bound work item', async setup => {
+  ])('opens or reuses the $description when opening a bound work item', async setup => {
     const { boardRoute, boardTabId, cloudProject, fixed } = setup
     const item = loopItem(cloudProject.id)
     const currentRuntimeTask = {
@@ -1400,12 +1400,18 @@ describe('useWorkbenchCloudProjectContext', () => {
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(item))
     act(() => result.current.openBoundProjectSpaceTask())
 
-    expect(openTab).not.toHaveBeenCalled()
-    expect(workspaceTabs.selectTab).toHaveBeenCalledOnce()
-    expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, {
+    const expectedTab = {
       title: '我的任务',
       contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
-    })
+    }
+    if (fixed) {
+      expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
+      expect(openTab).toHaveBeenCalledWith('board', expectedTab)
+    } else {
+      expect(openTab).not.toHaveBeenCalled()
+      expect(workspaceTabs.selectTab).toHaveBeenCalledOnce()
+      expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, expectedTab)
+    }
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })
 

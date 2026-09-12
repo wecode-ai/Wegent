@@ -1037,14 +1037,12 @@ export function useWorkbenchCloudProjectContext({
     const projectRef = projectSpaceRef(boundCloudProject)
     const contentRoute = projectSpaceContentRoute(projectRef)
     if (workspaceTabs) {
-      const existingBoardTab =
-        workspaceTabs.tabs.find(
-          tab =>
-            tab.kind === 'board' && projectSpaceRouteMatchesProject(tab.contentRoute, projectRef)
-        ) ??
-        workspaceTabs.tabs.find(
-          tab => tab.kind === 'board' && tab.fixed && tab.contentRoute === '/todo'
-        )
+      const existingBoardTab = workspaceTabs.tabs.find(
+        tab =>
+          tab.kind === 'board' &&
+          !tab.fixed &&
+          projectSpaceRouteMatchesProject(tab.contentRoute, projectRef)
+      )
       if (existingBoardTab) {
         workspaceTabs.selectTab(existingBoardTab.id, {
           title: boundCloudProject.name,

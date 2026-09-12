@@ -9,8 +9,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
-import type { CollaborationIssue } from "../types";
-import { IssueActivityPanel } from "./IssueActivityPanel";
+import type {
+  CollaborationAssignment,
+  CollaborationComment,
+  CollaborationIssue,
+} from "../types";
+import { issueActivityEntries, IssueActivityPanel } from "./IssueActivityPanel";
 
 const issue = {
   id: "issue-1",
@@ -133,5 +137,25 @@ describe("IssueActivityPanel", () => {
         ) as HTMLInputElement
       ).value,
     ).toBe("");
+  });
+
+  it("renders an assignment comment event only once", () => {
+    const assignment = {
+      id: "comment-1",
+      comment_id: "comment-1",
+      created_at: "2026-09-12T00:00:00Z",
+    } as CollaborationAssignment;
+    const comment = {
+      id: "comment-1",
+      created_at: "2026-09-12T00:00:00Z",
+    } as CollaborationComment;
+
+    expect(issueActivityEntries([assignment], [comment], [])).toEqual([
+      {
+        kind: "assignment",
+        at: "2026-09-12T00:00:00Z",
+        assignment,
+      },
+    ]);
   });
 });

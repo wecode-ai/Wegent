@@ -7,51 +7,36 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.share_link import ResourceType
 from app.models.user import User
-from app.models.workspace import (
-    WorkspaceAgentBinding,
-    WorkspaceExecutionEnvironment,
-)
 from app.services.workspaces.resource_mapping import (
     agent_status,
     personal_environment_values,
-    workspace_ids_by_resource,
 )
+from app.services.workspaces.storage import workspace_ids_for_resources
 
 
 class WorkspacePersonalResourceService:
     """List user-owned resources and their Workspace availability."""
 
     def list_personal_resources(
-        self,
-        db: Session,
-        user_id: int,
+        self, db: Session, user_id: int
     ) -> dict[str, list[dict[str, object]]]:
         user = db.get(User, user_id)
         if user is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
         teams = _list_owned_kinds(db, user_id, "Team")
         devices = _list_owned_kinds(db, user_id, "Device")
-        team_workspace_ids = workspace_ids_by_resource(
+        team_workspace_ids = workspace_ids_for_resources(
             db,
-            WorkspaceAgentBinding,
-            WorkspaceAgentBinding.team_id,
-            [team.id for team in teams],
+            resource_type=ResourceType.TEAM.value,
+            resource_ids=[team.id for team in teams],
         )
-        device_workspace_ids = workspace_ids_by_resource(
+        device_workspace_ids = workspace_ids_for_resources(
             db,
-            WorkspaceExecutionEnvironment,
-            WorkspaceExecutionEnvironment.device_id,
-            [device.id for device in devices],
+            resource_type=ResourceType.DEVICE.value,
+            resource_ids=[device.id for device in devices],
         )
-        environments = [
-            personal_environment_values(
-                device,
-                owner=user,
-                workspace_ids=device_workspace_ids.get(device.id, []),
-            )
-            for device in devices
-        ]
         environment_ids = [str(device.id) for device in devices]
         return {
             "agents": [
@@ -68,7 +53,14 @@ class WorkspacePersonalResourceService:
                 }
                 for team in teams
             ],
-            "execution_environments": environments,
+            "execution_environments": [
+                personal_environment_values(
+                    device,
+                    owner=user,
+                    workspace_ids=device_workspace_ids.get(device.id, []),
+                )
+                for device in devices
+            ],
         }
 
 

@@ -1908,7 +1908,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
   })
 
   test('returns to the exact previous workspace route after opening settings', async () => {
@@ -1937,7 +1937,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(window.location.pathname).toBe('/todo')
     expect(window.location.search).toContain('projectId=project-1')
-    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
   })
 
   test('returns to the previous page after opening settings through direct navigation', async () => {
@@ -1964,7 +1964,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
   })
 
   test('keeps the active task return route when an inactive project space is retained', () => {
@@ -2060,7 +2060,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
   })
 
   test('keeps the settings return path when the layout remounts at the settings route', async () => {
@@ -2119,7 +2119,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(screen.getByTestId('wework-collaboration-platform')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
   })
 
   test('uses the independent board tab instead of a work-items sidebar destination', () => {
@@ -2969,6 +2969,22 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
+  })
+
+  test('opens my tasks inside the fixed task tab without navigating to collaboration', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(await screen.findByTestId('task-my-work-button'))
+
+    expect(screen.getByTestId('task-my-work-surface')).toBeVisible()
+    expect(screen.getByTestId('cloud-my-work-view')).toHaveTextContent('我的任务')
+    expect(window.location.pathname).toBe('/')
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('new-chat-button'))
+
+    expect(screen.queryByTestId('task-my-work-surface')).not.toBeInTheDocument()
+    expect(baseProps.onNewChat).toHaveBeenCalled()
   })
 
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {

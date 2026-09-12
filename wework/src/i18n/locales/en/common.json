@@ -4660,6 +4660,12 @@
     "workflow_branch_collector_webhook": "Webhook pending registration",
     "workflow_branch_collector_error": "Collector unavailable"
   },
+  "collaboration": {
+    "all_workspaces": "All workspaces",
+    "resources": "Resources",
+    "login_title": "Sign in to use collaboration workspaces",
+    "login_description": "Sign in to Wegent to create and join workspaces, then collaborate with people and agents on projects."
+  },
   "notifications": {
     "title": "Notifications",
     "refresh": "Refresh",

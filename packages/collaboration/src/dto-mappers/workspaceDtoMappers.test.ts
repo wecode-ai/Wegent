@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  mapCollaborationAssignmentDto,
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapCollaborationOwnedAgentDto,
@@ -16,7 +17,7 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
-  it("preserves resource identifiers required for workspace authorization", () => {
+  it("uses resource identifiers instead of authorization binding identifiers", () => {
     expect(
       mapCollaborationOwnedAgentDto({
         id: "binding-1",
@@ -26,11 +27,10 @@ describe("workspace DTO mappers", () => {
         owner_id: "7",
         owner_name: "李明",
         status: "available",
-        workspace_ids: [],
         execution_environment_ids: ["22"],
       }),
     ).toMatchObject({
-      id: "binding-1",
+      id: "12",
       team_id: 12,
       owner_type: "user",
       execution_environment_ids: ["22"],
@@ -46,15 +46,40 @@ describe("workspace DTO mappers", () => {
         owner_id: "workspace-1",
         owner_name: "研发空间",
         status: "online",
-        workspace_ids: ["workspace-1"],
         updated_at: "2026-09-11T00:00:00Z",
       }),
     ).toMatchObject({
-      id: "binding-2",
+      id: "22",
       device_id: 22,
       device_key: "device-cloud-runner",
       kind: "cloud_host",
       owner_type: "workspace",
+    });
+  });
+
+  it("maps assignment API responses", () => {
+    expect(
+      mapCollaborationAssignmentDto({
+        id: "comment-9",
+        issue_id: "issue-1",
+        target_type: "agent",
+        target_id: "12",
+        target_name: "Codex",
+        workflow_step: "implementation",
+        body: "请实现接口",
+        comment_id: "comment-9",
+        created_by_user_id: 7,
+        created_at: "2026-09-12T00:00:00Z",
+      }),
+    ).toMatchObject({
+      id: "comment-9",
+      comment_id: "comment-9",
+      issue_id: "issue-1",
+      target_type: "agent",
+      target_id: "12",
+      workflow_step: "implementation",
+      body: "请实现接口",
+      status: "active",
     });
   });
 

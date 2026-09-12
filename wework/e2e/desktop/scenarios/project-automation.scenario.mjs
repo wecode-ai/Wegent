@@ -3526,6 +3526,9 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-add-board"]')
+      await control.command('navigate', 'body', {
+        value: `/todo?projectStore=backend&projectId=${PROJECT_ID}`,
+      })
       await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -3543,28 +3546,8 @@ export function createDesktopScenario({
           }
         )
       }
-      await control.command('click', `${activeBoard} [data-testid="cloud-project-settings"]`)
-      await control.command('waitFor', `${activeBoard} [data-testid="project-space-settings"]`, {
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('waitFor', `${activeBoard} [data-testid="project-space-api-wiki"]`, {
-        text: 'POST /api/v1/cloud-projects',
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command(
-        'waitFor',
-        `${activeBoard} [data-testid="project-space-device-concurrency"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-          visible: true,
-        }
-      )
-      const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
-      await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
-      await control.command('click', projectSelector)
-      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         visible: true,
       })
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {

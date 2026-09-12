@@ -242,6 +242,23 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
+  test('renders my tasks as a selected special task view', async () => {
+    const onOpenMyWork = vi.fn()
+
+    renderSidebar({
+      taskListView: 'my-work',
+      onOpenMyWork,
+    })
+
+    const myWorkButton = screen.getByTestId('task-my-work-button')
+    expect(myWorkButton).toHaveTextContent('我的任务')
+    expect(myWorkButton).toHaveAttribute('aria-current', 'page')
+
+    await userEvent.click(myWorkButton)
+
+    expect(onOpenMyWork).toHaveBeenCalledOnce()
+  })
+
   test('shows a discoverable project creation action when the project list is empty', async () => {
     renderSidebar({
       projects: [],

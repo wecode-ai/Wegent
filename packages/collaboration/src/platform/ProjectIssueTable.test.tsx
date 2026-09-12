@@ -40,6 +40,7 @@ const assignment = {
   target_id: "agent-1",
   target_name: "真实智能体",
   workflow_step: null,
+  body: "",
   comment_id: null,
   created_by_user_id: 1,
   created_by_user_name: "李明",
@@ -107,6 +108,6 @@ describe("ProjectIssueTable", () => {
     expect(container.textContent).toContain("—");
     expect(container.textContent).not.toContain("旧负责人");
     expect(visibleIssueAssignments(issue, [])).toEqual([]);
-    expect(visibleIssueAssignments(issue, undefined)).toHaveLength(1);
+    expect(visibleIssueAssignments(issue, undefined)).toEqual([]);
   });
 });

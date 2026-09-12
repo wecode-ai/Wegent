@@ -10,6 +10,28 @@ Wework、Codex、Plugin、Executor、LocalTask 与云端 Issue/Run 的关系。
 目标不是让所有本地对话强制上云，而是让参与协作项目的本地执行使用与 Wegent
 云端相同的 Agent 定义、Run 协议和能力快照。
 
+## 产品承载边界
+
+协作管理界面只有一个实现，归 Wegent Web 所有。Wework 固定“协作”Tab 与固定
+“智能体”Tab 一样，通过内置浏览器直接打开 Wegent Web：
+
+```text
+Wework 固定“协作”Tab
+→ Wegent Web /collaboration
+→ Workspace / Project / Issue / Member / Agent / 执行环境
+```
+
+Wework 不再实现“所有空间”和空间资源管理页面。Wework 本地只保留执行域能力：
+
+- “我的任务”聚合视图；
+- 通知和 Issue 深链；
+- 具体 Issue 的本地执行入口；
+- LocalTask 创建、Issue/Run 绑定、执行和产物同步。
+
+因此，固定“协作”Tab 使用云端页面；从“我的任务”或通知进入的具体项目任务仍可由
+Wework 本地执行页承载。两者复用同一套云端数据和
+`packages/collaboration` 领域组件，不复制 Workspace 管理状态。
+
 ## 当前执行链路
 
 现有本地看板机器人执行大致为：

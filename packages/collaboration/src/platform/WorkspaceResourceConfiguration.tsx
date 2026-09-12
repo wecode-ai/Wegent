@@ -19,21 +19,16 @@ import type {
 } from "../types";
 
 type MemberRole = Exclude<CollaborationRole, "Owner">;
-type ResourceOwnerType = "user" | "workspace";
 
 export interface WorkspaceResourceCommands {
   searchUsers(query: string): Promise<CollaborationUser[]>;
   addMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
   updateMember(userId: number, role: MemberRole): Promise<CollaborationMember>;
   removeMember(userId: number): Promise<void>;
-  addAgent(
-    agent: CollaborationOwnedAgent,
-    ownerType: ResourceOwnerType,
-  ): Promise<CollaborationOwnedAgent>;
+  addAgent(agent: CollaborationOwnedAgent): Promise<CollaborationOwnedAgent>;
   removeAgent(agent: CollaborationOwnedAgent): Promise<void>;
   addExecutionEnvironment(
     environment: CollaborationExecutionEnvironment,
-    ownerType: ResourceOwnerType,
   ): Promise<CollaborationExecutionEnvironment>;
   removeExecutionEnvironment(
     environment: CollaborationExecutionEnvironment,
@@ -249,8 +244,7 @@ export function WorkspaceMembersConfiguration({
   const [error, setError] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<number | null>(null);
   const canManage =
-    workspace.access_role === "Owner" ||
-    workspace.access_role === "Maintainer";
+    workspace.access_role === "Owner" || workspace.access_role === "Maintainer";
 
   return (
     <>
@@ -330,7 +324,9 @@ export function WorkspaceMembersConfiguration({
             ))}
           </div>
         ) : (
-          <div className="collaboration-resource-empty">{messages.noMembers}</div>
+          <div className="collaboration-resource-empty">
+            {messages.noMembers}
+          </div>
         )}
       </section>
       {dialogOpen ? (
@@ -434,8 +430,7 @@ export function WorkspaceAgentsConfiguration({
     agents.flatMap((agent) => (agent.team_id ? [agent.team_id] : [])),
   );
   const candidates = resources.agents.filter(
-    (candidate) =>
-      candidate.team_id && !assignedTeamIds.has(candidate.team_id),
+    (candidate) => candidate.team_id && !assignedTeamIds.has(candidate.team_id),
   );
   const canAuthorize =
     workspace.access_role === "Owner" ||
@@ -455,7 +450,7 @@ export function WorkspaceAgentsConfiguration({
           candidates={candidates}
           messages={messages}
           getValue={(candidate) => String(candidate.team_id)}
-          onAuthorize={(candidate) => commands.addAgent(candidate, "user")}
+          onAuthorize={(candidate) => commands.addAgent(candidate)}
         />
       ) : null}
       <ErrorMessage message={error} />
@@ -468,9 +463,9 @@ export function WorkspaceAgentsConfiguration({
               </span>
               <span>
                 <strong>{agent.name}</strong>
-                <small>{agent.owner_name}</small>
+                {agent.owner_name ? <small>{agent.owner_name}</small> : null}
               </span>
-              <em>{agent.owner_name}</em>
+              <em>{agent.status}</em>
               {canAuthorize ? (
                 <button
                   type="button"
@@ -543,7 +538,7 @@ export function WorkspaceExecutionEnvironmentsConfiguration({
           messages={messages}
           getValue={(candidate) => String(candidate.device_id)}
           onAuthorize={(candidate) =>
-            commands.addExecutionEnvironment(candidate, "user")
+            commands.addExecutionEnvironment(candidate)
           }
         />
       ) : null}
@@ -558,7 +553,7 @@ export function WorkspaceExecutionEnvironmentsConfiguration({
               <span>
                 <strong>{environment.name}</strong>
                 <small>
-                  {environment.owner_name} ·{" "}
+                  {environment.owner_name ? `${environment.owner_name} · ` : ""}
                   {environment.kind === "cloud_host" ? "Cloud" : "Local"}
                 </small>
               </span>

@@ -6,174 +6,150 @@
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject
+from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.models.workspace import (
-    Workspace,
-    WorkspaceAgentBinding,
-    WorkspaceExecutionEnvironment,
-)
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate
 from app.services.workspaces.access import WorkspaceAccess, require_workspace_role
 from app.services.workspaces.members import ensure_human_member
+from app.services.workspaces.storage import (
+    COLLABORATION_WORKSPACE_KIND,
+    WORKSPACE_ENTITY_TYPE,
+    CollaborationWorkspace,
+    get_workspace_kind,
+    project_ids_for_workspace,
+    workspace_from_kind,
+    workspace_kind_payload,
+)
 
 
 class WorkspaceLifecycleService:
     """Manage Workspace creation, discovery, updates, and archival."""
 
     def create(
-        self,
-        db: Session,
-        user_id: int,
-        values: WorkspaceCreate,
-    ) -> Workspace:
-        has_workspace = (
-            db.query(Workspace.id)
-            .filter(
-                Workspace.created_by_user_id == user_id,
-                Workspace.status == "active",
-            )
-            .first()
-            is not None
-        )
-        workspace = _new_workspace(
+        self, db: Session, user_id: int, values: WorkspaceCreate
+    ) -> CollaborationWorkspace:
+        is_default = values.is_default or not self._owned_active_kinds(db, user_id)
+        public_id = str(uuid.uuid4())
+        kind = Kind(
             user_id=user_id,
+            kind=COLLABORATION_WORKSPACE_KIND,
             name=values.name,
-            description=values.description,
-            is_default=values.is_default or not has_workspace,
+            namespace="default",
+            json=workspace_kind_payload(
+                name=values.name,
+                description=values.description,
+                public_id=public_id,
+                is_default=is_default,
+            ),
+            is_active=True,
         )
-        db.add(workspace)
+        db.add(kind)
         try:
             db.flush()
-            if workspace.is_default:
-                _clear_other_defaults(db, user_id, workspace.id)
-            db.add(_owner_membership(workspace.id, user_id))
+            if is_default:
+                self._clear_other_defaults(db, user_id, int(kind.id))
+            db.add(_owner_membership(int(kind.id), user_id))
             db.commit()
         except IntegrityError as exc:
             db.rollback()
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Workspace could not be created"
             ) from exc
-        db.refresh(workspace)
-        return workspace
+        db.refresh(kind)
+        return workspace_from_kind(kind)
 
-    def get_or_create_default(self, db: Session, user_id: int) -> Workspace:
-        workspace = (
-            db.query(Workspace)
-            .filter(
-                Workspace.created_by_user_id == user_id,
-                Workspace.status == "active",
-                Workspace.is_default.is_(True),
-            )
-            .order_by(Workspace.id)
-            .first()
-        )
-        if workspace is not None:
-            return workspace
-
-        workspace = (
-            db.query(Workspace)
-            .filter(
-                Workspace.created_by_user_id == user_id,
-                Workspace.status == "active",
-            )
-            .order_by(Workspace.id)
-            .first()
-        )
-        if workspace is not None:
-            workspace.is_default = True
-            workspace.version += 1
-            _clear_other_defaults(db, user_id, workspace.id)
+    def get_or_create_default(
+        self, db: Session, user_id: int
+    ) -> CollaborationWorkspace:
+        owned = self._owned_active_kinds(db, user_id)
+        for kind in owned:
+            workspace = workspace_from_kind(kind)
+            if workspace.is_default:
+                ensure_human_member(
+                    db,
+                    workspace_id=workspace.id,
+                    user_id=user_id,
+                    role=BaseRole.Owner,
+                )
+                return workspace
+        if owned:
+            kind = owned[0]
+            self._set_kind_values(kind, is_default=True)
+            self._clear_other_defaults(db, user_id, int(kind.id))
             ensure_human_member(
                 db,
-                workspace_id=workspace.id,
+                workspace_id=int(kind.id),
                 user_id=user_id,
                 role=BaseRole.Owner,
             )
             db.flush()
-            return workspace
+            return workspace_from_kind(kind)
+        return self._create_uncommitted_default(db, user_id)
 
-        workspace = _new_workspace(
-            user_id=user_id,
-            name="默认协作空间",
-            description="",
-            is_default=True,
-        )
-        db.add(workspace)
-        db.flush()
-        db.add(_owner_membership(workspace.id, user_id))
-        return workspace
-
-    def list_accessible(self, db: Session, user_id: int) -> list[Workspace]:
-        member_workspace_ids = select(ResourceMember.resource_id).where(
+    def list_accessible(
+        self, db: Session, user_id: int
+    ) -> list[CollaborationWorkspace]:
+        workspace_ids = select(ResourceMember.resource_id).where(
             ResourceMember.resource_type == ResourceType.WORKSPACE.value,
             ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
-        return (
-            db.query(Workspace)
+        kinds = (
+            db.query(Kind)
             .filter(
-                Workspace.status == "active",
-                or_(
-                    Workspace.created_by_user_id == user_id,
-                    Workspace.id.in_(member_workspace_ids),
-                ),
+                Kind.kind == COLLABORATION_WORKSPACE_KIND,
+                Kind.is_active.is_(True),
+                Kind.id.in_(workspace_ids),
             )
-            .order_by(Workspace.is_default.desc(), Workspace.updated_at.desc())
+            .order_by(Kind.updated_at.desc())
             .all()
         )
+        workspaces = [workspace_from_kind(kind) for kind in kinds]
+        return sorted(
+            workspaces,
+            key=lambda item: (not item.is_default, -item.updated_at.timestamp()),
+        )
 
-    def get(self, db: Session, workspace_id: int, user_id: int) -> Workspace:
+    def get(
+        self, db: Session, workspace_id: int, user_id: int
+    ) -> CollaborationWorkspace:
         return require_workspace_role(db, workspace_id, user_id).workspace
 
     def access(self, db: Session, workspace_id: int, user_id: int) -> WorkspaceAccess:
         return require_workspace_role(db, workspace_id, user_id)
 
     def summary_counts(self, db: Session, workspace_id: int) -> dict[str, int]:
-        member_count = (
-            db.query(func.count(ResourceMember.id))
-            .filter(
-                ResourceMember.resource_type == ResourceType.WORKSPACE.value,
-                ResourceMember.resource_id == workspace_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .scalar()
-            or 0
-        )
-        project_count = (
-            db.query(func.count(CloudProject.id))
-            .filter(
-                CloudProject.workspace_id == workspace_id,
-                CloudProject.status == "active",
-            )
-            .scalar()
-            or 0
-        )
-        agent_count = (
-            db.query(func.count(WorkspaceAgentBinding.id))
-            .filter(WorkspaceAgentBinding.workspace_id == workspace_id)
-            .scalar()
-            or 0
-        )
-        environment_count = (
-            db.query(func.count(WorkspaceExecutionEnvironment.id))
-            .filter(WorkspaceExecutionEnvironment.workspace_id == workspace_id)
-            .scalar()
-            or 0
+        member_count = self._grant_count(
+            db,
+            resource_type=ResourceType.WORKSPACE.value,
+            workspace_id=workspace_id,
+            entity_type="user",
+            resource_side=True,
         )
         return {
-            "member_count": int(member_count),
-            "project_count": int(project_count),
-            "agent_count": int(agent_count),
-            "execution_environment_count": int(environment_count),
+            "member_count": member_count,
+            "project_count": self._grant_count(
+                db,
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                workspace_id=workspace_id,
+            ),
+            "agent_count": self._grant_count(
+                db,
+                resource_type=ResourceType.TEAM.value,
+                workspace_id=workspace_id,
+            ),
+            "execution_environment_count": self._grant_count(
+                db,
+                resource_type=ResourceType.DEVICE.value,
+                workspace_id=workspace_id,
+            ),
         }
 
     def update(
@@ -182,87 +158,138 @@ class WorkspaceLifecycleService:
         workspace_id: int,
         user_id: int,
         values: WorkspaceUpdate,
-    ) -> Workspace:
-        workspace = require_workspace_role(
-            db, workspace_id, user_id, BaseRole.Maintainer
-        ).workspace
-        updates = values.model_dump(exclude={"version"}, exclude_none=True)
-        if updates.get("is_default"):
-            _clear_other_defaults(db, workspace.created_by_user_id, workspace.id)
-        updated = (
-            db.query(Workspace)
+    ) -> CollaborationWorkspace:
+        require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
+        kind = (
+            db.query(Kind)
             .filter(
-                Workspace.id == workspace.id,
-                Workspace.version == values.version,
+                Kind.id == workspace_id,
+                Kind.kind == COLLABORATION_WORKSPACE_KIND,
             )
-            .update({**updates, "version": Workspace.version + 1})
+            .with_for_update()
+            .one()
         )
-        if updated != 1:
+        current = workspace_from_kind(kind)
+        if current.version != values.version:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "Workspace changed")
+        next_default = (
+            values.is_default if values.is_default is not None else current.is_default
+        )
+        if next_default:
+            self._clear_other_defaults(db, current.created_by_user_id, workspace_id)
+        self._set_kind_values(
+            kind,
+            name=values.name,
+            description=values.description,
+            is_default=next_default,
+        )
         db.commit()
-        db.refresh(workspace)
-        return workspace
+        db.refresh(kind)
+        return workspace_from_kind(kind)
 
     def archive(
-        self,
-        db: Session,
-        workspace_id: int,
-        user_id: int,
-        version: int,
+        self, db: Session, workspace_id: int, user_id: int, version: int
     ) -> None:
-        workspace = require_workspace_role(
-            db, workspace_id, user_id, BaseRole.Owner
-        ).workspace
-        active_project = (
-            db.query(CloudProject.id)
-            .filter(
-                CloudProject.workspace_id == workspace.id,
-                CloudProject.status == "active",
-            )
-            .first()
-        )
-        if active_project is not None:
+        require_workspace_role(db, workspace_id, user_id, BaseRole.Owner)
+        if project_ids_for_workspace(db, workspace_id):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Archive or move active Projects before archiving the Workspace",
             )
-        updated = (
-            db.query(Workspace)
-            .filter(
-                Workspace.id == workspace.id,
-                Workspace.version == version,
-                Workspace.status == "active",
-            )
-            .update(
-                {
-                    "status": "archived",
-                    "is_default": False,
-                    "version": Workspace.version + 1,
-                }
-            )
-        )
-        if updated != 1:
-            db.rollback()
+        kind = get_workspace_kind(db, workspace_id)
+        if kind is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+        if workspace_from_kind(kind).version != version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Workspace changed")
+        self._set_kind_values(kind, is_default=False, state="archived")
+        kind.is_active = False
         db.commit()
 
+    def _create_uncommitted_default(
+        self, db: Session, user_id: int
+    ) -> CollaborationWorkspace:
+        public_id = str(uuid.uuid4())
+        kind = Kind(
+            user_id=user_id,
+            kind=COLLABORATION_WORKSPACE_KIND,
+            name="默认协作空间",
+            namespace="default",
+            json=workspace_kind_payload(
+                name="默认协作空间",
+                description="",
+                public_id=public_id,
+                is_default=True,
+            ),
+            is_active=True,
+        )
+        db.add(kind)
+        db.flush()
+        db.add(_owner_membership(int(kind.id), user_id))
+        return workspace_from_kind(kind)
 
-def _new_workspace(
-    *,
-    user_id: int,
-    name: str,
-    description: str,
-    is_default: bool,
-) -> Workspace:
-    return Workspace(
-        public_id=str(uuid.uuid4()),
-        name=name,
-        description=description,
-        created_by_user_id=user_id,
-        is_default=is_default,
-        status="active",
-    )
+    @staticmethod
+    def _grant_count(
+        db: Session,
+        *,
+        resource_type: str,
+        workspace_id: int,
+        entity_type: str = WORKSPACE_ENTITY_TYPE,
+        resource_side: bool = False,
+    ) -> int:
+        query = db.query(func.count(ResourceMember.id)).filter(
+            ResourceMember.resource_type == resource_type,
+            ResourceMember.entity_type == entity_type,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        if resource_side:
+            query = query.filter(ResourceMember.resource_id == workspace_id)
+        else:
+            query = query.filter(ResourceMember.entity_id == str(workspace_id))
+        return int(query.scalar() or 0)
+
+    @staticmethod
+    def _owned_active_kinds(db: Session, user_id: int) -> list[Kind]:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == COLLABORATION_WORKSPACE_KIND,
+                Kind.is_active.is_(True),
+            )
+            .order_by(Kind.id)
+            .all()
+        )
+
+    @staticmethod
+    def _set_kind_values(
+        kind: Kind,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        is_default: bool | None = None,
+        state: str = "active",
+    ) -> None:
+        current = workspace_from_kind(kind)
+        next_name = name if name is not None else current.name
+        kind.name = next_name
+        kind.json = workspace_kind_payload(
+            name=next_name,
+            description=(
+                description if description is not None else current.description
+            ),
+            public_id=current.public_id,
+            is_default=(is_default if is_default is not None else current.is_default),
+            version=current.version + 1,
+        )
+        kind.json["status"]["state"] = state
+
+    def _clear_other_defaults(
+        self, db: Session, user_id: int, workspace_id: int
+    ) -> None:
+        for kind in self._owned_active_kinds(db, user_id):
+            if int(kind.id) != workspace_id and workspace_from_kind(kind).is_default:
+                self._set_kind_values(kind, is_default=False)
 
 
 def _owner_membership(workspace_id: int, user_id: int) -> ResourceMember:
@@ -272,20 +299,4 @@ def _owner_membership(workspace_id: int, user_id: int) -> ResourceMember:
         entity_id=str(user_id),
         role=BaseRole.Owner.value,
         status=MemberStatus.APPROVED.value,
-    )
-
-
-def _clear_other_defaults(
-    db: Session,
-    user_id: int,
-    workspace_id: int,
-) -> None:
-    (
-        db.query(Workspace)
-        .filter(
-            Workspace.created_by_user_id == user_id,
-            Workspace.id != workspace_id,
-            Workspace.is_default.is_(True),
-        )
-        .update({"is_default": False}, synchronize_session=False)
     )

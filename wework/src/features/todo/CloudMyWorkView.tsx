@@ -1,14 +1,14 @@
-import { MyWorkView } from '@wegent/collaboration'
+import { MyWorkView, type MyWorkItem } from '@wegent/collaboration'
 import { CalendarDays, Clock, LayoutGrid, List } from 'lucide-react'
-import type { CloudMyWorkItem } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { CloudMyWorkCalendar } from './CloudMyWorkCalendar'
 import { isExecutionActive } from './executionStatus'
 
-interface CloudMyWorkViewProps {
-  items: CloudMyWorkItem[]
-  onSelectItem: (item: CloudMyWorkItem) => void
-  onApproveItem?: (item: CloudMyWorkItem) => void | Promise<void>
+interface CloudMyWorkViewProps<T extends MyWorkItem> {
+  items: readonly T[]
+  title?: string
+  onSelectItem: (item: T) => void
+  onApproveItem?: (item: T) => void | Promise<void>
 }
 
 const icons = {
@@ -18,14 +18,19 @@ const icons = {
   timeline: Clock,
 }
 
-export function CloudMyWorkView({ items, onSelectItem, onApproveItem }: CloudMyWorkViewProps) {
+export function CloudMyWorkView<T extends MyWorkItem>({
+  items,
+  title,
+  onSelectItem,
+  onApproveItem,
+}: CloudMyWorkViewProps<T>) {
   const { t, i18n } = useTranslation('common')
 
   return (
     <MyWorkView
       items={items}
       locale={i18n.language}
-      translate={(key, fallback) => t(key, fallback)}
+      translate={(key, fallback) => (key === 'todo.my_work' && title ? title : t(key, fallback))}
       icons={icons}
       isExecutionStateActive={isExecutionActive}
       onSelectItem={onSelectItem}

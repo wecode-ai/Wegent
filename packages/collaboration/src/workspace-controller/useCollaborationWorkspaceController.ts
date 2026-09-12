@@ -26,7 +26,6 @@ import type {
   CollaborationProject,
   CollaborationStatus,
 } from "../types";
-import { legacyIssueAssignmentProjection } from "../dto-mappers";
 
 export interface CollaborationWorkspaceControllerState {
   projects: CollaborationProject[];
@@ -1028,16 +1027,13 @@ export function createCollaborationWorkspaceControllerCommands({
                 )
             : Promise.resolve([]),
         ]);
-        const assignments = api.assignments
-          ? loadedAssignments
-          : legacyIssueAssignmentProjection(issue);
         if (revision !== selectedIssueLoadRevision) return null;
         dispatch({
           type: "issue-loaded",
           issue,
           attachments,
           comments,
-          assignments,
+          assignments: loadedAssignments,
           executions,
         });
         return issue;

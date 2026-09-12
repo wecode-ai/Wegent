@@ -36,7 +36,12 @@ const runtimeEnvironmentMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/topnav/AppIframe', () => ({
-  AppIframe: (props: { active?: boolean; embeddedBrowserLabel?: string }) => {
+  AppIframe: (props: {
+    active?: boolean
+    appKey: string
+    embeddedBrowserLabel?: string
+    src: string
+  }) => {
     appIframeMocks.props(props)
     useEffect(() => appIframeMocks.cleanup, [])
     return <div data-testid="mock-app-iframe" data-active={String(props.active)} />
@@ -139,16 +144,18 @@ describe('WorkspaceTabSurface', () => {
     runtimeEnvironmentMocks.electron = false
   })
 
-  test('keeps the board workbench connected and stateful while its tab is inactive', async () => {
+  test('opens the collaboration board in the retained Wegent webview', async () => {
     const props = {
-      cloudWebUrl: null,
+      cloudWebUrl:
+        'https://app.example.com/login/oidc?access_token=token&token_type=bearer&login_success=true',
       lifecycleStore: {} as never,
       services: {} as never,
       tab: {
         id: 'fixed-board',
         kind: 'board' as const,
+        fixed: true,
         title: '项目空间',
-        contentRoute: '/todo',
+        contentRoute: '/todo?projectId=project%201&itemId=ISSUE%2F1',
       },
       user: {
         id: 1,
@@ -158,12 +165,16 @@ describe('WorkspaceTabSurface', () => {
     }
 
     const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active />)
-    expect(await screen.findByTestId('mock-workbench-board')).toHaveAttribute(
-      'data-route-active',
-      'true'
+    expect(await screen.findByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'true')
+    const activeProps = appIframeMocks.props.mock.lastCall?.[0] as {
+      appKey: string
+      src: string
+    }
+    expect(activeProps.appKey).toBe('collaboration')
+    expect(new URL(activeProps.src).searchParams.get('redirect')).toBe(
+      '/collaboration/project%201/issues/ISSUE%2F1'
     )
-    expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(true)
-    expect(workbenchProviderMocks.prewarm).toHaveBeenLastCalledWith(false)
+    expect(workbenchProviderMocks.loadTaskComposerCatalogs).not.toHaveBeenCalled()
 
     rerender(<WorkspaceTabSurface {...props} active={false} />)
 
@@ -172,78 +183,36 @@ describe('WorkspaceTabSurface', () => {
       'invisible',
       'pointer-events-none'
     )
-    expect(screen.getByTestId('mock-workbench-board')).toHaveAttribute('data-route-active', 'false')
-    expect(workbenchProviderMocks.cleanup).not.toHaveBeenCalled()
+    expect(screen.getByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'false')
+    expect(appIframeMocks.cleanup).not.toHaveBeenCalled()
 
     unmount()
-    expect(workbenchProviderMocks.cleanup).toHaveBeenCalledTimes(1)
+    expect(appIframeMocks.cleanup).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps composer catalogs loaded when a retained board tab displays an auxiliary page', async () => {
-    const defaultRuntime = window.__WEWORK_DSH_UI__
-    const routes = [
-      {
-        id: 'board-auxiliary-catalog-test',
-        path: '/board-auxiliary-catalog-test',
-        telemetryFeature: 'apps',
-      },
-    ]
-    window.__WEWORK_DSH_UI__ = {
-      getEntries: slot =>
-        slot === 'wework.route' ? routes : (defaultRuntime?.getEntries(slot) ?? []),
-      subscribe: defaultRuntime?.subscribe ?? (() => () => undefined),
-      attach(slot, id, container) {
-        if (slot === 'wework.route' && id === 'board-auxiliary-catalog-test') {
-          const page = document.createElement('div')
-          page.dataset.testid = 'mock-board-auxiliary-page'
-          container.append(page)
-          return {
-            update: () => undefined,
-            dispose: () => page.remove(),
-          }
-        }
-        return {
-          update: () => undefined,
-          dispose: () => undefined,
-        }
-      },
-    }
-    const props = {
-      active: true,
-      cloudWebUrl: null,
-      lifecycleStore: {} as never,
-      nativeWorkbenchKind: 'board' as const,
-      services: {} as never,
-      tab: {
-        id: 'fixed-board',
-        kind: 'board' as const,
-        title: '项目空间',
-        contentRoute: '/todo',
-      },
-      user: {
-        id: 1,
-        user_name: 'tester',
-        email: 'tester@example.com',
-      },
-    }
-
-    const { rerender, unmount } = render(<WorkspaceTabSurface {...props} />)
-    await screen.findByTestId('mock-workbench-board')
-    expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(true)
-
-    rerender(
+  test('keeps a project board in the local workbench for task execution', () => {
+    render(
       <WorkspaceTabSurface
-        {...props}
-        tab={{ ...props.tab, contentRoute: '/board-auxiliary-catalog-test' }}
+        active
+        cloudWebUrl="https://app.example.com"
+        lifecycleStore={{} as never}
+        services={{} as never}
+        tab={{
+          id: 'project-board',
+          kind: 'board',
+          title: '项目',
+          contentRoute: '/todo?projectId=project-1&itemId=ISSUE-1',
+        }}
+        user={{
+          id: 1,
+          user_name: 'tester',
+          email: 'tester@example.com',
+        }}
       />
     )
 
-    expect(screen.getByTestId('mock-board-auxiliary-page')).toBeInTheDocument()
-    expect(workbenchProviderMocks.loadTaskComposerCatalogs.mock.calls).toEqual([[true], [true]])
-    expect(workbenchProviderMocks.cleanup).not.toHaveBeenCalled()
-
-    unmount()
-    window.__WEWORK_DSH_UI__ = defaultRuntime
+    expect(screen.getByTestId('mock-workbench-board')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-app-iframe')).not.toBeInTheDocument()
   })
 
   test('shows an unavailable route instead of degrading a removed plugin route to the task workbench', () => {

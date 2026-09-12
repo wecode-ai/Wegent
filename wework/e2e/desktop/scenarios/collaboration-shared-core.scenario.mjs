@@ -157,10 +157,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           timeoutMs: workbenchReadyTimeoutMs,
         })
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('waitFor', scoped('[data-testid="wework-collaboration-platform"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
+        await control.command('waitFor', scoped('[data-testid="app-iframe-collaboration"]'), {
           timeoutMs: uiTimeoutMs,
         })
         assert.equal(
@@ -173,50 +170,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Opening Collaboration did not activate the fixed Collaboration tab'
         )
 
-        await control.command(
-          'waitFor',
-          scoped(`[data-testid="collaboration-workspace-${workspace.id}"]`),
-          {
-            text: workspace.name,
-            timeoutMs: uiTimeoutMs,
-          }
-        )
         const platformSnapshot = await snapshot(control)
-        for (const testId of [
-          'wework-collaboration-platform',
-          'collaboration-platform-root',
-          'collaboration-platform-sidebar',
-          'collaboration-nav-all-spaces',
-          'collaboration-nav-resources',
-        ]) {
-          assert.ok(
-            platformSnapshot.testIds.includes(testId),
-            `The shared CollaborationPlatformApp is missing ${testId}`
-          )
-        }
+        assert.ok(
+          platformSnapshot.testIds.includes('app-iframe-collaboration'),
+          'The fixed Collaboration tab did not host Wegent Web'
+        )
         await capture(control, 'collaboration-shared-core-01-all-workspaces.png')
 
-        await control.command(
-          'click',
-          scoped(`[data-testid="collaboration-workspace-${workspace.id}"]`)
-        )
-        await control.command('waitFor', scoped('[data-testid="collaboration-workspace-back"]'), {
-          timeoutMs: uiTimeoutMs,
+        await control.command('navigate', 'body', {
+          value: `/todo?projectStore=backend&projectId=${encodeURIComponent(project.id)}`,
         })
-        await control.command(
-          'waitFor',
-          scoped(`[data-testid="collaboration-project-card-${project.id}"]`),
-          {
-            text: project.name,
-            timeoutMs: uiTimeoutMs,
-          }
-        )
-        await capture(control, 'collaboration-shared-core-02-workspace-home.png')
-
-        await control.command(
-          'click',
-          scoped(`[data-testid="collaboration-project-card-${project.id}"]`)
-        )
         await control.command('waitFor', scoped('[data-testid="cloud-todo-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -224,6 +187,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           text: ISSUE_TITLE,
           timeoutMs: uiTimeoutMs,
         })
+        await capture(control, 'collaboration-shared-core-02-workspace-home.png')
         await capture(control, 'collaboration-shared-core-03-project-board.png')
 
         await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))

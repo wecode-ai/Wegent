@@ -359,15 +359,7 @@ async function verifyDefaultWorkspaceStartupTab(control) {
   })
   await control.command(
     'waitFor',
-    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="wework-collaboration-platform"]`,
-    {
-      visible: true,
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    }
-  )
-  await control.command(
-    'waitFor',
-    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="collaboration-platform-root"]`,
+    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="app-iframe-collaboration"]`,
     {
       visible: true,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

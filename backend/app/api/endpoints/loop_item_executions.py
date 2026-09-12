@@ -46,6 +46,7 @@ from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
 from app.services.runtime_profiles import runtime_profile_service
+from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ def _execution_view(
             "id": row.id,
             "loop_item_id": row.loop_item_id,
             "cloud_project_id": row.cloud_project_id,
-            "workspace_id": row.workspace_id,
+            "workspace_id": workspace_id_for_project(db, row.cloud_project_id),
             "task_title": (item.title or item.name or "") if item else "",
             "task_status": item.status if item else None,
             "task_priority": item.priority if item else None,

@@ -135,6 +135,7 @@ export interface CollaborationAssignment {
   target_id: string;
   target_name: string;
   workflow_step: string | null;
+  body: string;
   comment_id: string | null;
   created_by_user_id: number;
   created_by_user_name: string | null;
@@ -168,7 +169,6 @@ export interface CollaborationExecutionEnvironment {
   owner_id: string;
   owner_name: string;
   status: "online" | "offline" | "provisioning" | "error";
-  workspace_ids: string[];
   updated_at: string;
 }
 
@@ -178,7 +178,6 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
   owner_name: string;
   status: "available" | "unavailable";
   execution_environment_ids: string[];
-  workspace_ids: string[];
 }
 
 export interface CollaborationPlatformResources {

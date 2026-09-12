@@ -1,4 +1,5 @@
 import type { CloudMyWorkItem } from '@/api/deliveries'
+import type { MyWorkItem } from '@wegent/collaboration'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -145,6 +146,6 @@ export function runtimeMyWorkItems(
   return [...unique.values()]
 }
 
-export function isRuntimeMyWorkItem(item: CloudMyWorkItem): item is RuntimeMyWorkItem {
+export function isRuntimeMyWorkItem(item: MyWorkItem): item is RuntimeMyWorkItem {
   return 'runtime_address' in item
 }

@@ -27,18 +27,17 @@ describe('workspace resource configuration adapter', () => {
         role: 'Developer',
       })
       .mockResolvedValueOnce({
-        id: 'binding-1',
+        id: 'team-kind-12',
         team_id: 12,
         name: 'Codex',
         owner_type: 'workspace',
         owner_id: 'workspace-1',
         owner_name: '研发空间',
         status: 'available',
-        workspace_ids: ['workspace-1'],
         execution_environment_ids: [],
       })
       .mockResolvedValueOnce({
-        id: 'binding-2',
+        id: 'device-kind-22',
         device_id: 22,
         name: 'Cloud Runner',
         kind: 'cloud_host',
@@ -46,28 +45,15 @@ describe('workspace resource configuration adapter', () => {
         owner_id: '8',
         owner_name: '王芳',
         status: 'online',
-        workspace_ids: ['workspace-1'],
         updated_at: '2026-09-11T00:00:00Z',
       })
-    client.patch
-      .mockResolvedValueOnce({
-        id: 8,
-        user_id: 8,
-        user_name: '王芳',
-        email: 'wangfang@example.com',
-        role: 'Reporter',
-      })
-      .mockResolvedValueOnce({
-        id: 'binding-1',
-        team_id: 12,
-        name: 'Codex',
-        owner_type: 'user',
-        owner_id: '8',
-        owner_name: '王芳',
-        status: 'available',
-        workspace_ids: ['workspace-1'],
-        execution_environment_ids: [],
-      })
+    client.patch.mockResolvedValueOnce({
+      id: 8,
+      user_id: 8,
+      user_name: '王芳',
+      email: 'wangfang@example.com',
+      role: 'Reporter',
+    })
     client.delete.mockResolvedValue(undefined)
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
@@ -79,13 +65,7 @@ describe('workspace resource configuration adapter', () => {
       role: 'Reporter',
     })
     await api.workspaces!.removeMember('workspace/1', 8)
-    await api.workspaces!.addAgent('workspace/1', {
-      teamId: 12,
-      ownerType: 'workspace',
-    })
-    await api.workspaces!.updateAgent('workspace/1', 12, {
-      ownerType: 'user',
-    })
+    await api.workspaces!.addAgent('workspace/1', { teamId: 12 })
     await api.workspaces!.removeAgent('workspace/1', 12)
     await expect(
       api.workspaces!.addExecutionEnvironment('workspace/1', {
@@ -104,16 +84,12 @@ describe('workspace resource configuration adapter', () => {
     expect(client.delete).toHaveBeenNthCalledWith(1, '/v1/workspaces/workspace%2F1/members/8')
     expect(client.post).toHaveBeenNthCalledWith(2, '/v1/workspaces/workspace%2F1/agents', {
       team_id: 12,
-      owner_type: 'workspace',
-    })
-    expect(client.patch).toHaveBeenNthCalledWith(2, '/v1/workspaces/workspace%2F1/agents/12', {
-      owner_type: 'user',
     })
     expect(client.delete).toHaveBeenNthCalledWith(2, '/v1/workspaces/workspace%2F1/agents/12')
     expect(client.post).toHaveBeenNthCalledWith(
       3,
       '/v1/workspaces/workspace%2F1/execution-environments',
-      { device_id: 22, owner_type: 'user' }
+      { device_id: 22 }
     )
     expect(client.delete).toHaveBeenNthCalledWith(
       3,

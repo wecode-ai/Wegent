@@ -12,19 +12,22 @@ Workspace、Project、Member、Agent、Issue 和 Run 模型，同时继续复用
 [云项目协作架构](./cloud-project-collaboration.md) 中已经确定的数据事实来源和执行
 连线。
 
+具体表结构和关系复用规则见
+[协作空间存储模型](./collaboration-storage-model.md)。
+
 ## 核心术语
 
-| 产品概念 | 中文名称 | 定义 |
-| --- | --- | --- |
-| `Workspace` | 协作空间 | 成员、权限、智能体、设备、集成和共享资源的长期租户边界 |
-| `Project` | 协作项目 | 协作空间内围绕一个产品、业务目标或交付事项组织工作的容器 |
-| `Member` | 协作成员 | 可以接收通知、参与协作或发起执行的人或智能体 |
-| `Agent` | 智能体 | 可以接收 Issue 并产生 Run 的机器协作成员 |
-| `Issue` | 任务 | 需要持续推进、讨论、审查和最终确认的一件工作 |
-| `Run` | 执行 | Agent 对一个 Issue 的一次有始有终的执行尝试 |
-| `Runtime` | 运行时 | 某个设备上可用于执行指定 Shell 和能力要求的环境 |
-| `Deliverable` | 交付物 | 人或 Agent 为 Issue 提交的可验证结果 |
-| `View` | 视图 | Project 中同一批 Issue 的看板、列表、表格等展示方式 |
+| 产品概念      | 中文名称 | 定义                                                     |
+| ------------- | -------- | -------------------------------------------------------- |
+| `Workspace`   | 协作空间 | 成员、权限、智能体、设备、集成和共享资源的长期租户边界   |
+| `Project`     | 协作项目 | 协作空间内围绕一个产品、业务目标或交付事项组织工作的容器 |
+| `Member`      | 协作成员 | 可以接收通知、参与协作或发起执行的人或智能体             |
+| `Agent`       | 智能体   | 可以接收 Issue 并产生 Run 的机器协作成员                 |
+| `Issue`       | 任务     | 需要持续推进、讨论、审查和最终确认的一件工作             |
+| `Run`         | 执行     | Agent 对一个 Issue 的一次有始有终的执行尝试              |
+| `Runtime`     | 运行时   | 某个设备上可用于执行指定 Shell 和能力要求的环境          |
+| `Deliverable` | 交付物   | 人或 Agent 为 Issue 提交的可验证结果                     |
+| `View`        | 视图     | Project 中同一批 Issue 的看板、列表、表格等展示方式      |
 
 产品主链固定为：
 
@@ -88,9 +91,7 @@ Member
 Issue、Workflow 节点和调度器统一使用 `MemberRef`：
 
 ```ts
-type MemberRef =
-  | { type: 'human'; id: string }
-  | { type: 'agent'; id: string }
+type MemberRef = { type: "human"; id: string } | { type: "agent"; id: string };
 ```
 
 Assignment 只表示定向通知、关注和行动请求，不表示独占执行权，也不是开始执行的
@@ -163,37 +164,32 @@ ProjectAgentBinding
 └── enabled
 ```
 
-Agent 的身份、Team、能力和默认执行策略属于 Workspace；Project 只保存是否启用
-以及项目级差异。
+Agent 的身份、Team、能力和默认执行策略属于 `kinds`；Workspace 通过
+`resource_members` 获得 Team 的使用权，Project 只保存是否启用以及项目级差异。
 
-旧模型中的授权字段不迁入 ProjectAgentBinding。迁移时，
-`ProjectChatAgent.created_by_user_id` 转为 Workspace Agent 绑定的人类所有者和
-添加者，即 `WorkspaceAgentBinding.owner_user_id` 与 `added_by_user_id`；已有
+旧模型中的授权字段不迁入 ProjectAgentBinding。已有
 `LoopItemExecution.executor_owner_user_id` 继续保留在 Run 上，并复制到替代或
 恢复创建的 Run。领取、心跳、事件上报和完成接口继续按该 Run 字段鉴权，因此将
 ProjectChatAgent 收敛为 ProjectAgentBinding 不会放宽 Run 所有者的执行权限。
 
 ### Workspace Agent 与 Project 专属 Agent
 
-Agent 的租户归属始终是 Workspace，但使用范围可以是 Workspace 共享或 Project
-专属。两者使用同一个 Agent 实体和 Team/Bot/Ghost 模型：
+Agent 的唯一实体始终是 Team。使用范围通过授权关系和 ProjectAgentBinding 表达，
+不在 Team 上增加第二套 Workspace 归属字段：
 
 ```text
-Agent
-├── workspace_id
-├── scope: workspace | project
-└── home_project_id: null | project_id
+Team
+├── Workspace grant: 可在该 Workspace 使用
+└── ProjectAgentBinding: 在指定 Project 启用
 ```
 
-- `scope = workspace`：可以绑定到 Workspace 内多个 Project；
-- `scope = project`：只能绑定到 `home_project_id` 指定的 Project，默认只对该
-  Project 成员可见；
-- 在 Project 内创建智能体时，系统仍创建 Workspace Agent，但自动设置
-  `scope = project` 并建立 ProjectAgentBinding；
-- 将项目专属 Agent 提升为 Workspace 共享 Agent 时，只修改 scope，不复制 Team、
-  Bot 或 Ghost；
-- Project 归档时，仅当项目专属 Agent 没有活动 Run、Automation 或其他有效引用时
-  才归档该 Agent，历史 Run 继续保留其不可变快照。
+- Workspace 授权的 Team 可以绑定到该 Workspace 内多个 Project；
+- 在 Project 内创建智能体时，系统创建 Team，向当前 Workspace 授权，并建立
+  ProjectAgentBinding；
+- 只建立 ProjectAgentBinding、但不在其他 Project 启用，即表现为项目专属 Agent；
+- 将项目专属 Agent 提升为 Workspace 共享时，不复制 Team、Bot 或 Ghost，只允许
+  其他 Project 建立绑定；
+- Project 归档不删除 Team；历史 Run 继续保留不可变执行快照。
 
 如果只是同一个 Agent 在不同 Project 使用不同仓库说明、附加指令或 Runtime
 偏好，应使用 ProjectAgentBinding 覆盖，不应创建项目专属 Agent。只有角色、能力、
@@ -221,13 +217,13 @@ spec:
 
 ```ts
 type GhostPluginRef = {
-  ref: string
-  version?: string
-  required: boolean
-  config?: NonSecretPluginConfig
-  credential_refs?: PluginCredentialRef[]
-  permissions?: string[]
-}
+  ref: string;
+  version?: string;
+  required: boolean;
+  config?: NonSecretPluginConfig;
+  credential_refs?: PluginCredentialRef[];
+  permissions?: string[];
+};
 
 type JsonValue =
   | string
@@ -235,14 +231,14 @@ type JsonValue =
   | boolean
   | null
   | JsonValue[]
-  | { [key: string]: JsonValue }
+  | { [key: string]: JsonValue };
 
-type NonSecretPluginConfig = Record<string, JsonValue>
+type NonSecretPluginConfig = Record<string, JsonValue>;
 
 type PluginCredentialRef = {
-  name: string
-  ref: string
-}
+  name: string;
+  ref: string;
+};
 ```
 
 Plugin 是能力包，可以展开为 Skill、MCP、Hook、Tool 和 Runtime Requirement。
@@ -259,12 +255,12 @@ UI Plugin 仍属于 Wework 宿主，不进入 Agent 能力模型。
 
 四者职责固定为：
 
-| 概念 | 职责 |
-| --- | --- |
-| `Shell` | 定义如何运行，例如 Codex、ClaudeCode、Agno、Dify 或 Chat |
-| `Runtime` | 表示某个 Device 上已经可用的 Shell 实例和能力集合 |
-| `Device` | 提供机器、文件系统、网络和本地凭据 |
-| `Executor` | 领取 Run、准备环境、启动 Shell、回传事件并处理取消恢复 |
+| 概念       | 职责                                                     |
+| ---------- | -------------------------------------------------------- |
+| `Shell`    | 定义如何运行，例如 Codex、ClaudeCode、Agno、Dify 或 Chat |
+| `Runtime`  | 表示某个 Device 上已经可用的 Shell 实例和能力集合        |
+| `Device`   | 提供机器、文件系统、网络和本地凭据                       |
+| `Executor` | 领取 Run、准备环境、启动 Shell、回传事件并处理取消恢复   |
 
 关系为：
 
@@ -288,7 +284,6 @@ Agent 不拥有 Device，只保存默认 Runtime 策略和调用权限。Run 创
 
 ```text
 Run
-├── workspace_id
 ├── project_id
 ├── issue_id
 ├── agent_id
@@ -319,43 +314,43 @@ Run 正常完成只表示本次执行结束，不自动表示 Issue 已验收完
 
 ## 现有设施映射
 
-| 目标概念 | 现有设施 | 演进方式 |
-| --- | --- | --- |
-| Workspace | 无完整对应物 | 新增租户聚合根 |
-| Project | `CloudProject` | 直接复用并统一产品术语 |
-| Issue | `LoopItem` | 直接复用 |
-| Agent | `Kind(kind=Team)` | 作为唯一 Agent 定义 |
-| Bot/Ghost/Shell/Model | Wegent CRD | 继续作为 Agent 内部定义 |
-| Project Agent | `ProjectChatAgent` | 收敛为 ProjectAgentBinding |
-| Run | `LoopItemExecution` | 提升为唯一产品执行记录 |
-| Wegent backend | `Task` / `Subtask` | 作为 Run 的后端执行记录 |
-| Wework backend | `LocalTask` / runtime RPC | 作为 Run 的本地执行后端 |
-| Runtime | Device、Executor、Shell 能力 | 建立统一 Runtime 投影与调度接口 |
-| View | 当前看板与筛选 | 看板降为默认 View，补充服务端保存视图 |
-| Workflow | Issue Workflow | 只组织 Issue 和 Run |
-| Automation | Project Automation、本地计划任务 | 合并定义和触发协议 |
+| 目标概念              | 现有设施                            | 演进方式                              |
+| --------------------- | ----------------------------------- | ------------------------------------- |
+| Workspace             | `Kind(kind=CollaborationWorkspace)` | 复用 Kind 与通用授权                  |
+| Project               | `CloudProject`                      | 直接复用并统一产品术语                |
+| Issue                 | `LoopItem`                          | 直接复用                              |
+| Agent                 | `Kind(kind=Team)`                   | 作为唯一 Agent 定义                   |
+| Bot/Ghost/Shell/Model | Wegent CRD                          | 继续作为 Agent 内部定义               |
+| Project Agent         | `ProjectChatAgent`                  | 收敛为 ProjectAgentBinding            |
+| Run                   | `LoopItemExecution`                 | 提升为唯一产品执行记录                |
+| Wegent backend        | `Task` / `Subtask`                  | 作为 Run 的后端执行记录               |
+| Wework backend        | `LocalTask` / runtime RPC           | 作为 Run 的本地执行后端               |
+| Runtime               | Device、Executor、Shell 能力        | 建立统一 Runtime 投影与调度接口       |
+| View                  | 当前看板与筛选                      | 看板降为默认 View，补充服务端保存视图 |
+| Workflow              | Issue Workflow                      | 只组织 Issue 和 Run                   |
+| Automation            | Project Automation、本地计划任务    | 合并定义和触发协议                    |
 
 ## 必须保持的领域约束
 
 1. Workspace 是成员、权限和共享能力的唯一租户边界。
 2. Project 必须属于一个 Workspace。
-3. Issue 必须属于一个 Project，并继承其 Workspace。
+3. Issue 必须属于一个 Project，并通过 Project 的 Workspace 授权关系继承空间。
 4. Member 只能是 Human 或 Agent，Device/Executor 不得成为 Assignment 对象。
 5. Agent 的唯一云端定义是 Team；单 Bot 也通过单 Bot Team 暴露。
-6. Project 专属 Agent 仍属于 Workspace，只通过 scope 和 Project Binding 限制使用。
+6. Project 专属 Agent 仍是 Team，只通过 Workspace 授权和 Project Binding 限制使用。
 7. Assignment 只产生通知和行动请求，不作为执行权限或排他锁。
 8. Project 成员只要拥有执行权限，就能在未被分配时基于 Issue 发起 Run。
 9. ProjectChatAgent 不再复制 Agent 的身份、能力和完整运行配置。
 10. 每次机器执行必须先创建一个 Run，再创建后端执行记录。
 11. 一个 Run 只能绑定一个实际执行后端，但可以包含多个后端 turn/subtask。
-12. Run、Project 和 Issue 的 `workspace_id` 必须一致，并由数据库或服务层强校验。
+12. Run 和 Issue 不重复存储 `workspace_id`；需要时通过 Project 的授权关系解析。
 13. Workflow Node 不得成为独立于 Issue/Run 的第三种任务。
 14. Plugin 的权限、版本和配置必须进入不可变执行快照。
 15. Executor 只能执行 Agent 声明与 Runtime 能力匹配的 Run。
 
 ## 演进顺序
 
-1. 新增 Workspace，将现有 CloudProject 迁入默认 Workspace。
+1. 注册 CollaborationWorkspace Kind，将现有 CloudProject 授权给默认 Workspace。
 2. 将 CloudProject 的产品术语统一为 Project，将看板定义为默认 View。
 3. 将 Workspace Member 扩展为 Human/Agent 统一可指派主体。
 4. 使用 Team 作为唯一 Agent 定义，将 ProjectChatAgent 收敛为项目绑定。

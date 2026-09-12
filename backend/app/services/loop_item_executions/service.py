@@ -48,6 +48,7 @@ from app.services.project_automation_domain import (
     assignment_mode,
     manager_type,
 )
+from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -874,7 +875,6 @@ class LoopItemExecutionService:
         )
         if task is None:
             raise ValueError(f"Wework execution task '{loop_item_id}' is unavailable")
-        project = db.get(CloudProject, cloud_project_id)
         context = dict(automation_context or {})
         run_id_value = context.get("run_id")
         automation_run_id = (
@@ -896,7 +896,6 @@ class LoopItemExecutionService:
         row = LoopItemExecution(
             loop_item_id=loop_item_id,
             cloud_project_id=cloud_project_id,
-            workspace_id=project.workspace_id if project is not None else 0,
             executor_owner_user_id=owner_user_id,
             agent_id=agent_id,
             team_id=team_id,
@@ -2494,7 +2493,6 @@ class LoopItemExecutionService:
         return LoopItemExecution(
             loop_item_id=previous.loop_item_id,
             cloud_project_id=previous.cloud_project_id,
-            workspace_id=previous.workspace_id,
             executor_owner_user_id=previous.executor_owner_user_id,
             agent_id=previous.agent_id,
             team_id=previous.team_id,
@@ -3916,7 +3914,9 @@ class LoopItemExecutionService:
         return [
             {
                 "id": execution.id,
-                "workspace_id": execution.workspace_id or None,
+                "workspace_id": workspace_id_for_project(
+                    db, execution.cloud_project_id
+                ),
                 "loop_item_id": execution.loop_item_id,
                 "cloud_project_id": execution.cloud_project_id,
                 "task_title": None,

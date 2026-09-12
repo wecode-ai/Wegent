@@ -38,13 +38,6 @@ class LoopItemExecution(Base):
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
     loop_item_id = Column(String(64), nullable=False, default="", server_default="")
     cloud_project_id = Column(String(64), nullable=False, default="", server_default="")
-    workspace_id = Column(
-        big_integer_id_type(),
-        nullable=False,
-        default=0,
-        server_default="0",
-        comment="Owning collaboration Workspace; 0 means no Workspace",
-    )
     executor_owner_user_id = Column(
         Integer, nullable=False, default=0, server_default="0"
     )
@@ -204,7 +197,6 @@ class LoopItemExecution(Base):
         Index("idx_exec_automation_run_id", "automation_run_id"),
         Index("idx_exec_assigner_status", "assigner_user_id", "status"),
         Index("idx_exec_item_status", "loop_item_id", "status"),
-        Index("idx_exec_workspace_status", "workspace_id", "status"),
         Index("idx_exec_status_device", "status", "execution_device_id"),
         Index("idx_exec_scope_status", "execution_scope", "status"),
         Index(
@@ -288,5 +280,3 @@ def _adapt_optional_execution_ids(
         target.team_id = 0
     if target.backend_task_id is None:
         target.backend_task_id = 0
-    if target.workspace_id is None:
-        target.workspace_id = 0

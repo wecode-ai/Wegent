@@ -48,6 +48,7 @@ from app.services.project_chat.workspace_binding import (
     read_agent_workspace_binding,
     write_workspace_binding,
 )
+from app.services.workspaces.storage import workspace_id_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -227,15 +228,16 @@ class ProjectChatService:
             task_id=None,
             required_role=BaseRole.Reporter,
         )
+        workspace_id = workspace_id_for_project(db, project.id)
         if request.runtime == "wegent":
             from app.services.project_automation_domain import runnable_wegent_team
             from app.services.workspaces import workspace_service
 
             team = runnable_wegent_team(db, user_id, request.wegent_team_id)
-            if project.workspace_id is not None:
+            if workspace_id is not None:
                 workspace_service.ensure_accessible_agent_authorized(
                     db,
-                    workspace_id=int(project.workspace_id),
+                    workspace_id=workspace_id,
                     user_id=user_id,
                     team_id=int(team.id),
                 )
@@ -250,12 +252,12 @@ class ProjectChatService:
             status="ready",
         )
         if request.runtime == "codex":
-            if project.workspace_id is not None and request.execution_device_id:
+            if workspace_id is not None and request.execution_device_id:
                 from app.services.workspaces import workspace_service
 
                 workspace_service.ensure_owned_execution_environment_authorized(
                     db,
-                    workspace_id=int(project.workspace_id),
+                    workspace_id=workspace_id,
                     user_id=user_id,
                     execution_device_id=request.execution_device_id,
                 )
@@ -357,10 +359,15 @@ class ProjectChatService:
 
             team = runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
             project = db.get(CloudProject, project_id)
-            if project is not None and project.workspace_id is not None:
+            workspace_id = (
+                workspace_id_for_project(db, project.id)
+                if project is not None
+                else None
+            )
+            if workspace_id is not None:
                 workspace_service.ensure_accessible_agent_authorized(
                     db,
-                    workspace_id=int(project.workspace_id),
+                    workspace_id=workspace_id,
                     user_id=user_id,
                     team_id=int(team.id),
                 )
@@ -414,12 +421,17 @@ class ProjectChatService:
             )
             device_id = str(row.device_id or "")
             project = db.get(CloudProject, project_id)
-            if project is not None and project.workspace_id is not None and device_id:
+            workspace_id = (
+                workspace_id_for_project(db, project.id)
+                if project is not None
+                else None
+            )
+            if workspace_id is not None and device_id:
                 from app.services.workspaces import workspace_service
 
                 workspace_service.ensure_owned_execution_environment_authorized(
                     db,
-                    workspace_id=int(project.workspace_id),
+                    workspace_id=workspace_id,
                     user_id=user_id,
                     execution_device_id=device_id,
                 )

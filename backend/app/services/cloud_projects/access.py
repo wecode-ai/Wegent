@@ -14,6 +14,7 @@ from app.models.cloud_project import CloudProject
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole, has_permission
+from app.services.workspaces.storage import workspace_id_for_project
 
 
 @dataclass(frozen=True)
@@ -131,10 +132,11 @@ def require_cloud_project_role(
                     status.HTTP_403_FORBIDDEN, "Invalid cloud project role"
                 ) from exc
 
-    if project.workspace_id is not None and role != BaseRole.RestrictedAnalyst:
+    workspace_id = workspace_id_for_project(db, project.id)
+    if workspace_id is not None and role != BaseRole.RestrictedAnalyst:
         from app.services.workspaces.access import require_workspace_role
 
-        require_workspace_role(db, int(project.workspace_id), user_id)
+        require_workspace_role(db, workspace_id, user_id)
 
     if not has_permission(role, required_role):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")

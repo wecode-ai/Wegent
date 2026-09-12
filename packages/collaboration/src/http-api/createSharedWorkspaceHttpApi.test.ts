@@ -47,11 +47,10 @@ describe("createSharedWorkspaceHttpApi", () => {
       .mockResolvedValueOnce({
         items: [
           {
-            id: "binding-1",
+            id: "team-kind-12",
             teamId: 12,
             name: "研发智能体",
             ownerType: "user",
-            workspaceIds: ["workspace-1"],
           },
         ],
       })
@@ -65,7 +64,6 @@ describe("createSharedWorkspaceHttpApi", () => {
             kind: "cloud_host",
             ownerType: "user",
             status: "online",
-            workspaceIds: ["workspace-1"],
           },
         ],
       });
@@ -75,14 +73,6 @@ describe("createSharedWorkspaceHttpApi", () => {
       userName: "王芳",
       role: "Developer",
     });
-    patch.mockResolvedValue({
-      id: "binding-1",
-      teamId: 12,
-      name: "研发智能体",
-      ownerType: "workspace",
-      workspaceIds: ["workspace-1"],
-    });
-
     const api = createSharedWorkspaceHttpApi(transport);
 
     await expect(api.workspaces.list()).resolves.toMatchObject([
@@ -90,16 +80,13 @@ describe("createSharedWorkspaceHttpApi", () => {
     ]);
     await expect(
       api.workspaces.listAgents("workspace/1"),
-    ).resolves.toMatchObject([{ team_id: 12, workspace_ids: ["workspace-1"] }]);
+    ).resolves.toMatchObject([{ id: "12", team_id: 12 }]);
     await expect(api.resources.list()).resolves.toMatchObject({
       execution_environments: [{ device_id: 22, owner_type: "user" }],
     });
     await expect(
       api.workspaces.addMember("workspace/1", { userId: 8 }),
     ).resolves.toMatchObject({ user_id: 8, user_name: "王芳" });
-    await api.workspaces.updateAgent("workspace/1", 12, {
-      ownerType: "workspace",
-    });
     await api.workspaces.removeExecutionEnvironment("workspace/1", 22);
 
     expect(get).toHaveBeenNthCalledWith(
@@ -110,10 +97,6 @@ describe("createSharedWorkspaceHttpApi", () => {
       user_id: 8,
       role: "Developer",
     });
-    expect(patch).toHaveBeenCalledWith(
-      "/v1/workspaces/workspace%2F1/agents/12",
-      { owner_type: "workspace" },
-    );
     expect(remove).toHaveBeenCalledWith(
       "/v1/workspaces/workspace%2F1/execution-environments/22",
     );
@@ -125,11 +108,14 @@ describe("createSharedWorkspaceHttpApi", () => {
       .mockResolvedValueOnce({
         items: [
           {
-            id: "assignment-1",
-            issueId: "issue-1",
-            targetType: "agent",
-            targetId: "agent-1",
-            targetName: "Codex",
+            id: "comment-1",
+            issue_id: "issue-1",
+            target_type: "agent",
+            target_id: "agent-1",
+            target_name: "Codex",
+            workflow_step: null,
+            body: "",
+            comment_id: "comment-1",
           },
         ],
       })
@@ -146,11 +132,14 @@ describe("createSharedWorkspaceHttpApi", () => {
     post
       .mockResolvedValueOnce({
         assignment: {
-          id: "assignment-2",
+          id: "comment-2",
           issue_id: "issue-1",
           target_type: "human",
           target_id: "8",
           target_name: "王芳",
+          workflow_step: "review",
+          body: "",
+          comment_id: "comment-2",
         },
         comment: null,
         issue: { id: "issue-1" },
@@ -171,13 +160,23 @@ describe("createSharedWorkspaceHttpApi", () => {
     const api = createSharedWorkspaceHttpApi(transport);
 
     await expect(api.assignments.list("issue/1")).resolves.toMatchObject([
-      { target_type: "agent", target_id: "agent-1" },
+      {
+        id: "comment-1",
+        comment_id: "comment-1",
+        target_type: "agent",
+        target_id: "agent-1",
+      },
     ]);
-    await api.assignments.create("issue/1", {
-      targetType: "human",
-      targetId: "8",
-      workflowStep: "review",
-      notifyTarget: true,
+    await expect(
+      api.assignments.create("issue/1", {
+        targetType: "human",
+        targetId: "8",
+        workflowStep: "review",
+        notifyTarget: true,
+      }),
+    ).resolves.toMatchObject({
+      assignment: { id: "comment-2", comment_id: "comment-2" },
+      comment: null,
     });
     await expect(api.agents.list("project/1")).resolves.toMatchObject([
       {

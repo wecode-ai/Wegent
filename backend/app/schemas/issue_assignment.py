@@ -9,7 +9,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.schemas.delivery import LoopItemCommentResponse, LoopItemResponse
-from app.schemas.types import SnowflakeId
 
 AssignmentTrigger = Literal[
     "manual",
@@ -30,12 +29,13 @@ class IssueAssignmentCreate(BaseModel):
 
 
 class IssueAssignmentResponse(BaseModel):
-    id: SnowflakeId
+    id: str
     issue_id: str
     target_type: Literal["human", "agent"]
     target_id: str
     target_name: str
     workflow_step: str | None
+    body: str
     comment_id: str | None
     created_by_user_id: int
     created_by_user_name: str | None

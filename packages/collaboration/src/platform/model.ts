@@ -7,13 +7,12 @@ import type {
   CollaborationIssue,
   CollaborationWorkspace,
 } from "../types";
-import { legacyIssueAssignmentProjection } from "../dto-mappers";
 
 export function visibleIssueAssignments(
-  issue: CollaborationIssue,
+  _issue: CollaborationIssue,
   assignments: CollaborationAssignment[] | undefined,
 ): CollaborationAssignment[] {
-  return assignments ?? legacyIssueAssignmentProjection(issue);
+  return assignments ?? [];
 }
 
 export function sortCollaborationWorkspaces(

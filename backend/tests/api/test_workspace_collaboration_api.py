@@ -13,12 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models.delivery import LoopItem, LoopItemComment, ProjectChatAgent
-from app.models.issue_assignment import IssueAssignment
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
-from app.models.workspace import WorkspaceExecutionEnvironment
 from app.services.workspaces.execution_environments import (
     WorkspaceExecutionEnvironmentService,
 )
@@ -26,6 +25,20 @@ from app.services.workspaces.execution_environments import (
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _assignment_comments(db: Session, issue_id: str) -> list[LoopItemComment]:
+    return [
+        comment
+        for comment in (
+            db.query(LoopItemComment)
+            .filter(LoopItemComment.loop_item_id == issue_id)
+            .order_by(LoopItemComment.created_at, LoopItemComment.id)
+            .all()
+        )
+        if isinstance(comment.metadata_json, dict)
+        and comment.metadata_json.get("event_type") == "assignment"
+    ]
 
 
 def _user(db: Session, name: str) -> tuple[User, str]:
@@ -240,13 +253,13 @@ def test_workspace_resources_and_project_scope_are_separate(
     agent_binding = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/agents",
         headers=_auth(test_token),
-        json={"team_id": team.id, "owner_type": "workspace"},
+        json={"team_id": team.id},
     )
     assert agent_binding.status_code == 201
     environment_binding = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/execution-environments",
         headers=_auth(test_token),
-        json={"device_id": device.id, "owner_type": "workspace"},
+        json={"device_id": device.id},
     )
     assert environment_binding.status_code == 201
     workspace_agents = test_client.get(
@@ -255,12 +268,12 @@ def test_workspace_resources_and_project_scope_are_separate(
     ).json()["items"]
     assert len(workspace_agents) == 1
     workspace_agent = workspace_agents[0]
+    assert workspace_agent["id"] == str(team.id)
     assert workspace_agent["team_id"] == team.id
-    assert workspace_agent["owner_type"] == "workspace"
-    assert workspace_agent["owner_id"] == workspace["id"]
-    assert workspace_agent["owner_name"] == workspace["name"]
+    assert workspace_agent["owner_type"] == "user"
+    assert workspace_agent["owner_id"] == str(test_user.id)
+    assert workspace_agent["owner_name"] == test_user.user_name
     assert workspace_agent["status"] == "available"
-    assert workspace_agent["workspace_ids"] == [workspace["id"]]
     assert workspace_agent["execution_environment_ids"] == [
         environment_binding.json()["id"]
     ]
@@ -271,13 +284,13 @@ def test_workspace_resources_and_project_scope_are_separate(
     ).json()["items"]
     assert len(workspace_environments) == 1
     workspace_environment = workspace_environments[0]
+    assert workspace_environment["id"] == str(device.id)
     assert workspace_environment["device_id"] == device.id
     assert workspace_environment["kind"] == "local_device"
-    assert workspace_environment["owner_type"] == "workspace"
-    assert workspace_environment["owner_id"] == workspace["id"]
-    assert workspace_environment["owner_name"] == workspace["name"]
+    assert workspace_environment["owner_type"] == "user"
+    assert workspace_environment["owner_id"] == str(test_user.id)
+    assert workspace_environment["owner_name"] == test_user.user_name
     assert workspace_environment["status"] == "online"
-    assert workspace_environment["workspace_ids"] == [workspace["id"]]
     assert workspace_environment["updated_at"]
 
     project_ids: list[str] = []
@@ -497,12 +510,14 @@ def test_personal_execution_environment_uses_owned_device_identity(
     test_db.add_all([owner_device, other_device])
     test_db.flush()
     test_db.add(
-        WorkspaceExecutionEnvironment(
-            workspace_id=workspace["id"],
-            device_id=other_device.id,
-            owner_type="human",
-            owner_user_id=other_user.id,
-            added_by_user_id=test_user.id,
+        ResourceMember.create(
+            resource_type="Device",
+            resource_id=other_device.id,
+            entity_type="workspace",
+            entity_id=str(workspace["id"]),
+            role="Developer",
+            status="approved",
+            invited_by_user_id=test_user.id,
         )
     )
     test_db.commit()
@@ -514,8 +529,8 @@ def test_personal_execution_environment_uses_owned_device_identity(
         execution_device_id=shared_name,
     )
 
-    assert binding.device_id == owner_device.id
-    assert binding.device_id != other_device.id
+    assert binding.resource_id == owner_device.id
+    assert binding.resource_id != other_device.id
 
 
 def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
@@ -535,7 +550,7 @@ def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
     authorization = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/agents",
         headers=_auth(test_token),
-        json={"team_id": team.id, "owner_type": "workspace"},
+        json={"team_id": team.id},
     )
     assert authorization.status_code == 201
     agent = _project_agent(
@@ -584,27 +599,21 @@ def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
     assert body["assignment"]["target_id"] == agent.id
     assert body["assignment"]["target_name"] == agent.title
     assert body["assignment"]["workflow_step"] == "后端开发"
+    assert body["assignment"]["body"] == "请完成 Workspace Agent 分配能力"
     assert body["assignment"]["created_by_user_id"] == maintainer.id
     assert body["assignment"]["status"] == "active"
     assert body["assignment"]["comment_id"] is not None
     assert body["issue"]["assignee_agent_id"] == agent.id
 
-    assignment = (
-        test_db.query(IssueAssignment)
-        .filter(
-            IssueAssignment.loop_item_id == issue["id"],
-            IssueAssignment.member_type == "agent",
-            IssueAssignment.member_id == agent.id,
-            IssueAssignment.workflow_step == "后端开发",
-        )
-        .one()
-    )
-    assert assignment.workspace_id == int(workspace["id"])
+    assignment = test_db.get(LoopItemComment, body["assignment"]["id"])
+    assert assignment is not None
     assert assignment.cloud_project_id == str(project["id"])
-    assert assignment.assigned_by_user_id == maintainer.id
-    assert assignment.notify is True
-    assert assignment.trigger == "workflow"
-    assert assignment.active_marker == "active"
+    assert assignment.created_by_user_id == maintainer.id
+    assert assignment.metadata_json["target_type"] == "agent"
+    assert assignment.metadata_json["target_id"] == agent.id
+    assert assignment.metadata_json["workflow_step"] == "后端开发"
+    assert assignment.metadata_json["notify"] is True
+    assert assignment.metadata_json["trigger"] == "workflow"
 
     execution = (
         test_db.query(LoopItemExecution)
@@ -614,7 +623,6 @@ def test_maintainer_assigns_workflow_step_to_authorized_workspace_agent(
         )
         .one()
     )
-    assert execution.workspace_id == int(workspace["id"])
     assert execution.cloud_project_id == str(project["id"])
     assert execution.team_id == team.id
     assert execution.assigner_user_id == maintainer.id
@@ -647,7 +655,7 @@ def test_internal_agent_assignment_commits_comment_projection_and_run_once(
     authorization = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/agents",
         headers=_auth(test_token),
-        json={"team_id": team.id, "owner_type": "workspace"},
+        json={"team_id": team.id},
     )
     assert authorization.status_code == 201
     agent = _project_agent(
@@ -661,6 +669,9 @@ def test_internal_agent_assignment_commits_comment_projection_and_run_once(
         headers=_auth(test_token),
         json={"title": "验证单事务分配", "status": "inbox"},
     ).json()
+    initial_assignment_ids = {
+        comment.id for comment in _assignment_comments(test_db, issue["id"])
+    }
 
     committed = False
     commit_calls = 0
@@ -669,16 +680,12 @@ def test_internal_agent_assignment_commits_comment_projection_and_run_once(
     def commit_once() -> None:
         nonlocal committed, commit_calls
         commit_calls += 1
-        assignment = (
-            test_db.query(IssueAssignment)
-            .filter(
-                IssueAssignment.loop_item_id == issue["id"],
-                IssueAssignment.member_id == agent.id,
-            )
-            .one()
+        assignment = next(
+            comment
+            for comment in _assignment_comments(test_db, issue["id"])
+            if comment.id not in initial_assignment_ids
         )
-        assert assignment.comment_id
-        assert test_db.get(LoopItemComment, assignment.comment_id) is not None
+        assert assignment.metadata_json["target_id"] == agent.id
         projected = test_db.get(LoopItem, issue["id"])
         assert projected is not None
         assert projected.assignee_agent_id == agent.id
@@ -746,6 +753,12 @@ def test_internal_assignment_failure_rolls_back_comment_assignment_and_notificat
         json={"title": "验证失败回滚", "status": "inbox"},
     ).json()
     original_version = issue["version"]
+    original_comment_ids = {
+        comment.id
+        for comment in test_db.query(LoopItemComment)
+        .filter(LoopItemComment.loop_item_id == issue["id"])
+        .all()
+    }
 
     def fail_commit() -> None:
         raise RuntimeError("commit failed")
@@ -770,21 +783,12 @@ def test_internal_assignment_failure_rolls_back_comment_assignment_and_notificat
     assert persisted is not None
     assert persisted.version == original_version
     assert persisted.assignee_user_id != target.id
-    assert (
-        test_db.query(LoopItemComment)
+    assert {
+        comment.id
+        for comment in test_db.query(LoopItemComment)
         .filter(LoopItemComment.loop_item_id == issue["id"])
-        .count()
-        == 0
-    )
-    assert (
-        test_db.query(IssueAssignment)
-        .filter(
-            IssueAssignment.loop_item_id == issue["id"],
-            IssueAssignment.member_id == str(target.id),
-        )
-        .count()
-        == 0
-    )
+        .all()
+    } == original_comment_ids
     assert (
         test_db.query(WeworkNotification)
         .filter(
@@ -821,6 +825,9 @@ def test_agent_assignment_rejects_team_not_authorized_in_workspace(
         headers=_auth(test_token),
         json={"title": "拒绝未授权 Team", "status": "inbox"},
     ).json()
+    original_assignment_ids = {
+        comment.id for comment in _assignment_comments(test_db, issue["id"])
+    }
     dispatch = AsyncMock(return_value=None)
     monkeypatch.setattr(
         board_team_execution,
@@ -840,15 +847,9 @@ def test_agent_assignment_rejects_team_not_authorized_in_workspace(
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Agent is not authorized in this Workspace"
-    assert (
-        test_db.query(IssueAssignment)
-        .filter(
-            IssueAssignment.loop_item_id == issue["id"],
-            IssueAssignment.member_type == "agent",
-        )
-        .count()
-        == 0
-    )
+    assert {
+        comment.id for comment in _assignment_comments(test_db, issue["id"])
+    } == original_assignment_ids
     assert (
         test_db.query(LoopItemExecution)
         .filter(LoopItemExecution.loop_item_id == issue["id"])
@@ -881,7 +882,7 @@ def test_agent_assignment_rejects_agent_from_another_project(
     authorization = test_client.post(
         f"/api/v1/workspaces/{workspace['id']}/agents",
         headers=_auth(test_token),
-        json={"team_id": team.id, "owner_type": "workspace"},
+        json={"team_id": team.id},
     )
     assert authorization.status_code == 201
     other_project_agent = _project_agent(
@@ -895,6 +896,9 @@ def test_agent_assignment_rejects_agent_from_another_project(
         headers=_auth(test_token),
         json={"title": "拒绝跨项目 Agent", "status": "inbox"},
     ).json()
+    original_assignment_ids = {
+        comment.id for comment in _assignment_comments(test_db, issue["id"])
+    }
     dispatch = AsyncMock(return_value=None)
     monkeypatch.setattr(
         board_team_execution,
@@ -914,15 +918,9 @@ def test_agent_assignment_rejects_agent_from_another_project(
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Agent is not active in this Project"
-    assert (
-        test_db.query(IssueAssignment)
-        .filter(
-            IssueAssignment.loop_item_id == issue["id"],
-            IssueAssignment.member_type == "agent",
-        )
-        .count()
-        == 0
-    )
+    assert {
+        comment.id for comment in _assignment_comments(test_db, issue["id"])
+    } == original_assignment_ids
     assert (
         test_db.query(LoopItemExecution)
         .filter(LoopItemExecution.loop_item_id == issue["id"])

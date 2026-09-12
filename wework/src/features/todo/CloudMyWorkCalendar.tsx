@@ -2,18 +2,24 @@ import { useMemo } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import zhCnLocale from '@fullcalendar/core/locales/zh-cn'
-import { buildMyWorkCalendarEntries, MY_WORK_GROUP_EVENT_COLORS } from '@wegent/collaboration'
-import type { CloudMyWorkItem } from '@/api/deliveries'
+import {
+  buildMyWorkCalendarEntries,
+  MY_WORK_GROUP_EVENT_COLORS,
+  type MyWorkItem,
+} from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isExecutionActive } from './executionStatus'
 import './cloud-my-work-calendar.css'
 
-interface CloudMyWorkCalendarProps {
-  items: readonly CloudMyWorkItem[]
-  onSelectItem: (item: CloudMyWorkItem) => void
+interface CloudMyWorkCalendarProps<T extends MyWorkItem> {
+  items: readonly T[]
+  onSelectItem: (item: T) => void
 }
 
-export function CloudMyWorkCalendar({ items, onSelectItem }: CloudMyWorkCalendarProps) {
+export function CloudMyWorkCalendar<T extends MyWorkItem>({
+  items,
+  onSelectItem,
+}: CloudMyWorkCalendarProps<T>) {
   const { t, i18n } = useTranslation('common')
 
   const events = useMemo(
@@ -59,7 +65,7 @@ export function CloudMyWorkCalendar({ items, onSelectItem }: CloudMyWorkCalendar
             </span>
           )}
           eventClick={info => {
-            const item = info.event.extendedProps.item as CloudMyWorkItem | undefined
+            const item = info.event.extendedProps.item as T | undefined
             if (item) onSelectItem(item)
           }}
         />

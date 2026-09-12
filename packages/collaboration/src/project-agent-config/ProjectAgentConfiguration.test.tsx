@@ -46,7 +46,6 @@ const workspaceAgent: CollaborationOwnedAgent = {
   owner_name: "研发空间",
   status: "available",
   execution_environment_ids: [],
-  workspace_ids: ["workspace-1"],
 };
 
 const environment: CollaborationExecutionEnvironment = {
@@ -59,7 +58,6 @@ const environment: CollaborationExecutionEnvironment = {
   owner_id: "7",
   owner_name: "李明",
   status: "online",
-  workspace_ids: ["workspace-1"],
   updated_at: "2026-09-12T00:00:00Z",
 };
 

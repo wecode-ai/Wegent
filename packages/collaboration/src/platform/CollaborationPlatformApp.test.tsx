@@ -58,7 +58,6 @@ const agent: CollaborationOwnedAgent = {
   owner_name: workspace.name,
   status: "available",
   execution_environment_ids: ["environment-1"],
-  workspace_ids: [workspace.id],
 };
 
 const environment: CollaborationExecutionEnvironment = {
@@ -70,7 +69,6 @@ const environment: CollaborationExecutionEnvironment = {
   owner_id: "7",
   owner_name: "李明",
   status: "online",
-  workspace_ids: [workspace.id],
   updated_at: "2026-09-12T00:00:00Z",
 };
 
@@ -79,7 +77,6 @@ const availableAgent: CollaborationOwnedAgent = {
   id: "agent-2",
   team_id: 12,
   name: "架构设计智能体",
-  workspace_ids: [],
 };
 
 const availableEnvironment: CollaborationExecutionEnvironment = {
@@ -88,7 +85,6 @@ const availableEnvironment: CollaborationExecutionEnvironment = {
   device_id: 22,
   name: "Wegent 云主机",
   kind: "cloud_host",
-  workspace_ids: [],
 };
 
 const project: CollaborationProject = {
@@ -257,38 +253,14 @@ function createApi({
       }),
       listAgents: vi.fn(async () => [...workspaceAgents]),
       addAgent: vi.fn(
-        async (
-          _workspaceId: string,
-          input: { teamId: number; ownerType?: "user" | "workspace" },
-        ) => {
+        async (_workspaceId: string, input: { teamId: number }) => {
           const source =
             personalResources.agents.find(
               (candidate) => candidate.team_id === input.teamId,
             ) ?? availableAgent;
-          const added = {
-            ...source,
-            owner_type: input.ownerType ?? ("user" as const),
-            workspace_ids: [workspace.id],
-          };
+          const added = { ...source };
           workspaceAgents.push(added);
           return added;
-        },
-      ),
-      updateAgent: vi.fn(
-        async (
-          _workspaceId: string,
-          teamId: number,
-          input: { ownerType: "user" | "workspace" },
-        ) => {
-          const index = workspaceAgents.findIndex(
-            (candidate) => candidate.team_id === teamId,
-          );
-          const updated = {
-            ...(workspaceAgents[index] ?? agent),
-            owner_type: input.ownerType,
-          };
-          workspaceAgents[index] = updated;
-          return updated;
         },
       ),
       removeAgent: vi.fn(async (_workspaceId: string, teamId: number) => {
@@ -299,19 +271,12 @@ function createApi({
       }),
       listExecutionEnvironments: vi.fn(async () => [...workspaceEnvironments]),
       addExecutionEnvironment: vi.fn(
-        async (
-          _workspaceId: string,
-          input: { deviceId: number; ownerType?: "user" | "workspace" },
-        ) => {
+        async (_workspaceId: string, input: { deviceId: number }) => {
           const source =
             personalResources.execution_environments.find(
               (candidate) => candidate.device_id === input.deviceId,
             ) ?? availableEnvironment;
-          const added = {
-            ...source,
-            owner_type: input.ownerType ?? ("user" as const),
-            workspace_ids: [workspace.id],
-          };
+          const added = { ...source };
           workspaceEnvironments.push(added);
           return added;
         },
@@ -404,6 +369,7 @@ function createApi({
             target_id: input.targetId,
             target_name: targetName,
             workflow_step: input.workflowStep ?? null,
+            body: input.commentBody ?? "",
             comment_id: null,
             created_by_user_id: 1,
             created_by_user_name: "项目经理",
@@ -857,7 +823,6 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(byTestId("collaboration-workspace-agent-authorize"));
     expect(api.workspaces?.addAgent).toHaveBeenCalledWith(workspace.id, {
       teamId: 12,
-      ownerType: "user",
     });
     await click(byTestId("collaboration-workspace-agent-remove-12"));
     expect(api.workspaces?.removeAgent).toHaveBeenCalledWith(workspace.id, 12);
@@ -879,7 +844,6 @@ describe("CollaborationPlatformApp real component flow", () => {
       workspace.id,
       {
         deviceId: 22,
-        ownerType: "user",
       },
     );
     await click(byTestId("collaboration-workspace-environment-remove-22"));

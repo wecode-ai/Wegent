@@ -1050,7 +1050,6 @@ class ExternalLoopItemProvider:
         )
         _, assignment_created = issue_assignment_service.record(
             db,
-            workspace_id=project.workspace_id,
             project_id=project.id,
             issue_id=index_row.id,
             member_type=("human" if values.assignee_type == "user" else "agent"),

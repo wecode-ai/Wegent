@@ -4,7 +4,6 @@
 """Workspace human membership management."""
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject
@@ -14,6 +13,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceMemberCreate, WorkspaceMemberUpdate
 from app.services.workspaces.access import require_workspace_role
+from app.services.workspaces.storage import project_ids_for_workspace
 
 
 class WorkspaceMemberService:
@@ -112,10 +112,11 @@ class WorkspaceMemberService:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Workspace owner cannot be removed"
             )
+        project_ids = project_ids_for_workspace(db, workspace.id)
         owned_project = (
             db.query(CloudProject.id)
             .filter(
-                CloudProject.workspace_id == workspace.id,
+                CloudProject.id.in_(project_ids),
                 CloudProject.created_by_user_id == member_user_id,
                 CloudProject.status == "active",
             )
@@ -127,9 +128,6 @@ class WorkspaceMemberService:
                 "Transfer or archive the member's Projects before removal",
             )
         member, _ = _get_member(db, workspace_id, member_user_id)
-        project_ids = select(CloudProject.id).where(
-            CloudProject.workspace_id == workspace.id
-        )
         (
             db.query(ResourceMember)
             .filter(

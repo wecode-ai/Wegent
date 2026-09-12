@@ -281,16 +281,12 @@ export function useCollaborationPlatformController({
           })),
         }));
       },
-      async addAgent(
-        agent: CollaborationOwnedAgent,
-        ownerType: "user" | "workspace",
-      ) {
+      async addAgent(agent: CollaborationOwnedAgent) {
         if (!api.workspaces || !location.workspaceId || !agent.team_id) {
           throw new Error("Agent cannot be authorized");
         }
         const added = await api.workspaces.addAgent(location.workspaceId, {
           teamId: agent.team_id,
-          ownerType,
         });
         setState((current) => ({
           ...current,
@@ -317,32 +313,6 @@ export function useCollaborationPlatformController({
         }));
         return added;
       },
-      async updateAgent(
-        agent: CollaborationOwnedAgent,
-        ownerType: "user" | "workspace",
-      ) {
-        if (!api.workspaces || !location.workspaceId || !agent.team_id) {
-          throw new Error("Agent cannot be updated");
-        }
-        const updated = await api.workspaces.updateAgent(
-          location.workspaceId,
-          agent.team_id,
-          { ownerType },
-        );
-        setState((current) => ({
-          ...current,
-          agents: current.agents.map((candidate) =>
-            candidate.team_id === updated.team_id ? updated : candidate,
-          ),
-          resources: {
-            ...current.resources,
-            agents: current.resources.agents.map((candidate) =>
-              candidate.team_id === updated.team_id ? updated : candidate,
-            ),
-          },
-        }));
-        return updated;
-      },
       async removeAgent(agent: CollaborationOwnedAgent) {
         if (!api.workspaces || !location.workspaceId || !agent.team_id) {
           throw new Error("Agent cannot be removed");
@@ -355,16 +325,7 @@ export function useCollaborationPlatformController({
           ),
           resources: {
             ...current.resources,
-            agents: current.resources.agents.map((candidate) =>
-              candidate.team_id === agent.team_id
-                ? {
-                    ...candidate,
-                    workspace_ids: candidate.workspace_ids.filter(
-                      (workspaceId) => workspaceId !== location.workspaceId,
-                    ),
-                  }
-                : candidate,
-            ),
+            agents: current.resources.agents,
           },
           ...updateCurrentWorkspace(current, (workspace) => ({
             ...workspace,
@@ -374,7 +335,6 @@ export function useCollaborationPlatformController({
       },
       async addExecutionEnvironment(
         environment: CollaborationExecutionEnvironment,
-        ownerType: "user" | "workspace",
       ) {
         if (
           !api.workspaces ||
@@ -385,10 +345,7 @@ export function useCollaborationPlatformController({
         }
         const added = await api.workspaces.addExecutionEnvironment(
           location.workspaceId,
-          {
-            deviceId: environment.device_id,
-            ownerType,
-          },
+          { deviceId: environment.device_id },
         );
         setState((current) => ({
           ...current,
@@ -437,17 +394,7 @@ export function useCollaborationPlatformController({
           ),
           resources: {
             ...current.resources,
-            execution_environments:
-              current.resources.execution_environments.map((candidate) =>
-                candidate.device_id === environment.device_id
-                  ? {
-                      ...candidate,
-                      workspace_ids: candidate.workspace_ids.filter(
-                        (workspaceId) => workspaceId !== location.workspaceId,
-                      ),
-                    }
-                  : candidate,
-              ),
+            execution_environments: current.resources.execution_environments,
           },
           ...updateCurrentWorkspace(current, (workspace) => ({
             ...workspace,

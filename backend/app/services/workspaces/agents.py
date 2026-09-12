@@ -4,77 +4,72 @@
 """Workspace Agent authorization management."""
 
 from fastapi import HTTPException, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.workspace import Workspace, WorkspaceAgentBinding
+from app.models.resource_member import ResourceMember
+from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
-from app.schemas.workspace import WorkspaceAgentCreate, WorkspaceAgentUpdate
+from app.schemas.workspace import WorkspaceAgentCreate
 from app.services.share import team_share_service
 from app.services.workspaces.access import require_workspace_role
-from app.services.workspaces.resource_mapping import agent_values, internal_owner_type
+from app.services.workspaces.resource_mapping import agent_values
+from app.services.workspaces.storage import (
+    ensure_resource_grant,
+    resource_grant,
+)
 
 
 class WorkspaceAgentService:
     """Authorize Agent Teams for use in a Workspace."""
 
     def list_agents(
-        self,
-        db: Session,
-        workspace_id: int,
-        user_id: int,
+        self, db: Session, workspace_id: int, user_id: int
     ) -> list[dict[str, object]]:
         require_workspace_role(db, workspace_id, user_id)
         rows = (
-            db.query(WorkspaceAgentBinding, Kind)
-            .join(Kind, Kind.id == WorkspaceAgentBinding.team_id)
+            db.query(ResourceMember, Kind)
+            .join(Kind, Kind.id == ResourceMember.resource_id)
             .filter(
-                WorkspaceAgentBinding.workspace_id == workspace_id,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
+                ResourceMember.entity_type == "workspace",
+                ResourceMember.entity_id == str(workspace_id),
+                ResourceMember.status == "approved",
                 Kind.kind == "Team",
                 Kind.is_active.is_(True),
             )
-            .order_by(WorkspaceAgentBinding.created_at)
+            .order_by(ResourceMember.created_at, ResourceMember.id)
             .all()
         )
-        return [agent_values(db, binding=binding, team=team) for binding, team in rows]
+        return [agent_values(db, grant=grant, team=team) for grant, team in rows]
 
     def require_agent_authorized(
-        self,
-        db: Session,
-        *,
-        workspace_id: int,
-        team_id: int,
-    ) -> WorkspaceAgentBinding:
-        binding = _authorized_agent(
+        self, db: Session, *, workspace_id: int, team_id: int
+    ) -> ResourceMember:
+        grant = resource_grant(
             db,
             workspace_id=workspace_id,
-            team_id=team_id,
+            resource_type=ResourceType.TEAM.value,
+            resource_id=team_id,
         )
-        if binding is None:
+        if grant is None:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Agent is not authorized in this Workspace",
             )
-        return binding
+        return grant
 
     def ensure_accessible_agent_authorized(
-        self,
-        db: Session,
-        *,
-        workspace_id: int,
-        user_id: int,
-        team_id: int,
-    ) -> WorkspaceAgentBinding:
-        """Authorize a selected accessible Team for the current Workspace."""
-        existing = _authorized_agent(
+        self, db: Session, *, workspace_id: int, user_id: int, team_id: int
+    ) -> ResourceMember:
+        existing = resource_grant(
             db,
             workspace_id=workspace_id,
-            team_id=team_id,
+            resource_type=ResourceType.TEAM.value,
+            resource_id=team_id,
         )
         if existing is not None:
             return existing
-
         require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
         team = team_share_service.get_resource(db, team_id, user_id)
         if team is None or team.kind != "Team" or not team.is_active:
@@ -82,28 +77,14 @@ class WorkspaceAgentService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Agent is not available to this user",
             )
-
-        db.query(Workspace.id).filter(
-            Workspace.id == workspace_id
-        ).with_for_update().one()
-        existing = _authorized_agent(
+        return ensure_resource_grant(
             db,
             workspace_id=workspace_id,
-            team_id=team_id,
-        )
-        if existing is not None:
-            return existing
-
-        binding = WorkspaceAgentBinding(
-            workspace_id=workspace_id,
-            team_id=team.id,
-            owner_type="human",
-            owner_user_id=team.user_id,
+            resource_type=ResourceType.TEAM.value,
+            resource_id=int(team.id),
             added_by_user_id=user_id,
+            role=BaseRole.Developer,
         )
-        db.add(binding)
-        db.flush()
-        return binding
 
     def add_agent(
         self,
@@ -114,82 +95,56 @@ class WorkspaceAgentService:
     ) -> dict[str, object]:
         require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
         team = team_share_service.get_resource(db, values.team_id, user_id)
-        if team is None:
+        if team is None or team.kind != "Team" or not team.is_active:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent Team not found")
-        access = require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
-        if values.owner_type == "workspace" and access.role not in {
-            BaseRole.Owner,
-            BaseRole.Maintainer,
-        }:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "Only Workspace admins can transfer Agent ownership",
-            )
-        binding = WorkspaceAgentBinding(
+        if resource_grant(
+            db,
             workspace_id=workspace_id,
-            team_id=team.id,
-            owner_type=internal_owner_type(values.owner_type),
-            owner_user_id=None if values.owner_type == "workspace" else team.user_id,
-            added_by_user_id=user_id,
-        )
-        db.add(binding)
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
+            resource_type=ResourceType.TEAM.value,
+            resource_id=values.team_id,
+        ):
             raise HTTPException(
-                status.HTTP_409_CONFLICT, "Agent is already available in this Workspace"
-            ) from exc
-        db.refresh(binding)
-        return agent_values(db, binding=binding, team=team)
-
-    def update_agent(
-        self,
-        db: Session,
-        workspace_id: int,
-        team_id: int,
-        user_id: int,
-        values: WorkspaceAgentUpdate,
-    ) -> dict[str, object]:
-        require_workspace_role(db, workspace_id, user_id, BaseRole.Maintainer)
-        binding, team = _get_agent_binding(db, workspace_id, team_id)
-        binding.owner_type = internal_owner_type(values.owner_type)
-        binding.owner_user_id = (
-            None if values.owner_type == "workspace" else team.user_id
+                status.HTTP_409_CONFLICT,
+                "Agent is already available in this Workspace",
+            )
+        grant = ensure_resource_grant(
+            db,
+            workspace_id=workspace_id,
+            resource_type=ResourceType.TEAM.value,
+            resource_id=int(team.id),
+            added_by_user_id=user_id,
+            role=BaseRole.Developer,
         )
         db.commit()
-        db.refresh(binding)
-        return agent_values(db, binding=binding, team=team)
+        db.refresh(grant)
+        return agent_values(db, grant=grant, team=team)
 
     def remove_agent(
-        self,
-        db: Session,
-        workspace_id: int,
-        team_id: int,
-        user_id: int,
+        self, db: Session, workspace_id: int, team_id: int, user_id: int
     ) -> None:
         access = require_workspace_role(db, workspace_id, user_id, BaseRole.Developer)
-        binding, _ = _get_agent_binding(db, workspace_id, team_id)
-        if binding.added_by_user_id != user_id and access.role not in {
+        grant, _ = _get_agent_grant(db, workspace_id, team_id)
+        if grant.invited_by_user_id != user_id and access.role not in {
             BaseRole.Owner,
             BaseRole.Maintainer,
         }:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
-        db.delete(binding)
+        db.delete(grant)
         db.commit()
 
 
-def _get_agent_binding(
-    db: Session,
-    workspace_id: int,
-    team_id: int,
-) -> tuple[WorkspaceAgentBinding, Kind]:
+def _get_agent_grant(
+    db: Session, workspace_id: int, team_id: int
+) -> tuple[ResourceMember, Kind]:
     row = (
-        db.query(WorkspaceAgentBinding, Kind)
-        .join(Kind, Kind.id == WorkspaceAgentBinding.team_id)
+        db.query(ResourceMember, Kind)
+        .join(Kind, Kind.id == ResourceMember.resource_id)
         .filter(
-            WorkspaceAgentBinding.workspace_id == workspace_id,
-            WorkspaceAgentBinding.team_id == team_id,
+            ResourceMember.resource_type == ResourceType.TEAM.value,
+            ResourceMember.resource_id == team_id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(workspace_id),
+            ResourceMember.status == "approved",
             Kind.kind == "Team",
             Kind.is_active.is_(True),
         )
@@ -198,19 +153,3 @@ def _get_agent_binding(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace Agent not found")
     return row
-
-
-def _authorized_agent(
-    db: Session,
-    *,
-    workspace_id: int,
-    team_id: int,
-) -> WorkspaceAgentBinding | None:
-    return (
-        db.query(WorkspaceAgentBinding)
-        .filter(
-            WorkspaceAgentBinding.workspace_id == workspace_id,
-            WorkspaceAgentBinding.team_id == team_id,
-        )
-        .first()
-    )

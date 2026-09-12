@@ -4657,6 +4657,12 @@
     "workflow_branch_collector_webhook": "webhook 待注册",
     "workflow_branch_collector_error": "采集器不可用"
   },
+  "collaboration": {
+    "all_workspaces": "所有空间",
+    "resources": "资源",
+    "login_title": "登录后使用协作空间",
+    "login_description": "登录 Wegent 后可以创建和加入 Workspace，与成员和智能体共同推进项目。"
+  },
   "notifications": {
     "title": "通知",
     "refresh": "刷新",

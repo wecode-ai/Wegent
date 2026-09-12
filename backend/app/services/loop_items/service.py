@@ -650,7 +650,6 @@ class LoopItemService:
                 )
             issue_assignment_service.record(
                 db,
-                workspace_id=project.workspace_id,
                 project_id=project.id,
                 issue_id=item.id,
                 member_type=assignment_member[0],
@@ -825,6 +824,15 @@ class LoopItemService:
             .order_by(LoopItemComment.created_at.asc())
             .all()
         )
+        comments = [
+            comment
+            for comment in comments
+            if comment.description
+            or not (
+                isinstance(comment.metadata_json, dict)
+                and comment.metadata_json.get("event_type") == "assignment"
+            )
+        ]
         author_ids = {
             comment.created_by_user_id
             for comment in comments
@@ -1386,7 +1394,6 @@ class LoopItemService:
                     )
                 _, assignment_created = issue_assignment_service.record(
                     db,
-                    workspace_id=project.workspace_id,
                     project_id=project.id,
                     issue_id=item.id,
                     member_type=target_type,
@@ -1587,7 +1594,6 @@ class LoopItemService:
             )
             _, assignment_created = issue_assignment_service.record(
                 db,
-                workspace_id=project.workspace_id,
                 project_id=project.id,
                 issue_id=item.id,
                 member_type="agent",
@@ -1664,7 +1670,6 @@ class LoopItemService:
 
             _, assignment_created = issue_assignment_service.record(
                 db,
-                workspace_id=project.workspace_id,
                 project_id=project.id,
                 issue_id=item.id,
                 member_type="human",
@@ -1718,7 +1723,6 @@ class LoopItemService:
 
             _, assignment_created = issue_assignment_service.record(
                 db,
-                workspace_id=project.workspace_id,
                 project_id=project.id,
                 issue_id=item.id,
                 member_type="agent",

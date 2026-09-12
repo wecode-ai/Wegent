@@ -13,19 +13,22 @@ This is a target domain model. It does not replace the established sources of
 truth and execution wiring in
 [Cloud Project Collaboration Architecture](./cloud-project-collaboration.md).
 
+See [Collaboration Workspace Storage Model](./collaboration-storage-model.md)
+for the concrete table mapping and relationship rules.
+
 ## Core terminology
 
-| Product concept | Definition |
-| --- | --- |
-| `Workspace` | The long-lived tenant boundary for members, permissions, agents, devices, integrations, and shared resources |
-| `Project` | A container inside a Workspace that organizes work around a product, business objective, or delivery |
-| `Member` | A human or agent that can receive notifications, collaborate, or initiate execution |
-| `Agent` | A machine member that can receive an Issue and produce a Run |
-| `Issue` | A durable unit of work that can be discussed, advanced, reviewed, and accepted |
-| `Run` | One bounded attempt by an Agent to execute an Issue |
-| `Runtime` | An environment on a device that can execute a required Shell and capability set |
-| `Deliverable` | A verifiable result submitted for an Issue by a human or Agent |
-| `View` | A board, list, table, or other presentation of the same Issues in a Project |
+| Product concept | Definition                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `Workspace`     | The long-lived tenant boundary for members, permissions, agents, devices, integrations, and shared resources |
+| `Project`       | A container inside a Workspace that organizes work around a product, business objective, or delivery         |
+| `Member`        | A human or agent that can receive notifications, collaborate, or initiate execution                          |
+| `Agent`         | A machine member that can receive an Issue and produce a Run                                                 |
+| `Issue`         | A durable unit of work that can be discussed, advanced, reviewed, and accepted                               |
+| `Run`           | One bounded attempt by an Agent to execute an Issue                                                          |
+| `Runtime`       | An environment on a device that can execute a required Shell and capability set                              |
+| `Deliverable`   | A verifiable result submitted for an Issue by a human or Agent                                               |
+| `View`          | A board, list, table, or other presentation of the same Issues in a Project                                  |
 
 The product path is fixed:
 
@@ -90,9 +93,7 @@ Member
 Issues, Workflow nodes, and dispatchers use the same `MemberRef`:
 
 ```ts
-type MemberRef =
-  | { type: 'human'; id: string }
-  | { type: 'agent'; id: string }
+type MemberRef = { type: "human"; id: string } | { type: "agent"; id: string };
 ```
 
 Assignment means directed notification, attention, and a request for action. It
@@ -170,14 +171,12 @@ ProjectAgentBinding
 └── enabled
 ```
 
-Agent identity, Team, capabilities, and default execution policy belong to the
-Workspace. A Project stores only enablement and Project-specific differences.
+Agent identity, Team, capabilities, and default execution policy belong in
+`kinds`. A Workspace receives access to a Team through `resource_members`; a
+Project stores only enablement and Project-specific differences.
 
 Authorization fields from the legacy model do not move into
-ProjectAgentBinding. During migration,
-`ProjectChatAgent.created_by_user_id` becomes the human owner and adding actor
-of the Workspace Agent binding (`WorkspaceAgentBinding.owner_user_id` and
-`added_by_user_id`). Existing `LoopItemExecution.executor_owner_user_id`
+ProjectAgentBinding. Existing `LoopItemExecution.executor_owner_user_id`
 remains on the Run and is copied to replacement or resumed Runs. Claim,
 heartbeat, event-reporting, and completion endpoints authorize against that
 Run field, so replacing ProjectChatAgent with ProjectAgentBinding does not
@@ -185,27 +184,24 @@ widen Run-owner execution access.
 
 ### Workspace Agents and Project-private Agents
 
-An Agent always belongs to a Workspace tenant, but its usage scope may be
-Workspace-shared or private to one Project. Both use the same Agent entity and
-Team/Bot/Ghost model:
+A Team remains the only Agent entity. Authorization edges and
+ProjectAgentBinding express its usage scope without adding another Workspace
+ownership field to Team:
 
 ```text
-Agent
-├── workspace_id
-├── scope: workspace | project
-└── home_project_id: null | project_id
+Team
+├── Workspace grant: available in a Workspace
+└── ProjectAgentBinding: enabled in a Project
 ```
 
-- `scope = workspace` allows bindings to multiple Projects in the Workspace.
-- `scope = project` allows a binding only to `home_project_id` and is visible
-  only to members of that Project by default.
-- Creating an Agent inside a Project still creates a Workspace Agent, sets
-  `scope = project`, and creates its ProjectAgentBinding.
-- Promoting a Project-private Agent to Workspace-shared changes only its scope;
-  it does not copy Team, Bot, or Ghost.
-- Archiving a Project archives its private Agent only when no active Run,
-  Automation, or other valid reference remains. Historical Runs retain their
-  immutable snapshots.
+- A Team granted to a Workspace may be bound to multiple Projects in it.
+- Creating an Agent inside a Project creates a Team, grants it to the current
+  Workspace, and creates a ProjectAgentBinding.
+- A Team bound only to one Project behaves as a Project-private Agent.
+- Promoting it to Workspace-shared does not copy Team, Bot, or Ghost; it only
+  allows other Projects to establish bindings.
+- Archiving a Project does not delete the Team. Historical Runs retain their
+  immutable execution snapshots.
 
 If the same Agent only needs different repository context, extra instructions,
 or Runtime preferences in different Projects, use ProjectAgentBinding
@@ -235,13 +231,13 @@ The reference model should contain at least:
 
 ```ts
 type GhostPluginRef = {
-  ref: string
-  version?: string
-  required: boolean
-  config?: NonSecretPluginConfig
-  credential_refs?: PluginCredentialRef[]
-  permissions?: string[]
-}
+  ref: string;
+  version?: string;
+  required: boolean;
+  config?: NonSecretPluginConfig;
+  credential_refs?: PluginCredentialRef[];
+  permissions?: string[];
+};
 
 type JsonValue =
   | string
@@ -249,14 +245,14 @@ type JsonValue =
   | boolean
   | null
   | JsonValue[]
-  | { [key: string]: JsonValue }
+  | { [key: string]: JsonValue };
 
-type NonSecretPluginConfig = Record<string, JsonValue>
+type NonSecretPluginConfig = Record<string, JsonValue>;
 
 type PluginCredentialRef = {
-  name: string
-  ref: string
-}
+  name: string;
+  ref: string;
+};
 ```
 
 A Plugin is a capability package that may expand into Skills, MCP servers,
@@ -276,11 +272,11 @@ extend Wework menus, pages, or components remain Wework host extensions.
 
 Their responsibilities are fixed:
 
-| Concept | Responsibility |
-| --- | --- |
-| `Shell` | Defines how to execute, such as Codex, ClaudeCode, Agno, Dify, or Chat |
-| `Runtime` | Represents an available Shell instance and capability set on a Device |
-| `Device` | Provides the machine, filesystem, network, and local credentials |
+| Concept    | Responsibility                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------- |
+| `Shell`    | Defines how to execute, such as Codex, ClaudeCode, Agno, Dify, or Chat                                   |
+| `Runtime`  | Represents an available Shell instance and capability set on a Device                                    |
+| `Device`   | Provides the machine, filesystem, network, and local credentials                                         |
 | `Executor` | Claims Runs, prepares environments, starts Shells, reports events, and handles cancellation and recovery |
 
 The relationship is:
@@ -307,7 +303,6 @@ Wework-local and Wegent execution:
 
 ```text
 Run
-├── workspace_id
 ├── project_id
 ├── issue_id
 ├── agent_id
@@ -340,34 +335,35 @@ that the Issue has been accepted.
 
 ## Existing facility mapping
 
-| Target concept | Existing facility | Evolution |
-| --- | --- | --- |
-| Workspace | No complete equivalent | Add a tenant aggregate root |
-| Project | `CloudProject` | Reuse directly and unify product terminology |
-| Issue | `LoopItem` | Reuse directly |
-| Agent | `Kind(kind=Team)` | Use as the only Agent definition |
-| Bot/Ghost/Shell/Model | Wegent CRDs | Keep as internal Agent definitions |
-| Project Agent | `ProjectChatAgent` | Reduce to ProjectAgentBinding |
-| Run | `LoopItemExecution` | Promote to the only product execution record |
-| Wegent backend | `Task` / `Subtask` | Use as backend execution records for Run |
-| Wework backend | `LocalTask` / runtime RPC | Use as the local execution backend for Run |
-| Runtime | Device, Executor, and Shell capabilities | Add a unified Runtime projection and scheduling interface |
-| View | Current board and filters | Make board the default View and add server-backed saved Views |
-| Workflow | Issue Workflow | Restrict to organizing Issues and Runs |
-| Automation | Project Automation and local schedules | Merge definitions and trigger protocols |
+| Target concept        | Existing facility                        | Evolution                                                     |
+| --------------------- | ---------------------------------------- | ------------------------------------------------------------- |
+| Workspace             | `Kind(kind=CollaborationWorkspace)`      | Reuse Kind and generic authorization                          |
+| Project               | `CloudProject`                           | Reuse directly and unify product terminology                  |
+| Issue                 | `LoopItem`                               | Reuse directly                                                |
+| Agent                 | `Kind(kind=Team)`                        | Use as the only Agent definition                              |
+| Bot/Ghost/Shell/Model | Wegent CRDs                              | Keep as internal Agent definitions                            |
+| Project Agent         | `ProjectChatAgent`                       | Reduce to ProjectAgentBinding                                 |
+| Run                   | `LoopItemExecution`                      | Promote to the only product execution record                  |
+| Wegent backend        | `Task` / `Subtask`                       | Use as backend execution records for Run                      |
+| Wework backend        | `LocalTask` / runtime RPC                | Use as the local execution backend for Run                    |
+| Runtime               | Device, Executor, and Shell capabilities | Add a unified Runtime projection and scheduling interface     |
+| View                  | Current board and filters                | Make board the default View and add server-backed saved Views |
+| Workflow              | Issue Workflow                           | Restrict to organizing Issues and Runs                        |
+| Automation            | Project Automation and local schedules   | Merge definitions and trigger protocols                       |
 
 ## Required domain invariants
 
 1. Workspace is the only tenant boundary for members, permissions, and shared
    capabilities.
 2. Every Project belongs to one Workspace.
-3. Every Issue belongs to one Project and inherits its Workspace.
+3. Every Issue belongs to one Project and inherits its Workspace through the
+   Project authorization edge.
 4. A Member is either a Human or an Agent; Devices and Executors cannot be
    Assignment targets.
 5. Team is the only cloud Agent definition; a single Bot is exposed through a
    single-Bot Team.
-6. A Project-private Agent still belongs to Workspace and is restricted only
-   through scope and Project Binding.
+6. A Project-private Agent remains a Team and is restricted through Workspace
+   authorization and Project Binding.
 7. Assignment produces notification and a request for action, not execution
    permission or an exclusive lock.
 8. Any Project Member with execution permission may start a Run without being
@@ -375,11 +371,11 @@ that the Issue has been accepted.
 9. ProjectChatAgent must not duplicate Agent identity, capabilities, or complete
    runtime configuration.
 10. Every machine execution creates a Run before creating a backend execution
-   record.
+    record.
 11. A Run binds to one execution backend but may contain multiple backend turns
-   or subtasks.
-12. Run, Project, and Issue `workspace_id` values must agree and be enforced by
-   the database or service layer.
+    or subtasks.
+12. Run and Issue do not duplicate `workspace_id`; resolve it through the
+    Project authorization edge when needed.
 13. A Workflow Node cannot become a third task type independent of Issue and
     Run.
 14. Plugin permissions, versions, and configuration must enter an immutable
@@ -389,7 +385,8 @@ that the Issue has been accepted.
 
 ## Evolution order
 
-1. Add Workspace and migrate existing CloudProjects into default Workspaces.
+1. Register CollaborationWorkspace Kind and grant existing CloudProjects to
+   default Workspaces.
 2. Standardize CloudProject as Project in product terminology and make the
    board its default View.
 3. Extend Workspace Member into a common Human/Agent assignable actor.

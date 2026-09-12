@@ -32,6 +32,11 @@ from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
 from app.services.workspaces import workspace_service
 from app.services.workspaces.access import require_workspace_role
+from app.services.workspaces.storage import (
+    ensure_resource_grant,
+    project_ids_for_workspace,
+    workspace_id_for_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +122,6 @@ class CloudProjectService:
         except ValueError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
         project = CloudProject(
-            workspace_id=workspace.id,
             public_id=public_id,
             project_key=values.project_key
             or self._generate_project_key(db, values.name),
@@ -151,6 +155,14 @@ class CloudProjectService:
                     role=BaseRole.Owner.value,
                     status=MemberStatus.APPROVED.value,
                 )
+            )
+            ensure_resource_grant(
+                db,
+                workspace_id=workspace.id,
+                resource_type=ResourceType.CLOUD_PROJECT.value,
+                resource_id=int(project.id),
+                added_by_user_id=user_id,
+                role=BaseRole.Owner,
             )
             db.commit()
         except IntegrityError as exc:
@@ -186,7 +198,9 @@ class CloudProjectService:
             ),
         )
         if workspace_id is not None:
-            query = query.filter(CloudProject.workspace_id == workspace_id)
+            query = query.filter(
+                CloudProject.id.in_(project_ids_for_workspace(db, workspace_id))
+            )
         return (
             query.filter(
                 CloudProject.status == "active",
@@ -462,10 +476,11 @@ class CloudProjectService:
     ) -> dict[str, object]:
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
-        if project.workspace_id is not None:
+        workspace_id = workspace_id_for_project(db, project.id)
+        if workspace_id is not None:
             require_workspace_role(
                 db,
-                int(project.workspace_id),
+                workspace_id,
                 user_id,
                 BaseRole.Maintainer,
             )
@@ -494,10 +509,10 @@ class CloudProjectService:
         else:
             member.role = values.role.value
             member.status = MemberStatus.APPROVED.value
-        if project.workspace_id is not None:
+        if workspace_id is not None:
             workspace_service.ensure_human_member(
                 db,
-                workspace_id=int(project.workspace_id),
+                workspace_id=workspace_id,
                 user_id=target.id,
                 role=BaseRole.Reporter,
             )

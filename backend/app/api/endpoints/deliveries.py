@@ -1406,10 +1406,6 @@ async def create_issue_assignment(
         )
         if assignment is None:
             raise RuntimeError("Assignment was not persisted")
-        if comment_values is not None:
-            assignment.comment_id = str(comment_values["id"])
-            db.commit()
-            db.refresh(assignment)
     else:
         try:
             comment_values = (
@@ -1452,7 +1448,6 @@ async def create_issue_assignment(
                 raise RuntimeError("Assignment was not persisted")
             db.commit()
             db.refresh(item)
-            db.refresh(assignment)
         except Exception:
             db.rollback()
             raise
@@ -1511,7 +1506,7 @@ async def create_issue_assignment(
 )
 def remove_issue_assignment(
     item_id: str,
-    assignment_id: int,
+    assignment_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:

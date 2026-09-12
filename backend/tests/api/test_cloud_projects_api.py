@@ -29,10 +29,10 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
+from app.models.resource_member import ResourceMember
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.models.workspace import WorkspaceAgentBinding, WorkspaceExecutionEnvironment
 from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
@@ -1830,17 +1830,18 @@ def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
     assert agent["executionDeviceId"] == device.name
 
     bindings = (
-        test_db.query(WorkspaceExecutionEnvironment)
+        test_db.query(ResourceMember)
         .filter(
-            WorkspaceExecutionEnvironment.workspace_id == int(project["workspace_id"]),
-            WorkspaceExecutionEnvironment.device_id == device.id,
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
         )
         .all()
     )
     assert len(bindings) == 1
-    assert bindings[0].owner_type == "human"
-    assert bindings[0].owner_user_id == test_user.id
-    assert bindings[0].added_by_user_id == test_user.id
+    assert bindings[0].role == "Developer"
+    assert bindings[0].invited_by_user_id == test_user.id
 
     listed = test_client.get(
         f"/api/v1/workspaces/{project['workspace_id']}/execution-environments",
@@ -1871,10 +1872,12 @@ def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
     assert updated.status_code == 200, updated.text
     assert updated.json()["executionDeviceId"] == device.name
     assert (
-        test_db.query(WorkspaceExecutionEnvironment)
+        test_db.query(ResourceMember)
         .filter(
-            WorkspaceExecutionEnvironment.workspace_id == int(project["workspace_id"]),
-            WorkspaceExecutionEnvironment.device_id == device.id,
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
         )
         .count()
         == 1
@@ -1915,17 +1918,18 @@ def test_cloud_project_wegent_agent_authorizes_accessible_team_once(
     assert agent["wegentTeamId"] == team.id
 
     bindings = (
-        test_db.query(WorkspaceAgentBinding)
+        test_db.query(ResourceMember)
         .filter(
-            WorkspaceAgentBinding.workspace_id == int(project["workspace_id"]),
-            WorkspaceAgentBinding.team_id == team.id,
+            ResourceMember.resource_type == "Team",
+            ResourceMember.resource_id == team.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
         )
         .all()
     )
     assert len(bindings) == 1
-    assert bindings[0].owner_type == "human"
-    assert bindings[0].owner_user_id == test_user.id
-    assert bindings[0].added_by_user_id == test_user.id
+    assert bindings[0].role == "Developer"
+    assert bindings[0].invited_by_user_id == test_user.id
 
     created_again = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/chat-agents",
@@ -1945,10 +1949,12 @@ def test_cloud_project_wegent_agent_authorizes_accessible_team_once(
     assert updated.status_code == 200, updated.text
     assert updated.json()["wegentTeamId"] == team.id
     assert (
-        test_db.query(WorkspaceAgentBinding)
+        test_db.query(ResourceMember)
         .filter(
-            WorkspaceAgentBinding.workspace_id == int(project["workspace_id"]),
-            WorkspaceAgentBinding.team_id == team.id,
+            ResourceMember.resource_type == "Team",
+            ResourceMember.resource_id == team.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
         )
         .count()
         == 1

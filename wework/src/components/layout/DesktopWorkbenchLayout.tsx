@@ -37,7 +37,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { CollaborationWorkspace } from '@/features/todo/CollaborationWorkspace'
+import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { TaskMyWorkView } from '@/features/todo/TaskMyWorkView'
+import type { WorkspaceMyWorkItem } from '@wegent/collaboration'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
 import {
@@ -397,19 +399,23 @@ export function DesktopWorkbenchLayout({
     }
   }, [loadLocalHarnessSessions, todoOpen])
   const activeItem = 'chat'
+  const [taskListView, setTaskListView] = useState<'tasks' | 'my-work'>('tasks')
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
+    setTaskListView('tasks')
     setActiveLocalHarnessSessionId(null)
     activateSplitPane(blankPaneKey)
     onNewChat()
   }, [activateSplitPane, blankPaneKey, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
+    setTaskListView('tasks')
     setActiveLocalHarnessSessionId(null)
     activateSplitPane(blankPaneKey)
     onStartStandaloneChat()
   }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
+      setTaskListView('tasks')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(blankPaneKey)
       onSelectProject(projectId)
@@ -418,6 +424,7 @@ export function DesktopWorkbenchLayout({
   )
   const startNewProjectChatOutsideHarness = useCallback(
     (projectId: number) => {
+      setTaskListView('tasks')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(blankPaneKey)
       onStartNewProjectChat(projectId)
@@ -426,6 +433,7 @@ export function DesktopWorkbenchLayout({
   )
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
+      setTaskListView('tasks')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(
         getWorkbenchPaneKey({
@@ -977,6 +985,7 @@ export function DesktopWorkbenchLayout({
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
+      taskListView={taskListView}
       localHarnessSessions={localHarnessSessions}
       activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}
@@ -995,6 +1004,7 @@ export function DesktopWorkbenchLayout({
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
       onOpenSearch={() => setSearchOpen(true)}
+      onOpenMyWork={() => setTaskListView('my-work')}
       onSelectProject={selectProjectOutsideHarness}
       onStartNewProjectChat={startNewProjectChatOutsideHarness}
       onOpenRuntimeTask={openRuntimeTaskOutsideHarness}
@@ -1095,14 +1105,7 @@ export function DesktopWorkbenchLayout({
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
           {todoOpen &&
             (state.user && services.deliveryApi ? (
-              <CollaborationWorkspace
-                entryMode={
-                  workspaceTabs && ownedWorkspaceTab?.kind === 'board'
-                    ? ownedWorkspaceTab.fixed
-                      ? 'platform'
-                      : 'project'
-                    : 'platform'
-                }
+              <CloudTodoWorkspace
                 user={state.user}
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}
@@ -1182,19 +1185,64 @@ export function DesktopWorkbenchLayout({
               </div>
             ))}
           {!todoOpen ? (
-            <DesktopWorkbenchMain
-              visible={routeActive && !settingsOpen && !todoOpen}
-              sidebarCollapsed={effectiveSidebarCollapsed}
-              sidebarResizing={sidebarResizing}
-              onSidebarCollapsedChange={updateSidebarCollapsed}
-              activePane={activePane}
-              splitGroups={splitGroups}
-              localHarnessSessions={localHarnessSessions}
-              activeLocalHarnessSessionId={activeLocalHarnessSessionId}
-              onLocalHarnessSessionStarted={registerLocalHarnessSession}
-              onLocalHarnessSessionClose={closeLocalHarnessSession}
-              onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
-            />
+            <div className="relative flex min-h-0 min-w-0 flex-1">
+              {taskListView === 'my-work' ? (
+                <TaskMyWorkView
+                  api={services.sharedWorkspaceApi}
+                  runtimeWork={state.runtimeWork}
+                  runtimeTaskLifecycle={runtimeTaskLifecycle}
+                  onOpenRuntimeItem={item => {
+                    void openRuntimeTaskOutsideHarness(item.runtime_address)
+                  }}
+                  onOpenCloudItem={(item: WorkspaceMyWorkItem) => {
+                    if (!workspaceTabs || item.can_view_detail === false) return
+                    const params = new URLSearchParams()
+                    params.set('projectStore', 'backend')
+                    params.set('projectId', String(item.cloud_project_id))
+                    params.set('itemId', item.id)
+                    const contentRoute = `/todo?${params.toString()}`
+                    const existingTab = workspaceTabs.tabs.find(
+                      tab =>
+                        tab.kind === 'board' &&
+                        !tab.fixed &&
+                        projectSpaceRouteParam(tab.contentRoute, 'projectId') ===
+                          String(item.cloud_project_id)
+                    )
+                    if (existingTab) {
+                      workspaceTabs.selectTab(existingTab.id, {
+                        title: item.project_name,
+                        contentRoute,
+                      })
+                      return
+                    }
+                    workspaceTabs.openTab('board', {
+                      title: item.project_name,
+                      contentRoute,
+                    })
+                  }}
+                />
+              ) : null}
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1',
+                  taskListView === 'my-work' && 'hidden'
+                )}
+              >
+                <DesktopWorkbenchMain
+                  visible={routeActive && !settingsOpen && taskListView === 'tasks'}
+                  sidebarCollapsed={effectiveSidebarCollapsed}
+                  sidebarResizing={sidebarResizing}
+                  onSidebarCollapsedChange={updateSidebarCollapsed}
+                  activePane={activePane}
+                  splitGroups={splitGroups}
+                  localHarnessSessions={localHarnessSessions}
+                  activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+                  onLocalHarnessSessionStarted={registerLocalHarnessSession}
+                  onLocalHarnessSessionClose={closeLocalHarnessSession}
+                  onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
+                />
+              </div>
+            </div>
           ) : null}
         </div>
       </div>

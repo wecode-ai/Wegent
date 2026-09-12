@@ -71,6 +71,7 @@ from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.message_forwarding_service import message_forwarding_service
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
+from app.services.workspaces.storage import workspace_id_for_project
 from app.stores.tasks import subtask_store, task_access_store, task_store
 
 router = APIRouter()
@@ -193,6 +194,7 @@ def _project_response(
     return CloudProjectResponse.model_validate(
         {
             **project.__dict__,
+            "workspace_id": workspace_id_for_project(db, project.id),
             "current_user_id": current_user.id,
             "current_user_name": current_user.user_name,
             "access_role": access.role,

@@ -39,9 +39,7 @@ import {
 
 import {
   captureVerificationScreenshot,
-  openProjectWorkspaceTab,
   waitForWorkbenchDebugState,
-  workspaceTabIds,
 } from './workspace-flows.mjs'
 
 const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
@@ -628,27 +626,20 @@ async function verifyBackgroundCompletionRestore({
     'A stale running transcript revived the completed task'
   )
 
-  await control.command('navigate', 'body', { value: '/todo' })
+  await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const existingBoardTabIds = workspaceTabIds(
-    JSON.parse(await control.command('snapshot', 'body')),
-    'board'
-  )
-  const { boardContentSelector, boardTabId } = await openProjectWorkspaceTab(
-    control,
-    existingBoardTabIds
-  )
-  const myWorkButton = `${boardContentSelector} [data-testid="cloud-my-work"]`
-  const myWorkView = `${boardContentSelector} [data-testid="cloud-my-work-view"]`
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+  const myWorkButton = '[data-testid="task-my-work-button"]'
+  const myWorkView = '[data-testid="task-my-work-surface"]'
   await control.command('waitFor', myWorkButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', myWorkButton)
   await control.command(
     'waitFor',
-    `${boardContentSelector} [data-testid="my-work-group-done-${taskId}"]`,
+    `[data-testid="my-work-group-done-${taskId}"]`,
     {
       text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
       visible: true,
@@ -661,9 +652,7 @@ async function verifyBackgroundCompletionRestore({
     false,
     'My Work revived a completed task from the stale running transcript'
   )
-  await control.command('click', `[data-testid="workspace-tab-close-${boardTabId}"]`)
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
-  await control.command('navigate', 'body', { value: '/' })
+  await control.command('click', '[data-testid="task-new-chat"]')
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

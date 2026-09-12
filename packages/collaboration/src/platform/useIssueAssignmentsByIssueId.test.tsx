@@ -18,7 +18,7 @@ const issue = {
 const issues = [issue];
 
 const assignment = {
-  id: 1,
+  id: "comment-assignment-1",
   issue_id: issue.id,
 } as CollaborationAssignment;
 

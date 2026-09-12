@@ -1,34 +1,80 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Authoritative non-exclusive Issue assignments."""
+"""Issue assignments stored as structured LoopItemComment events."""
 
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
-from app.models.issue_assignment import IssueAssignment
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemComment,
+    ProjectChatAgent,
+    loop_datetime_is_unset,
+)
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
-from app.models.workspace import WorkspaceAgentBinding
 from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.workspaces.storage import workspace_id_for_project
+
+ASSIGNMENT_EVENT_TYPE = "assignment"
 
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+@dataclass(frozen=True)
+class AssignmentEvent:
+    comment: LoopItemComment
+    metadata: dict[str, object]
+
+    @property
+    def id(self) -> str:
+        return str(self.comment.id)
+
+    @property
+    def loop_item_id(self) -> str:
+        return str(self.comment.loop_item_id)
+
+    @property
+    def member_type(self) -> str:
+        return str(self.metadata.get("target_type") or "")
+
+    @property
+    def member_id(self) -> str:
+        return str(self.metadata.get("target_id") or "")
+
+    @property
+    def workflow_step(self) -> str:
+        return str(self.metadata.get("workflow_step") or "")
+
+    @property
+    def assigned_by_user_id(self) -> int:
+        return int(self.comment.created_by_user_id or 0)
+
+    @property
+    def comment_id(self) -> str:
+        return self.id
+
+    @property
+    def created_at(self) -> datetime:
+        return self.comment.created_at
+
+    @property
+    def updated_at(self) -> datetime:
+        return self.comment.updated_at
 
 
 class IssueAssignmentService:
-    """Persist assignment facts independently from compatibility projections."""
+    """Treat the Issue activity stream as the assignment source of truth."""
 
     def list(
         self,
@@ -37,19 +83,10 @@ class IssueAssignmentService:
         project_id: int,
         issue_id: str,
         user_id: int,
-    ) -> list[IssueAssignment]:
+    ) -> list[AssignmentEvent]:
         require_cloud_project_role(db, project_id, user_id, BaseRole.RestrictedAnalyst)
         self._require_issue_project(db, project_id, issue_id)
-        return (
-            db.query(IssueAssignment)
-            .filter(
-                IssueAssignment.cloud_project_id == str(project_id),
-                IssueAssignment.loop_item_id == issue_id,
-                IssueAssignment.active_marker == "active",
-            )
-            .order_by(IssueAssignment.created_at, IssueAssignment.id)
-            .all()
-        )
+        return list(self._active_events(db, issue_id).values())
 
     def active(
         self,
@@ -59,24 +96,19 @@ class IssueAssignmentService:
         member_type: str,
         member_id: str,
         workflow_step: str | None,
-    ) -> IssueAssignment | None:
-        return (
-            db.query(IssueAssignment)
-            .filter(
-                IssueAssignment.loop_item_id == issue_id,
-                IssueAssignment.member_type == member_type,
-                IssueAssignment.member_id == member_id,
-                IssueAssignment.workflow_step == self._workflow_step(workflow_step),
-                IssueAssignment.active_marker == "active",
-            )
-            .first()
+    ) -> AssignmentEvent | None:
+        key = (
+            self._member_type(member_type),
+            member_id.strip(),
+            self._workflow_step(workflow_step),
         )
+        return self._active_events(db, issue_id).get(key)
 
     def record(
         self,
         db: Session,
         *,
-        workspace_id: int | None,
+        workspace_id: int | None = None,
         project_id: int | str,
         issue_id: str,
         member_type: str,
@@ -86,7 +118,9 @@ class IssueAssignmentService:
         notify: bool,
         trigger: str,
         comment_id: str | None = None,
-    ) -> tuple[IssueAssignment, bool]:
+        comment_body: str | None = None,
+    ) -> tuple[AssignmentEvent, bool]:
+        del workspace_id
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
         existing = self.active(
@@ -98,22 +132,33 @@ class IssueAssignmentService:
         )
         if existing is not None:
             return existing, False
-        assignment = IssueAssignment(
-            workspace_id=workspace_id,
-            cloud_project_id=str(project_id),
-            loop_item_id=issue_id,
-            member_type=normalized_type,
-            member_id=normalized_id,
-            assigned_by_user_id=assigned_by_user_id,
-            workflow_step=self._workflow_step(workflow_step),
-            notify=notify,
-            comment_id=comment_id,
-            trigger=trigger,
-            active_marker="active",
-        )
-        db.add(assignment)
+        target_name = self._target_name(db, normalized_type, normalized_id)
+        metadata = {
+            "event_type": ASSIGNMENT_EVENT_TYPE,
+            "action": "assign",
+            "target_type": normalized_type,
+            "target_id": normalized_id,
+            "target_name": target_name,
+            "workflow_step": self._workflow_step(workflow_step),
+            "notify": bool(notify),
+            "trigger": trigger,
+        }
+        comment = db.get(LoopItemComment, comment_id) if comment_id else None
+        if comment is None:
+            comment = LoopItemComment(
+                cloud_project_id=str(project_id),
+                loop_item_id=issue_id,
+                description=comment_body or "",
+                created_by_user_id=assigned_by_user_id,
+                updated_by_user_id=assigned_by_user_id,
+                status="active",
+                metadata_json=metadata,
+            )
+            db.add(comment)
+        else:
+            comment.metadata_json = metadata
         db.flush()
-        return assignment, True
+        return AssignmentEvent(comment=comment, metadata=metadata), True
 
     def remove(
         self,
@@ -121,9 +166,9 @@ class IssueAssignmentService:
         *,
         project_id: int,
         issue_id: str,
-        assignment_id: int,
+        assignment_id: str,
         user_id: int,
-    ) -> IssueAssignment:
+    ) -> AssignmentEvent:
         access = require_cloud_project_role(
             db, project_id, user_id, BaseRole.RestrictedAnalyst
         )
@@ -134,19 +179,37 @@ class IssueAssignmentService:
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
-        assignment = (
-            db.query(IssueAssignment)
-            .filter(
-                IssueAssignment.id == assignment_id,
-                IssueAssignment.cloud_project_id == str(project_id),
-                IssueAssignment.loop_item_id == issue_id,
-                IssueAssignment.active_marker == "active",
-            )
-            .first()
+        assignment = next(
+            (
+                event
+                for event in self._active_events(db, issue_id).values()
+                if event.id == str(assignment_id)
+            ),
+            None,
         )
         if assignment is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
-        assignment.remove(user_id=user_id, removed_at=utcnow())
+        metadata = {
+            "event_type": ASSIGNMENT_EVENT_TYPE,
+            "action": "unassign",
+            "assignment_event_id": assignment.id,
+            "target_type": assignment.member_type,
+            "target_id": assignment.member_id,
+            "target_name": assignment.metadata.get("target_name") or "",
+            "workflow_step": assignment.workflow_step,
+            "notify": False,
+            "trigger": "manual",
+        }
+        comment = LoopItemComment(
+            cloud_project_id=str(project_id),
+            loop_item_id=issue_id,
+            description="",
+            created_by_user_id=user_id,
+            updated_by_user_id=user_id,
+            status="active",
+            metadata_json=metadata,
+        )
+        db.add(comment)
         db.flush()
         return assignment
 
@@ -172,7 +235,6 @@ class IssueAssignmentService:
                     "Assignee is not a member of this Project",
                 )
             return "user", str(user_id)
-
         agent = db.get(ProjectChatAgent, member_id)
         if (
             agent is None
@@ -185,7 +247,8 @@ class IssueAssignmentService:
             )
         metadata = agent.metadata_json if isinstance(agent.metadata_json, dict) else {}
         team_id_value = metadata.get("wegent_team_id")
-        if team_id_value is None or project.workspace_id is None:
+        workspace_id = workspace_id_for_project(db, project.id)
+        if team_id_value is None or workspace_id is None:
             return "agent", agent.id
         try:
             team_id = int(team_id_value)
@@ -194,70 +257,34 @@ class IssueAssignmentService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Project Agent has an invalid Team binding",
             ) from exc
-        binding = (
-            db.query(WorkspaceAgentBinding)
-            .join(Kind, Kind.id == WorkspaceAgentBinding.team_id)
-            .filter(
-                WorkspaceAgentBinding.workspace_id == project.workspace_id,
-                WorkspaceAgentBinding.team_id == team_id,
-                Kind.kind == "Team",
-                Kind.is_active.is_(True),
-            )
-            .first()
+        from app.services.workspaces import workspace_service
+
+        workspace_service.require_agent_authorized(
+            db, workspace_id=workspace_id, team_id=team_id
         )
-        if binding is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Agent is not authorized in this Workspace",
-            )
         return "agent", agent.id
 
     @staticmethod
-    def response_values(
-        db: Session,
-        assignment: IssueAssignment,
-    ) -> dict[str, object]:
+    def response_values(db: Session, assignment: AssignmentEvent) -> dict[str, object]:
         creator = db.get(User, assignment.assigned_by_user_id)
-        target_name = ""
-        if assignment.member_type == "human":
-            try:
-                target = db.get(User, int(assignment.member_id))
-            except ValueError:
-                target = None
-            if target is not None:
-                target_name = target.user_name
-        else:
-            agent = db.get(ProjectChatAgent, assignment.member_id)
-            if agent is not None:
-                target_name = str(agent.title or agent.name or "")
-            else:
-                try:
-                    team = db.get(Kind, int(assignment.member_id))
-                except ValueError:
-                    team = None
-                if team is not None:
-                    target_name = team.name
         return {
             "id": assignment.id,
             "issue_id": assignment.loop_item_id,
             "target_type": assignment.member_type,
             "target_id": assignment.member_id,
-            "target_name": target_name,
+            "target_name": str(assignment.metadata.get("target_name") or ""),
             "workflow_step": assignment.workflow_step or None,
-            "comment_id": assignment.comment_id,
+            "body": assignment.comment.description or "",
+            "comment_id": assignment.id,
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
-            "status": "active" if assignment.is_active else "cancelled",
+            "status": "active",
             "created_at": assignment.created_at,
             "updated_at": assignment.updated_at,
         }
 
     def project_for_issue(
-        self,
-        db: Session,
-        *,
-        issue_id: str,
-        user_id: int,
+        self, db: Session, *, issue_id: str, user_id: int
     ) -> tuple[CloudProject, LoopItem]:
         item = db.get(LoopItem, issue_id)
         if item is None:
@@ -270,23 +297,9 @@ class IssueAssignmentService:
         )
         return project, item
 
-    def project_legacy_assignment(
-        self,
-        db: Session,
-        *,
-        item: LoopItem,
-    ) -> None:
-        """Project the newest active assignment onto legacy singular columns."""
-
-        latest = (
-            db.query(IssueAssignment)
-            .filter(
-                IssueAssignment.loop_item_id == item.id,
-                IssueAssignment.active_marker == "active",
-            )
-            .order_by(IssueAssignment.created_at.desc(), IssueAssignment.id.desc())
-            .first()
-        )
+    def project_legacy_assignment(self, db: Session, *, item: LoopItem) -> None:
+        active = list(self._active_events(db, item.id).values())
+        latest = active[-1] if active else None
         item.assignee_user_id = None
         item.assignee_agent_id = ""
         item.assignee_team_id = None
@@ -304,6 +317,64 @@ class IssueAssignmentService:
                 pass
         item.version += 1
 
+    def _active_events(
+        self, db: Session, issue_id: str
+    ) -> dict[tuple[str, str, str], AssignmentEvent]:
+        comments = (
+            db.query(LoopItemComment)
+            .filter(
+                LoopItemComment.loop_item_id == issue_id,
+                loop_datetime_is_unset(LoopItemComment.deleted_at),
+            )
+            .order_by(LoopItemComment.created_at, LoopItemComment.id)
+            .all()
+        )
+        cancelled_event_ids = {
+            str(metadata.get("assignment_event_id") or "")
+            for comment in comments
+            if (
+                isinstance(comment.metadata_json, dict)
+                and (metadata := comment.metadata_json).get("event_type")
+                == ASSIGNMENT_EVENT_TYPE
+                and metadata.get("action") == "unassign"
+            )
+        }
+        active: dict[tuple[str, str, str], AssignmentEvent] = {}
+        for comment in comments:
+            metadata = (
+                comment.metadata_json if isinstance(comment.metadata_json, dict) else {}
+            )
+            if metadata.get("event_type") != ASSIGNMENT_EVENT_TYPE:
+                continue
+            action = metadata.get("action")
+            if action == "assign":
+                key = (
+                    self._member_type(str(metadata.get("target_type") or "")),
+                    str(metadata.get("target_id") or ""),
+                    self._workflow_step(str(metadata.get("workflow_step") or "")),
+                )
+                event = AssignmentEvent(comment=comment, metadata=metadata)
+                if event.id not in cancelled_event_ids:
+                    active[key] = event
+        return active
+
+    @staticmethod
+    def _target_name(db: Session, member_type: str, member_id: str) -> str:
+        if member_type == "human":
+            try:
+                user = db.get(User, int(member_id))
+            except ValueError:
+                user = None
+            return user.user_name if user is not None else ""
+        agent = db.get(ProjectChatAgent, member_id)
+        if agent is not None:
+            return str(agent.title or agent.name or "")
+        try:
+            team = db.get(Kind, int(member_id))
+        except ValueError:
+            team = None
+        return team.name if team is not None else ""
+
     @staticmethod
     def _member_type(value: str) -> str:
         if value in {"user", "human"}:
@@ -317,11 +388,7 @@ class IssueAssignmentService:
         return value.strip() if value else ""
 
     @staticmethod
-    def _require_issue_project(
-        db: Session,
-        project_id: int,
-        issue_id: str,
-    ) -> LoopItem:
+    def _require_issue_project(db: Session, project_id: int, issue_id: str) -> LoopItem:
         item = db.get(LoopItem, issue_id)
         if item is None or str(item.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")

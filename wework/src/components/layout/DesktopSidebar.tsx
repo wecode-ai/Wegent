@@ -13,6 +13,7 @@ import {
   Globe2,
   GitCompareArrows,
   Laptop,
+  ListTodo,
   Loader2,
   MessageCircle,
   MessageCircleOff,
@@ -212,6 +213,7 @@ interface DesktopSidebarProps {
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  taskListView?: 'tasks' | 'my-work'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
@@ -230,6 +232,7 @@ interface DesktopSidebarProps {
   onOpenLocalHarnessSession?: (sessionId: string) => void
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
   onOpenSearch?: () => void
+  onOpenMyWork?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -3032,6 +3035,7 @@ export function DesktopSidebar({
   unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
+  taskListView = 'tasks',
   localHarnessSessions = [],
   activeLocalHarnessSessionId = null,
   onNewChat,
@@ -3039,6 +3043,7 @@ export function DesktopSidebar({
   onOpenLocalHarnessSession,
   onCloseLocalHarnessSession,
   onOpenSearch,
+  onOpenMyWork,
   onStartNewProjectChat,
   onOpenRuntimeTask,
   onMarkRuntimeTaskRead,
@@ -4094,6 +4099,15 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
+              {onOpenMyWork ? (
+                <DesktopSidebarNavItem
+                  icon={ListTodo}
+                  label={t('workbench.work_item_create_title', '我的任务')}
+                  testId="task-my-work-button"
+                  selected={taskListView === 'my-work'}
+                  onClick={onOpenMyWork}
+                />
+              ) : null}
               {sidebarNavigation.map(item => {
                 if (item.surface === 'module') {
                   return (

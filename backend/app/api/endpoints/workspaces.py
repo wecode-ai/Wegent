@@ -19,7 +19,6 @@ from app.schemas.workspace import (
     WorkspaceAgentCreate,
     WorkspaceAgentListResponse,
     WorkspaceAgentResponse,
-    WorkspaceAgentUpdate,
     WorkspaceCreate,
     WorkspaceExecutionEnvironmentCreate,
     WorkspaceExecutionEnvironmentListResponse,
@@ -34,6 +33,7 @@ from app.schemas.workspace import (
 )
 from app.services.cloud_projects import cloud_project_service
 from app.services.workspaces import workspace_service
+from app.services.workspaces.storage import workspace_id_for_project
 
 router = APIRouter()
 resources_router = APIRouter()
@@ -63,6 +63,7 @@ def _project_response(
     return CloudProjectResponse.model_validate(
         {
             **project.__dict__,
+            "workspace_id": workspace_id_for_project(db, project.id),
             "current_user_id": current_user.id,
             "current_user_name": current_user.user_name,
             "access_role": access.role,
@@ -236,24 +237,6 @@ def add_workspace_agent(
 ) -> WorkspaceAgentResponse:
     return WorkspaceAgentResponse.model_validate(
         workspace_service.add_agent(db, workspace_id, current_user.id, values)
-    )
-
-
-@router.patch(
-    "/{workspace_id}/agents/{team_id}",
-    response_model=WorkspaceAgentResponse,
-)
-def update_workspace_agent(
-    workspace_id: int,
-    team_id: int,
-    values: WorkspaceAgentUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> WorkspaceAgentResponse:
-    return WorkspaceAgentResponse.model_validate(
-        workspace_service.update_agent(
-            db, workspace_id, team_id, current_user.id, values
-        )
     )
 
 

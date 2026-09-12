@@ -92,11 +92,6 @@ class WorkspaceMemberListResponse(BaseModel):
 
 class WorkspaceAgentCreate(BaseModel):
     team_id: int = Field(ge=1)
-    owner_type: ResourceOwnerType = "user"
-
-
-class WorkspaceAgentUpdate(BaseModel):
-    owner_type: ResourceOwnerType
 
 
 class WorkspaceAgentResponse(BaseModel):
@@ -110,7 +105,6 @@ class WorkspaceAgentResponse(BaseModel):
     owner_name: str
     status: Literal["available", "unavailable"]
     execution_environment_ids: list[str] = Field(default_factory=list)
-    workspace_ids: list[str] = Field(default_factory=list)
     owner_user_id: int | None
     added_by_user_id: int
     created_at: datetime
@@ -123,7 +117,6 @@ class WorkspaceAgentListResponse(BaseModel):
 
 class WorkspaceExecutionEnvironmentCreate(BaseModel):
     device_id: int = Field(ge=1)
-    owner_type: ResourceOwnerType = "user"
 
 
 class WorkspaceExecutionEnvironmentResponse(BaseModel):
@@ -140,7 +133,6 @@ class WorkspaceExecutionEnvironmentResponse(BaseModel):
     owner_id: SnowflakeId
     owner_name: str
     status: Literal["online", "offline", "provisioning", "error"]
-    workspace_ids: list[str] = Field(default_factory=list)
     owner_user_id: int | None
     added_by_user_id: int
     created_at: datetime
