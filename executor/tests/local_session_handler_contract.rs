@@ -375,15 +375,15 @@ async fn running_session_gateway_proxies_vnc_websocket_to_loopback_rfb() {
         .unwrap();
     assert_eq!(
         websocket.next().await.unwrap().unwrap(),
-        TungsteniteMessage::Binary(b"RFB 003.008\n".to_vec().into())
+        TungsteniteMessage::Binary(b"RFB 003.008\n".to_vec())
     );
     websocket
-        .send(TungsteniteMessage::Binary(b"hello-rfb".to_vec().into()))
+        .send(TungsteniteMessage::Binary(b"hello-rfb".to_vec()))
         .await
         .unwrap();
     assert_eq!(
         websocket.next().await.unwrap().unwrap(),
-        TungsteniteMessage::Binary(b"rfb:hello".to_vec().into())
+        TungsteniteMessage::Binary(b"rfb:hello".to_vec())
     );
     websocket.close(None).await.unwrap();
 
