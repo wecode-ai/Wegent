@@ -70,16 +70,17 @@ def _validate_assignment_fields(
     role_source: AutomationRoleSource = "agent",
 ) -> None:
     if assignment_mode == "manual":
-        if role_source == "agent" and not agent_id:
-            raise ValueError("agent_id is required for manual assignment")
-        if role_source == "generic" and agent_id:
+        if role_source == "agent":
+            if not agent_id:
+                raise ValueError("agent_id is required for manual assignment")
+            if model or execution_environment or execution_device_id:
+                raise ValueError("agent roles use the agent Runtime")
+        elif agent_id:
             raise ValueError("generic role does not accept agent_id")
         if manager_type is not None:
             raise ValueError("manager_type is only valid for AI-managed assignment")
         if wegent_team_id is not None:
             raise ValueError("wegent_team_id is only valid for a Wegent manager")
-        if model or execution_environment or execution_device_id:
-            raise ValueError("custom manager configuration requires AI management")
         return
     if agent_id:
         raise ValueError("agent_id is only valid for manual assignment")

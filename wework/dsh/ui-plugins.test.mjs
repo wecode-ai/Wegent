@@ -79,11 +79,13 @@ test('core apps are contributed through wework.app', async () => {
   assert.deepEqual(injections, ['wework.app'])
   assert.deepEqual(
     registrations.map(entry => entry.options.id),
-    ['wework', 'todo', 'wegent']
+    ['wework', 'todo', 'collaboration', 'wegent']
   )
   assert.equal(registrations[0].descriptor.module, 'plugins/wework-ui-core-apps.js')
   assert.equal(registrations[1].descriptor.module, 'plugins/wework-ui-core-apps.js')
   assert.equal(registrations[2].descriptor.urlSource, 'cloud-web')
+  assert.equal(registrations[2].descriptor.cloudPath, '/collaboration')
+  assert.equal(registrations[3].descriptor.urlSource, 'cloud-web')
 })
 
 test('core settings are metadata-driven DSH pages', async () => {

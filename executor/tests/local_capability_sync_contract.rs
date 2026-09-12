@@ -2034,6 +2034,74 @@ fn reporter_marks_local_and_managed_capabilities_and_falls_back_to_plugin_store(
 }
 
 #[test]
+fn reporter_uses_managed_manifest_when_plugin_registry_is_missing() {
+    let temp = TempRoot::new("capability-report-managed-plugin-without-registry");
+    let skills_dir = temp.path().join(".claude/skills");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let store_path = temp
+        .path()
+        .join("capabilities/store/plugins/42-wework-dingtalk-0.2.2");
+    let codex_link = temp.path().join(".codex/plugins/dingtalk-wework");
+    let manifest_path = temp.path().join("capabilities/manifest.json");
+    fs::create_dir_all(store_path.join("skills/store-only")).unwrap();
+    fs::write(
+        store_path.join("skills/store-only/SKILL.md"),
+        "---\nname: store-only\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(codex_link.join("skills/dws")).unwrap();
+    fs::write(
+        codex_link.join("skills/dws/SKILL.md"),
+        "---\nname: dws\ndescription: Manage DingTalk capabilities.\n---\n",
+    )
+    .unwrap();
+    let manifest = ManagedCapabilityManifest::new(manifest_path);
+    manifest
+        .save(json!({
+            "version": 1,
+            "revision": 3,
+            "skills": {},
+            "plugins": {
+                "dingtalk@wework": {
+                    "name": "dingtalk",
+                    "key": "dingtalk@wework",
+                    "marketplace": "wework",
+                    "installed_plugin_id": 42,
+                    "managed": true,
+                    "version": "0.2.2",
+                    "store_path": store_path.display().to_string(),
+                    "runtime": {
+                        "codex_link": codex_link.display().to_string()
+                    }
+                }
+            },
+            "mcps": {}
+        }))
+        .unwrap();
+    let reporter = GlobalCapabilityReporter::new(skills_dir, plugins_dir.clone(), manifest);
+
+    let report = reporter.build_report(true).unwrap();
+
+    assert!(!plugins_dir.join("installed_plugins.json").exists());
+    assert_eq!(
+        report["plugins"],
+        json!([{
+            "name": "dingtalk",
+            "marketplace": "wework",
+            "scope": "user",
+            "version": "0.2.2",
+            "source": "wegent",
+            "installed_plugin_id": 42,
+            "skills": [{
+                "name": "dws",
+                "description": "Manage DingTalk capabilities.",
+                "path": "skills/dws"
+            }]
+        }])
+    );
+}
+
+#[test]
 fn global_capability_helpers_match_project_and_device_config_contract() {
     let temp = TempRoot::new("capability-sync-global");
     let _home = EnvGuard::set("HOME", temp.path().display().to_string());

@@ -28,6 +28,8 @@ class ResourceType(str, PyEnum):
     SMART_APP = "SmartApp"
     PROJECT = "Project"
     CLOUD_PROJECT = "CloudProject"
+    WORKSPACE = "Workspace"
+    DEVICE = "Device"
 
 
 # Import BaseRole and create MemberRole alias for backward compatibility

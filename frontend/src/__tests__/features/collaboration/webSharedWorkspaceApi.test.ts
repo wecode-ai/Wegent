@@ -20,6 +20,18 @@ function createClient() {
 }
 
 describe('createWebSharedWorkspaceApi', () => {
+  it('requests terminal execution history only when explicitly required', async () => {
+    const client = createClient()
+    client.get.mockResolvedValue({ items: [] })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await api.executions.list('project/1', { includeTerminal: true })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/cloud-projects/project%2F1/executions?include_terminal=true'
+    )
+  })
+
   it('maps project and issue inputs to backend snake_case fields', async () => {
     const client = createClient()
     client.post.mockResolvedValue({ id: 'issue-1' })
@@ -395,8 +407,8 @@ describe('createWebSharedWorkspaceApi', () => {
 
     expect(unsupported).toEqual([])
     expect(partial).toEqual([])
-    expect(supported).toHaveLength(91)
-    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(91)
+    expect(supported).toHaveLength(98)
+    expect(WEB_SHARED_WORKSPACE_CAPABILITIES).toHaveLength(98)
     expect(
       WEB_SHARED_WORKSPACE_CAPABILITIES.some(
         capability =>

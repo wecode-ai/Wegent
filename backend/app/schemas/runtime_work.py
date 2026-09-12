@@ -9,6 +9,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
+
 RuntimeName = Literal["codex", "claude_code"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
@@ -1002,6 +1004,10 @@ class RuntimeTaskCreateRequest(BaseModel):
     def validate_versioned_intent_boundary(self) -> "RuntimeTaskCreateRequest":
         """Validate fields introduced by versioned producer contracts."""
 
+        validate_non_secret_plugin_configs(
+            self.project_plugins,
+            field_name="projectPlugins",
+        )
         if self.schema_version >= 2 and self.runtime_model_config is not None:
             raise ValueError(
                 "RuntimeTaskCreateRequest V2+ cannot carry materialized modelConfig"

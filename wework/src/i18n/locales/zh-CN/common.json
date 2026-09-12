@@ -723,6 +723,10 @@
     "workspace_tabs": "工作区标签页",
     "workspace_tab_task": "任务",
     "workspace_tab_board": "协作",
+    "back_to_collaboration": "返回协作空间",
+    "back_to_project": "返回项目",
+    "local_project_spaces": "本地项目",
+    "issue_task_prepare_failed": "无法准备本地任务，请重试",
     "work_items": "工作空间",
     "workspace_tab_agent": "智能体",
     "workspace_tab_auxiliary": "工作区",
@@ -4507,6 +4511,10 @@
     "filter_conditions": "筛选条件",
     "all": "全部",
     "updated_at": "更新时间",
+    "table_view": "数据视图",
+    "issue_table_empty": "暂无 Issue",
+    "issue_column": "Issue",
+    "assignments": "分配",
     "any_time": "不限",
     "last_7_days": "近 7 天",
     "last_30_days": "近 30 天",
@@ -4684,6 +4692,12 @@
     "workflow_branch_collector_poll": "轮询采集中",
     "workflow_branch_collector_webhook": "webhook 待注册",
     "workflow_branch_collector_error": "采集器不可用"
+  },
+  "collaboration": {
+    "all_workspaces": "所有空间",
+    "resources": "资源",
+    "login_title": "登录后使用协作空间",
+    "login_description": "登录 Wegent 后可以创建和加入 Workspace，与成员和智能体共同推进项目。"
   },
   "notifications": {
     "title": "通知",

@@ -35,7 +35,9 @@ from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
+    IssueAction,
     require_cloud_project_role,
+    require_issue_action,
 )
 from app.services.delivery.storage import delivery_storage
 from app.services.loop_item_executions.service import (
@@ -963,6 +965,14 @@ class ExternalLoopItemProvider:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Robot is not active in this project",
                 )
+            from app.services.issue_assignments import issue_assignment_service
+
+            issue_assignment_service.require_canonical_member(
+                db,
+                project=project,
+                member_type="agent",
+                member_id=agent.id,
+            )
             assignee_label = self._assignee_label(
                 "agent", agent.id, agent.title or agent.name
             )
@@ -1014,7 +1024,7 @@ class ExternalLoopItemProvider:
                 )
             },
         )
-        self._ensure_index_row(
+        index_row = self._ensure_index_row(
             db,
             item_id=item_id,
             project=project,
@@ -1031,14 +1041,25 @@ class ExternalLoopItemProvider:
             assignee_name=assignee_name,
             user_id=user_id,
         )
-        cancelled_runs = self._cancel_active_executions(
-            db,
-            item_id,
-            preserve_automation_run_id=str(
-                (automation_context or {}).get("run_id") or ""
-            ),
+        from app.services.issue_assignments import issue_assignment_service
+
+        target_id = (
+            agent.id
+            if agent is not None
+            else str(team.id) if team is not None else str(target_user_id)
         )
-        if agent is not None:
+        _, assignment_created = issue_assignment_service.record(
+            db,
+            project_id=project.id,
+            issue_id=index_row.id,
+            member_type=("human" if values.assignee_type == "user" else "agent"),
+            member_id=target_id,
+            assigned_by_user_id=user_id,
+            workflow_step=values.workflow_step,
+            notify=values.notify_assignee,
+            trigger=values.trigger,
+        )
+        if agent is not None and assignment_created:
             self._create_execution_for_agent(
                 db,
                 item_id=item_id,
@@ -1049,7 +1070,7 @@ class ExternalLoopItemProvider:
                 automation_context=automation_context,
                 instruction=instruction,
             )
-        elif team is not None:
+        elif team is not None and assignment_created:
             loop_item_execution_service.create_for_team_assignment(
                 db,
                 loop_item_id=item_id,
@@ -1061,6 +1082,7 @@ class ExternalLoopItemProvider:
         if (
             values.notify_assignee
             and values.assignee_type == "user"
+            and assignment_created
             and (
                 target_user_id != user_id
                 or automation_context is not None
@@ -1084,12 +1106,6 @@ class ExternalLoopItemProvider:
                 assigner_name=assigner.user_name if assigner else str(user_id),
             )
         db.commit()
-        if cancelled_runs:
-            from app.services.board_team_execution import (
-                request_execution_cancellations,
-            )
-
-            request_execution_cancellations(cancelled_runs)
         return self._response(db, project, issue, access, user_id)
 
     def _ensure_index_row(
@@ -1330,10 +1346,12 @@ class ExternalLoopItemProvider:
             db, project.id, user_id, BaseRole.RestrictedAnalyst
         )
         issue = self._get_issue(project, number)
-        if not self._permissions(
-            access, self._creator_id(self._labels(issue)), user_id
-        )[1]:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        require_issue_action(
+            access,
+            action=IssueAction.COMMENT,
+            issue_creator_user_id=self._creator_id(self._labels(issue)),
+            user_id=user_id,
+        )
         return self._create_comment(project, number, body)
 
     def list_comments(

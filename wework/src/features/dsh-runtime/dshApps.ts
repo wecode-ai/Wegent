@@ -13,6 +13,7 @@ export interface WeworkDshApp extends WeworkDshSlotEntry {
   path?: string
   requiresAuth?: boolean
   requiresCloud?: boolean
+  cloudPath?: string
   url?: string
   urlSource?: 'cloud-web'
   workspaceKinds?: readonly ('task' | 'board')[]

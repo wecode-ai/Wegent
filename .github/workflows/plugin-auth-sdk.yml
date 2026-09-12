@@ -102,4 +102,4 @@ jobs:
         with:
           workspaces: executor
       - name: Test native transport, OAuth lifecycle, and process cleanup
-        run: uv run --no-project cargo test --manifest-path executor/Cargo.toml --test plugin_account_auth_contract
+        run: uv run --no-project cargo test --manifest-path executor/Cargo.toml --test plugin_account_auth_contract -- --test-threads=1

@@ -29,6 +29,15 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
     : null
   const currentDevice = await cloudEnvironment.device(CLOUD_DEVICE_ID)
   assert.ok(currentDevice?.executor_version, 'The cloud lifecycle fixture has no Executor version')
+  assert.equal(
+    currentDevice?.status,
+    'online',
+    'The cloud lifecycle fixture did not start with an online Executor'
+  )
+  assert.ok(
+    currentDevice?.runtime_instance_id,
+    'The cloud lifecycle fixture did not expose a Runtime identity'
+  )
   const testLatestVersion = '999.0.0'
   await control.command('navigate', 'body', { value: '/settings/general' })
   await cloudEnvironment.setExecutorLatestVersion(testLatestVersion)
@@ -48,6 +57,7 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
   await control.command('waitFor', upgradeBadge, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await captureVerificationScreenshot(control, 'cloud-device-01-online.png')
   const upgradeLabel = await control.command('getText', upgradeBadge)
   assert.match(
     upgradeLabel,
@@ -163,7 +173,7 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
   )
   await captureVerificationScreenshot(control, 'cloud-device-restart-pending.png')
 
-  await cloudEnvironment.restartCloudExecutor()
+  const restartedExecutor = await cloudEnvironment.restartCloudExecutor()
   await waitForCondition(
     async () => {
       try {
@@ -184,5 +194,16 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
     enabled: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const recoveredDevice = await cloudEnvironment.device(CLOUD_DEVICE_ID)
+  assert.equal(
+    recoveredDevice?.status,
+    'online',
+    'The restarted cloud Executor did not recover its online Backend state'
+  )
+  assert.equal(
+    recoveredDevice?.runtime_instance_id,
+    restartedExecutor.runtimeInstanceId,
+    'The recovered device card and restarted Executor resolved to different Runtime identities'
+  )
   await captureVerificationScreenshot(control, 'cloud-device-restart-recovered.png')
 }

@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.types import SnowflakeId
+
 
 def _to_camel(value: str) -> str:
     head, *tail = value.split("_")
@@ -174,6 +176,14 @@ class LoopItemAssign(ProjectChatSchema):
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent"]
     assignee_id: str = Field(min_length=1, max_length=128)
+    workflow_step: str | None = Field(default=None, max_length=128)
+    trigger: Literal[
+        "manual",
+        "rule",
+        "workflow",
+        "automation",
+        "mention",
+    ] = "manual"
 
 
 class LoopItemApproval(ProjectChatSchema):
@@ -253,6 +263,7 @@ class LoopItemExecutionCancel(ProjectChatSchema):
 
 class LoopItemExecutionView(ProjectChatSchema):
     id: int
+    workspace_id: SnowflakeId | None = None
     loop_item_id: str
     cloud_project_id: str
     task_title: str
@@ -307,7 +318,7 @@ class LoopItemExecutionView(ProjectChatSchema):
     created_at: Any
     updated_at: Any
 
-    @field_validator("team_id", "backend_task_id", mode="before")
+    @field_validator("workspace_id", "team_id", "backend_task_id", mode="before")
     @classmethod
     def normalize_optional_execution_id(cls, value: object) -> object:
         return None if value == 0 else value

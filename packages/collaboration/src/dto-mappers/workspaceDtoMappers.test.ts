@@ -5,7 +5,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  mapCollaborationAssignmentDto,
+  mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
+  mapCollaborationOwnedAgentDto,
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
   mapWorkspaceTaskBindingDto,
@@ -14,6 +17,72 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("uses resource identifiers instead of authorization binding identifiers", () => {
+    expect(
+      mapCollaborationOwnedAgentDto({
+        id: "binding-1",
+        team_id: "12",
+        name: "Codex",
+        owner_type: "user",
+        owner_id: "7",
+        owner_name: "李明",
+        status: "available",
+        execution_environment_ids: ["22"],
+      }),
+    ).toMatchObject({
+      id: "12",
+      team_id: 12,
+      owner_type: "user",
+      execution_environment_ids: ["22"],
+    });
+    expect(
+      mapCollaborationExecutionEnvironmentDto({
+        id: "binding-2",
+        device_id: "22",
+        device_key: "device-cloud-runner",
+        name: "Cloud Runner",
+        kind: "cloud_host",
+        owner_type: "workspace",
+        owner_id: "workspace-1",
+        owner_name: "研发空间",
+        status: "online",
+        updated_at: "2026-09-11T00:00:00Z",
+      }),
+    ).toMatchObject({
+      id: "22",
+      device_id: 22,
+      device_key: "device-cloud-runner",
+      kind: "cloud_host",
+      owner_type: "workspace",
+    });
+  });
+
+  it("maps assignment API responses", () => {
+    expect(
+      mapCollaborationAssignmentDto({
+        id: "comment-9",
+        issue_id: "issue-1",
+        target_type: "agent",
+        target_id: "12",
+        target_name: "Codex",
+        workflow_step: "implementation",
+        body: "请实现接口",
+        comment_id: "comment-9",
+        created_by_user_id: 7,
+        created_at: "2026-09-12T00:00:00Z",
+      }),
+    ).toMatchObject({
+      id: "comment-9",
+      comment_id: "comment-9",
+      issue_id: "issue-1",
+      target_type: "agent",
+      target_id: "12",
+      workflow_step: "implementation",
+      body: "请实现接口",
+      status: "active",
+    });
+  });
+
   it("normalizes task bindings and uses the request project context when needed", () => {
     expect(
       mapWorkspaceTaskBindingDto(

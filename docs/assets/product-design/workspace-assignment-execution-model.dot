@@ -1,0 +1,200 @@
+digraph WorkspaceAssignmentExecutionModel {
+  graph [
+    rankdir=LR,
+    bgcolor="transparent",
+    fontname="PingFang SC",
+    fontsize=18,
+    pad=0.35,
+    nodesep=0.5,
+    ranksep=0.9,
+    compound=true,
+    newrank=true,
+    splines=spline
+  ];
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fillcolor="#FFFFFF",
+    color="#94A3B8",
+    penwidth=1.2,
+    fontname="PingFang SC",
+    fontsize=13,
+    margin="0.18,0.11"
+  ];
+
+  edge [
+    color="#475569",
+    penwidth=1.4,
+    arrowsize=0.7,
+    fontname="PingFang SC",
+    fontsize=11
+  ];
+
+  subgraph cluster_workspace {
+    label="Workspace 协作空间";
+    color="#2563EB";
+    fillcolor="#EFF6FF";
+    style="rounded,filled";
+    penwidth=1.8;
+    margin=24;
+
+    workspace [
+      label="Workspace",
+      fillcolor="#DBEAFE",
+      color="#2563EB",
+      penwidth=1.8
+    ];
+    members [label="Members\nHuman + Agent"];
+    devices [label="Devices"];
+    environments [label="Execution Environments"];
+
+    workspace -> members [label="拥有"];
+    workspace -> devices [label="拥有"];
+    workspace -> environments [label="拥有"];
+
+    subgraph cluster_project {
+      label="Project 协作项目";
+      color="#7C3AED";
+      fillcolor="#F5F3FF";
+      style="rounded,filled";
+      penwidth=1.5;
+      margin=18;
+
+      project [
+        label="Project",
+        fillcolor="#EDE9FE",
+        color="#7C3AED"
+      ];
+      project_members [label="Project Members"];
+      pmo [label="PMO"];
+      workflow [label="Workflow"];
+      issue [label="Issue"];
+      step [label="Issue Step"];
+
+      project -> project_members [label="拥有"];
+      project -> pmo [label="拥有"];
+      project -> workflow [label="拥有"];
+      project -> issue [label="拥有"];
+      issue -> step [label="拥有"];
+    }
+
+    workspace -> project [label="拥有"];
+
+    assignment_context [
+      label="Assignment Context\nPMO + Step + Target Member",
+      shape=component,
+      fillcolor="#FFF7ED",
+      color="#D97706"
+    ];
+    execution_context [
+      label="Execution Context\nStep + Member + Environment",
+      shape=component,
+      fillcolor="#ECFDF5",
+      color="#059669"
+    ];
+
+    project_members -> members [
+      style=dashed,
+      color="#94A3B8",
+      constraint=false
+    ];
+    environments -> devices [
+      style=dashed,
+      color="#94A3B8",
+      constraint=false
+    ];
+  }
+
+  subgraph cluster_assigner {
+    label="Assigner 分配器模块";
+    color="#D97706";
+    fillcolor="#FFFBEB";
+    style="rounded,filled";
+    penwidth=1.8;
+    margin=24;
+
+    assigner [
+      label="Assigner Service",
+      fillcolor="#FEF3C7",
+      color="#D97706",
+      penwidth=1.8
+    ];
+    assignment [label="Assignment"];
+    notification [label="Notification"];
+    assignment_event [label="AssignmentCreated"];
+
+    assigner -> assignment [label="创建"];
+    assignment -> notification [label="产生"];
+    assignment -> assignment_event [label="发布"];
+  }
+
+  subgraph cluster_execution {
+    label="Execution 执行模块";
+    color="#059669";
+    fillcolor="#ECFDF5";
+    style="rounded,filled";
+    penwidth=1.8;
+    margin=24;
+
+    task_creator [
+      label="Task Creator",
+      fillcolor="#D1FAE5",
+      color="#059669",
+      penwidth=1.8
+    ];
+    task [label="Task"];
+    executor [label="Executor"];
+    run [label="Run"];
+    deliverable [label="Deliverable"];
+
+    task_creator -> task [label="创建"];
+    task -> run [label="拥有"];
+    task -> deliverable [label="拥有"];
+    executor -> run [label="执行"];
+  }
+
+  assignment_context -> assigner [
+    style=invis,
+    weight=100,
+    minlen=2
+  ];
+  assignment_event -> task_creator [
+    style=invis,
+    weight=100,
+    minlen=2
+  ];
+
+  assignment_context -> assigner [
+    label="分配输入",
+    style=dashed,
+    color="#D97706",
+    constraint=false
+  ];
+
+  assignment_event -> task_creator [
+    label="Agent 自动执行",
+    style=dashed,
+    color="#059669",
+    constraint=false
+  ];
+  notification -> task_creator [
+    label="Human 手动开始",
+    style=dashed,
+    color="#059669",
+    constraint=false
+  ];
+  execution_context -> task_creator [
+    label="未分配也可开始",
+    style=dashed,
+    color="#059669",
+    constraint=false
+  ];
+
+  execution_context -> task_creator [
+    label="执行输入",
+    style=dashed,
+    color="#059669",
+    constraint=false
+  ];
+}

@@ -4,17 +4,22 @@
 
 import type {
   CollaborationAgent,
+  CollaborationAssignment,
   CollaborationAttachment,
   CollaborationBoardSnapshot,
   CollaborationComment,
+  CollaborationExecutionEnvironment,
   CollaborationExecution,
   CollaborationFile,
   CollaborationIssue,
   CollaborationMember,
+  CollaborationOwnedAgent,
+  CollaborationPlatformResources,
   CollaborationPriority,
   CollaborationProject,
   CollaborationRole,
   CollaborationUser,
+  CollaborationWorkspace,
 } from "../types";
 
 export interface WorkspacePage<T> {
@@ -23,6 +28,7 @@ export interface WorkspacePage<T> {
 }
 
 export interface WorkspaceProjectCreateInput {
+  workspaceId?: string;
   projectKey?: string;
   name: string;
   description?: string;
@@ -129,6 +135,42 @@ export interface WorkspaceIssueAssignmentInput {
   assigneeType: "user" | "agent" | "team";
   assigneeId: string;
   notifyAssignee?: boolean;
+}
+
+export interface WorkspaceAssignmentCreateInput {
+  targetType: "human" | "agent";
+  targetId: string;
+  workflowStep?: string | null;
+  commentBody?: string;
+  notifyTarget?: boolean;
+}
+
+export interface WorkspaceCreateInput {
+  name: string;
+  description?: string;
+}
+
+export interface WorkspaceUpdateInput {
+  version: number;
+  name?: string;
+  description?: string;
+}
+
+export interface WorkspaceMemberCreateInput {
+  userId: number;
+  role?: Exclude<CollaborationRole, "Owner">;
+}
+
+export interface WorkspaceMemberUpdateInput {
+  role: Exclude<CollaborationRole, "Owner">;
+}
+
+export interface WorkspaceAgentCreateInput {
+  teamId: number;
+}
+
+export interface WorkspaceExecutionEnvironmentCreateInput {
+  deviceId: number;
 }
 
 export interface WorkspaceIssueCollaborator {
@@ -284,7 +326,7 @@ export interface WorkspaceProjectAgent extends CollaborationAgent {
 }
 
 export interface SharedWorkspaceProjectsApi {
-  list(): Promise<CollaborationProject[]>;
+  list(workspaceId?: string): Promise<CollaborationProject[]>;
   get(projectId: string): Promise<CollaborationProject>;
   create(input: WorkspaceProjectCreateInput): Promise<CollaborationProject>;
   update(
@@ -350,6 +392,61 @@ export interface SharedWorkspaceIssuesApi {
 export interface SharedWorkspaceCommentsApi {
   list(issueId: string): Promise<CollaborationComment[]>;
   create(issueId: string, body: string): Promise<CollaborationComment>;
+}
+
+export interface SharedWorkspaceAssignmentsApi {
+  list(issueId: string): Promise<CollaborationAssignment[]>;
+  create(
+    issueId: string,
+    input: WorkspaceAssignmentCreateInput,
+  ): Promise<{
+    assignment: CollaborationAssignment;
+    comment: CollaborationComment | null;
+    issue: CollaborationIssue;
+  }>;
+}
+
+export interface SharedCollaborationWorkspacesApi {
+  list(): Promise<CollaborationWorkspace[]>;
+  get(workspaceId: string): Promise<CollaborationWorkspace>;
+  create(input: WorkspaceCreateInput): Promise<CollaborationWorkspace>;
+  update(
+    workspaceId: string,
+    input: WorkspaceUpdateInput,
+  ): Promise<CollaborationWorkspace>;
+  archive(workspaceId: string, version: number): Promise<void>;
+  listMembers(workspaceId: string): Promise<CollaborationMember[]>;
+  addMember(
+    workspaceId: string,
+    input: WorkspaceMemberCreateInput,
+  ): Promise<CollaborationMember>;
+  updateMember(
+    workspaceId: string,
+    userId: number,
+    input: WorkspaceMemberUpdateInput,
+  ): Promise<CollaborationMember>;
+  removeMember(workspaceId: string, userId: number): Promise<void>;
+  listAgents(workspaceId: string): Promise<CollaborationOwnedAgent[]>;
+  addAgent(
+    workspaceId: string,
+    input: WorkspaceAgentCreateInput,
+  ): Promise<CollaborationOwnedAgent>;
+  removeAgent(workspaceId: string, teamId: number): Promise<void>;
+  listExecutionEnvironments(
+    workspaceId: string,
+  ): Promise<CollaborationExecutionEnvironment[]>;
+  addExecutionEnvironment(
+    workspaceId: string,
+    input: WorkspaceExecutionEnvironmentCreateInput,
+  ): Promise<CollaborationExecutionEnvironment>;
+  removeExecutionEnvironment(
+    workspaceId: string,
+    deviceId: number,
+  ): Promise<void>;
+}
+
+export interface SharedCollaborationResourcesApi {
+  list(): Promise<CollaborationPlatformResources>;
 }
 
 export interface SharedWorkspaceAttachmentsApi {
@@ -463,7 +560,11 @@ export interface SharedWorkspaceDeliveriesApi {
 export interface SharedWorkspaceExecutionsApi {
   list(
     projectId: string,
-    filters?: { agentId?: string; status?: string },
+    filters?: {
+      agentId?: string;
+      status?: string;
+      includeTerminal?: boolean;
+    },
   ): Promise<CollaborationExecution[]>;
   stop(
     projectId: string,
@@ -578,10 +679,13 @@ export interface SharedWorkspaceAgentsApi {
  * Electron runtime orchestration does not belong here.
  */
 export interface SharedWorkspaceApi {
+  workspaces?: SharedCollaborationWorkspacesApi;
+  resources?: SharedCollaborationResourcesApi;
   projects: SharedWorkspaceProjectsApi;
   myWork?: SharedWorkspaceMyWorkApi;
   issues: SharedWorkspaceIssuesApi;
   comments: SharedWorkspaceCommentsApi;
+  assignments?: SharedWorkspaceAssignmentsApi;
   attachments: SharedWorkspaceAttachmentsApi;
   collaborators: SharedWorkspaceCollaboratorsApi;
   taskBindings: SharedWorkspaceTaskBindingsApi;

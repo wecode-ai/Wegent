@@ -83,6 +83,53 @@ const deliveryApiMock = vi.hoisted(() => ({
   trackProjectTask: vi.fn(),
 }))
 const sharedWorkspaceApiMock = {
+  workspaces: {
+    async list() {
+      const response = await deliveryApiMock.listCloudProjects()
+      const workspaceIds = [
+        ...new Set(
+          response.items.flatMap(project =>
+            typeof project.workspace_id === 'string' ? [project.workspace_id] : []
+          )
+        ),
+      ]
+      return workspaceIds.map(workspaceId => ({
+        id: workspaceId,
+        name: 'Test Workspace',
+        description: '',
+        owner_user_id: 1,
+        current_user_role: 'Owner',
+        member_count: 1,
+        agent_count: 0,
+        execution_environment_count: 0,
+        project_count: response.items.filter(project => project.workspace_id === workspaceId)
+          .length,
+        version: 1,
+        created_at: '2026-09-11T00:00:00Z',
+        updated_at: '2026-09-11T00:00:00Z',
+      }))
+    },
+    async get(workspaceId: string) {
+      const workspaces = await this.list()
+      const workspace = workspaces.find(candidate => candidate.id === workspaceId)
+      if (!workspace) throw new Error(`Workspace ${workspaceId} was not found`)
+      return workspace
+    },
+    async listMembers() {
+      return []
+    },
+    async listAgents() {
+      return []
+    },
+    async listExecutionEnvironments() {
+      return []
+    },
+  },
+  resources: {
+    async list() {
+      return { agents: [], execution_environments: [] }
+    },
+  },
   projects: {
     async list() {
       const response = await deliveryApiMock.listCloudProjects()
@@ -1698,10 +1745,56 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
+  test('keeps a newly added board tab on the existing project workbench', () => {
+    deliveryApiMock.available = true
+    const boardTab = {
+      id: 'board-new',
+      kind: 'board' as const,
+      title: '协作',
+      contentRoute: '/todo',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          workspaceTabId={boardTab.id}
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeInTheDocument()
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+  })
+
   test('keeps a retained board bound to its own workspace tab route', async () => {
     deliveryApiMock.available = true
     const project = {
       id: 'project-1',
+      workspace_id: 'workspace-1',
       public_id: 'public-project-1',
       project_key: 'PROJECT-1',
       name: 'Retained Project',
@@ -2876,6 +2969,45 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
+  })
+
+  test('opens the existing My Tasks board inside the fixed task tab', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(await screen.findByTestId('task-my-work-button'))
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
+    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(screen.queryByTestId('cloud-my-work-view')).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+    expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('new-chat-button'))
+
+    expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
+    expect(baseProps.onNewChat).toHaveBeenCalled()
   })
 
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
