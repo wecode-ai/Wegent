@@ -417,6 +417,7 @@ describe('WorkspacePanelCards', () => {
       terminal: { visible: true, disabled: false },
       desktop: { visible: true, disabled: false },
     })
+    expect(actions.terminal).not.toHaveProperty('run')
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
     await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())

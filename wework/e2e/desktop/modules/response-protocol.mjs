@@ -189,6 +189,7 @@ function encryptedReasoningItem(id, encryptedContent) {
 }
 
 function streamingMarkdownReport() {
+  const sectionCount = Number(process.env.WEWORK_E2E_MEMORY_SECTION_COUNT ?? 80)
   const section = index =>
     [
       `### Memory section ${index}`,
@@ -205,7 +206,7 @@ function streamingMarkdownReport() {
       'This section exercises incremental Markdown parsing, syntax highlighting, React reconciliation, and WebKit layout allocation.',
       '',
     ].join('\n')
-  return `${Array.from({ length: 80 }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
+  return `${Array.from({ length: sectionCount }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
 }
 
 function streamingTextEvents(id, text) {

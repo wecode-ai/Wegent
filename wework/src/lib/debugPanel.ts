@@ -55,7 +55,9 @@ export interface WorkbenchDebugSnapshot {
 export interface RuntimePaneDebugSnapshot {
   updatedAt: string
   currentRuntimeTask: RuntimeTaskAddressDebug | null
-  status: RuntimePaneStatus
+  status: Omit<RuntimePaneStatus, 'activeAssistantMessage'> & {
+    activeAssistantMessage: MessageSummaryItem | null
+  }
   messageSummary: MessageSummary
   messageStyleComparison: MessageStyleComparison
   memory: RuntimePaneMemoryDiagnostics
@@ -313,8 +315,9 @@ export function updateWorkbenchDebugSnapshot({
 }
 
 export function updateRuntimePaneDebugSnapshot(
-  snapshot: Omit<RuntimePaneDebugSnapshot, 'updatedAt' | 'currentRuntimeTask'> & {
+  snapshot: Omit<RuntimePaneDebugSnapshot, 'updatedAt' | 'currentRuntimeTask' | 'status'> & {
     currentRuntimeTask: RuntimeTaskAddress | null
+    status: RuntimePaneStatus
   },
   options?: { enabled?: boolean }
 ) {
@@ -322,6 +325,12 @@ export function updateRuntimePaneDebugSnapshot(
 
   paneSnapshot = {
     ...snapshot,
+    status: {
+      ...snapshot.status,
+      activeAssistantMessage: snapshot.status.activeAssistantMessage
+        ? createMessageSummaryItem(snapshot.status.activeAssistantMessage)
+        : null,
+    },
     currentRuntimeTask: sanitizeRuntimeTaskAddress(snapshot.currentRuntimeTask),
     updatedAt: new Date().toISOString(),
   }

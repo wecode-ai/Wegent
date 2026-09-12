@@ -1,11 +1,38 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  MAX_RUNTIME_TASK_STREAM_HANDLERS,
+  createRuntimeConversationStreamHandlers,
   createRuntimeTaskStreamHandlers,
   runtimeMessagesToWorkbenchMessages,
   runtimeTranscriptTurnsToConversationTurns,
 } from './runtimePaneMessages'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
+
+describe('createRuntimeConversationStreamHandlers', () => {
+  test('bounds task-specific stream state across long-running navigation', () => {
+    const onAssistantStart = vi.fn()
+    const handlers = createRuntimeConversationStreamHandlers({
+      onMessageAction: vi.fn(),
+      onAssistantStart,
+    })
+
+    for (let index = 0; index <= MAX_RUNTIME_TASK_STREAM_HANDLERS; index += 1) {
+      handlers.onChatStart?.({
+        deviceId: 'device-1',
+        taskId: `task-${index}`,
+        subtaskId: 'turn-1',
+      })
+    }
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+    })
+
+    expect(onAssistantStart).toHaveBeenCalledTimes(MAX_RUNTIME_TASK_STREAM_HANDLERS + 2)
+  })
+})
 
 describe('runtime transcript status', () => {
   test('preserves the first transcript message index for turn ordering', () => {

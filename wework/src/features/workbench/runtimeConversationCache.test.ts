@@ -68,6 +68,27 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
   })
 
+  test('reuses the projection while the canonical turns are unchanged', () => {
+    const projected = applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+
+    expect(getRuntimeConversationMessages(address)).toBe(projected)
+    expect(getRuntimeConversationMessages(address)).toBe(projected)
+
+    const updated = applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'assistant-1',
+      content: 'next',
+    })
+
+    expect(updated).not.toBe(projected)
+    expect(getRuntimeConversationMessages(address)).toBe(updated)
+  })
+
   test('resolves the local-device alias to a unique executor conversation', () => {
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',
@@ -559,6 +580,24 @@ describe('runtimeConversationCache', () => {
     settleRuntimeConversationSubagents(address)
 
     expect(getRuntimeConversationMetadata(address).subagentStatuses[0]?.status).toBe('done')
+  })
+
+  test('bounds subagent status metadata across a long-running conversation', () => {
+    for (let index = 0; index < 300; index += 1) {
+      applyRuntimeConversationSubagentActivity(address, {
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        agentId: `agent-${index}`,
+        agentPath: `agents/agent-${index}`,
+        status: 'done',
+        occurredAtMs: index,
+      })
+    }
+
+    const statuses = getRuntimeConversationMetadata(address).subagentStatuses
+    expect(statuses).toHaveLength(256)
+    expect(statuses[0]?.id).toBe('agent-299')
+    expect(statuses.at(-1)?.id).toBe('agent-44')
   })
 
   test('does not let an older active Goal snapshot overwrite completion', () => {

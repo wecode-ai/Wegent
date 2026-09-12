@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS,
   appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
@@ -34,6 +35,42 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('bounds processing blocks retained by a continuously streaming turn', () => {
+    let turns: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-streaming',
+        items: [],
+        status: 'streaming',
+      },
+    ]
+
+    for (let index = 0; index < MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS + 20; index += 1) {
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'block_created',
+        subtaskId: 'turn-streaming',
+        block: {
+          id: `tool-${index}`,
+          subtaskId: 'turn-streaming',
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: {},
+          status: 'done',
+          createdAt: index,
+        },
+      })
+    }
+
+    const retainedBlockIds = turns[0].items.flatMap(item =>
+      item.type === 'block' ? [item.id] : []
+    )
+    expect(retainedBlockIds).toHaveLength(MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS)
+    expect(retainedBlockIds[0]).toBe('tool-20')
+    expect(retainedBlockIds.at(-1)).toBe(`tool-${MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS + 19}`)
+    expect(projectRuntimeConversationTurns(turns)[0]).toMatchObject({
+      contentTruncated: true,
+    })
+  })
+
   test('projects an unfinished empty assistant turn deterministically', () => {
     const turns: RuntimeConversationTurn[] = [
       {
@@ -2370,6 +2407,50 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('bounds a streaming text block', () => {
+    const streamedContent = `${'a'.repeat(120_010)}stream-tail`
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'text-1',
+        subtaskId: 'turn-1',
+        type: 'text',
+        content: streamedContent,
+        status: 'streaming',
+        createdAt: 1770000000000,
+      },
+    })
+
+    expect(turns[0].items).toEqual([
+      {
+        id: 'text-1',
+        type: 'block',
+        block: expect.objectContaining({
+          content: expect.stringMatching(/stream-tail$/),
+          contentTruncated: true,
+          contentOriginalChars: streamedContent.length,
+        }),
+      },
+    ])
+    const streamedBlock = turns[0].items[0]
+    expect(streamedBlock.type === 'block' && streamedBlock.block.type === 'text').toBe(true)
+    if (streamedBlock.type !== 'block' || streamedBlock.block.type !== 'text') return
+    expect(streamedBlock.block.content).toHaveLength(120_000)
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_updated',
+      subtaskId: 'turn-1',
+      blockId: 'text-1',
+      updates: { contentDelta: 'delta-tail' },
+    })
+    const updatedBlock = turns[0].items[0]
+    if (updatedBlock.type !== 'block' || updatedBlock.block.type !== 'text') return
+    expect(updatedBlock.block.content).toHaveLength(120_000)
+    expect(updatedBlock.block.content.endsWith('delta-tail')).toBe(true)
+    expect(updatedBlock.block.contentOriginalChars).toBe(streamedContent.length + 10)
+  })
+
   test('clears the active reasoning summary when final text starts streaming', () => {
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
       type: 'assistant_chunk',
@@ -2387,27 +2468,6 @@ describe('runtimeConversationTurns', () => {
 
     expect(turns[0].streamingThinkingContent).toBeUndefined()
     expect(projectRuntimeConversationTurns(turns)[0].streamingThinkingContent).toBeUndefined()
-  })
-
-  test('clears stale reasoning when cached assistant content is applied', () => {
-    const turns = reduceRuntimeConversationTurns(
-      [
-        {
-          id: 'turn-1',
-          items: [],
-          status: 'streaming',
-          streamingThinkingContent: 'Old reasoning',
-        },
-      ],
-      {
-        type: 'assistant_cached',
-        subtaskId: 'turn-1',
-        content: 'Cached answer',
-        blocks: [],
-      }
-    )
-
-    expect(turns[0].streamingThinkingContent).toBeUndefined()
   })
 
   test('keeps the active reasoning summary across a tool continuation', () => {

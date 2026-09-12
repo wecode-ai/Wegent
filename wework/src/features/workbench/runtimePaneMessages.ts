@@ -34,6 +34,7 @@ import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChange
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
 
 const RUNTIME_MESSAGE_CONTENT_TRUNCATION_THRESHOLD_CHARS = 200_000
+export const MAX_RUNTIME_TASK_STREAM_HANDLERS = 50
 
 export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFileChangesSummary>
 
@@ -112,7 +113,11 @@ export function createRuntimeConversationStreamHandlers(
     }
     const key = `${address.deviceId}:${address.taskId}`
     const existing = taskHandlers.get(key)
-    if (existing) return existing
+    if (existing) {
+      taskHandlers.delete(key)
+      taskHandlers.set(key, existing)
+      return existing
+    }
 
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
@@ -134,6 +139,11 @@ export function createRuntimeConversationStreamHandlers(
       onGuidanceApplied: payload => handlers.onGuidanceApplied?.(address, payload),
     })
     taskHandlers.set(key, created)
+    while (taskHandlers.size > MAX_RUNTIME_TASK_STREAM_HANDLERS) {
+      const oldestKey = taskHandlers.keys().next().value
+      if (oldestKey === undefined) break
+      taskHandlers.delete(oldestKey)
+    }
     return created
   }
 
@@ -360,13 +370,6 @@ export function createRuntimeTaskStreamHandlers(
         handlers.onMessageAction({
           type: 'assistant_cancelled',
           subtaskId: identity.subtaskId,
-        })
-      } else if (payload.shellType?.toLowerCase() === 'codex') {
-        handlers.onMessageAction({
-          type: 'assistant_error',
-          subtaskId: identity.subtaskId,
-          error: payload.error,
-          errorType: payload.type,
         })
       } else {
         handlers.onMessageAction({

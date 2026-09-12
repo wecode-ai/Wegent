@@ -15,29 +15,15 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.completed',
   'response.failed',
   'response.incomplete',
-  'response.reasoning_summary_part.added',
   'response.reasoning_summary_text.delta',
   'response.output_item.added',
   'response.output_item.done',
-  'response.content_part.added',
-  'response.content_part.done',
   'response.output_text.delta',
-  'response.output_text.annotation.added',
   'response.output_text.done',
   'response.refusal.delta',
   'response.refusal.done',
   'response.function_call_arguments.delta',
   'response.function_call_arguments.done',
-  'response.file_search_call.in_progress',
-  'response.file_search_call.searching',
-  'response.file_search_call.completed',
-  'response.web_search_call.in_progress',
-  'response.web_search_call.searching',
-  'response.web_search_call.completed',
-  'response.mcp_list_tools.in_progress',
-  'response.mcp_list_tools.completed',
-  'response.mcp_list_tools.failed',
-  'response.mcp_call.in_progress',
   'response.mcp_call_arguments.delta',
   'response.mcp_call_arguments.done',
   'response.mcp_call.completed',
@@ -56,7 +42,6 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'runtime.plan.updated',
   'thread/tokenUsage/updated',
   'thread.tokenUsage.updated',
-  'response.status.updated',
   'error',
 ] as const
 
@@ -276,15 +261,6 @@ function contextUsageFromResponseData(
     normalizeContextUsage(recordField(response, 'tokenUsage')) ??
     normalizeContextUsage(recordField(response, 'token_usage'))
   )
-}
-
-function reasoningContent(eventName: string, data: Record<string, unknown>): string {
-  if (eventName === 'response.reasoning_summary_text.delta') {
-    return stringField(data, 'delta') ?? ''
-  }
-
-  const part = recordField(data, 'part')
-  return part.type === 'reasoning' ? (stringField(part, 'text') ?? '') : ''
 }
 
 function callIdFromItem(item: Record<string, unknown>): string | undefined {
@@ -696,6 +672,7 @@ export function emitResponseApiEvent(
   const data = eventResult(payload)
 
   if (eventName === 'response.created' || eventName === 'response.in_progress') {
+    if (eventName === 'response.created') state.toolContexts.clear()
     const generatedUserMessage = asRecord(payload.runtimeGeneratedUserMessage)
     const generatedUserMessageId = stringField(generatedUserMessage, 'id')
     const generatedUserMessageContent = stringField(generatedUserMessage, 'message')
@@ -731,7 +708,7 @@ export function emitResponseApiEvent(
     return
   }
 
-  if (eventName === 'response.output_text.done') {
+  if (eventName === 'response.output_text.done' || eventName === 'response.refusal.done') {
     const content =
       stringField(data, 'text') ?? stringField(data, 'value') ?? stringField(data, 'output_text')
     const itemId = idField(data, 'itemId') ?? idField(data, 'item_id')
@@ -749,11 +726,8 @@ export function emitResponseApiEvent(
     return
   }
 
-  if (
-    eventName === 'response.reasoning_summary_text.delta' ||
-    eventName === 'response.reasoning_summary_part.added'
-  ) {
-    const content = reasoningContent(eventName, data)
+  if (eventName === 'response.reasoning_summary_text.delta') {
+    const content = stringField(data, 'delta') ?? ''
     if (!content) {
       warnDroppedResponseDelta(eventName, 'empty_reasoning_delta', base, data)
       return
@@ -936,6 +910,7 @@ export function emitResponseApiEvent(
   }
 
   if (eventName === 'response.completed') {
+    state.toolContexts.clear()
     handlers.onChatDone?.({
       ...base,
       ...(eventOffset(payload) !== undefined && { offset: eventOffset(payload) }),
@@ -949,6 +924,7 @@ export function emitResponseApiEvent(
     eventName === 'response.failed' ||
     eventName === 'error'
   ) {
+    state.toolContexts.clear()
     handlers.onChatError?.({
       ...base,
       error: errorMessage(payload, data),
