@@ -401,7 +401,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     assert_eq!(turns_list_count, 3);
     assert_eq!(items_list_count, 3);
     assert!(calls.iter().all(|call| {
-        call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "notLoaded"
+        call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "summary"
     }));
     assert!(calls.iter().any(|call| {
         call["method"] == "thread/turns/list"
@@ -412,6 +412,90 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
         call["method"] == "thread/turns/list"
             && call["params"]["cursor"].is_null()
             && call["params"]["limit"] == 40
+            && call["params"]["sortDirection"] == "desc"
+    }));
+}
+
+#[tokio::test]
+async fn app_runtime_pages_codex_turn_items_before_older_turns() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-item-page-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-item-page-codex-home");
+    let log_path = temp_path("wegent-app-runtime-item-page-log", "jsonl");
+    let fake_codex = write_fake_incremental_items_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let latest = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 1
+            }
+        }))
+        .await
+        .expect("latest transcript page should succeed");
+    let item_cursor = latest["beforeCursor"]
+        .as_str()
+        .expect("partial turn should return an item cursor");
+    assert!(item_cursor.starts_with("wework-codex-items:"));
+    assert_eq!(latest["messages"][0]["content"], "new prompt");
+    assert_eq!(
+        latest["turns"][0]["items"]
+            .as_array()
+            .expect("latest turn items")
+            .len(),
+        3
+    );
+
+    let older_items = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 1,
+                "beforeCursor": item_cursor
+            }
+        }))
+        .await
+        .expect("older item page should succeed");
+
+    assert_eq!(older_items["beforeCursor"], "older-turns");
+    assert_eq!(older_items["turns"][0]["itemMerge"], "prepend");
+    assert_eq!(older_items["turns"][0]["items"][0]["type"], "user_message");
+    assert_eq!(older_items["turns"][0]["items"][1]["type"], "block");
+    assert_eq!(
+        older_items["turns"][0]["items"][1]["block"]["tool_input"]["command"],
+        "older-tool"
+    );
+
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/turns/list")
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/items/list")
+            .count(),
+        2
+    );
+    assert!(calls.iter().any(|call| {
+        call["method"] == "thread/items/list"
+            && call["params"]["cursor"] == "older-items"
             && call["params"]["sortDirection"] == "desc"
     }));
 }
@@ -961,6 +1045,9 @@ while IFS= read -r line; do
     *'"method":"thread/turns/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
+    *'"method":"thread/items/list"'*'"sortDirection":"desc"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}}}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}}}},{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
     *'"method":"thread/items/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}}}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}}}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
@@ -1119,11 +1206,59 @@ while IFS= read -r line; do
     *'"method":"thread/turns/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
       ;;
+    *'"method":"thread/items/list"'*'"sortDirection":"desc"'*'"turnId":"turn-old"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-old","item":{{"id":"agent-old","type":"agentMessage","text":"old answer","phase":"final_answer"}}}},{{"turnId":"turn-old","item":{{"id":"user-old","type":"userMessage","content":[{{"type":"text","text":"old prompt"}}]}}}}],"nextCursor":null,"backwardsCursor":"old-items-head"}}}}'
+      ;;
     *'"method":"thread/items/list"'*'"turnId":"turn-old"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-old","item":{{"id":"user-old","type":"userMessage","content":[{{"type":"text","text":"old prompt"}}]}}}},{{"turnId":"turn-old","item":{{"id":"agent-old","type":"agentMessage","text":"old answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"old-items-head"}}}}'
       ;;
+    *'"method":"thread/items/list"'*'"sortDirection":"desc"'*'"turnId":"turn-new"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}},{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}}],"nextCursor":null,"backwardsCursor":"new-items-head"}}}}'
+      ;;
     *'"method":"thread/items/list"'*'"turnId":"turn-new"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}},{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"new-items-head"}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_incremental_items_codex(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-item-pagination", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"summary","items":[{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}},{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*'"cursor":"older-items"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"tool-old","type":"commandExecution","command":"older-tool","status":"completed","aggregatedOutput":"old"}}}},{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}}],"nextCursor":null,"backwardsCursor":"newer-items"}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}},{{"turnId":"turn-new","item":{{"id":"tool-new","type":"commandExecution","command":"newer-tool","status":"completed","aggregatedOutput":"new"}}}}],"nextCursor":"older-items","backwardsCursor":null}}}}'
       ;;
   esac
 done

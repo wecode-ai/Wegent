@@ -157,6 +157,7 @@ export interface RuntimeConversationTurn {
   id: string | null
   clientUserMessageId?: string
   runtimeMessageIndex?: number
+  itemMerge?: 'prepend'
   items: RuntimeConversationItem[]
   status: RuntimeWorkbenchMessageStatus
   completedAt?: string | number | null

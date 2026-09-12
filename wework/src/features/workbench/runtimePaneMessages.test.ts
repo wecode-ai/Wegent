@@ -131,6 +131,19 @@ describe('runtime transcript status', () => {
     expect(turn.runtimeMessageIndex).toBe(42)
   })
 
+  test('preserves the item prepend merge mode for an older item page', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        itemMerge: 'prepend',
+        items: [],
+        status: 'done',
+      },
+    ])
+
+    expect(turn.itemMerge).toBe('prepend')
+  })
+
   test('keeps valid canonical items when a transcript turn contains a malformed item', () => {
     const [turn] = runtimeTranscriptTurnsToConversationTurns([
       {
