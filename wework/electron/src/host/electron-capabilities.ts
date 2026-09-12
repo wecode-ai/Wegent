@@ -561,6 +561,21 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
+  router.register('e2e.getRendererHeapUsage', async () => {
+    const contents = e2eHost.captureTarget('main')
+    if (!contents || contents.isDestroyed()) {
+      throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
+    }
+    const debugSession = contents.debugger
+    const alreadyAttached = debugSession.isAttached()
+    if (!alreadyAttached) debugSession.attach('1.3')
+    try {
+      await debugSession.sendCommand('HeapProfiler.collectGarbage')
+      return await debugSession.sendCommand('Runtime.getHeapUsage')
+    } finally {
+      if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
+    }
+  })
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getClipboardText', () => clipboard.readText())
   router.register('e2e.getWindowFocusSnapshot', () => {

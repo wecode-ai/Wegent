@@ -1,11 +1,48 @@
 import { describe, expect, test } from 'vitest'
 import {
+  limitWorkbenchProcessingBlock,
   nestWorkbenchProcessingBlocks,
   normalizeWorkbenchBlockStatus,
   projectWorkbenchSubagentActivity,
   reduceWorkbenchMessages,
   type WorkbenchMessage
 } from './index'
+
+test('bounds subagent text fields and nested processing blocks', () => {
+  const block = limitWorkbenchProcessingBlock({
+    id: 'subagent-1',
+    subtaskId: 'turn-1',
+    type: 'subagent',
+    title: `${'t'.repeat(120_000)}title-tail`,
+    description: `${'d'.repeat(120_000)}description-tail`,
+    output: `${'o'.repeat(120_000)}output-tail`,
+    summary: `${'s'.repeat(120_000)}summary-tail`,
+    children: Array.from({ length: 300 }, (_, index) => ({
+      id: `child-${index}`,
+      subtaskId: 'turn-1',
+      type: 'text' as const,
+      content: `child ${index}`,
+      status: 'done' as const,
+      createdAt: index
+    })),
+    status: 'streaming',
+    createdAt: 1
+  })
+
+  expect(block.type).toBe('subagent')
+  if (block.type !== 'subagent') return
+  expect(block.title).toHaveLength(120_000)
+  expect(block.title?.endsWith('title-tail')).toBe(true)
+  expect(block.description).toHaveLength(120_000)
+  expect(block.description?.endsWith('description-tail')).toBe(true)
+  expect(block.output).toHaveLength(120_000)
+  expect(block.output?.endsWith('output-tail')).toBe(true)
+  expect(block.summary).toHaveLength(120_000)
+  expect(block.summary?.endsWith('summary-tail')).toBe(true)
+  expect(block.children).toHaveLength(256)
+  expect(block.children?.[0]?.id).toBe('child-44')
+  expect(block.contentTruncated).toBe(true)
+})
 
 test('nests streamed child blocks under their subagent', () => {
   const nested = nestWorkbenchProcessingBlocks([

@@ -149,6 +149,7 @@ type ProcessingBlockUpdate = {
 const MAX_LIVE_MESSAGE_CONTENT_CHARS = 200_000
 const MAX_LIVE_BLOCK_CONTENT_CHARS = 120_000
 const MAX_LIVE_TOOL_OUTPUT_CHARS = 64 * 1024
+const MAX_LIVE_SUBAGENT_CHILDREN = 256
 
 export type WorkbenchMessageAction<
   TAttachment = unknown,
@@ -163,14 +164,6 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       clientUserMessageId?: string
       shellType?: string
-    }
-  | {
-      type: 'assistant_cached'
-      messageId?: string
-      taskId?: string
-      subtaskId?: string
-      content: string
-      blocks?: WorkbenchProcessingBlock<TFileChanges>[]
     }
   | {
       type: 'assistant_chunk'
@@ -270,35 +263,6 @@ export function reduceWorkbenchMessages<
             taskId: action.taskId,
             subtaskId: action.subtaskId,
             shellType: action.shellType
-          })
-        )
-      ]
-    case 'assistant_cached':
-      if (
-        state.some((message) => isAssistantMessageForAction(message, action))
-      ) {
-        return state.map((message) =>
-          isAssistantMessageForAction(message, action)
-            ? limitWorkbenchMessage({
-                ...clearMessageError(message),
-                taskId: action.taskId ?? message.taskId,
-                content: action.content,
-                streamingThinkingContent: undefined,
-                status: 'streaming' as const,
-                blocks: action.blocks ?? message.blocks
-              })
-            : message
-        )
-      }
-      return [
-        ...state,
-        limitWorkbenchMessage(
-          createAssistantMessage<TAttachment, TFileChanges>({
-            messageId: action.messageId,
-            taskId: action.taskId,
-            subtaskId: action.subtaskId,
-            content: action.content,
-            blocks: action.blocks ?? []
           })
         )
       ]
@@ -615,7 +579,7 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
     message.contentOriginalChars
   )
   const blocks = sortProcessingBlocksByCreatedAt(
-    message.blocks?.map(limitProcessingBlock)
+    message.blocks?.map(limitWorkbenchProcessingBlock)
   )
   return {
     ...message,
@@ -629,7 +593,7 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
   }
 }
 
-function limitProcessingBlock<TFileChanges>(
+export function limitWorkbenchProcessingBlock<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.type === 'tool') {
@@ -656,12 +620,37 @@ function limitProcessingBlock<TFileChanges>(
     }
   }
   if (block.type === 'subagent') {
+    const title = limitOptionalBlockText(block.title)
+    const description = limitOptionalBlockText(block.description)
+    const output = limitOptionalBlockText(block.output)
+    const summary = limitOptionalBlockText(block.summary)
+    const children = block.children?.slice(-MAX_LIVE_SUBAGENT_CHILDREN)
     return {
       ...block,
-      children: block.children?.map(limitProcessingBlock)
+      title: title.text,
+      description: description.text,
+      output: output.text,
+      summary: summary.text,
+      children: children?.map(limitWorkbenchProcessingBlock),
+      contentTruncated:
+        block.contentTruncated ||
+        title.truncated ||
+        description.truncated ||
+        output.truncated ||
+        summary.truncated ||
+        children?.length !== block.children?.length ||
+        undefined
     }
   }
   return block
+}
+
+function limitOptionalBlockText(value?: string): {
+  text: string | undefined
+  truncated: boolean
+} {
+  if (value === undefined) return { text: undefined, truncated: false }
+  return limitTextContent(value, MAX_LIVE_BLOCK_CONTENT_CHARS)
 }
 
 export function nestWorkbenchProcessingBlocks<TFileChanges>(
