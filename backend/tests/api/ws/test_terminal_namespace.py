@@ -13,6 +13,8 @@ import pytest
 
 from app.api.ws import terminal_namespace
 from app.api.ws.terminal_namespace import TerminalNamespace
+from app.core.config import settings
+from app.services.device import terminal_diagnostics
 from app.services.device.terminal_session_service import (
     TerminalSessionAuthorizationUnavailable,
     TerminalSessionRecord,
@@ -566,6 +568,37 @@ async def test_terminal_input_relays_to_executor_socket(monkeypatch):
         namespace="/local-executor",
     )
     service.authorize.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_terminal_input_binds_safe_trace_during_relay(monkeypatch):
+    namespace = TerminalNamespace()
+    service = _service(authorize=AsyncMock(), is_revoked=Mock(return_value=False))
+    observed = []
+
+    async def capture_emit(*_args, **_kwargs):
+        observed.append(terminal_diagnostics.current_terminal_trace())
+
+    sio = SimpleNamespace(emit=AsyncMock(side_effect=capture_emit))
+    monkeypatch.setattr(
+        settings, "TERMINAL_BACKEND_DIAGNOSTICS_DEVICE_IDS", "device-abc"
+    )
+    monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
+    monkeypatch.setattr(
+        namespace, "get_session", AsyncMock(return_value=_attached_session())
+    )
+
+    result = await namespace.on_terminal_input(
+        "browser-sid", {"session_id": "terminal-1", "data": "你好\n"}
+    )
+
+    assert result == {"success": True}
+    assert observed[0] is not None
+    assert observed[0].event == "terminal:input"
+    assert observed[0].byte_count == len("你好\n".encode("utf-8"))
+    assert observed[0].session_hash != "terminal-1"
+    assert terminal_diagnostics.current_terminal_trace() is None
 
 
 @pytest.mark.asyncio

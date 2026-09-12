@@ -73,6 +73,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Redis test server
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes redis-server
+          redis-server --version
+
       - name: Install dependencies
         working-directory: ./backend
         run: uv sync --dev

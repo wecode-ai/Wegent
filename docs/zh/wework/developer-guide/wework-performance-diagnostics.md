@@ -171,6 +171,33 @@ pnpm --filter wework e2e:desktop -- --cloud-only --segment core-task-flow
 - Executor `/metrics`：`terminal_output_batches_total`、`terminal_output_bytes_total`、`terminal_replayed_batches_total`、`terminal_replay_bytes`、`terminal_ack_lag_bytes`、`terminal_backpressured_sessions`。
 - Wework 性能事件：`remote-terminal-write`、`remote-terminal-replay-request`。指标、trace 和诊断日志不记录终端原始内容或凭据；Redis 观测使用 `INFO commandstats`，禁止 `SCAN`、`KEYS`、`MONITOR`。
 
+### Backend-only 分段延迟诊断
+
+生产现场需要区分 Backend handler、Socket.IO 本地投递和 Redis 跨 Pod 转发耗时时，可只在 Backend 配置精确设备白名单：
+
+```text
+TERMINAL_BACKEND_DIAGNOSTICS_DEVICE_IDS=device-id-1,device-id-2
+TERMINAL_BACKEND_DIAGNOSTICS_SAMPLE_RATE=0.01
+TERMINAL_BACKEND_DIAGNOSTICS_SLOW_THRESHOLD_MS=50
+TERMINAL_BACKEND_DIAGNOSTICS_LOOP_LAG_INTERVAL_SECONDS=1
+```
+
+设备 ID 只做完整字符串匹配，不支持 `*`、前缀或正则。空白名单为关闭状态，此时不创建 trace、不修改 Socket.IO envelope，也不启动事件循环 lag 采样器。`attach`、`input`、`resize`、`close`、`exit` 全量记录；高频 `output`、`ack` 按 trace ID 确定性采样。未抽中的目标事件仍携带最小的安全 trace 元数据，使后续慢阶段能单独留证；它不能补写更早阶段的完整日志。
+
+日志前缀为 `[TerminalBackendTrace]`，可按 `trace_id`、`session_hash` 和 `device_id` 聚合。常用阶段：
+
+- `namespace.relay`：解析、授权、目标查询、`emit` 或 `call` 总耗时。正常返回使用 `result=handler_accepted`，只表示 Backend 已完成 handler；`call_total_ms` 包含 Executor/Browser 回调往返，不代表单向网络耗时。
+- `socketio.local_enqueue`：目标位于当前 Pod 时，等待 Engine.IO 发送协程入队完成的耗时；不代表浏览器或 Executor 已收到。
+- `redis.publish`：Redis publish 调用耗时和订阅者数量。`published_no_subscribers` 与 publish 失败分开记录。
+- `redis.consume_enqueue`：另一 Pod 消费 envelope 并完成本地入队的耗时，正常返回使用 `result=enqueued`。`approx_queue_ms` 从目标 Pod 开始处理 envelope 的时刻计算，使用两台机器的墙钟近似；负值保留并标记 `clock_skew=true`。
+- `namespace.forced_exit`：拒绝事件后向原 Browser SID 确认 terminal end。`queue_bypassed=true` 表示本 Pod 直投。
+
+记录只包含 session 的 SHA-256 前 12 位、字节数、协议版本、序号、Pod、PID、耗时和内部原因码；不会写终端内容、用户 Token、完整 session ID、Socket.IO SID、路径或环境变量值。Socket.IO Redis 连接日志也会去除用户名、密码和查询参数。
+
+建议先按 `trace_id` 查看 `namespace.relay → socketio.local_enqueue` 或 `namespace.relay → redis.publish → redis.consume_enqueue`。同时对比 `event_loop_lag_ms`：handler 慢而 lag 低时检查授权/Redis；publish 或跨 Pod queue 慢时检查 Redis 与 Pod 网络；入队快但用户仍感觉慢时继续查看 Executor PTY、网络 RTT 和 Wework `remote-terminal-write`。这套日志不能测量 WebSocket 到达或 xterm 渲染完成时间，也不能代替端到端探针。
+
+先在单个问题设备上启用并观察日志量，再扩大白名单。回滚只需清空 `TERMINAL_BACKEND_DIAGNOSTICS_DEVICE_IDS` 并滚动 Backend；不需要修改 Wework、Executor、协议或 Redis 数据。
+
 ## 本地 Codex 流式日志
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。

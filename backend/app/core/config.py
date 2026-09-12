@@ -303,6 +303,13 @@ class Settings(BaseSettings):
     TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
     # Keep false during mixed-version Backend rollout; enable after all replicas upgrade.
     TERMINAL_PROTOCOL_V2_ENABLED: bool = True
+    # Exact cloud device IDs whose terminal relay should emit diagnostic logs.
+    TERMINAL_BACKEND_DIAGNOSTICS_DEVICE_IDS: str = ""
+    TERMINAL_BACKEND_DIAGNOSTICS_SAMPLE_RATE: float = Field(default=0.01, ge=0, le=1)
+    TERMINAL_BACKEND_DIAGNOSTICS_SLOW_THRESHOLD_MS: float = Field(default=50, ge=0)
+    TERMINAL_BACKEND_DIAGNOSTICS_LOOP_LAG_INTERVAL_SECONDS: float = Field(
+        default=1.0, ge=0.1
+    )
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
     # Public base URL of this backend, reachable from executor devices. The
