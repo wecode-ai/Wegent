@@ -228,8 +228,13 @@ export default defineConfig({
       'dsh/**/*.test.mjs',
       'e2e/**',
       'electron/**',
+      'scripts/account-auth-command.test.mjs',
+      'scripts/check-telemetry-boundary.test.mjs',
       'scripts/electron-e2e-launch-arguments.test.mjs',
+      'scripts/generate-telemetry-catalog.test.mjs',
       'scripts/harness-runtime-metadata.test.mjs',
+      'scripts/local-plugin-object-storage.test.mjs',
+      'scripts/sync-posthog-event-definitions.test.mjs',
       'test-results/**',
     ],
     coverage: {

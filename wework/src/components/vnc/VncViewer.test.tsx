@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { VncViewer } from './VncViewer'
 
 const invokeDesktopHostMock = vi.hoisted(() => vi.fn())
+const runtimeState = vi.hoisted(() => ({ electron: true }))
 const rfbState = vi.hoisted(() => ({
   instances: [] as Array<
     EventTarget & {
@@ -52,11 +53,12 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isElectronRuntime: () => true,
+  isElectronRuntime: () => runtimeState.electron,
 }))
 
 describe('VncViewer', () => {
   beforeEach(() => {
+    runtimeState.electron = true
     invokeDesktopHostMock.mockReset()
     rfbState.instances.length = 0
     invokeDesktopHostMock.mockImplementation(async capability => {
@@ -92,6 +94,7 @@ describe('VncViewer', () => {
     const rfb = rfbState.instances[0]
 
     act(() => {
+      rfb.dispatchEvent(new Event('connect'))
       rfb.dispatchEvent(new CustomEvent('clipboard', { detail: { text: 'remote text' } }))
     })
 
@@ -101,6 +104,9 @@ describe('VncViewer', () => {
         text: 'remote text',
       })
     )
+    expect(await screen.findByTestId('vnc-viewer-clipboard-notice')).toHaveTextContent(
+      'workbench.device_desktop_clipboard_copied'
+    )
 
     fireEvent.click(screen.getByTestId('vnc-viewer-paste-button'))
 
@@ -108,6 +114,70 @@ describe('VncViewer', () => {
     expect(invokeDesktopHostMock).toHaveBeenCalledWith('vncClipboard.readText', {
       leaseId: expect.any(String),
     })
+    expect(screen.getByTestId('vnc-viewer-clipboard-notice')).toHaveTextContent(
+      'workbench.device_desktop_clipboard_synced'
+    )
+  })
+
+  test('retries the Electron clipboard lease when the window regains focus', async () => {
+    let activationAttempts = 0
+    invokeDesktopHostMock.mockImplementation(async capability => {
+      if (capability === 'vncClipboard.activate') {
+        activationAttempts += 1
+        if (activationAttempts === 1) throw new Error('window_not_focused')
+      }
+      return undefined
+    })
+    render(<VncViewer websocketUrl="ws://127.0.0.1/session/websockify?token=secret" />)
+
+    await waitFor(() => expect(activationAttempts).toBe(1))
+    act(() => window.dispatchEvent(new Event('focus')))
+
+    await waitFor(() => expect(activationAttempts).toBe(2))
+  })
+
+  test('retries the Electron clipboard lease from the toolbar action', async () => {
+    let activationAttempts = 0
+    invokeDesktopHostMock.mockImplementation(async capability => {
+      if (capability === 'vncClipboard.activate') {
+        activationAttempts += 1
+        if (activationAttempts < 3) throw new Error('window_not_focused')
+      }
+      if (capability === 'vncClipboard.readText') return 'clipboard after focus'
+      return undefined
+    })
+    render(<VncViewer websocketUrl="ws://127.0.0.1/session/websockify?token=secret" />)
+    const rfb = rfbState.instances[0]
+
+    act(() => rfb.dispatchEvent(new Event('connect')))
+    fireEvent.click(screen.getByTestId('vnc-viewer-paste-button'))
+
+    await waitFor(() =>
+      expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith('clipboard after focus')
+    )
+    expect(activationAttempts).toBe(3)
+  })
+
+  test('uses the browser Clipboard API outside Electron', async () => {
+    runtimeState.electron = false
+    const readText = vi.fn(async () => 'browser clipboard')
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText, writeText },
+    })
+    render(<VncViewer websocketUrl="ws://127.0.0.1/session/websockify?token=secret" />)
+    const rfb = rfbState.instances[0]
+
+    act(() => {
+      rfb.dispatchEvent(new Event('connect'))
+      rfb.dispatchEvent(new CustomEvent('clipboard', { detail: { text: 'remote browser text' } }))
+    })
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('remote browser text'))
+    fireEvent.click(screen.getByTestId('vnc-viewer-paste-button'))
+    await waitFor(() => expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith('browser clipboard'))
+    expect(invokeDesktopHostMock).not.toHaveBeenCalled()
   })
 
   test('handles a real paste event and Ctrl Alt Del controls', async () => {

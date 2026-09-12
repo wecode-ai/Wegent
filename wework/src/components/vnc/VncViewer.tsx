@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import type { TFunction } from 'i18next'
 
 type VncStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
+type ClipboardNotice = 'remote-copied' | 'local-synced' | null
 
 export interface VncViewerProps {
   websocketUrl: string
@@ -57,15 +58,20 @@ async function deactivateClipboardLease(leaseId: string): Promise<void> {
 }
 
 async function writeNativeClipboard(leaseId: string, text: string): Promise<void> {
-  if (!isElectronRuntime()) return
-  await invokeDesktopHost('vncClipboard.writeText', { leaseId, text })
+  if (isElectronRuntime()) {
+    await invokeDesktopHost('vncClipboard.writeText', { leaseId, text })
+    return
+  }
+  if (!navigator.clipboard?.writeText) throw new Error('Clipboard API is unavailable')
+  await navigator.clipboard.writeText(text)
 }
 
 async function readNativeClipboard(leaseId: string): Promise<string> {
   if (isElectronRuntime()) {
     return invokeDesktopHost<string>('vncClipboard.readText', { leaseId })
   }
-  return navigator.clipboard?.readText?.() ?? ''
+  if (!navigator.clipboard?.readText) throw new Error('Clipboard API is unavailable')
+  return navigator.clipboard.readText()
 }
 
 function viewerStatusLabel(status: VncStatus, t: TFunction) {
@@ -122,8 +128,8 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
   const rfbRef = useRef<RFB | null>(null)
   const leaseId = useMemo(() => makeLeaseId(), [])
   const [status, setStatus] = useState<VncStatus>('connecting')
-  const [clipboardAvailable, setClipboardAvailable] = useState(false)
   const [clipboardError, setClipboardError] = useState<string | null>(null)
+  const [clipboardNotice, setClipboardNotice] = useState<ClipboardNotice>(null)
   const [viewOnly, setViewOnly] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
 
@@ -134,6 +140,7 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
     target.replaceChildren()
     setStatus('connecting')
     setClipboardError(null)
+    setClipboardNotice(null)
 
     const rfb = new RFB(target, websocketUrl, { shared: true })
     rfb.scaleViewport = true
@@ -148,6 +155,7 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
     const handleConnect = () => {
       setStatus('connected')
       rfb.focus()
+      void activateClipboardLease(leaseId)
     }
     const handleDisconnect = (event: CustomEvent<{ clean?: boolean }>) => {
       setStatus(event.detail?.clean ? 'disconnected' : 'error')
@@ -156,23 +164,36 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
     const handleClipboard = (event: CustomEvent<{ text?: string }>) => {
       const text = event.detail?.text
       if (typeof text !== 'string') return
-      void writeNativeClipboard(leaseId, text).catch(() => {
+      void (async () => {
+        if (isElectronRuntime() && !(await activateClipboardLease(leaseId))) {
+          throw new Error('The VNC clipboard lease is inactive')
+        }
+        await writeNativeClipboard(leaseId, text)
+        setClipboardError(null)
+        setClipboardNotice('remote-copied')
+      })().catch(() => {
+        setClipboardNotice(null)
         setClipboardError(t('workbench.device_desktop_clipboard_failed'))
       })
+    }
+    const handleWindowFocus = () => {
+      void activateClipboardLease(leaseId)
     }
 
     rfb.addEventListener('connect', handleConnect)
     rfb.addEventListener('disconnect', handleDisconnect)
     rfb.addEventListener('securityfailure', handleSecurityFailure)
     rfb.addEventListener('clipboard', handleClipboard)
+    window.addEventListener('focus', handleWindowFocus)
 
-    void activateClipboardLease(leaseId).then(setClipboardAvailable)
+    void activateClipboardLease(leaseId)
 
     return () => {
       rfb.removeEventListener('connect', handleConnect)
       rfb.removeEventListener('disconnect', handleDisconnect)
       rfb.removeEventListener('securityfailure', handleSecurityFailure)
       rfb.removeEventListener('clipboard', handleClipboard)
+      window.removeEventListener('focus', handleWindowFocus)
       rfb.disconnect()
       if (rfbRef.current === rfb) rfbRef.current = null
       void deactivateClipboardLease(leaseId)
@@ -195,6 +216,7 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
     if (!text) return
     rfbRef.current?.clipboardPasteFrom(text)
     setClipboardError(null)
+    setClipboardNotice('local-synced')
   }, [])
 
   const handlePaste = useCallback(
@@ -209,8 +231,12 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
 
   const handleNativePaste = useCallback(async () => {
     try {
+      if (isElectronRuntime() && !(await activateClipboardLease(leaseId))) {
+        throw new Error('The VNC clipboard lease is inactive')
+      }
       pasteText(await readNativeClipboard(leaseId))
     } catch {
+      setClipboardNotice(null)
       setClipboardError(t('workbench.device_desktop_clipboard_failed'))
     }
   }, [leaseId, pasteText, t])
@@ -249,12 +275,22 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
           >
             {viewerStatusLabel(status, t)}
           </span>
-          {clipboardError && (
+          {(clipboardError || clipboardNotice) && (
             <span
-              data-testid="vnc-viewer-clipboard-error"
-              className="hidden text-sm text-red-600 dark:text-red-300 md:inline"
+              data-testid={
+                clipboardError ? 'vnc-viewer-clipboard-error' : 'vnc-viewer-clipboard-notice'
+              }
+              className={cn(
+                'hidden text-sm md:inline',
+                clipboardError ? 'text-red-600 dark:text-red-300' : 'text-text-secondary'
+              )}
             >
-              {clipboardError}
+              {clipboardError ||
+                t(
+                  clipboardNotice === 'remote-copied'
+                    ? 'workbench.device_desktop_clipboard_copied'
+                    : 'workbench.device_desktop_clipboard_synced'
+                )}
             </span>
           )}
         </div>
@@ -263,7 +299,7 @@ export function VncViewer({ websocketUrl }: VncViewerProps) {
             testId="vnc-viewer-paste-button"
             label={t('workbench.device_desktop_paste')}
             onClick={() => void handleNativePaste()}
-            disabled={!clipboardAvailable && isElectronRuntime()}
+            disabled={status !== 'connected'}
           >
             <Clipboard className="h-4 w-4" aria-hidden="true" />
           </ToolbarButton>

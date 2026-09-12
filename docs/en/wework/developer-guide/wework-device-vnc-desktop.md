@@ -114,7 +114,9 @@ In Electron, VNC clipboard access goes through main-process `vncClipboard.*` cap
 VNC clipboard must be verified in both directions:
 
 1. **Remote to local**: copy text inside the VNC desktop; noVNC emits a `clipboard` event; Wework writes the local clipboard.
-2. **Local to remote**: copy text locally; click the viewer paste button or trigger system paste; the viewer calls `clipboardPasteFrom(text)`.
+2. **Local to remote**: copy text locally and click **Sync local clipboard** in the viewer; the viewer calls `clipboardPasteFrom(text)`. This updates the remote clipboard without assuming a remote operating system or application shortcut. After synchronization, paste in the remote application. Linux graphical terminals normally use `Ctrl+Shift+V` or `Shift+Insert`, while ordinary editors normally use `Ctrl+V`.
+
+To copy from a Linux terminal to the local machine, select the text and use the terminal's own copy shortcut, normally `Ctrl+Shift+C`. macOS `Command+C` is not automatically the copy shortcut of a remote Linux application. The viewer shows a confirmation after it receives and writes a remote clipboard update.
 
 Use a Unicode payload that includes ASCII, Chinese text, emoji, a newline, and a tab:
 
@@ -123,7 +125,7 @@ UNICODE-L2R-R2L-中文-🙂-20260912
 line-2	末尾
 ```
 
-The validation passes only when the text is byte-for-byte identical after round trips through the remote editor and the local clipboard.
+The validation passes only when the synchronized text is pasted into the remote editor byte-for-byte and a copy from the remote application is read back identically from the local clipboard.
 
 ## Local full-chain validation
 
