@@ -25,6 +25,11 @@ type VirtualizerOptions<TScrollElement extends HTMLElement, TItemElement extends
   initialDistanceFromBottomPx: number
   positionKey?: string | number | null
   scrollElementRef?: RefObject<TScrollElement | null>
+  /**
+   * Reports a scroll offset this hook wrote by itself, so the scroll owner can keep telling the
+   * reader's own scrolling apart from the correction it already applied.
+   */
+  onScrollOffsetWrite?: (amount: number) => void
   shouldAdjustScrollPositionOnItemSizeChange?: ReactVirtualizer<
     TScrollElement,
     TItemElement
@@ -41,6 +46,7 @@ export function useBottomOriginVirtualizer<
   initialDistanceFromBottomPx,
   positionKey,
   scrollElementRef,
+  onScrollOffsetWrite,
   shouldAdjustScrollPositionOnItemSizeChange,
   ...options
 }: VirtualizerOptions<TScrollElement, TItemElement>): ReactVirtualizer<
@@ -137,13 +143,13 @@ export function useBottomOriginVirtualizer<
         }
         if (element.scrollTop >= -0.5 || delta === 0) return false
         if (streamingRow && delta > 0 && item.start < offset) {
-          // The streaming row grew past the viewport top while the reader is parked in the history
-          // above it. Only the rendered rows move with a layout change — and the streaming row is
-          // the last one, so nothing underneath it absorbs the growth: its extra height pushes the
-          // whole history up under the reader. Grow its spacer with the row so the offset can be
-          // shifted without the scroller clamping, and shift it back.
-          // Scroll-owning code in `ScrollableMessageArea` measures every other layout change from
-          // the text the reader is looking at, so this is the only case handled here.
+          // The streaming row is the last one, so nothing underneath it absorbs its growth: the
+          // extra height pushes the whole history up under the reader. This is the same correction
+          // `ScrollableMessageArea` applies after a layout change, but it has to happen here and
+          // now: the commit that grew the row runs before the frame's paint, while a ResizeObserver
+          // correction would only land in the next frame and show a one-frame jump.
+          // Grow the spacer with the row so the offset can be shifted without the scroller
+          // clamping at the end of the history.
           const itemElement = instance.elementsCache.get(item.key)
           const listElement = itemElement?.parentElement
           if (listElement instanceof HTMLElement) {
@@ -153,12 +159,13 @@ export function useBottomOriginVirtualizer<
             listElement.style.height = `${Math.max(0, currentHeight + delta)}px`
           }
           element.scrollTop -= delta
+          onScrollOffsetWrite?.(-delta)
           return false
         }
 
-        // A re-measured row above the viewport carries the rendered rows with it. The scroll owner
-        // corrects that once the layout lands, measuring the move that actually happened from the
-        // text the reader is looking at instead of predicting anything from `delta` here.
+        // Everything else (a whole-list reflow, a re-measured row above the viewport) is left to the
+        // scroll owner, which measures how far the text under the reader actually moved once the
+        // layout lands.
         return false
       }
     : shouldAdjustScrollPositionOnItemSizeChange

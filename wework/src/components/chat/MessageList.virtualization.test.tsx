@@ -178,8 +178,8 @@ describe('MessageList desktop virtualization', () => {
 
     // The viewport top sits at 9_640: a 10_000px conversation with a 200px viewport, parked
     // 160px above the bottom. The streaming row is the last one, so nothing under it absorbs its
-    // growth: its spacer grows with it and the offset is shifted back by the same amount, or the
-    // text the reader selected scrolls away while the response streams.
+    // growth: it has to be given back right here, before the frame paints, or the text the reader
+    // selected jumps for one frame while the response streams.
     scrollElement.scrollTop = -160
     expect(
       shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_500, size: 400 }, 40, instance)
@@ -195,8 +195,8 @@ describe('MessageList desktop virtualization', () => {
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
-    // A row that reaches past the viewport top and is not the streaming row only changes the
-    // height under the viewport, which the scroll owner accounts for; nothing is written here.
+    // A row that reaches past the viewport top and is not the streaming row only changes the height
+    // under the viewport, which the scroll owner accounts for; nothing is written here.
     expect(
       shouldAdjustScrollPosition?.({ key: 'user-18', start: 9_700, size: 100 }, -60, instance)
     ).toBe(false)

@@ -52,23 +52,22 @@ interface ReaderLayoutModel {
   /** Records the current position as the sample a layout change is measured against. */
   sample: () => void
   /**
-   * Applies one layout change the way Chromium does to the desktop chat scroller, which the desktop
-   * e2e and the scroll diagnostics both pin down:
+   * Applies one layout change under the rule the scroll area now relies on: the browser's own scroll
+   * anchoring is switched off for this list, so the only things that move the reader are their own
+   * scrolling and the layout change itself.
    *
-   * - a row above the viewport re-measures: the scroller applies the height delta to the reader's
-   *   distance from the bottom, and the rendered rows below the row move with the text;
-   * - the streaming row below the viewport grows: the offset is left alone and the extra height
-   *   pushes the whole history up under the reader (`desktop e2e: the selected text drifted by the
-   *   same amount the content grew`), which the virtualizer's streaming spacer compensates.
-   *
-   * The plain reader scroll and any content shift are carried in the same numbers, which is what
-   * lets the scroll owner tell them apart.
+   * - `aboveViewportGrowthPx` moves the anchor down the content (positive) or up it (negative), which
+   *   is what a re-measured row above the viewport or a whole-list reflow does;
+   * - `belowViewportGrowthPx` only makes the content taller underneath the anchor;
+   * - `readerScrollPx` is the reader's own scrolling, the one thing that moves `scrollTop`.
    */
   apply: (change: {
-    aboveViewportShrinkPx?: number
+    aboveViewportGrowthPx?: number
     belowViewportGrowthPx?: number
     readerScrollPx?: number
   }) => void
+  /** Where the sampled text sits on screen right now. */
+  anchorTopPx: () => number
 }
 
 interface AnchorHarness {
@@ -165,15 +164,15 @@ function createAnchorHarness(): AnchorHarness {
         fireEvent.scroll(scroller)
       },
       apply: change => {
-        const shrink = change.aboveViewportShrinkPx ?? 0
-        const grow = change.belowViewportGrowthPx ?? 0
-        const readerScroll = change.readerScrollPx ?? 0
-        const heightDelta = -shrink + grow
-        layout.contentHeightPx += heightDelta
-        layout.distanceFromBottomPx += readerScroll + (shrink > 0 ? heightDelta : 0)
-        layout.anchorContentTopPx -= shrink
+        const above = change.aboveViewportGrowthPx ?? 0
+        const below = change.belowViewportGrowthPx ?? 0
+        layout.contentHeightPx += above + below
+        layout.anchorContentTopPx += above
+        // Scroll anchoring is off, so only the reader moves the offset.
+        layout.distanceFromBottomPx += change.readerScrollPx ?? 0
         scroller.scrollTop = -layout.distanceFromBottomPx
       },
+      anchorTopPx: () => anchor.getBoundingClientRect().top,
     },
     flushResizeObservers: () => {
       act(() => {
@@ -641,41 +640,38 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the reader own scrolling while a row above the viewport is re-measured', () => {
+  test('keeps the text in place when the whole list reflows around it', () => {
     const harness = createAnchorHarness()
     try {
-      const { scroller, model } = harness
+      const { model } = harness
+      const anchorBefore = model.anchorTopPx()
       model.sample()
 
-      // The reader scrolls 120px up into the history while a row 300px above the viewport is
-      // re-measured shorter: the scroller moves the reader's distance from the bottom by the
-      // height delta, and the row above carries the text under them with it.
-      model.apply({ readerScrollPx: 120, aboveViewportShrinkPx: 300 })
-      fireEvent.scroll(scroller)
+      // Opening the file panel narrows the conversation: the text above the reader grows and so
+      // does the text below it. This is the shape that broke the desktop e2e — the reader's
+      // paragraph has to stay exactly where it was.
+      model.apply({ aboveViewportGrowthPx: 600, belowViewportGrowthPx: 2_000 })
       harness.flushResizeObservers()
 
-      // The 300px drag is given back and the 120px the reader scrolled is kept.
-      expect(scroller.scrollTop).toBe(-4_120)
+      expect(model.anchorTopPx()).toBe(anchorBefore)
     } finally {
       harness.dispose()
     }
   })
 
-  test('leaves the viewport alone when only the streaming response below it grows', () => {
+  test('keeps the reader own scrolling when a row above the viewport re-measures', () => {
     const harness = createAnchorHarness()
     try {
-      const { scroller, model } = harness
+      const { model } = harness
+      const anchorBefore = model.anchorTopPx()
       model.sample()
 
-      // A streaming response grows 400px below the viewport, which pushes the history up under the
-      // reader. The offset is left alone (the virtualizer's streaming spacer owns that case, see
-      // the desktop e2e) and nothing is written back here.
-      model.apply({ belowViewportGrowthPx: 400 })
-      fireEvent.scroll(scroller)
+      // The reader scrolls 120px up while a row above them shrinks by 373px. Their scrolling has to
+      // survive; the 373px the layout took away has to be given back.
+      model.apply({ aboveViewportGrowthPx: -373, readerScrollPx: 120 })
       harness.flushResizeObservers()
 
-      expect(scroller.scrollTo).not.toHaveBeenCalled()
-      expect(scroller.scrollTop).toBe(-4_000)
+      expect(model.anchorTopPx()).toBe(anchorBefore + 120)
     } finally {
       harness.dispose()
     }
@@ -684,18 +680,38 @@ describe('ScrollableMessageArea', () => {
   test('keeps the reader own scrolling while the streaming response below it grows', () => {
     const harness = createAnchorHarness()
     try {
-      const { scroller, model } = harness
+      const { model } = harness
+      const anchorBefore = model.anchorTopPx()
       model.sample()
 
       // Scrolling through a response that keeps streaming: every frame changes the content height,
-      // so the reader's own scrolling arrives in the same frame as the layout change. The scroll
-      // owner must not turn that into a correction that puts them back where they already were.
-      model.apply({ readerScrollPx: 120, belowViewportGrowthPx: 400 })
-      fireEvent.scroll(scroller)
+      // so the reader's own scrolling arrives in the same frame as the layout change. The growth
+      // must not push the text away, and must not take the scrolling with it either.
+      model.apply({ belowViewportGrowthPx: 400, readerScrollPx: 120 })
       harness.flushResizeObservers()
 
-      expect(scroller.scrollTo).not.toHaveBeenCalled()
-      expect(scroller.scrollTop).toBe(-4_120)
+      expect(model.anchorTopPx()).toBe(anchorBefore + 120)
+    } finally {
+      harness.dispose()
+    }
+  })
+
+  test('keeps the text in place while the streaming response below it grows', () => {
+    const harness = createAnchorHarness()
+    try {
+      const { scroller, model } = harness
+      const anchorBefore = model.anchorTopPx()
+      const scrollBefore = scroller.scrollTop
+      model.sample()
+
+      // A streaming response grows 400px below the viewport with the reader parked. Only the last
+      // row grew, so nothing underneath absorbs it: the whole history is pushed up by 400px unless
+      // the offset is moved with it.
+      model.apply({ belowViewportGrowthPx: 400 })
+      harness.flushResizeObservers()
+
+      expect(model.anchorTopPx()).toBe(anchorBefore)
+      expect(scroller.scrollTop).toBe(scrollBefore - 400)
     } finally {
       harness.dispose()
     }
@@ -705,16 +721,16 @@ describe('ScrollableMessageArea', () => {
     const harness = createAnchorHarness()
     try {
       const { scroller, anchor, model } = harness
+      const scrollBefore = scroller.scrollTop
       model.sample()
 
       anchor.closest('[data-message-id]')?.remove()
-      model.apply({ aboveViewportShrinkPx: 300 })
+      model.apply({ aboveViewportGrowthPx: 600, belowViewportGrowthPx: 2_000 })
       harness.flushResizeObservers()
 
       // Nothing from the sample can be measured any more, so the layout change stays unattributed
       // instead of being guessed at; the next sample is taken from where the reader is now.
-      expect(scroller.scrollTo).not.toHaveBeenCalled()
-      expect(scroller.scrollTop).toBe(-3_700)
+      expect(scroller.scrollTop).toBe(scrollBefore)
     } finally {
       harness.dispose()
     }
@@ -2841,7 +2857,9 @@ describe('ScrollableMessageArea', () => {
       screen.getByTestId('runtime-transcript-gap-marker').querySelector('button')
     ).toBeDisabled()
     expect(screen.queryByTestId('message-turn-navigation-loading')).not.toBeInTheDocument()
-    expect(scroller).not.toHaveClass('[overflow-anchor:none]')
+    // The scroll container always owns its own anchor position now, so the browser never adjusts
+    // the offset behind the reader's back; the scroll area puts the text back itself.
+    expect(scroller).toHaveClass('[overflow-anchor:none]')
     expect(firstMessage).toHaveClass('[content-visibility:auto]')
 
     await act(async () => {
