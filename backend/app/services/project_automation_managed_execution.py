@@ -212,7 +212,7 @@ class ProjectAutomationManagedExecutionService:
             title=title.strip() or "Board task",
             task_type="chat",
             source="board_team_assignment",
-            auto_delete_executor="true",
+            auto_delete_executor="false",
         )
         result = await create_chat_task(
             db=db,

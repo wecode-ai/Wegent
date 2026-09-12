@@ -247,6 +247,8 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
     assert execution.backend_task_id == 51
     resolve_model_id.assert_called_once_with(db, team=team, user_id=owner.id)
     assert create_chat_task.await_args.kwargs["commit"] is False
+    params = create_chat_task.await_args.kwargs["params"]
+    assert params.auto_delete_executor == "false"
     assert task.json["metadata"]["labels"] == {
         "source": "board_team_assignment",
         "boardTeamExecutionId": "61",
