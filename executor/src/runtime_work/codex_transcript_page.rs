@@ -15,7 +15,7 @@ use super::util::string_field;
 
 const CODEX_ITEM_PAGE_SIZE: usize = 100;
 const CODEX_ITEM_LOAD_CONCURRENCY: usize = 5;
-const CODEX_INITIAL_ITEM_BUDGET_PAGES: usize = 5;
+const CODEX_INITIAL_ITEM_BUDGET_TURN_CAP: usize = 5;
 const CODEX_FULL_TRANSCRIPT_MAX_TURNS: usize = 500;
 const CODEX_INCREMENTAL_CURSOR_PREFIX: &str = "wework-codex-items:";
 
@@ -397,7 +397,7 @@ async fn load_initial_turn_items(
     turn_limit: usize,
 ) -> Result<InitialTurnItems, String> {
     let mut remaining_items = turn_limit
-        .min(CODEX_INITIAL_ITEM_BUDGET_PAGES)
+        .min(CODEX_INITIAL_ITEM_BUDGET_TURN_CAP)
         .saturating_mul(CODEX_ITEM_PAGE_SIZE);
     let mut page_turns = Vec::with_capacity(turns.len());
     let mut pending_turns = Vec::new();
