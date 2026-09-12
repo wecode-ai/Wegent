@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MessageList } from './MessageList'
 import {
@@ -176,19 +176,30 @@ describe('MessageList desktop virtualization', () => {
         ) => boolean)
       | undefined
 
+    // The viewport top sits at 9_640: a 10_000px conversation with a 200px viewport, parked
+    // 160px above the bottom. The streaming row is the last one, so nothing under it absorbs its
+    // growth: it has to be given back right here, before the frame paints, or the text the reader
+    // selected jumps for one frame while the response streams.
     scrollElement.scrollTop = -160
-    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
+    expect(
+      shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_500, size: 400 }, 40, instance)
+    ).toBe(false)
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
-    expect(shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(false)
+    // A re-measured row that ends above the viewport top is left to the scroll owner, which
+    // measures the layout it actually got instead of predicting anything from `delta`.
+    expect(
+      shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000, size: 100 }, 40, instance)
+    ).toBe(false)
     expect(listElement).toHaveStyle({ height: '3940px' })
     expect(scrollElement.scrollTop).toBe(-200)
 
-    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
-      false
-    )
-    expect(listElement).toHaveStyle({ height: '3940px' })
+    // A row that reaches past the viewport top and is not the streaming row only changes the height
+    // under the viewport, which the scroll owner accounts for; nothing is written here.
+    expect(
+      shouldAdjustScrollPosition?.({ key: 'user-18', start: 9_700, size: 100 }, -60, instance)
+    ).toBe(false)
     expect(scrollElement.scrollTop).toBe(-200)
 
     scrollElement.scrollTop = 0
@@ -227,6 +238,167 @@ describe('MessageList desktop virtualization', () => {
     options.scrollToFn(9_760, { adjustments: 40 }, instance)
     expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: 0 })
     expect(onOffset).toHaveBeenLastCalledWith(9_800, false)
+  })
+
+  test('leaves the reader position to the viewport anchor when rows are re-measured', () => {
+    const scrollElement = createBottomOriginScrollElement({
+      clientHeight: 200,
+      scrollHeight: 10_000,
+      distanceFromBottom: 1_200,
+    })
+    const messages = buildMessages(20, 're-measure')
+    messages[19] = { ...messages[19], role: 'assistant', status: 'streaming' }
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scrollElement.scrollTop = top ?? scrollElement.scrollTop
+    })
+    scrollElement.scrollTo = scrollTo
+    render(
+      <MessageList messages={messages} scrollElementRef={{ current: scrollElement }} bottomOrigin />
+    )
+
+    const instance = {
+      elementsCache: new Map<string, HTMLElement>(),
+      getTotalSize: () => 10_000,
+      scrollElement,
+    }
+    const itemElement = document.createElement('div')
+    const listElement = document.createElement('div')
+    listElement.style.height = '9900px'
+    listElement.append(itemElement)
+    instance.elementsCache.set('user-19', itemElement)
+    const shouldAdjustScrollPosition = virtualizerInstances.at(-1)
+      ?.shouldAdjustScrollPositionOnItemSizeChange as
+      | ((
+          item: { key: string; start: number; size: number },
+          delta: number,
+          instance: typeof instance
+        ) => boolean)
+      | undefined
+
+    // The reader parked 1_200px above the bottom of a 10_000px conversation with a 200px
+    // viewport, so the viewport top sits at content position 8_600.
+    scrollElement.scrollTop = -1_200
+
+    // Re-measuring a row that ends above the viewport top makes the scroller apply that delta to
+    // the distance from the bottom. The virtualizer must not pre-shift the offset for it: the
+    // scroller carries the rendered rows with the reader, and `ScrollableMessageArea` restores the
+    // position from the viewport anchor once the layout lands.
+    expect(
+      shouldAdjustScrollPosition?.({ key: 'user-5', start: 1_000, size: 300 }, -120, instance)
+    ).toBe(false)
+    expect(scrollElement.scrollTop).toBe(-1_200)
+    expect(scrollTo).not.toHaveBeenCalled()
+
+    // A row that reaches past the viewport top only changes the height under the reader, which the
+    // scroller already keeps visually stable.
+    expect(
+      shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_500, size: 200 }, -120, instance)
+    ).toBe(false)
+    expect(scrollElement.scrollTop).toBe(-1_200)
+
+    // The streaming row below the viewport keeps its spacer in sync and shifts the offset with it.
+    expect(
+      shouldAdjustScrollPosition?.({ key: 'user-19', start: 8_400, size: 300 }, 80, instance)
+    ).toBe(false)
+    expect(scrollElement.scrollTop).toBe(-1_280)
+    expect(listElement).toHaveStyle({ height: '9980px' })
+  })
+
+  test('renders the measured geometry after a row far above the viewport re-measures', () => {
+    const scrollElement = createBottomOriginScrollElement({
+      clientHeight: 200,
+      scrollHeight: 10_000,
+      distanceFromBottom: 4_000,
+    })
+    const messages = buildMessages(20, 'hold')
+    render(
+      <MessageList messages={messages} scrollElementRef={{ current: scrollElement }} bottomOrigin />
+    )
+
+    const instance = {
+      elementsCache: new Map<string, HTMLElement>(),
+      getTotalSize: () => 10_000,
+      scrollElement,
+    }
+    const shouldAdjustScrollPosition = virtualizerInstances.at(-1)
+      ?.shouldAdjustScrollPositionOnItemSizeChange as
+      | ((
+          item: { key: string; start: number; size: number },
+          delta: number,
+          instance: typeof instance
+        ) => boolean)
+      | undefined
+
+    // The reader is 4_000px above the bottom, so the viewport top sits at content position 5_800.
+    scrollElement.scrollTop = -4_000
+    act(() => {
+      expect(
+        shouldAdjustScrollPosition?.(
+          { index: 3, key: 'user-3', start: 2_000, size: 300 },
+          -300,
+          instance
+        )
+      ).toBe(false)
+    })
+
+    // The list renders exactly what the virtualizer measured: no held height is left behind to
+    // fabricate blank space between the rows above the reader.
+    expect(scrollElement.scrollTop).toBe(-4_000)
+    expect(screen.getByText('hold message 19').closest('[data-index]')).toHaveStyle({
+      transform: 'translateY(2280px)',
+    })
+  })
+
+  test('leaves no blank space behind when older transcript is prepended', () => {
+    const scrollElement = createBottomOriginScrollElement({
+      clientHeight: 200,
+      scrollHeight: 10_000,
+      distanceFromBottom: 4_000,
+    })
+    const messages = buildMessages(20, 'prepend')
+    const props = {
+      messages,
+      scrollElementRef: { current: scrollElement },
+      bottomOrigin: true,
+    }
+    const view = render(<MessageList {...props} />)
+
+    const instance = {
+      elementsCache: new Map<string, HTMLElement>(),
+      getTotalSize: () => 10_000,
+      scrollElement,
+    }
+    const shouldAdjustScrollPosition = virtualizerInstances.at(-1)
+      ?.shouldAdjustScrollPositionOnItemSizeChange as
+      | ((
+          item: { index: number; key: string; start: number; size: number },
+          delta: number,
+          instance: typeof instance
+        ) => boolean)
+      | undefined
+
+    scrollElement.scrollTop = -4_000
+    act(() => {
+      shouldAdjustScrollPosition?.(
+        { index: 3, key: 'user-3', start: 2_000, size: 300 },
+        -300,
+        instance
+      )
+    })
+    expect(screen.getByText('prepend message 19').closest('[data-index]')).toHaveStyle({
+      transform: 'translateY(2280px)',
+    })
+
+    // Loading older transcript prepends rows, so every index shifts. The rendered rows must follow
+    // the new indexes without carrying blank space from the layout before the prepend.
+    act(() => {
+      view.rerender(
+        <MessageList {...props} messages={[...buildMessages(4, 'older'), ...messages]} />
+      )
+    })
+    expect(screen.getByText('prepend message 19').closest('[data-index]')).toHaveStyle({
+      transform: 'translateY(2760px)',
+    })
   })
 
   test('normalizes a restored bottom-origin distance in the task-switch layout commit', () => {
@@ -536,5 +708,46 @@ function createScrollElement(clientHeight: number): HTMLDivElement {
     configurable: true,
     value: 800,
   })
+  return scrollElement
+}
+
+function createBottomOriginScrollElement({
+  clientHeight,
+  scrollHeight,
+  distanceFromBottom,
+}: {
+  clientHeight: number
+  scrollHeight: number
+  distanceFromBottom: number
+}): HTMLDivElement {
+  const scrollElement = document.createElement('div')
+  const maximumDistanceFromBottom = Math.max(0, scrollHeight - clientHeight)
+  let currentDistanceFromBottom = distanceFromBottom
+  Object.defineProperty(scrollElement, 'clientHeight', {
+    configurable: true,
+    value: clientHeight,
+  })
+  Object.defineProperty(scrollElement, 'clientWidth', {
+    configurable: true,
+    value: 800,
+  })
+  Object.defineProperty(scrollElement, 'scrollHeight', {
+    configurable: true,
+    value: scrollHeight,
+  })
+  Object.defineProperty(scrollElement, 'scrollTop', {
+    configurable: true,
+    // A bottom-origin scroller reports its distance from the bottom as a negative offset.
+    // Writes stay inside [-maximumDistance, 0] and anything past the bottom clamps back to
+    // it, which is exactly how an over-shifted offset turns into "yanked to the very bottom".
+    get: () => -currentDistanceFromBottom,
+    set: (value: number) => {
+      currentDistanceFromBottom = Math.min(maximumDistanceFromBottom, Math.max(0, -value))
+    },
+  })
+  scrollElement.scrollTo = ((options: ScrollToOptions | number, y?: number) => {
+    const top = typeof options === 'number' ? (y ?? 0) : (options.top ?? 0)
+    scrollElement.scrollTop = top
+  }) as HTMLDivElement['scrollTo']
   return scrollElement
 }

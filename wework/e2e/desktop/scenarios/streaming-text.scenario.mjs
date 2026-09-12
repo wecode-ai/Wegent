@@ -2335,6 +2335,18 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The scroll-to-bottom button left the growing streaming conversation ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom`
       )
+      // Regression: the bottom pin must survive past the previous fixed release window so a
+      // response that keeps growing cannot leave the user staring at the middle of the chat.
+      await new Promise(resolve => setTimeout(resolve, 1_200))
+      const pinnedAfterReleaseWindow = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The growing streaming conversation after the bottom release window'
+      )
+      assert.ok(
+        distanceFromBottom(pinnedAfterReleaseWindow) <= 8,
+        `The jump-to-bottom pin was dropped after the release window, leaving the conversation ${distanceFromBottom(pinnedAfterReleaseWindow)}px from the bottom`
+      )
       await capture(control, 'streaming-text-14-scroll-button-followed-layout-growth.png')
       await new Promise(resolve => setTimeout(resolve, 250))
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -2454,10 +2466,81 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await capture(control, 'streaming-text-18-completed-user-scroll-stable.png')
+
+      // Regression: a small upward scroll that stays within the bottom tolerance must keep
+      // its up-scroll pause so the follow engine cannot snap the viewport straight back to
+      // the bottom (the reported "cannot scroll up while the assistant replies" issue).
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
       await waitForBottom(
         control,
-        'The completed conversation after restoring the downstream test precondition',
+        'The completed conversation before the small up-scroll regression',
+        uiTimeoutMs
+      )
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '3' })
+      const smallUpScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation immediately after a small up-scroll'
+      )
+      assert.ok(
+        distanceFromBottom(smallUpScrollPosition) > 0,
+        'The small up-scroll did not move the completed conversation away from the very bottom'
+      )
+      const smallUpScrollDeadline = Date.now() + 2_000
+      while (Date.now() < smallUpScrollDeadline) {
+        const current = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          'The completed conversation while pending bottom-follow work could run'
+        )
+        assert.ok(
+          distanceFromBottom(current) > 0,
+          `The small up-scroll was snapped straight back to the bottom (paused follow cleared the up-scroll intent; now ${distanceFromBottom(current)}px from the bottom)`
+        )
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      // Regression: sweeping upward through the history must keep moving the reader away from
+      // the bottom. Re-measured rows used to drag the viewport back down, which the user saw
+      // as small bounces while reading and as being yanked back to the very bottom.
+      const sweepStart = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation before the fast upward sweep'
+      )
+      const sweepMaximum = Math.max(
+        1,
+        sweepStart.scrollHeight - sweepStart.clientHeight,
+        distanceFromBottom(sweepStart)
+      )
+      let sweepDistanceFromBottom = distanceFromBottom(sweepStart)
+      for (const fraction of [0.25, 0.5, 0.75, 1]) {
+        await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, {
+          value: String(Math.round(sweepMaximum * fraction)),
+        })
+        await new Promise(resolve => setTimeout(resolve, 200))
+        const sweepStep = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          `The completed conversation after fast upward sweep step ${fraction}`
+        )
+        const stepDistanceFromBottom = distanceFromBottom(sweepStep)
+        assert.ok(
+          stepDistanceFromBottom >= sweepDistanceFromBottom - 8,
+          `The fast upward scroll retreated toward the bottom (${Math.round(sweepDistanceFromBottom)}px -> ${Math.round(stepDistanceFromBottom)}px from the bottom)`
+        )
+        sweepDistanceFromBottom = stepDistanceFromBottom
+      }
+      await capture(control, 'streaming-text-19-fast-up-scroll-stable.png')
+      assert.ok(
+        sweepDistanceFromBottom > 0,
+        'The fast upward sweep never left the bottom of the completed conversation'
+      )
+
+      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await waitForBottom(
+        control,
+        'The completed conversation after clearing the small up-scroll regression',
         uiTimeoutMs
       )
       const completedSnapshot = JSON.parse(
