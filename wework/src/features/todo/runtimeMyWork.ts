@@ -34,7 +34,7 @@ export interface RuntimeIssueBinding {
   task_id: string
 }
 
-type RuntimeBoundIssueStatus = 'pending' | 'in_progress' | 'in_review' | 'completed'
+type RuntimeBoundIssueStatus = 'pending' | 'in_progress' | 'in_review'
 
 function runtimeTaskKey(address: Pick<RuntimeTaskAddress, 'deviceId' | 'taskId'>): string {
   return `${address.deviceId}\0${address.taskId}`
@@ -226,12 +226,6 @@ function boundIssueStatus(
   if (statuses.includes('queued')) return 'pending'
   if (statuses.some(status => status === 'failed' || status === 'cancelled')) {
     return 'in_review'
-  }
-  if (
-    statuses.length > 0 &&
-    statuses.every(status => status === 'succeeded' || status === 'archived')
-  ) {
-    return 'completed'
   }
   return null
 }

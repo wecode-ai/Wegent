@@ -188,7 +188,7 @@ describe('mergeRuntimeMyWorkItems', () => {
 })
 
 describe('projectBoundRuntimeTaskStatuses', () => {
-  it('uses successful Runtime Task state instead of a stale review Issue status', () => {
+  it('preserves the persisted Issue review state after Runtime Task success', () => {
     const lifecycleStore = new RuntimeTaskLifecycleStore('runtime-my-work-bound-success')
     lifecycleStore.syncRuntimeWork(
       runtimeWork([
@@ -213,7 +213,7 @@ describe('projectBoundRuntimeTaskStatuses', () => {
         ],
         lifecycleStore.getSnapshot()
       )
-    ).toEqual([expect.objectContaining({ status: 'completed' })])
+    ).toEqual([expect.objectContaining({ status: 'in_review' })])
   })
 
   it('keeps failed Runtime Tasks in review and running Runtime Tasks in progress', () => {

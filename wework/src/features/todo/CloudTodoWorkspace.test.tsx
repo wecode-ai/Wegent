@@ -5092,7 +5092,7 @@ describe('CloudTodoWorkspace', () => {
     }
   })
 
-  it('projects bound Runtime Task lifecycle when persisted board status lags behind', async () => {
+  it('projects active Runtime Task lifecycle without bypassing persisted Issue review', async () => {
     const defaultProject = {
       ...project,
       id: 'default-work-items',
@@ -5230,11 +5230,11 @@ describe('CloudTodoWorkspace', () => {
     rendered.rerender(workspace(lifecycleStore.getSnapshot()))
 
     await waitFor(() => {
-      expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveTextContent(
         trackedIssue.title
       )
     })
-    expect(screen.getByTestId('cloud-todo-column-in_review')).not.toHaveTextContent(
+    expect(screen.getByTestId('cloud-todo-column-completed')).not.toHaveTextContent(
       trackedIssue.title
     )
   })
