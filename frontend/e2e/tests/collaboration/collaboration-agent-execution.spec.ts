@@ -405,14 +405,12 @@ test.describe('Collaboration agent execution', () => {
     expect(task.model_id).toBe(claude.modelName)
     const runtimeSubtask = task.subtasks.find(
       subtask =>
-        String(subtask.role).toUpperCase() === 'ASSISTANT' &&
-        Boolean(subtask.executor_name) &&
-        Boolean(subtask.executor_namespace)
+        String(subtask.role).toUpperCase() === 'ASSISTANT' && Boolean(subtask.executor_name)
     )
     expect(runtimeSubtask, 'ClaudeCode task should retain its Executor identity').toBeTruthy()
     expect(runtimeSubtask!.id).toBeGreaterThan(0)
-    expect(runtimeSubtask!.executor_name).toMatch(/^executor-/)
-    expect(runtimeSubtask!.executor_namespace).toBeTruthy()
+    expect(runtimeSubtask!.executor_name).toMatch(/^wegent-task-/)
+    expect(runtimeSubtask!.executor_namespace).toBe('')
     expect(String(runtimeSubtask!.status).toUpperCase()).toMatch(/^COMPLETED/)
 
     const runtime = await apiRequest<RuntimeCheck>(
