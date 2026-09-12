@@ -543,6 +543,56 @@ Skill locator or content enters runtime
 - 截图显示的状态与结构化日志一致。
 - 没有用静态 demo、旧页面或测试桩页面充当产品证据。
 
+## 执行环境部署证据链
+
+协作功能不另造一套 Executor 部署流程。Workspace 中的“执行环境”复用 Wework
+连接设置中的远程执行环境引导，并由两个已有 checkpoint 提供真实证据。
+
+### `remote-device-onboarding`
+
+该 checkpoint 必须连续证明：
+
+1. 从 Wework UI 打开“添加远程执行环境”对话框。
+2. UI 生成包含 Backend、WebSocket、设备 ID、设备名称和一次性授权信息的部署命令。
+3. 复制按钮写入的内容与 UI 展示的可运行命令完全一致。
+4. 测试进程使用这条命令中的设备身份和授权信息启动真实 Executor 二进制，不预先向
+   Backend 写入设备记录。
+5. Backend 返回 `online` 状态和非空 Runtime identity，Wework 设备卡同步显示在线。
+6. 通过该设备创建远程项目，调试快照中的 Runtime Task `deviceId` 必须等于刚部署的设备。
+7. 真实 Codex 工具循环在该设备的项目目录创建
+   `wework-cloud-e2e-result.txt`，文件内容为
+   `CODEX_EXECUTED_REAL_CLOUD_TOOL`，随后任务正常结束。
+
+证据截图：
+
+- `cloud-00-remote-docker-command.png`
+- `cloud-00-generated-remote-device-online.png`
+- `cloud-00-disabled-session-settings.png`
+- `cloud-00-disabled-session-project.png`
+- `cloud-00-generated-remote-task-running.png`
+- `cloud-00-generated-remote-task-completed.png`
+
+其中“禁用终端/IDE”是能力上报的边界验证，不代替任务执行验证。
+
+### `cloud-device-lifecycle`
+
+该 checkpoint 复用 CI 启动的真实云端 Executor，验证：
+
+1. 初始 Backend 状态为 `online`，设备具有 Executor 版本和 Runtime identity。
+2. Wework 展示版本升级入口、当前版本、目标版本和短暂离线提示。
+3. 管理型云环境中，重启操作命中 Sandbox identity；重启等待期间设备操作被禁用。
+4. 测试真实停止 Executor 进程，等待 Backend 变为 `offline`，再启动同一 Executor。
+5. Backend 恢复 `online`，Runtime identity 保持稳定，Wework 显示“重新在线”并恢复操作。
+6. 不支持管理型恢复的公共 Backend 分支必须明确显示重启失败，且不能把在线设备误标为离线。
+
+证据截图：
+
+- `cloud-device-01-online.png`
+- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-pending.png`
+- `cloud-device-restart-recovered.png`
+- `cloud-device-restart-unavailable.png`（仅公共 Backend 拒绝分支）
+
 ## CI checkpoint 映射
 
 优先扩展和复用现有 checkpoint，不复制已有部署、插件或运行时框架。
@@ -551,8 +601,8 @@ Skill locator or content enters runtime
 | ----------------------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
 | Wegent 协作资源创建           | Frontend collaboration Playwright                | 增加 Workspace、Project、Chat/Claude 资源创建和跨端持久化断言         |
 | Wework 协作资源浏览与创建     | `collaboration-shared-core`                      | 覆盖 Wework 创建资源、跨端读取和共享协作主流程                        |
-| Executor 注册                 | `remote-device-onboarding`                       | 复用部署命令、真实 Executor 启动、注册与能力上报                      |
-| Executor 生命周期             | `cloud-device-lifecycle`                         | 复用离线、恢复、升级和重连断言                                        |
+| Executor 注册与可执行性       | `remote-device-onboarding`                       | UI 部署命令、真实进程启动、在线注册、能力上报、指定设备执行和文件产物 |
+| Executor 生命周期             | `cloud-device-lifecycle`                         | 权威在线状态、离线、恢复、升级、稳定 Runtime identity 和重连断言      |
 | Chat Issue 分配与执行         | `project-automation` + provider-native Chat E2E  | 提取共享 fixture，补齐 Ghost Skill/MCP 配置到项目分配完成的闭环       |
 | ClaudeCode Skill/MCP 执行     | provider-native ClaudeCode E2E                   | 接入 Workspace/Project/Issue 分配，并保留真实 CLI 与文件产物断言      |
 | Codex Skill/MCP/Plugin        | Wework plugin E2E + project automation           | 接入 ProjectChatAgent 分配，复用真实 Plugin 物化和多轮 tool-call 证据 |
@@ -566,6 +616,8 @@ CI 要求：
 - 不允许只提供本地调试命令而没有 CI 注册。
 - desktop 长流程必须通过共享 runner 暴露 checkpoint。
 - classifier 必须把协作、分配、ProjectChatAgent、Plugin、Skill、MCP、Executor 和状态同步相关改动映射到对应分片。
+- Workspace 执行环境授权、Project Agent 执行环境绑定和共享 Workspace API 映射相关改动，必须同时触发
+  `collaboration-shared-core`、`remote-device-onboarding` 和 `cloud-device-lifecycle`。
 - 默认零重试；间歇失败按缺陷处理，不靠 rerun 获得绿色结果。
 - 截图、结构化日志、模型请求、MCP 调用和 Runtime 日志统一上传为 diagnostics artifact。
 

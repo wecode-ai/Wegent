@@ -78,6 +78,56 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('preserves shared detail translation interpolation options', async () => {
+    const deliveryApi = {
+      ...api,
+      listDeliveries: vi.fn(async () => ({
+        items: [
+          {
+            id: 'delivery-1',
+            loop_item_id: baseItem.id,
+            created_by_user_id: 1,
+            source_task_binding_id: null,
+            source_task_snapshot: null,
+            status: 'delivered',
+            created_at: '2026-09-12T00:00:00Z',
+            delivered_at: '2026-09-12T00:00:00Z',
+            assets: [
+              {
+                id: 'asset-1',
+                kind: 'file',
+                display_name: 'result.txt',
+                relative_path: 'result.txt',
+                content_type: 'text/plain',
+                size_bytes: 6,
+                sha256: 'sha256',
+              },
+            ],
+            fulfillments: [],
+          },
+        ],
+      })),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={deliveryApi}
+        currentUserId={1}
+        presentation="workspace-panel"
+      />
+    )
+
+    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
+      '交付结果 · 1 个附件'
+    )
+  })
+
   it('fails closed for cloud Issue editing when can_edit is missing', async () => {
     const updateLoopItem = vi.fn()
     const readOnlyApi = {

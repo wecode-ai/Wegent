@@ -543,22 +543,80 @@ Screenshot review must verify:
 - Screenshot states agree with structured logs.
 - Static demos, legacy pages, and stub pages are not used as product evidence.
 
+## Execution Environment Deployment Evidence Chain
+
+Collaboration does not introduce a parallel Executor deployment flow. Workspace
+execution environments reuse the remote execution environment onboarding in Wework
+connection settings, with two existing checkpoints providing real evidence.
+
+### `remote-device-onboarding`
+
+This checkpoint must continuously prove:
+
+1. The Wework UI opens the add-remote-execution-environment dialog.
+2. The UI generates a deployment command containing the Backend, WebSocket, device ID,
+   device name, and one-time authorization information.
+3. The copy action writes exactly the runnable command displayed by the UI.
+4. The test process starts the real Executor binary with the device identity and
+   authorization information from that command, without pre-seeding a Backend device record.
+5. The Backend reports `online` with a non-empty Runtime identity, and Wework shows the
+   device card as online.
+6. A remote project is created through that device, and the Runtime Task `deviceId` in the
+   debug snapshot must equal the newly deployed device.
+7. A real Codex tool loop creates `wework-cloud-e2e-result.txt` in that device's project
+   directory with `CODEX_EXECUTED_REAL_CLOUD_TOOL`, and the task then settles normally.
+
+Evidence screenshots:
+
+- `cloud-00-remote-docker-command.png`
+- `cloud-00-generated-remote-device-online.png`
+- `cloud-00-disabled-session-settings.png`
+- `cloud-00-disabled-session-project.png`
+- `cloud-00-generated-remote-task-running.png`
+- `cloud-00-generated-remote-task-completed.png`
+
+The disabled terminal/IDE checks are capability-reporting boundary coverage, not a substitute
+for task execution coverage.
+
+### `cloud-device-lifecycle`
+
+This checkpoint reuses the real cloud Executor started by CI and verifies:
+
+1. The initial Backend state is `online`, with an Executor version and Runtime identity.
+2. Wework shows the upgrade action, current version, target version, and temporary-offline warning.
+3. In a managed cloud environment, restart targets the Sandbox identity and disables device
+   actions while restart is pending.
+4. The test really stops the Executor process, waits for Backend `offline`, and starts the same
+   Executor again.
+5. The Backend returns to `online`, Runtime identity stays stable, and Wework reports recovery
+   and re-enables actions.
+6. The public-Backend branch without managed recovery must show an explicit restart failure and
+   must not mislabel the still-online device as offline.
+
+Evidence screenshots:
+
+- `cloud-device-01-online.png`
+- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-pending.png`
+- `cloud-device-restart-recovered.png`
+- `cloud-device-restart-unavailable.png` (public-Backend rejection branch only)
+
 ## CI Checkpoint Mapping
 
 Prefer extending and reusing existing checkpoints instead of duplicating deployment, Plugin, or runtime frameworks.
 
-| Capability                                 | Existing checkpoint / suite                      | Target change                                                                                                       |
-| ------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| Wegent collaboration resource creation     | Frontend collaboration Playwright                | Add Workspace, Project, Chat/Claude resource creation and cross-host persistence assertions                         |
-| Wework collaboration creation and browsing | `collaboration-shared-core`                      | Cover Wework resource creation, cross-host reads, and the shared collaboration primary flow                         |
-| Executor registration                      | `remote-device-onboarding`                       | Reuse deployment command, real Executor startup, registration, and capability reporting                             |
-| Executor lifecycle                         | `cloud-device-lifecycle`                         | Reuse offline, recovery, upgrade, and reconnect assertions                                                          |
-| Chat Issue assignment and execution        | `project-automation` + provider-native Chat E2E  | Extract shared fixtures and close the loop from Ghost Skill/MCP configuration through project assignment completion |
-| ClaudeCode Skill/MCP execution             | provider-native ClaudeCode E2E                   | Connect Workspace/Project/Issue assignment while preserving real CLI and file-artifact assertions                   |
-| Codex Skill/MCP/Plugin                     | Wework Plugin E2E + project automation           | Connect ProjectChatAgent assignment and reuse real Plugin materialization and multi-turn tool-call evidence         |
-| Human assignment and notification          | `project-assignment-notification`                | Extend through notification deep link, Task creation, real execution, artifact, and Issue terminal state            |
-| Wework Task and Issue status sync          | `task-status-sync` + `collaboration-shared-core` | Reuse Task binding and status-projection assertions                                                                 |
-| Wework Claude Runtime regression           | `claude-runtime`                                 | Keep as an independent real local/cloud Claude CLI regression; it does not replace the project-assignment scenario  |
+| Capability                                 | Existing checkpoint / suite                      | Target change                                                                                                         |
+| ------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Wegent collaboration resource creation     | Frontend collaboration Playwright                | Add Workspace, Project, Chat/Claude resource creation and cross-host persistence assertions                           |
+| Wework collaboration creation and browsing | `collaboration-shared-core`                      | Cover Wework resource creation, cross-host reads, and the shared collaboration primary flow                           |
+| Executor registration and executability    | `remote-device-onboarding`                       | UI deployment command, real process startup, online registration, capability report, targeted execution, and artifact |
+| Executor lifecycle                         | `cloud-device-lifecycle`                         | Authoritative online state, offline, recovery, upgrade, stable Runtime identity, and reconnect assertions             |
+| Chat Issue assignment and execution        | `project-automation` + provider-native Chat E2E  | Extract shared fixtures and close the loop from Ghost Skill/MCP configuration through project assignment completion   |
+| ClaudeCode Skill/MCP execution             | provider-native ClaudeCode E2E                   | Connect Workspace/Project/Issue assignment while preserving real CLI and file-artifact assertions                     |
+| Codex Skill/MCP/Plugin                     | Wework Plugin E2E + project automation           | Connect ProjectChatAgent assignment and reuse real Plugin materialization and multi-turn tool-call evidence           |
+| Human assignment and notification          | `project-assignment-notification`                | Extend through notification deep link, Task creation, real execution, artifact, and Issue terminal state              |
+| Wework Task and Issue status sync          | `task-status-sync` + `collaboration-shared-core` | Reuse Task binding and status-projection assertions                                                                   |
+| Wework Claude Runtime regression           | `claude-runtime`                                 | Keep as an independent real local/cloud Claude CLI regression; it does not replace the project-assignment scenario    |
 
 CI requirements:
 
@@ -566,6 +624,9 @@ CI requirements:
 - A local-only debug command without CI registration is not acceptable.
 - Long desktop flows must expose checkpoints through the shared runner.
 - The classifier must map collaboration, assignment, ProjectChatAgent, Plugin, Skill, MCP, Executor, and status-sync changes to the corresponding shards.
+- Changes to Workspace execution-environment authorization, Project Agent environment binding,
+  and shared Workspace API mapping must trigger `collaboration-shared-core`,
+  `remote-device-onboarding`, and `cloud-device-lifecycle` together.
 - Default retry count is zero. Intermittent failures are defects and must not be hidden by reruns.
 - Screenshots, structured logs, model requests, MCP calls, and Runtime logs are uploaded together as diagnostic artifacts.
 

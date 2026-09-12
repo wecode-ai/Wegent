@@ -7,8 +7,6 @@ import {
   authHeaders,
   clearToolScenario,
   collectTaskToolCalls,
-  configureDingTalkService,
-  configureMockMcp,
   configureToolScenario,
   createProviderNativeResources,
   deleteProviderNativeResources,
@@ -23,7 +21,6 @@ import {
   PROVIDER_NATIVE_MOCK_URL,
   ProviderNativeResources,
   ProviderNativeSkillRef,
-  resetMockMcp,
   resolveProviderNativeSkillRef,
   waitForTaskTerminal,
 } from '../../utils/provider-native-test-support'
@@ -37,6 +34,7 @@ const CLAUDE_EXECUTOR_IMAGE =
 const SKILL_NAME = 'wegent-knowledge'
 const SKILL_MARKER = '# Wegent Knowledge Base Skill'
 const MCP_SERVER_NAME = 'collaboration-evidence'
+const CLAUDE_ARTIFACT_NAME = 'collaboration-claudecode-runtime-evidence.txt'
 
 interface VersionedResource {
   version: number
@@ -82,6 +80,36 @@ interface CollaborationExecution {
   syncState: string
 }
 
+interface BackendTaskSubtask {
+  id: number
+  role: string
+  status: string
+  executor_name: string | null
+  executor_namespace: string | null
+}
+
+interface BackendTask {
+  id: number
+  model_id: string | null
+  status: string
+  execution_workspace_source: string | null
+  execution_workspace_path: string | null
+  subtasks: BackendTaskSubtask[]
+}
+
+interface RuntimeCheck {
+  task_id: number
+  task_status: string
+  active_stream: unknown | null
+}
+
+interface RemoteWorkspaceStatus {
+  connected: boolean
+  available: boolean
+  root_path: string
+  reason: string | null
+}
+
 interface CreatedClaudeResources {
   modelName: string
   shellName: string
@@ -99,12 +127,18 @@ interface AgentCase {
   nodeId: string
   mcpOutputMarker: string
   answerMarker: string
+  artifactName?: string
 }
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  const path = testInfo.outputPath(`${name}.png`)
   await page.screenshot({
-    path: testInfo.outputPath(`${name}.png`),
+    path,
     fullPage: true,
+  })
+  await testInfo.attach(name, {
+    path,
+    contentType: 'image/png',
   })
 }
 
@@ -120,8 +154,6 @@ test.describe('Collaboration agent execution', () => {
 
   test.beforeAll(async ({ request }) => {
     resources = await createProviderNativeResources(request, TEST_PREFIX)
-    await configureDingTalkService(request, resources.token, 'docs', false)
-    await configureDingTalkService(request, resources.token, 'wikispace', false)
     skillRef = await resolveProviderNativeSkillRef(request, resources.token, SKILL_NAME)
     await configureBotCapabilities(request, resources.botId, skillRef)
     claude = await createClaudeResources(request, skillRef)
@@ -166,8 +198,8 @@ test.describe('Collaboration agent execution', () => {
         agent: chatAgent,
         loadsSkillWithTool: false,
         prompt: `${TEST_PREFIX} CHAT_GHOST_CAPABILITY_EXECUTION`,
-        nodeId: 'collaboration-chat-doc',
-        mcpOutputMarker: 'COLLABORATION_CHAT_MCP_OUTPUT',
+        nodeId: 'doc-d2',
+        mcpOutputMarker: 'Doc-D2_旧设计',
         answerMarker: 'COLLABORATION_CHAT_COMPLETED',
       },
       {
@@ -176,9 +208,10 @@ test.describe('Collaboration agent execution', () => {
         agent: claudeAgent,
         loadsSkillWithTool: true,
         prompt: `${TEST_PREFIX} CLAUDE_GHOST_CAPABILITY_EXECUTION`,
-        nodeId: 'collaboration-claude-doc',
-        mcpOutputMarker: 'COLLABORATION_CLAUDE_MCP_OUTPUT',
+        nodeId: 'doc-d3',
+        mcpOutputMarker: 'Doc-D3_项目说明',
         answerMarker: 'COLLABORATION_CLAUDE_COMPLETED',
+        artifactName: CLAUDE_ARTIFACT_NAME,
       },
     ]
 
@@ -198,12 +231,25 @@ test.describe('Collaboration agent execution', () => {
     agentCase: AgentCase,
     testInfo: TestInfo
   ): Promise<void> {
-    await resetMockMcp(request)
-    await configureMockMcp(request, {
-      documentNames: { [agentCase.nodeId]: agentCase.mcpOutputMarker },
-    })
-    configuredPrompts.add(agentCase.prompt)
-    await configureToolScenario(request, agentCase.prompt, [
+    const artifactContent = agentCase.artifactName
+      ? [
+          `SKILL_PROBE=${SKILL_MARKER}`,
+          `MCP_PROBE=${agentCase.mcpOutputMarker}`,
+          `TASK_RESULT=${agentCase.answerMarker}`,
+        ].join('\n')
+      : ''
+    const artifactCommand = agentCase.artifactName
+      ? [
+          `cat > ${agentCase.artifactName} <<'EOF'`,
+          artifactContent,
+          'EOF',
+          `cat ${agentCase.artifactName}`,
+        ].join('\n')
+      : ''
+    const issue = await createIssue(request, projectId, agentCase)
+    const scenarioMatch = `task_id: ${issue.id}`
+    configuredPrompts.add(scenarioMatch)
+    await configureToolScenario(request, scenarioMatch, [
       ...(agentCase.loadsSkillWithTool
         ? [
             {
@@ -224,12 +270,33 @@ test.describe('Collaboration agent execution', () => {
           },
         ],
       },
+      ...(agentCase.artifactName
+        ? [
+            {
+              toolCalls: [
+                {
+                  toolName: 'Bash',
+                  arguments: {
+                    command: artifactCommand,
+                    description: 'Persist collaboration execution evidence',
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
       {
-        responseContent: `${agentCase.answerMarker} ${agentCase.mcpOutputMarker}`,
+        responseContent: [
+          agentCase.answerMarker,
+          SKILL_MARKER,
+          agentCase.mcpOutputMarker,
+          agentCase.artifactName ?? '',
+        ]
+          .filter(Boolean)
+          .join(' '),
       },
     ])
 
-    const issue = await createIssue(request, projectId, agentCase)
     await page.goto(
       `/collaboration/workspaces/${workspace!.id}/projects/${projectId}/issues/${issue.id}`
     )
@@ -256,7 +323,9 @@ test.describe('Collaboration agent execution', () => {
     expect(execution.syncState).toBe('in_sync')
 
     await waitForTaskTerminal(resources.token, execution.backendTaskId!)
-    const task = await getTask(request, resources.token, execution.backendTaskId!)
+    const task = (await getTask(request, resources.token, execution.backendTaskId!)) as BackendTask
+    expect(task.id).toBe(execution.backendTaskId)
+    expect(String(task.status).toUpperCase()).toMatch(/^COMPLETED/)
     const taskCalls = collectTaskToolCalls(task).filter(call =>
       call.name.endsWith('get_document_info')
     )
@@ -264,8 +333,10 @@ test.describe('Collaboration agent execution', () => {
     expect(taskCalls[0].input).toEqual({ nodeId: agentCase.nodeId })
     expect(JSON.stringify(taskCalls[0].output)).toContain(agentCase.mcpOutputMarker)
     expect(extractTaskAnswer(task)).toContain(agentCase.answerMarker)
+    expect(extractTaskAnswer(task)).toContain(SKILL_MARKER)
+    expect(extractTaskAnswer(task)).toContain(agentCase.mcpOutputMarker)
 
-    const modelBodies = await getScenarioModelBodies(request, agentCase.prompt)
+    const modelBodies = await getScenarioModelBodies(request, scenarioMatch)
     expect(modelBodies.length).toBeGreaterThan(1)
     if (agentCase.loadsSkillWithTool) {
       const skillCalls = collectTaskToolCalls(task).filter(call => call.name === 'Skill')
@@ -283,7 +354,22 @@ test.describe('Collaboration agent execution', () => {
       agentCase.mcpOutputMarker
     )
 
-    const mcpCalls = await getMcpCalls(request)
+    if (agentCase.artifactName) {
+      await assertClaudeRuntimeEvidence(
+        request,
+        execution,
+        task,
+        modelBodies,
+        agentCase,
+        artifactCommand,
+        artifactContent
+      )
+    }
+
+    const mcpCalls = (await getMcpCalls(request)).filter(
+      call =>
+        call.name === 'get_document_info' && String(call.arguments.nodeId) === agentCase.nodeId
+    )
     expect(mcpCalls).toHaveLength(1)
     expect(mcpCalls[0]).toMatchObject({
       name: 'get_document_info',
@@ -305,6 +391,75 @@ test.describe('Collaboration agent execution', () => {
     await page.reload()
     await expect(page.getByTestId(`collaboration-run-${execution.id}`)).toContainText('succeeded')
     await capture(page, testInfo, `wegent-${agentCase.label.toLowerCase()}-04-completed`)
+  }
+
+  async function assertClaudeRuntimeEvidence(
+    request: APIRequestContext,
+    execution: CollaborationExecution,
+    task: BackendTask,
+    modelBodies: Record<string, unknown>[],
+    agentCase: AgentCase,
+    artifactCommand: string,
+    artifactContent: string
+  ): Promise<void> {
+    expect(task.model_id).toBe(claude.modelName)
+    const runtimeSubtask = task.subtasks.find(
+      subtask =>
+        String(subtask.role).toUpperCase() === 'ASSISTANT' &&
+        Boolean(subtask.executor_name) &&
+        Boolean(subtask.executor_namespace)
+    )
+    expect(runtimeSubtask, 'ClaudeCode task should retain its Executor identity').toBeTruthy()
+    expect(runtimeSubtask!.id).toBeGreaterThan(0)
+    expect(runtimeSubtask!.executor_name).toMatch(/^executor-/)
+    expect(runtimeSubtask!.executor_namespace).toBeTruthy()
+    expect(String(runtimeSubtask!.status).toUpperCase()).toMatch(/^COMPLETED/)
+
+    const runtime = await apiRequest<RuntimeCheck>(
+      request,
+      `/api/tasks/${execution.backendTaskId}/runtime-check`
+    )
+    expect(runtime).toMatchObject({
+      task_id: execution.backendTaskId,
+      active_stream: null,
+    })
+    expect(String(runtime.task_status).toUpperCase()).toMatch(/^COMPLETED/)
+
+    const bashCalls = collectTaskToolCalls(task).filter(call => call.name === 'Bash')
+    expect(bashCalls).toHaveLength(1)
+    expect(bashCalls[0].input).toEqual({
+      command: artifactCommand,
+      description: 'Persist collaboration execution evidence',
+    })
+    expect(modelToolNames(modelBodies).some(name => name === 'Bash')).toBe(true)
+    expect(modelRequestText(modelBodies.slice(2))).toContain(SKILL_MARKER)
+    expect(modelRequestText(modelBodies.slice(2))).toContain(agentCase.mcpOutputMarker)
+
+    const workspace = await apiRequest<RemoteWorkspaceStatus>(
+      request,
+      `/api/tasks/${execution.backendTaskId}/remote-workspace/status`
+    )
+    expect(workspace).toMatchObject({
+      connected: true,
+      available: true,
+      reason: null,
+    })
+    expect(workspace.root_path).toBeTruthy()
+    if (task.execution_workspace_path) {
+      expect(workspace.root_path).toBe(task.execution_workspace_path)
+    }
+
+    const artifactPath = `${workspace.root_path.replace(/\/$/, '')}/${agentCase.artifactName}`
+    const artifactResponse = await request.get(
+      `${PROVIDER_NATIVE_API_URL}/api/tasks/${
+        execution.backendTaskId
+      }/remote-workspace/file?path=${encodeURIComponent(artifactPath)}&disposition=inline`,
+      { headers: authHeaders(resources.token) }
+    )
+    const artifactBody = await artifactResponse.text()
+    expect(artifactResponse.status(), artifactBody).toBe(200)
+    expect(artifactBody.trim()).toBe(artifactContent)
+    expect(extractTaskAnswer(task)).toContain(agentCase.artifactName!)
   }
 
   async function configureBotCapabilities(

@@ -55,9 +55,20 @@ const CODEX_PLUGIN_SKILL_NAME = 'hello-wework'
 const CODEX_PLUGIN_SKILL_MARKER = '# Hello Wework'
 const CODEX_PLUGIN_PROMPT = '使用 Wework 插件示例向 Collaboration E2E 问好。'
 const CODEX_PLUGIN_COMPLETION = 'Hello, Collaboration E2E!'
+const CODEX_PLUGIN_ID = `${CODEX_PLUGIN_NAME}@${CODEX_PLUGIN_MARKETPLACE}`
+const CODEX_PLUGIN_ARTIFACT_NAME = 'collaboration-codex-plugin-result.txt'
+const CODEX_PLUGIN_ARTIFACT_LINES = [
+  `Skill marker: ${CODEX_PLUGIN_SKILL_MARKER}`,
+  `MCP output: ${CODEX_PLUGIN_COMPLETION}`,
+  `Plugin: ${CODEX_PLUGIN_ID}`,
+]
+const CODEX_PLUGIN_ARTIFACT_CONTENT = `${CODEX_PLUGIN_ARTIFACT_LINES.join('\n')}\n`
+const CODEX_PLUGIN_BOARD_SEARCH_CALL_ID = 'collaboration-codex-plugin-board-item-search'
 const CODEX_PLUGIN_BOARD_CALL_ID = 'collaboration-codex-plugin-board-item'
 const CODEX_PLUGIN_SKILL_CALL_ID = 'collaboration-codex-plugin-skill'
+const CODEX_PLUGIN_MCP_SEARCH_CALL_ID = 'collaboration-codex-plugin-mcp-search'
 const CODEX_PLUGIN_MCP_CALL_ID = 'collaboration-codex-plugin-mcp'
+const CODEX_PLUGIN_ARTIFACT_CALL_ID = 'collaboration-codex-plugin-artifact'
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -471,6 +482,8 @@ export function createDesktopScenario({
   let workflowTaskBindings = []
   let resolveFirstContinuationStarted
   let releaseFirstContinuation
+  let resolveCodexPluginCompletionStarted
+  let releaseCodexPluginCompletion
   let resolveMoonshotFollowUpStarted
   let releaseMoonshotFollowUp
   const firstContinuationStarted = new Promise(resolve => {
@@ -478,6 +491,12 @@ export function createDesktopScenario({
   })
   const firstContinuationRelease = new Promise(resolve => {
     releaseFirstContinuation = resolve
+  })
+  const codexPluginCompletionStarted = new Promise(resolve => {
+    resolveCodexPluginCompletionStarted = resolve
+  })
+  const codexPluginCompletionRelease = new Promise(resolve => {
+    releaseCodexPluginCompletion = resolve
   })
   const moonshotFollowUpStarted = new Promise(resolve => {
     resolveMoonshotFollowUpStarted = resolve
@@ -497,6 +516,12 @@ export function createDesktopScenario({
       ...options,
       useApiKey: true,
     })
+  }
+
+  function requestWorkspacePath(payload) {
+    const match = JSON.stringify(payload).match(/<cwd>([^<]+)<\/cwd>/u)
+    assert.ok(match?.[1], 'The Codex request did not expose its execution workspace')
+    return match[1]
   }
 
   async function allExecutions(projectId) {
@@ -1265,6 +1290,7 @@ export function createDesktopScenario({
     )
     await control.command('select', executionModel, { value: `public:${CLOUD_MODEL_NAME}` })
     await control.command('select', executionProject, { value: 'standalone' })
+    await captureScreenshot(control, 'project-automation-codex-plugin-01-bound-agent-runtime.png')
     const initialUpstreamRequestOffset = upstreamResponseRequests.length
     await control.command('setLocalProxyUrl', 'body', {
       value: 'http://127.0.0.1:1',
@@ -1292,6 +1318,44 @@ export function createDesktopScenario({
       uiTimeoutMs
     ).then(response => response.items.find(candidate => candidate.id === moonshotOverrideIssue.id))
     assert.equal(persistedMoonshotIssue.execution_config.model, CLOUD_MODEL_NAME)
+
+    const moonshotTaskListSelector = `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`
+    const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
+    const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
+    await withTimeout(
+      codexPluginCompletionStarted,
+      automationRuntimeTimeoutMs,
+      'The Codex plugin execution did not reach its final completion response'
+    )
+    try {
+      await control.command('scrollIntoView', moonshotTaskListSelector)
+      await control.command('waitFor', moonshotTaskListSelector, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
+      await control.command('hover', moonshotOverrideCard, { visible: true })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        `${moonshotPopupConversation} [data-testid="pause-response-button"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await captureScreenshot(control, 'project-automation-codex-plugin-02-running.png')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', moonshotProgressPopup, {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
+    } finally {
+      releaseCodexPluginCompletion()
+    }
 
     const moonshotExecution = await waitForCompletedExecution(
       projectId,
@@ -1343,13 +1407,16 @@ export function createDesktopScenario({
       'The Issue execution did not reach the selected Moonshot model service',
       uiTimeoutMs
     )
-    const initialIssueRequests = initialMoonshotRequests.filter(request =>
-      JSON.stringify(request).includes(`task_id: ${moonshotOverrideIssue.id}`)
-    )
-    assert.equal(
-      initialIssueRequests.length,
-      4,
-      'The Codex plugin flow did not execute Issue read, Skill read, MCP call, and completion'
+    const initialIssueRequests = initialMoonshotRequests.filter(request => {
+      const requestText = JSON.stringify(request)
+      return (
+        requestText.includes(`task_id: ${moonshotOverrideIssue.id}`) &&
+        !requestText.includes('"request_kind":"prewarm"')
+      )
+    })
+    assert.ok(
+      [5, 6, 7].includes(initialIssueRequests.length),
+      `The Codex plugin flow did not execute Issue read, Skill read, MCP discovery/call, artifact write, and completion in a valid number of model turns: ${initialIssueRequests.length}`
     )
     assert.ok(
       initialIssueRequests.every(request => request.model === CLOUD_MODEL_UPSTREAM_ID),
@@ -1367,8 +1434,6 @@ export function createDesktopScenario({
       ),
       'The Codex plugin MCP output never returned to the model'
     )
-    await captureScreenshot(control, 'project-automation-codex-plugin-completed.png')
-    await control.command('setLocalProxyUrl', 'body', { value: '' })
 
     const runtimeWork = await waitForValue(
       () => cloudRequest('/api/runtime-work'),
@@ -1386,29 +1451,41 @@ export function createDesktopScenario({
     assert.equal(runtimeTasksForIssue.length, 1, 'The Issue created more than one Runtime task')
     assert.equal(projectedMoonshotTask.modelSelection?.modelName, CLOUD_MODEL_NAME)
     assert.equal(projectedMoonshotTask.modelSelection?.modelType, 'public')
+    assert.ok(
+      projectedMoonshotTask.workspacePath,
+      'The projected Runtime task did not expose its execution workspace'
+    )
     assert.equal(
       Object.hasOwn(projectedMoonshotTask, 'runtimeHandle'),
       false,
       'The private Runtime handle escaped the cloud projection boundary'
     )
+    assert.equal(
+      await readFile(join(projectedMoonshotTask.workspacePath, CODEX_PLUGIN_ARTIFACT_NAME), 'utf8'),
+      CODEX_PLUGIN_ARTIFACT_CONTENT,
+      'The real Codex Runtime did not persist the Skill, MCP, and Plugin evidence artifact'
+    )
 
-    await control.command('drag', moonshotOverrideCard, {
-      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-in_review"]`,
-    })
-    await waitForValue(
+    const completedMoonshotIssue = await waitForValue(
       () => cloudRequest(`/api/v1/loop-items/${moonshotOverrideIssue.id}`),
-      item => item.status === 'in_review',
-      'The completed Issue did not reach the review state required for board follow-up',
+      item =>
+        item.status === 'in_review' &&
+        item.execution_state === 'succeeded' &&
+        item.ai_state?.status === 'succeeded' &&
+        item.ai_state?.project_chat_message_id &&
+        item.ai_state?.runtime_device_id === CLOUD_DEVICE_ID &&
+        item.ai_state?.runtime_task_id === moonshotExecution.runtimeTaskId,
+      'The completed Codex Runtime did not automatically project the Issue and completion activity to review',
       uiTimeoutMs
     )
-    const moonshotTaskListSelector = `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`
+    assert.equal(completedMoonshotIssue.ai_state.agent_id, localDefaultAgent.id)
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
+
     await control.command('scrollIntoView', moonshotTaskListSelector)
     await control.command('waitFor', moonshotTaskListSelector, {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
-    const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
     const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
     const moonshotPopupInput = `${moonshotPopupConversation} [data-testid="chat-message-input"]`
     const moonshotPopupSend = `${moonshotPopupConversation} [data-testid="send-message-button"]`
@@ -1419,6 +1496,21 @@ export function createDesktopScenario({
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command(
+      'waitFor',
+      `${moonshotPopupConversation} [data-testid="message-assistant"]`,
+      {
+        text: CODEX_PLUGIN_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
+    await control.command('waitFor', taskFileLink, {
+      text: '打开任务文件',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-codex-plugin-03-completed-evidence.png')
     const [moonshotPopupMetrics] = JSON.parse(
       await control.command('getElementMetrics', moonshotProgressPopup)
     )
@@ -1475,11 +1567,6 @@ export function createDesktopScenario({
       `The board popup did not start from the latest message: ${JSON.stringify(popupScrollMetrics)}`
     )
     await captureScreenshot(control, 'project-automation-board-hover-stable-latest.png')
-    await control.command('waitFor', taskFileLink, {
-      text: '打开任务文件',
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
     await control.command('click', taskFileLink, { visible: true })
     await control.command(
       'waitFor',
@@ -2985,11 +3072,20 @@ export function createDesktopScenario({
             codexPluginSkillPath,
             'The Codex plugin execution started before its Skill synchronized'
           )
-          if (requestContainsToolOutput(payload, CODEX_PLUGIN_MCP_CALL_ID)) {
+          const advertisedToolNames = new Set(
+            (Array.isArray(payload.tools) ? payload.tools : [])
+              .map(tool => tool?.name ?? tool?.function?.name)
+              .filter(Boolean)
+          )
+          const directToolName = candidates =>
+            candidates.find(candidate => advertisedToolNames.has(candidate))
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_ARTIFACT_CALL_ID)) {
             assert.ok(
-              serialized.includes(CODEX_PLUGIN_COMPLETION),
-              'The Codex plugin MCP result did not return to the model'
+              CODEX_PLUGIN_ARTIFACT_LINES.every(line => serialized.includes(line)),
+              'The Codex workspace artifact did not contain Skill, MCP, and Plugin evidence'
             )
+            resolveCodexPluginCompletionStarted()
+            await codexPluginCompletionRelease
             writeEvents([
               responseCreated(responseId),
               assistantMessage(
@@ -2999,11 +3095,31 @@ export function createDesktopScenario({
             ])
             return true
           }
-          if (requestContainsToolOutput(payload, CODEX_PLUGIN_SKILL_CALL_ID)) {
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_MCP_CALL_ID)) {
             assert.ok(
-              serialized.includes(CODEX_PLUGIN_SKILL_MARKER),
-              'The Codex plugin Skill file was not read through the real tool loop'
+              serialized.includes(CODEX_PLUGIN_COMPLETION),
+              'The Codex plugin MCP result did not return to the model'
             )
+            const artifactCommand = [
+              `printf '%s\\n' ${CODEX_PLUGIN_ARTIFACT_LINES.map(line => JSON.stringify(line)).join(
+                ' '
+              )}`,
+              `> ${JSON.stringify(CODEX_PLUGIN_ARTIFACT_NAME)}`,
+              `&& cat ${JSON.stringify(CODEX_PLUGIN_ARTIFACT_NAME)}`,
+            ].join(' ')
+            const shell = selectShellToolCommand(
+              payload,
+              artifactCommand,
+              requestWorkspacePath(payload)
+            )
+            writeEvents([
+              responseCreated(responseId),
+              ...functionCall(CODEX_PLUGIN_ARTIFACT_CALL_ID, shell.name, shell.arguments),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_MCP_SEARCH_CALL_ID)) {
             const tool = selectMcpTool(payload, CODEX_PLUGIN_MCP_NAMESPACE, 'hello_wework', {
               name: 'Collaboration E2E',
             })
@@ -3015,6 +3131,25 @@ export function createDesktopScenario({
                 tool.name,
                 tool.arguments
               ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_SKILL_CALL_ID)) {
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_SKILL_MARKER),
+              'The Codex plugin Skill file was not read through the real tool loop'
+            )
+            const selection = mcpToolRequestEvents(payload, {
+              toolName: 'hello_wework',
+              argumentsValue: { name: 'Collaboration E2E' },
+              directToolName: directToolName([`${CODEX_PLUGIN_MCP_NAMESPACE}__hello_wework`]),
+              searchCallId: CODEX_PLUGIN_MCP_SEARCH_CALL_ID,
+              toolCallId: CODEX_PLUGIN_MCP_CALL_ID,
+            })
+            writeEvents([
+              responseCreated(responseId),
+              ...selection.events,
               responseCompleted(responseId),
             ])
             return true
@@ -3041,15 +3176,33 @@ export function createDesktopScenario({
             ])
             return true
           }
-          const boardTool = selectMcpTool(payload, 'wework_space', 'get_board_item', {})
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_BOARD_SEARCH_CALL_ID)) {
+            const boardTool = selectMcpTool(payload, 'wework_space', 'get_board_item', {})
+            writeEvents([
+              responseCreated(responseId),
+              ...namespacedFunctionCall(
+                CODEX_PLUGIN_BOARD_CALL_ID,
+                boardTool.namespace,
+                boardTool.name,
+                boardTool.arguments
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          const selection = mcpToolRequestEvents(payload, {
+            toolName: 'get_board_item',
+            argumentsValue: {},
+            directToolName: directToolName([
+              'wework_space__get_board_item',
+              'wegent-wework-space_get_board_item',
+            ]),
+            searchCallId: CODEX_PLUGIN_BOARD_SEARCH_CALL_ID,
+            toolCallId: CODEX_PLUGIN_BOARD_CALL_ID,
+          })
           writeEvents([
             responseCreated(responseId),
-            ...namespacedFunctionCall(
-              CODEX_PLUGIN_BOARD_CALL_ID,
-              boardTool.namespace,
-              boardTool.name,
-              boardTool.arguments
-            ),
+            ...selection.events,
             responseCompleted(responseId),
           ])
           return true

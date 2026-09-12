@@ -2929,7 +2929,10 @@ export function TodoEditor(props: TodoEditorProps) {
                   </details>
 
                   {deliveries.length > 0 ? (
-                    <section className="task-detail-workspace-section">
+                    <section
+                      className="task-detail-workspace-section"
+                      data-testid="todo-detail-deliveries"
+                    >
                       <div className="task-detail-workspace-section-head">
                         <h3 className="task-detail-workspace-section-title">
                           交付

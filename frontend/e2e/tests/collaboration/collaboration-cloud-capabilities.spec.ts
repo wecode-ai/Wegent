@@ -93,10 +93,25 @@ async function webApi<T>(
   )
 }
 
-async function createProjectByApi(page: Page, name: string): Promise<CloudProject> {
+async function createWorkspaceByApi(page: Page, name: string): Promise<CloudWorkspace> {
+  return webApi(page, '/api/v1/workspaces', {
+    method: 'POST',
+    body: {
+      name,
+      description: 'Collaboration cloud capability E2E workspace',
+    },
+  })
+}
+
+async function createProjectByApi(
+  page: Page,
+  workspaceId: string,
+  name: string
+): Promise<CloudProject> {
   return webApi(page, '/api/v1/cloud-projects', {
     method: 'POST',
     body: {
+      workspace_id: workspaceId,
       name,
       description: 'Collaboration cloud capability E2E project',
       task_provider: 'local',
@@ -469,10 +484,13 @@ test.describe('Collaboration cloud capabilities', () => {
     test.setTimeout(120_000)
     const suffix = Date.now()
     let projectId = ''
+    let workspaceId = ''
 
     try {
       await page.goto('/collaboration')
-      const project = await createProjectByApi(page, `Board Groups ${suffix}`)
+      const workspace = await createWorkspaceByApi(page, `Board Groups Workspace ${suffix}`)
+      workspaceId = workspace.id
+      const project = await createProjectByApi(page, workspace.id, `Board Groups ${suffix}`)
       projectId = project.id
       const member = await regularUser(page)
       await addProjectMember(page, project.id, member.id, 'Developer')
@@ -521,6 +539,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await captureEvidence(page, 'web-06-status-board')
     } finally {
       if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
     }
   })
 
@@ -533,10 +552,13 @@ test.describe('Collaboration cloud capabilities', () => {
     const fileName = `cloud-file-${suffix}.txt`
     const taskAttachmentName = `task-attachment-${suffix}.txt`
     let projectId = ''
+    let workspaceId = ''
 
     try {
       await page.goto('/collaboration')
-      const project = await createProjectByApi(page, `Files ${suffix}`)
+      const workspace = await createWorkspaceByApi(page, `Files Workspace ${suffix}`)
+      workspaceId = workspace.id
+      const project = await createProjectByApi(page, workspace.id, `Files ${suffix}`)
       projectId = project.id
       const attachmentIssue = await createIssueByApi(page, project.id, `Attachment Issue ${suffix}`)
       const taskAttachment = await uploadIssueAttachment(
@@ -620,6 +642,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByRole('button', { name: folderName, exact: true })).toHaveCount(0)
     } finally {
       if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
     }
   })
 
@@ -629,10 +652,13 @@ test.describe('Collaboration cloud capabilities', () => {
     test.setTimeout(120_000)
     const suffix = Date.now()
     let projectId = ''
+    let workspaceId = ''
 
     try {
       await page.goto('/collaboration')
-      const project = await createProjectByApi(page, `Automation ${suffix}`)
+      const workspace = await createWorkspaceByApi(page, `Automation Workspace ${suffix}`)
+      workspaceId = workspace.id
+      const project = await createProjectByApi(page, workspace.id, `Automation ${suffix}`)
       projectId = project.id
       await page.goto(`/collaboration/${encodeURIComponent(project.id)}?view=automation`)
       await expect(page.getByTestId('project-automation-view')).toBeVisible()
@@ -687,6 +713,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await captureEvidence(page, 'web-09-automation-history')
     } finally {
       if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
     }
   })
 
@@ -697,10 +724,13 @@ test.describe('Collaboration cloud capabilities', () => {
     const suffix = Date.now()
     const stageId = `review-${suffix}`
     let projectId = ''
+    let workspaceId = ''
 
     try {
       await page.goto('/collaboration')
-      const project = await createProjectByApi(page, `Workflow ${suffix}`)
+      const workspace = await createWorkspaceByApi(page, `Workflow Workspace ${suffix}`)
+      workspaceId = workspace.id
+      const project = await createProjectByApi(page, workspace.id, `Workflow ${suffix}`)
       projectId = project.id
       const created = await createIssueByApi(page, project.id, `Workflow Issue ${suffix}`, {
         workflow: {
@@ -769,6 +799,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await captureEvidence(page, 'web-12-workflow-completed')
     } finally {
       if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
     }
   })
 
@@ -780,10 +811,13 @@ test.describe('Collaboration cloud capabilities', () => {
     const suffix = Date.now()
     const tagName = `managed-${suffix}`
     let projectId = ''
+    let workspaceId = ''
 
     try {
       await page.goto('/collaboration')
-      const project = await createProjectByApi(page, `Manage ${suffix}`)
+      const workspace = await createWorkspaceByApi(page, `Manage Workspace ${suffix}`)
+      workspaceId = workspace.id
+      const project = await createProjectByApi(page, workspace.id, `Manage ${suffix}`)
       projectId = project.id
       const member = await regularUser(page)
       await page.goto(`/collaboration/${encodeURIComponent(project.id)}?view=manage`)
@@ -896,6 +930,7 @@ test.describe('Collaboration cloud capabilities', () => {
       }
     } finally {
       if (projectId) await archiveProject(page, projectId)
+      if (workspaceId) await archiveWorkspace(page, workspaceId)
     }
   })
 })

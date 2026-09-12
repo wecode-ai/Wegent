@@ -644,7 +644,22 @@ describe('shared IssueDetail', () => {
         ]),
       },
       deliveries: {
-        list: jest.fn().mockResolvedValue([delivery]),
+        list: jest.fn().mockResolvedValue([
+          {
+            ...delivery,
+            assets: [
+              {
+                id: 'asset-1',
+                kind: 'file',
+                displayName: 'report.md',
+                relativePath: 'report.md',
+                contentType: 'text/markdown',
+                sizeBytes: 128,
+                sha256: 'abc',
+              },
+            ],
+          },
+        ]),
         get: jest.fn().mockResolvedValue({
           ...delivery,
           assets: [
@@ -693,6 +708,7 @@ describe('shared IssueDetail', () => {
     await waitFor(() => expect(api.collaborators.remove).toHaveBeenCalledWith(issue.id, 5))
 
     fireEvent.click(screen.getByRole('button', { name: /交付结果/ }))
+    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
     expect(await screen.findByText('report.md')).toBeInTheDocument()
     open.mockRestore()
     anchorClick.mockRestore()

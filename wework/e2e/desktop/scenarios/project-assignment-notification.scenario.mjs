@@ -31,6 +31,12 @@ const EXECUTION_COMPLETION = 'WEWORK_ASSIGNMENT_RUNTIME_COMPLETED'
 const EXECUTION_CALL_ID = 'wework-assignment-apply-patch'
 const EXECUTION_ARTIFACT_NAME = 'wework-assignment-runtime-result.txt'
 const EXECUTION_ARTIFACT_CONTENT = 'WEWORK_ASSIGNMENT_RUNTIME_ARTIFACT'
+const DELIVERY_CREATE_SEARCH_ID = 'wework-assignment-search-create-delivery'
+const DELIVERY_CREATE_CALL_ID = 'wework-assignment-create-delivery'
+const DELIVERY_UPLOAD_SEARCH_ID = 'wework-assignment-search-upload-delivery'
+const DELIVERY_UPLOAD_CALL_ID = 'wework-assignment-upload-delivery'
+const DELIVERY_FINALIZE_SEARCH_ID = 'wework-assignment-search-finalize-delivery'
+const DELIVERY_FINALIZE_CALL_ID = 'wework-assignment-finalize-delivery'
 const MULTI_TURN_RESPONSE_TIMEOUT_MS = 30_000
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
@@ -87,15 +93,63 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+function findToolOutput(value, callId) {
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const output = findToolOutput(candidate, callId)
+      if (output !== undefined) return output
+    }
+    return undefined
+  }
+  if (!value || typeof value !== 'object') return undefined
+  if (
+    ['function_call_output', 'custom_tool_call_output'].includes(value.type) &&
+    value.call_id === callId
+  ) {
+    return value.output
+  }
+  for (const candidate of Object.values(value)) {
+    const output = findToolOutput(candidate, callId)
+    if (output !== undefined) return output
+  }
+  return undefined
+}
+
+function findDeliveryDraft(value) {
+  if (typeof value === 'string') {
+    try {
+      return findDeliveryDraft(JSON.parse(value))
+    } catch {
+      return null
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const deliveryDraft = findDeliveryDraft(candidate)
+      if (deliveryDraft) return deliveryDraft
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  if (value.id && value.status === 'draft') return value
+  for (const candidate of Object.values(value)) {
+    const deliveryDraft = findDeliveryDraft(candidate)
+    if (deliveryDraft) return deliveryDraft
+  }
+  return null
+}
+
 export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspacePath }) {
   let backendUrl = ''
   let ownerToken = ''
   let owner = null
   let assigner = null
   let assignerToken = ''
+  let workspace = null
   let project = null
   let assignedTask = null
   let selfAssignedTask = null
+  let delivery = null
   let modelRequestCount = 0
   let clickRequested = false
   let executionCompletionReleased = false
@@ -144,9 +198,98 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         requestContainsToolOutput(payload, EXECUTION_CALL_ID)
       ) {
         let events
-        if (requestContainsToolOutput(payload, EXECUTION_CALL_ID)) {
+        if (requestContainsToolOutput(payload, DELIVERY_FINALIZE_CALL_ID)) {
+          const deliveries = await ownerRequest(`/api/v1/loop-items/${assignedTask.id}/deliveries`)
+          delivery = deliveries.items.find(candidate => candidate.status === 'delivered')
+          assert.ok(delivery, 'The real local Codex runtime did not finalize its Delivery')
+          assert.equal(delivery.assets.length, 1)
+          assert.equal(delivery.assets[0].relative_path, EXECUTION_ARTIFACT_NAME)
           await executionCompletionGate
           events = [assistantMessage(EXECUTION_COMPLETION)]
+        } else if (requestContainsToolOutput(payload, DELIVERY_FINALIZE_SEARCH_ID)) {
+          const tool = selectMcpTool(payload, 'wework_space', 'finalize_delivery', {
+            delivery_id: delivery.id,
+            fulfillments: [],
+          })
+          events = namespacedFunctionCall(
+            DELIVERY_FINALIZE_CALL_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          )
+        } else if (requestContainsToolOutput(payload, DELIVERY_UPLOAD_CALL_ID)) {
+          const directToolName = (payload.tools ?? [])
+            .map(tool => tool.name ?? tool.function?.name)
+            .find(name => name?.endsWith('__finalize_delivery'))
+          events = mcpToolRequestEvents(payload, {
+            toolName: 'finalize_delivery',
+            argumentsValue: {
+              delivery_id: delivery.id,
+              fulfillments: [],
+            },
+            directToolName,
+            searchCallId: DELIVERY_FINALIZE_SEARCH_ID,
+            toolCallId: DELIVERY_FINALIZE_CALL_ID,
+          }).events
+        } else if (requestContainsToolOutput(payload, DELIVERY_UPLOAD_SEARCH_ID)) {
+          const tool = selectMcpTool(payload, 'wework_space', 'upload_delivery_asset', {
+            delivery_id: delivery.id,
+            file_path: join(workspacePath, EXECUTION_ARTIFACT_NAME),
+            relative_path: EXECUTION_ARTIFACT_NAME,
+            display_name: EXECUTION_ARTIFACT_NAME,
+            content_type: 'text/plain',
+          })
+          events = namespacedFunctionCall(
+            DELIVERY_UPLOAD_CALL_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          )
+        } else if (requestContainsToolOutput(payload, DELIVERY_CREATE_CALL_ID)) {
+          delivery = findDeliveryDraft(findToolOutput(payload.input ?? [], DELIVERY_CREATE_CALL_ID))
+          assert.ok(
+            delivery,
+            'The real local Codex runtime did not return its persisted Delivery draft'
+          )
+          const directToolName = (payload.tools ?? [])
+            .map(tool => tool.name ?? tool.function?.name)
+            .find(name => name?.endsWith('__upload_delivery_asset'))
+          events = mcpToolRequestEvents(payload, {
+            toolName: 'upload_delivery_asset',
+            argumentsValue: {
+              delivery_id: delivery.id,
+              file_path: join(workspacePath, EXECUTION_ARTIFACT_NAME),
+              relative_path: EXECUTION_ARTIFACT_NAME,
+              display_name: EXECUTION_ARTIFACT_NAME,
+              content_type: 'text/plain',
+            },
+            directToolName,
+            searchCallId: DELIVERY_UPLOAD_SEARCH_ID,
+            toolCallId: DELIVERY_UPLOAD_CALL_ID,
+          }).events
+        } else if (requestContainsToolOutput(payload, DELIVERY_CREATE_SEARCH_ID)) {
+          const tool = selectMcpTool(payload, 'wework_space', 'create_delivery', {
+            markdown: `# ${ASSIGNED_TASK_TITLE}\n\n${EXECUTION_COMPLETION}`,
+          })
+          events = namespacedFunctionCall(
+            DELIVERY_CREATE_CALL_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          )
+        } else if (requestContainsToolOutput(payload, EXECUTION_CALL_ID)) {
+          const directToolName = (payload.tools ?? [])
+            .map(tool => tool.name ?? tool.function?.name)
+            .find(name => name?.endsWith('__create_delivery'))
+          events = mcpToolRequestEvents(payload, {
+            toolName: 'create_delivery',
+            argumentsValue: {
+              markdown: `# ${ASSIGNED_TASK_TITLE}\n\n${EXECUTION_COMPLETION}`,
+            },
+            directToolName,
+            searchCallId: DELIVERY_CREATE_SEARCH_ID,
+            toolCallId: DELIVERY_CREATE_CALL_ID,
+          }).events
         } else {
           const applyPatch = (payload.tools ?? []).find(tool => tool?.name === 'apply_patch')
           assert.ok(applyPatch, 'The real local Codex runtime did not advertise apply_patch')
@@ -219,7 +362,21 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         }),
       })
       assignerToken = login.access_token
-      project = await ownerRequest('/api/v1/cloud-projects', {
+      workspace = await ownerRequest('/api/v1/workspaces', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `${PROJECT_NAME}-${process.pid}`,
+          description: 'Desktop E2E Workspace for assigned human execution',
+        }),
+      })
+      await ownerRequest(`/api/v1/workspaces/${workspace.id}/members`, {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: assigner.id,
+          role: 'Maintainer',
+        }),
+      })
+      project = await ownerRequest(`/api/v1/workspaces/${workspace.id}/projects`, {
         method: 'POST',
         body: JSON.stringify({
           projectKey: 'NOTIFY',
@@ -251,9 +408,15 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
     async verify(control) {
       assert.ok(owner?.id, 'Notification recipient fixture is missing')
       assert.ok(assigner?.id, 'Notification assigner fixture is missing')
+      assert.ok(workspace?.id, 'Notification Workspace fixture is missing')
       assert.ok(project?.id, 'Notification project fixture is missing')
       assert.ok(assignedTask?.id, 'Assigned task fixture is missing')
       assert.ok(selfAssignedTask?.id, 'Self-assigned task fixture is missing')
+      const workspaceProjects = await ownerRequest(`/api/v1/workspaces/${workspace.id}/projects`)
+      assert.ok(
+        workspaceProjects.items.some(candidate => candidate.id === project.id),
+        'The assigned human Project is not owned by its Workspace'
+      )
 
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
@@ -271,6 +434,13 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         text: NOTIFICATION_COMPLETION,
         timeoutMs: Math.max(uiTimeoutMs, MULTI_TURN_RESPONSE_TIMEOUT_MS),
       })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('pause-response-button'),
+        'The general notification response rendered before its Runtime Task became idle',
+        uiTimeoutMs,
+        activeSurface
+      )
       const sentInbox = await ownerRequest('/api/v1/wework-notifications')
       const general = sentInbox.items.find(
         item => item.title === 'Wework 通知' && item.body === '你好'
@@ -308,6 +478,13 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         text: CLICK_COMPLETION,
         timeoutMs: Math.max(uiTimeoutMs, MULTI_TURN_RESPONSE_TIMEOUT_MS),
       })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('pause-response-button'),
+        'The clickable notification response rendered before its Runtime Task became idle',
+        uiTimeoutMs,
+        activeSurface
+      )
       const clickInbox = await ownerRequest('/api/v1/wework-notifications')
       const clickable = clickInbox.items.find(item => item.title === '点击打开看板')
       assert.ok(clickable, 'The real MCP must persist the requested click target')
@@ -478,18 +655,36 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       )
       const completedIssue = await waitForApiValue(
         () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
-        value => value?.status === 'in_review',
-        'Runtime Task completion did not synchronize the assigned Issue to in_review',
+        value => value?.status === 'completed',
+        'Finalizing the Runtime Task Delivery did not complete the assigned Issue',
         uiTimeoutMs
       )
-      assert.equal(completedIssue.status, 'in_review')
+      assert.equal(completedIssue.status, 'completed')
+      const deliveredFiles = await ownerRequest(
+        `/api/v1/cloud-projects/${project.id}/delivery-files`
+      )
+      const deliveredArtifact = deliveredFiles.items.find(
+        candidate =>
+          candidate.loop_item_id === assignedTask.id &&
+          candidate.relative_path === EXECUTION_ARTIFACT_NAME
+      )
+      assert.ok(
+        deliveredArtifact,
+        'The completed Wework Task did not synchronize its artifact to the Project Delivery view'
+      )
+      const deliveredContent = await fetch(
+        `${backendUrl}/api/v1/delivery-assets/${deliveredArtifact.asset_id}/content`,
+        { headers: { Authorization: `Bearer ${ownerToken}` } }
+      )
+      assert.equal(deliveredContent.ok, true)
+      assert.equal((await deliveredContent.text()).trim(), EXECUTION_ARTIFACT_CONTENT)
       await captureScreenshot(control, 'assignment-05-task-completed.png', activeSurface)
       await control.command('click', `${activeSurface} [data-testid="ai-chat-modal-close"]`)
       await control.command('waitFor', `${activeSurface} [data-testid="ai-chat-modal"]`, {
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      const synchronizedCard = `${activeSurface} [data-testid="cloud-todo-column-in_review"] [data-testid="cloud-todo-card-${assignedTask.id}"]`
+      const synchronizedCard = `${activeSurface} [data-testid="cloud-todo-column-completed"] [data-testid="cloud-todo-card-${assignedTask.id}"]`
       await control.command('waitFor', synchronizedCard, { timeoutMs: uiTimeoutMs })
       await control.command('click', synchronizedCard)
       await control.command('waitFor', `${activeSurface} [data-testid="cloud-todo-detail"]`, {
@@ -498,15 +693,19 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       const synchronizedDetailStatus = await waitForApiValue(
         () =>
           control.command('getValue', `${activeSurface} [data-testid="cloud-todo-detail-status"]`),
-        value => value === 'in_review',
+        value => value === 'completed',
         'The completed Runtime Task status was not reflected in the open Issue detail',
         uiTimeoutMs
       )
       assert.equal(
         synchronizedDetailStatus,
-        'in_review',
+        'completed',
         'The completed Runtime Task status was not reflected in the open Issue detail'
       )
+      await control.command('waitFor', `${activeSurface} [data-testid="todo-detail-deliveries"]`, {
+        text: '1 个附件',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureScreenshot(control, 'assignment-06-issue-synchronized.png', activeSurface)
 
       await control.command('clearSystemNotifications', 'body')
@@ -617,7 +816,9 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         assignerId: assigner?.id ?? null,
         assignedTaskId: assignedTask?.id ?? null,
         ownerId: owner?.id ?? null,
+        workspaceId: workspace?.id ?? null,
         projectId: project?.id ?? null,
+        deliveryId: delivery?.id ?? null,
         selfAssignedTaskId: selfAssignedTask?.id ?? null,
       }
     },

@@ -107,6 +107,9 @@ export default defineConfig({
     {
       name: 'executor-chromium',
       testMatch: EXECUTOR_REGRESSION_SPEC,
+      // Executor regression specs share administrator DingTalk configuration and
+      // the provider mock's global MCP call state, so files must not overlap.
+      workers: 1,
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',

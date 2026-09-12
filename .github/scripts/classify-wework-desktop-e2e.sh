@@ -476,6 +476,10 @@ classify_wework_path() {
       select_target "cloud:all"
       return
       ;;
+    wework/e2e/desktop/scenarios/project-assignment-notification.scenario.mjs)
+      select_target "core:project-assignment-notification"
+      return
+      ;;
     wework/e2e/desktop/scenarios/project-event-sources.scenario.mjs)
       select_target "core:project-event-sources"
       return
@@ -839,6 +843,15 @@ classify_path() {
       backend/tests/services/test_runtime_work_service.py | \
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
+      ;;
+    packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
+      packages/collaboration/src/project-agent-config/* | \
+      packages/collaboration/src/http-api/createSharedWorkspaceHttpApi* | \
+      packages/collaboration/src/ports/SharedWorkspaceApi* | \
+      packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
+      select_target "core:remote-device-onboarding"
+      select_target "core:collaboration-shared-core"
+      select_target "cloud:cloud-device-lifecycle"
       ;;
     packages/collaboration/*)
       select_target "core:collaboration-shared-core"

@@ -334,6 +334,17 @@ class RealCloudEnvironment {
     await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
   }
 
+  async restartBackendWithFrontendUrl(frontendUrl) {
+    assert.ok(frontendUrl, 'The cloud frontend URL is required')
+    assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
+    await stopProcessGroup(this.backend)
+    this.backendEnv = {
+      ...this.backendEnv,
+      FRONTEND_URL: frontendUrl,
+    }
+    await this.launchBackend()
+  }
+
   async publishOfficialSmartApp(sourcePath) {
     assert.ok(this.backendEnv, 'Cloud backend environment is not initialized')
     await runChecked('uv', ['run', 'python', 'scripts/publish_official_smart_app.py', sourcePath], {
