@@ -151,6 +151,12 @@ export function WorkspacePanelCards({
   const cloudToolsAvailable = Boolean(
     projectDevice && supportsCloudSessions(projectDevice, activeWorkspaceDeviceId)
   )
+  const cloudDesktopAvailable = Boolean(
+    cloudToolsAvailable &&
+    cloudDesktopExtension.available &&
+    projectDevice &&
+    supportsVncDesktop(projectDevice, activeWorkspaceDeviceId)
+  )
   const remoteSessionTarget = Boolean(
     projectDevice &&
     (supportsCloudSessions(projectDevice, activeWorkspaceDeviceId) ||
@@ -232,12 +238,6 @@ export function WorkspacePanelCards({
         preferLocalTerminal ? 'local' : 'configured',
       ].join(':')
     : ''
-  const cloudDesktopAvailable = Boolean(
-    cloudToolsAvailable &&
-      cloudDesktopExtension.available &&
-      projectDevice &&
-      supportsVncDesktop(projectDevice, activeWorkspaceDeviceId)
-  )
   const cloudDesktopLaunchActionRef = useRef<CloudDesktopLaunchAction | null>(null)
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()

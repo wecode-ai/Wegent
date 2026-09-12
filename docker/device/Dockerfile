@@ -275,12 +275,14 @@ export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
 export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
+export DEVICE_VNC_DESKTOP_ENABLED="${DEVICE_VNC_DESKTOP_ENABLED:-false}"
+export DEVICE_VNC_RFB_ADDR="${DEVICE_VNC_RFB_ADDR:-127.0.0.1:5901}"
 EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
 
 normalize_enabled_flag() {
     local name="$1"
     local value="${!name:-true}"
-    case "${value,,}" in
+    case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
         true | 1 | yes | on) printf 'true' ;;
         false | 0 | no | off) printf 'false' ;;
         *)

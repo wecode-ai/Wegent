@@ -1508,6 +1508,16 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+      runtime_features: {
+        schemaVersion: 4,
+        desktop: {
+          version: 1,
+          available: true,
+          protocol: 'rfb' as const,
+          transport: 'websocket' as const,
+          clipboard: 'extended-text' as const,
+        },
+      },
     }
     const workspaceProject = {
       id: 12,
