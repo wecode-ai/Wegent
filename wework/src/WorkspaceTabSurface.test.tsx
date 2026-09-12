@@ -144,7 +144,16 @@ describe('WorkspaceTabSurface', () => {
     runtimeEnvironmentMocks.electron = false
   })
 
-  test('opens the collaboration board in the retained Wegent webview', async () => {
+  test('opens the fixed collaboration board without a registered DSH app', async () => {
+    const defaultRuntime = window.__WEWORK_DSH_UI__
+    if (!defaultRuntime) throw new Error('Expected the default DSH UI test runtime')
+    window.__WEWORK_DSH_UI__ = {
+      ...defaultRuntime,
+      getEntries: slot =>
+        slot === 'wework.app'
+          ? defaultRuntime.getEntries(slot).filter(app => app.id !== 'collaboration')
+          : defaultRuntime.getEntries(slot),
+    }
     const props = {
       cloudWebUrl:
         'https://app.example.com/login/oidc?access_token=token&token_type=bearer&login_success=true',
@@ -164,30 +173,38 @@ describe('WorkspaceTabSurface', () => {
       },
     }
 
-    const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active />)
-    expect(await screen.findByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'true')
-    const activeProps = appIframeMocks.props.mock.lastCall?.[0] as {
-      appKey: string
-      src: string
+    try {
+      expect(window.__WEWORK_DSH_UI__.getEntries('wework.app')).not.toContainEqual(
+        expect.objectContaining({ id: 'collaboration' })
+      )
+
+      const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active />)
+      expect(await screen.findByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'true')
+      const activeProps = appIframeMocks.props.mock.lastCall?.[0] as {
+        appKey: string
+        src: string
+      }
+      expect(activeProps.appKey).toBe('collaboration')
+      expect(new URL(activeProps.src).searchParams.get('redirect')).toBe(
+        '/collaboration/project%201/issues/ISSUE%2F1'
+      )
+      expect(workbenchProviderMocks.loadTaskComposerCatalogs).not.toHaveBeenCalled()
+
+      rerender(<WorkspaceTabSurface {...props} active={false} />)
+
+      expect(screen.getByTestId('workspace-tab-content-fixed-board')).toHaveClass('hidden')
+      expect(screen.getByTestId('workspace-tab-content-fixed-board')).not.toHaveClass(
+        'invisible',
+        'pointer-events-none'
+      )
+      expect(screen.getByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'false')
+      expect(appIframeMocks.cleanup).not.toHaveBeenCalled()
+
+      unmount()
+      expect(appIframeMocks.cleanup).toHaveBeenCalledTimes(1)
+    } finally {
+      window.__WEWORK_DSH_UI__ = defaultRuntime
     }
-    expect(activeProps.appKey).toBe('collaboration')
-    expect(new URL(activeProps.src).searchParams.get('redirect')).toBe(
-      '/collaboration/project%201/issues/ISSUE%2F1'
-    )
-    expect(workbenchProviderMocks.loadTaskComposerCatalogs).not.toHaveBeenCalled()
-
-    rerender(<WorkspaceTabSurface {...props} active={false} />)
-
-    expect(screen.getByTestId('workspace-tab-content-fixed-board')).toHaveClass('hidden')
-    expect(screen.getByTestId('workspace-tab-content-fixed-board')).not.toHaveClass(
-      'invisible',
-      'pointer-events-none'
-    )
-    expect(screen.getByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'false')
-    expect(appIframeMocks.cleanup).not.toHaveBeenCalled()
-
-    unmount()
-    expect(appIframeMocks.cleanup).toHaveBeenCalledTimes(1)
   })
 
   test('keeps a project board in the local workbench for task execution', () => {

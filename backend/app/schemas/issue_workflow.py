@@ -115,10 +115,10 @@ class WorkflowExecutionConfig(BaseModel):
         )
         return self
 
-    def is_complete(self) -> bool:
+    def is_complete(self, *, require_model: bool = True) -> bool:
         return bool(
             (self.agent_id or self.execution_device_id)
-            and self.model
+            and (self.model or not require_model)
             and self.workspace_binding
         )
 
@@ -716,7 +716,7 @@ class IssueWorkflowInstance(BaseModel):
         if node.execution_mode != "robot":
             return False
         config = self.execution_config_for(node)
-        if config is None or not config.is_complete():
+        if config is None or not config.is_complete(require_model=False):
             return True
         if node.workspace_policy == "composer":
             binding = config.workspace_binding

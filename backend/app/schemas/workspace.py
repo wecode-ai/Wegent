@@ -157,6 +157,7 @@ class PersonalAgentResource(BaseModel):
 
 class PersonalExecutionEnvironmentResource(BaseModel):
     id: SnowflakeId
+    device_id: int
     name: str
     kind: Literal["local_device", "cloud_host"]
     owner_type: Literal["user"] = "user"

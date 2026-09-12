@@ -235,6 +235,7 @@ def test_workspace_resources_and_project_scope_are_separate(
         for row in resource_body["execution_environments"]
         if row["id"] == str(device.id)
     )
+    assert personal_environment["device_id"] == device.id
     assert personal_environment["kind"] == "local_device"
     assert personal_environment["owner_type"] == "user"
     assert personal_environment["owner_id"] == str(test_user.id)

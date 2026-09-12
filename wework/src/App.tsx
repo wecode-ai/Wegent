@@ -201,10 +201,12 @@ function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
 ): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
-  const appId =
-    tab.kind === 'board' && tab.fixed
-      ? 'collaboration'
-      : workspaceTabPath(tab).match(/^\/app\/([^/]+)/)?.[1]
+  if (tab.kind === 'board' && tab.fixed) {
+    const src = resolveCloudAppUrl(wegentUrl, '/collaboration', tab)
+    return src ? { appKey: 'collaboration', src, title: tab.title } : null
+  }
+
+  const appId = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)?.[1]
   if (!appId) return null
   const app = resolveDshApp(appId)
   if (app?.mode === 'iframe') {

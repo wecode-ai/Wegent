@@ -97,6 +97,7 @@ def personal_environment_values(
     device_type = str(spec.get("deviceType") or "local")
     return {
         "id": str(device.id),
+        "device_id": device.id,
         "name": str(spec.get("displayName") or device.name),
         "kind": execution_environment_kind(device_type),
         "owner_type": "user",

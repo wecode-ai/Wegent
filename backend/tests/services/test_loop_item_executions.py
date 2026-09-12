@@ -3139,6 +3139,76 @@ def test_inherited_stage_requires_the_executor_that_owns_the_workspace(
         )
 
 
+def test_executor_payload_accepts_aliases_for_the_same_app_device(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user, title="Send message")
+    execution = _make_execution(test_db, item, bot, test_user)
+    device = Kind(
+        kind="Device",
+        name="device-runtime",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "deviceId": "device-runtime",
+                "appDeviceId": "electron-app-device",
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.flush()
+    record_route = f"app-record-{device.id}"
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=execution.id,
+        runtime_task_id=execution.runtime_task_id,
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id=record_route,
+    )
+    execution.execution_environment = "cloud"
+    execution.execution_device_id = record_route
+    execution.execution_payload = (
+        loop_item_execution_service._serialize_execution_intent(
+            runtime_selection=dict(execution.runtime_selection),
+            origin_context={},
+            runtime_request=request.model_dump(by_alias=True, exclude_none=True),
+        )
+    )
+    test_db.commit()
+
+    compiled = MagicMock()
+    compiled.payload = {"executionRequest": {}}
+    compiled.target.device_id = record_route
+    with patch(
+        "app.services.runtime_work_service.compile_runtime_task_create",
+        return_value=compiled,
+    ) as compile_runtime:
+        payload = loop_item_execution_service.build_executor_runtime_payload(
+            test_db,
+            execution=execution,
+            execution_target_id="electron-app-device",
+            executor_device_id=record_route,
+        )
+
+    assert payload == compiled.payload
+    compiled_request = compile_runtime.call_args.kwargs["request"]
+    assert compiled_request.device_id == record_route
+
+
 def test_claim_batch_moves_queued_to_claimed_within_capacity(
     test_db: Session, test_user: User
 ) -> None:
@@ -6159,3 +6229,63 @@ def test_enqueue_generic_robot_normalizes_app_device_id(
 
     assert execution.execution_device_id == f"app-record-{device.id}"
     assert execution.execution_environment == "local"
+
+
+def test_enqueue_generic_robot_uses_codex_runtime_default_model(
+    test_db: Session, test_user: User
+) -> None:
+    """A workflow robot may defer model selection to the Codex Runtime."""
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "local-device", device_type="app")
+    rule = ProjectAutomationRule(
+        id="generic-default-model-rule",
+        cloud_project_id=project.id,
+        title="Generic default model rule",
+        description="Handle this task",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json=_automation_metadata(action="execute"),
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger": "workflow",
+            "workflow_node_id": "node-1",
+            "instruction_override": "Handle this task",
+        },
+    )
+    test_db.add_all([rule, run])
+    test_db.flush()
+
+    execution = loop_item_execution_service.enqueue_generic_robot(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        runtime_subject_user_id=test_user.id,
+        runtime_profile=None,
+        execution_device_id="local-device",
+        model=None,
+        model_type=None,
+        model_options={},
+        assigner_user_id=test_user.id,
+        priority="medium",
+        automation_context={
+            "runtime_source": "runtime_user",
+            "run_id": str(run.id),
+            "workspace_binding": {"type": "standalone"},
+        },
+    )
+
+    assert execution.status == "queued"
+    assert execution.runtime_selection["model"] is None
+    profile, _ = loop_item_execution_service._runtime_profile_and_context(
+        test_db,
+        execution=execution,
+    )
+    assert profile.model == ""
