@@ -111,11 +111,17 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
     && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    dbus-x11 \
     file \
     git \
     python3 \
     python3-pip \
+    tigervnc-standalone-server \
+    tigervnc-tools \
     util-linux \
+    xclip \
+    xfce4 \
+    xfce4-terminal \
     xz-utils \
     && case "$DEVICE_IMAGE_PLATFORM" in \
         linux/amd64) node_arch=x64 ;; \
@@ -256,6 +262,10 @@ ENV DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
 ENV DEVICE_SESSION_GATEWAY_PORT=17888
 ENV DEVICE_CODE_SERVER_ENABLED=true
 ENV DEVICE_TERMINAL_ENABLED=true
+ENV DEVICE_VNC_DESKTOP_ENABLED=true
+ENV DEVICE_VNC_RFB_ADDR=127.0.0.1:5901
+ENV DEVICE_VNC_CLIPBOARD_MODE=extended-text
+ENV DEVICE_VNC_GEOMETRY=1440x900
 
 RUN cat >/usr/local/bin/wegent-device-entrypoint <<'EOF'
 #!/usr/bin/env bash
@@ -283,7 +293,13 @@ normalize_enabled_flag() {
 DEVICE_SESSION_GATEWAY_ENABLED="$(normalize_enabled_flag DEVICE_SESSION_GATEWAY_ENABLED)"
 DEVICE_CODE_SERVER_ENABLED="$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)"
 DEVICE_TERMINAL_ENABLED="$(normalize_enabled_flag DEVICE_TERMINAL_ENABLED)"
-export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED
+DEVICE_VNC_DESKTOP_ENABLED="$(normalize_enabled_flag DEVICE_VNC_DESKTOP_ENABLED)"
+export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED DEVICE_VNC_DESKTOP_ENABLED
+
+if [ "$DEVICE_VNC_RFB_ADDR" != "127.0.0.1:5901" ]; then
+    echo "DEVICE_VNC_RFB_ADDR must remain 127.0.0.1:5901 in the managed device image" >&2
+    exit 1
+fi
 
 if [[ "$WEGENT_EXECUTOR_HOME" != /* ]]; then
     echo "WEGENT_EXECUTOR_HOME must be an absolute path" >&2
@@ -371,6 +387,27 @@ if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then
 fi
 
 pids=()
+vnc_started=false
+
+if [ "$DEVICE_VNC_DESKTOP_ENABLED" = "true" ] && [ "$DEVICE_SESSION_GATEWAY_ENABLED" = "true" ]; then
+    mkdir -p "$HOME/.vnc"
+    cat >"$HOME/.vnc/xstartup" <<'VNC_STARTUP'
+#!/bin/sh
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+exec dbus-launch --exit-with-session startxfce4
+VNC_STARTUP
+    chmod 0700 "$HOME/.vnc/xstartup"
+    rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+    tigervncserver :1 \
+        -localhost yes \
+        -SecurityTypes None \
+        -geometry "${DEVICE_VNC_GEOMETRY:-1440x900}" \
+        -depth 24 \
+        >"$DEVICE_LOG_DIR/vnc.log" \
+        2>"$DEVICE_LOG_DIR/vnc-error.log"
+    vnc_started=true
+fi
 
 # Match the local device installer: code-server only listens on loopback and
 # leaves remote authentication to the token-gated device session gateway.
@@ -394,7 +431,7 @@ else
     echo "WEGENT_AUTH_TOKEN is not set; skipping wegent-executor startup" >&2
 fi
 
-trap 'if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi' TERM INT EXIT
+trap 'if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi; if [ "$vnc_started" = "true" ]; then tigervncserver -kill :1 >/dev/null 2>&1 || true; fi' TERM INT EXIT
 if [ "${#pids[@]}" -gt 0 ]; then
     wait -n "${pids[@]}"
 else

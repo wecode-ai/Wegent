@@ -10,6 +10,7 @@ import {
   supportsLocalTerminalLaunch,
   supportsRemoteSessions,
   supportsRemoteTerminalSessions,
+  supportsVncDesktop,
 } from '@/lib/device-capabilities'
 import {
   closeLocalTerminal,
@@ -232,7 +233,10 @@ export function WorkspacePanelCards({
       ].join(':')
     : ''
   const cloudDesktopAvailable = Boolean(
-    cloudToolsAvailable && cloudDesktopExtension.available && activeWorkspaceDeviceId
+    cloudToolsAvailable &&
+      cloudDesktopExtension.available &&
+      projectDevice &&
+      supportsVncDesktop(projectDevice, activeWorkspaceDeviceId)
   )
   const cloudDesktopLaunchActionRef = useRef<CloudDesktopLaunchAction | null>(null)
   const availableTools =

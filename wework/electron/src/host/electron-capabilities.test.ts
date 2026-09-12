@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from 'vitest'
-import type { WebContents } from 'electron'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { clipboard, type WebContents } from 'electron'
 import { resolve } from 'node:path'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
@@ -9,6 +9,7 @@ import type {
 } from './capability-router.js'
 import {
   captureWebContentsDataUrl,
+  createElectronCapabilityRouter,
   coreGrantedCapabilities,
   cpuLoadRatioBetween,
   e2eOpenDialogOverride,
@@ -27,6 +28,56 @@ import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
+
+const electronMocks = vi.hoisted(() => ({
+  appGetPath: vi.fn(() => '/tmp'),
+  appGetVersion: vi.fn(() => '0.0.0-test'),
+  clipboardAvailableFormats: vi.fn(() => [] as string[]),
+  clipboardRead: vi.fn(() => ''),
+  clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
+  clipboardReadText: vi.fn(() => 'native text'),
+  clipboardWriteText: vi.fn(),
+  dialogShowMessageBox: vi.fn(),
+  dialogShowOpenDialog: vi.fn(),
+  dialogShowSaveDialog: vi.fn(),
+  powerMonitorGetSystemIdleTime: vi.fn(() => 0),
+  shellOpenExternal: vi.fn(async () => undefined),
+  shellOpenPath: vi.fn(async () => ''),
+  shellShowItemInFolder: vi.fn(),
+}))
+
+vi.mock('electron', () => ({
+  app: {
+    getPath: electronMocks.appGetPath,
+    getVersion: electronMocks.appGetVersion,
+  },
+  BrowserWindow: class BrowserWindow {},
+  clipboard: {
+    availableFormats: electronMocks.clipboardAvailableFormats,
+    read: electronMocks.clipboardRead,
+    readBuffer: electronMocks.clipboardReadBuffer,
+    readText: electronMocks.clipboardReadText,
+    writeText: electronMocks.clipboardWriteText,
+  },
+  dialog: {
+    showMessageBox: electronMocks.dialogShowMessageBox,
+    showOpenDialog: electronMocks.dialogShowOpenDialog,
+    showSaveDialog: electronMocks.dialogShowSaveDialog,
+  },
+  Notification: class Notification {
+    constructor(readonly options: { title: string; body: string }) {}
+    once = vi.fn()
+    show = vi.fn()
+  },
+  powerMonitor: {
+    getSystemIdleTime: electronMocks.powerMonitorGetSystemIdleTime,
+  },
+  shell: {
+    openExternal: electronMocks.shellOpenExternal,
+    openPath: electronMocks.shellOpenPath,
+    showItemInFolder: electronMocks.shellShowItemInFolder,
+  },
+}))
 
 describe('cpuLoadRatioBetween', () => {
   test('calculates system utilization from cumulative CPU times', () => {
@@ -146,6 +197,47 @@ function createWebContents(input: {
     debugger: debuggerSession,
   } as unknown as WebContents
   return { capturePage, contents, debuggerSession }
+}
+
+function createVncClipboardRouter(focused = true) {
+  const targetWindow = {
+    isDestroyed: vi.fn(() => false),
+    isFocused: vi.fn(() => focused),
+  }
+  const router = createElectronCapabilityRouter(
+    () => targetWindow as never,
+    () => ({
+      crashCount: 0,
+      generation: 1,
+      reason: null,
+      state: 'ready',
+      updatedAt: '2026-09-12T00:00:00.000Z',
+    }),
+    () => null,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {
+      cleanupStaleTemporaryImages: vi.fn(),
+      coreDshPlugins: () => null,
+      events: { read: vi.fn(() => ({ events: [], latestSequence: 0, historyLost: false })) },
+      feedback: {} as never,
+      openRuntimeTask: vi.fn(),
+      openScheme: vi.fn(),
+      pendingSchemes: {
+        acknowledge: vi.fn(),
+        read: vi.fn(() => ({ items: [] })),
+      },
+      pluginDevelopment: () => null,
+      secureStorage: {
+        delete: vi.fn(),
+        get: vi.fn(),
+        set: vi.fn(),
+      },
+    } as never
+  )
+  return { router, targetWindow }
 }
 
 describe('captureWebContentsDataUrl', () => {
@@ -501,6 +593,57 @@ describe('registerDesktopServiceCapabilities', () => {
     expect(cleanupStaleTemporaryImages).toHaveBeenCalledOnce()
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
+  })
+})
+
+describe('VNC clipboard capabilities', () => {
+  beforeEach(() => {
+    electronMocks.clipboardReadText.mockClear()
+    electronMocks.clipboardWriteText.mockClear()
+  })
+
+  test('read and write require a focused window with the active lease', async () => {
+    const { router } = createVncClipboardRouter()
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.readText', { leaseId: 'lease-1' })
+    ).rejects.toMatchObject({ code: 'vnc_clipboard_inactive' })
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.activate', { leaseId: 'lease-1' })
+    ).resolves.toEqual({ active: true })
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.readText', { leaseId: 'lease-1' })
+    ).resolves.toBe('native text')
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.writeText', {
+        leaseId: 'lease-1',
+        text: 'remote text',
+      })
+    ).resolves.toEqual({ written: true })
+
+    expect(clipboard.readText).toHaveBeenCalledOnce()
+    expect(clipboard.writeText).toHaveBeenCalledWith('remote text')
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.readText', { leaseId: 'lease-2' })
+    ).rejects.toMatchObject({ code: 'vnc_clipboard_inactive' })
+  })
+
+  test('rejects VNC clipboard activation and access when the Wework window is unfocused', async () => {
+    const { router } = createVncClipboardRouter(false)
+
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.activate', { leaseId: 'lease-1' })
+    ).rejects.toMatchObject({ code: 'window_not_focused' })
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'vncClipboard.writeText', {
+        leaseId: 'lease-1',
+        text: 'remote text',
+      })
+    ).rejects.toMatchObject({ code: 'vnc_clipboard_inactive' })
+
+    expect(clipboard.writeText).not.toHaveBeenCalled()
   })
 })
 

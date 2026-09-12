@@ -161,6 +161,7 @@ export function createBackendWorkbenchServices(
       startProjectCodeServer: projectApi.startCodeServerSession,
       startDeviceTerminal: deviceApi.startTerminal,
       startDeviceCodeServer: deviceApi.startCodeServer,
+      startDeviceVnc: deviceApi.startVnc,
       createRemoteTerminalClient: sessionId =>
         createRemoteTerminalClient(sessionId, {
           socketBaseUrl,

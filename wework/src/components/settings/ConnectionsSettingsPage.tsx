@@ -44,6 +44,7 @@ import {
   supportsCloudSessions,
   supportsDeviceMetrics,
   supportsRemoteSessions,
+  supportsVncDesktop,
 } from '@/lib/device-capabilities'
 import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -725,7 +726,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                       : undefined
                   }
                 />
-                {canUseCloudSessions && cloudDesktopExtension.available && (
+                {supportsVncDesktop(device) && cloudDesktopExtension.available && (
                   <CloudDesktopDeviceAction
                     deviceId={device.device_id}
                     disabled={!isOnline}

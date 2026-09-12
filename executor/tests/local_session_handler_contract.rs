@@ -18,8 +18,11 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::TcpListener;
 use tokio::sync::Notify;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as TungsteniteMessage};
 use wegent_executor::local::session::{
     CodeServerLoginClient, GatewayRequest, LocalSession, LocalSessionHandler, PtySpawnRequest,
@@ -316,6 +319,76 @@ async fn running_session_gateway_proxies_http_and_websocket_to_code_server() {
 
     drop(gateway);
     upstream_task.abort();
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Serializes process-wide gateway environment overrides.
+async fn running_session_gateway_proxies_vnc_websocket_to_loopback_rfb() {
+    let _lock = env_lock();
+    let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
+    let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let _public_base_url = EnvGuard::set("DEVICE_PUBLIC_BASE_URL", "");
+    let rfb_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rfb_port = rfb_listener.local_addr().unwrap().port();
+    let rfb_task = tokio::spawn(async move {
+        let (mut stream, _) = rfb_listener.accept().await.unwrap();
+        stream.write_all(b"RFB 003.008\n").await.unwrap();
+        let mut buffer = [0_u8; 32];
+        let read = stream.read(&mut buffer).await.unwrap();
+        assert_eq!(&buffer[..read], b"hello-rfb");
+        stream.write_all(b"rfb:hello").await.unwrap();
+    });
+
+    let root = temp_root("running-vnc-gateway");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler =
+        LocalSessionHandler::new("http://127.0.0.1:0", true, 18080, root, pty_manager)
+            .with_vnc_desktop(true, rfb_port);
+    handler.sessions.insert(
+        "vnc-websocket".to_owned(),
+        LocalSession::vnc("vnc-websocket", "secret", 123, rfb_port, 9999999999),
+    );
+    let handler = Arc::new(Mutex::new(handler));
+    let gateway = start_session_gateway(Arc::clone(&handler))
+        .await
+        .unwrap()
+        .unwrap();
+    let http_status = reqwest::get(format!(
+        "http://{}/s/vnc-websocket/websockify?token=secret",
+        gateway.local_addr
+    ))
+    .await
+    .unwrap()
+    .status();
+    assert_eq!(http_status, StatusCode::BAD_REQUEST);
+
+    let websocket_request = format!(
+        "ws://{}/s/vnc-websocket/websockify?token=secret",
+        gateway.local_addr
+    )
+    .into_client_request()
+    .unwrap();
+    let (mut websocket, _) = tokio_tungstenite::connect_async(websocket_request)
+        .await
+        .unwrap();
+    assert_eq!(
+        websocket.next().await.unwrap().unwrap(),
+        TungsteniteMessage::Binary(b"RFB 003.008\n".to_vec().into())
+    );
+    websocket
+        .send(TungsteniteMessage::Binary(b"hello-rfb".to_vec().into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        websocket.next().await.unwrap().unwrap(),
+        TungsteniteMessage::Binary(b"rfb:hello".to_vec().into())
+    );
+    websocket.close(None).await.unwrap();
+
+    drop(gateway);
+    rfb_task.abort();
 }
 
 #[tokio::test]
@@ -1250,6 +1323,50 @@ fn start_code_server_session_returns_gateway_url() {
     assert_eq!(session.session_type, SessionType::CodeServer);
     assert!(session.terminal.is_none());
     assert_eq!(session.port, 18080);
+}
+
+#[tokio::test]
+async fn start_vnc_session_returns_gateway_websocket_url_without_workspace_path() {
+    let rfb_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rfb_port = rfb_listener.local_addr().unwrap().port();
+    let root = temp_root("vnc-session");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler = LocalSessionHandler::new(
+        "https://desktop.example.test",
+        true,
+        18080,
+        root,
+        pty_manager,
+    )
+    .with_vnc_desktop(true, rfb_port);
+
+    let result = handler.handle_start_session(SessionStartRequest {
+        session_type: SessionType::Vnc,
+        session_id: "vnc-1".to_owned(),
+        project_id: 123,
+        path: "/outside/workspace".to_owned(),
+        access_token: "secret value".to_owned(),
+        rows: None,
+        cols: None,
+        create_if_missing: false,
+        ttl_seconds: None,
+    });
+
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.session_type, Some(SessionType::Vnc));
+    assert_eq!(result.transport, Some("websocket".to_owned()));
+    assert!(result.path.is_none());
+    assert_eq!(
+        result.url,
+        "wss://desktop.example.test/s/vnc-1/websockify?token=secret+value"
+    );
+    let session = handler.sessions.get("vnc-1").unwrap();
+    assert_eq!(session.session_type, SessionType::Vnc);
+    assert_eq!(session.port, rfb_port);
+
+    drop(rfb_listener);
 }
 
 #[test]

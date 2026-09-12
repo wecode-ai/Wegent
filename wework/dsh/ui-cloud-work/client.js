@@ -16,6 +16,18 @@ window.__ModuleLoader__.load({
             title: '云端工作',
           })
         )
+        ctx.slots.inject('wework.route', () =>
+          ctx.wework.contributions.register(ctx, 'wework.route', {
+            id: 'device-desktop.root',
+            icon: 'monitor',
+            module: 'plugins/wework-ui-device-desktop.js',
+            path: '/device-desktop',
+            restorePolicy: 'none',
+            telemetryFeature: 'cloud_work',
+            titleKey: 'workbench.device_desktop',
+            title: '设备桌面',
+          })
+        )
         ctx.slots.inject('wework.sidebar.navigation', () =>
           ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', {
             id: 'cloud-work.navigation',

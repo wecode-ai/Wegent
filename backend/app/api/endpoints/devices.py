@@ -869,13 +869,13 @@ class DeviceSessionResponse(BaseModel):
 
     session_id: str = Field(..., description="Unique session identifier")
     device_id: str = Field(..., description="Target device ID")
-    type: Literal["terminal", "code_server"] = Field(
+    type: Literal["terminal", "code_server", "vnc"] = Field(
         ...,
         description="Session type",
     )
     path: str = Field(..., description="Working directory path")
     url: str = Field(default="", description="Browser-accessible session URL")
-    transport: Literal["url", "socketio"] = Field(
+    transport: Literal["url", "socketio", "websocket"] = Field(
         default="url",
         description="Browser transport for the interactive session",
     )
@@ -979,4 +979,43 @@ async def start_device_code_server(
         path=result.get("path", session_path),
         url=result.get("url", ""),
         transport=result.get("transport", "url"),
+    )
+
+
+@router.post("/{device_id}/vnc", response_model=DeviceSessionResponse)
+async def start_device_vnc(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a short-lived VNC desktop WebSocket session on a device."""
+    from app.services.device.session_service import (
+        DeviceSessionError,
+        local_device_session_service,
+    )
+
+    try:
+        result = await local_device_session_service.start_session(
+            db=db,
+            user_id=current_user.id,
+            device_id=device_id,
+            project_id=0,
+            session_type="vnc",
+            path="",
+            create_if_missing=False,
+            allow_app_device=False,
+        )
+    except DeviceSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return DeviceSessionResponse(
+        session_id=result.get("session_id", ""),
+        device_id=result.get("device_id", device_id),
+        type="vnc",
+        path="",
+        url=result.get("url", ""),
+        transport=result.get("transport", "websocket"),
     )
