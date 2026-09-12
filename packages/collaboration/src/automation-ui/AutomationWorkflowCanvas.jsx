@@ -1076,10 +1076,10 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
       previousRightPanelInset.current === 0 && rightPanelInset > 0;
     const addedNode =
       selectedNode.type === "step" && !previousIds.has(selectedNode.id)
-        ? nodes.find(
-            (node) => node.id === selectedNode.id && node.parentId == null,
-          )
-        : undefined;
+        ? nodes.find((node) => node.id === selectedNode.id)
+        : selectedNode.type === "dagStage" || selectedNode.type === "loopBody"
+          ? nodes.find((node) => !previousIds.has(node.id))
+          : undefined;
     const selectedId = selectedCanvasNodeId(selectedNode);
     const selectedAfterDeletion =
       priorSelectedId !== null &&
