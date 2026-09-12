@@ -1386,9 +1386,19 @@ export function CloudTodoWorkspace({
     }
     return result
   }, [runtimeWork])
+  const selectedProjectKey = selectedProject
+    ? projectSpaceKey(projectSpaceRef(selectedProject))
+    : null
   const activeItemTaskBindings = useMemo(() => {
-    if (selectedProject?.location !== 'cloud') return localItemTaskBindings
-    const bindings = cloudWorkspace.state.taskBindings.map(toWeworkTaskBinding)
+    const refreshedBindings =
+      itemTaskBindingsProjectKey === selectedProjectKey
+        ? Object.values(localItemTaskBindings).flat()
+        : null
+    const bindings =
+      refreshedBindings ??
+      (selectedProject?.location === 'cloud'
+        ? cloudWorkspace.state.taskBindings.map(toWeworkTaskBinding)
+        : [])
     const visibleBindings = isMyTasksBoard
       ? bindings.filter(binding =>
           runtimeTaskKeys.has(
@@ -1407,10 +1417,12 @@ export function CloudTodoWorkspace({
     return byItem
   }, [
     cloudWorkspace.state.taskBindings,
+    itemTaskBindingsProjectKey,
     isMyTasksBoard,
     localItemTaskBindings,
     runtimeTaskKeys,
     selectedProject?.location,
+    selectedProjectKey,
   ])
   const boardTaskBindings = useMemo<Record<string, CloudTodoBoardTaskBinding[]>>(
     () =>
@@ -1498,9 +1510,6 @@ export function CloudTodoWorkspace({
     },
     [activeItemTaskBindings, runtimeProjectIdByTask]
   )
-  const selectedProjectKey = selectedProject
-    ? projectSpaceKey(projectSpaceRef(selectedProject))
-    : null
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
