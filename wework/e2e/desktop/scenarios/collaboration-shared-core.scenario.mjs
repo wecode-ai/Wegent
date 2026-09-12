@@ -203,25 +203,9 @@ async function clickEmbedded(control, browserLabel, bridge, selector) {
 }
 
 async function fillEmbedded(bridge, selector, text) {
-  const target = await pageValue(
-    bridge,
-    `(() => {
-      const element = document.querySelector(${JSON.stringify(selector)})
-      if (!element) return null
-      const rect = element.getBoundingClientRect()
-      return {
-        disabled: Boolean(element.disabled),
-        x: rect.x + rect.width / 2,
-        y: rect.y + rect.height / 2,
-      }
-    })()`
-  )
-  assert.ok(target, `Could not find embedded selector ${selector}`)
-  assert.equal(target.disabled, false, `Embedded selector ${selector} is disabled`)
   const result = await bridge({
     action: 'fill',
-    x: target.x,
-    y: target.y,
+    selector,
     text,
     timeoutMs: 5_000,
   })
