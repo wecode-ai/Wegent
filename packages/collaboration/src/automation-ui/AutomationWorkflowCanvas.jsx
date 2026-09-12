@@ -1077,9 +1077,7 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
     const addedNode =
       selectedNode.type === "step" && !previousIds.has(selectedNode.id)
         ? nodes.find((node) => node.id === selectedNode.id)
-        : selectedNode.type === "dagStage" || selectedNode.type === "loopBody"
-          ? nodes.find((node) => !previousIds.has(node.id))
-          : undefined;
+        : nodes.find((node) => !previousIds.has(node.id));
     const selectedId = selectedCanvasNodeId(selectedNode);
     const selectedAfterDeletion =
       priorSelectedId !== null &&
