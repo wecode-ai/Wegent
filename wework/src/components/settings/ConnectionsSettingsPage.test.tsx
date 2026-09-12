@@ -175,6 +175,19 @@ function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   }
 }
 
+function vncDesktopRuntimeFeatures(): NonNullable<DeviceInfo['runtime_features']> {
+  return {
+    schemaVersion: 4,
+    desktop: {
+      version: 1,
+      available: true,
+      protocol: 'rfb',
+      transport: 'websocket',
+      clipboard: 'extended-text',
+    },
+  }
+}
+
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return cloudDevice({
     id: 2,
@@ -1823,7 +1836,9 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test('warns about active work and disables sessions while a cloud device restarts', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice({ slot_used: 1 })])
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({ slot_used: 1, runtime_features: vncDesktopRuntimeFeatures() }),
+    ])
     api.restartCloudDevice.mockResolvedValue({ message: 'restart sent' })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -1985,16 +2000,7 @@ describe('ConnectionsSettingsPage', () => {
     const onBack = vi.fn()
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
-        runtime_features: {
-          schemaVersion: 4,
-          desktop: {
-            version: 1,
-            available: true,
-            protocol: 'rfb',
-            transport: 'websocket',
-            clipboard: 'extended-text',
-          },
-        },
+        runtime_features: vncDesktopRuntimeFeatures(),
       }),
     ])
 
@@ -2028,16 +2034,7 @@ describe('ConnectionsSettingsPage', () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
         status: 'offline',
-        runtime_features: {
-          schemaVersion: 4,
-          desktop: {
-            version: 1,
-            available: true,
-            protocol: 'rfb',
-            transport: 'websocket',
-            clipboard: 'extended-text',
-          },
-        },
+        runtime_features: vncDesktopRuntimeFeatures(),
       }),
     ])
 
