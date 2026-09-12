@@ -141,6 +141,14 @@ class DingTalkChannelConfig(BaseModel):
     use_ai_card: bool = Field(
         default=True, description="Use AI Card for streaming responses"
     )
+    conversation_card_template_id: Optional[str] = Field(
+        default=None,
+        description="Custom streaming card template with a session settings action",
+    )
+    interaction_card_template_id: Optional[str] = Field(
+        default=None,
+        description="Custom model, device, agent, and task selection card template",
+    )
     # User mapping mode: how to map DingTalk users to Wegent users
     # - "staff_id": Use DingTalk staff_id as username (default)
     # - "email": Match user by email address

@@ -19,6 +19,10 @@ import dingtalk_stream
 
 from app.services.channels.base import BaseChannelProvider
 from app.services.channels.dingtalk.handler import WegentChatbotHandler
+from app.services.channels.dingtalk.selection_cards import (
+    DingTalkSelectionCardCallbackHandler,
+    DingTalkSelectionCardService,
+)
 from app.services.channels.messager_config import (
     get_channel_default_model_name,
     get_channel_default_team_id,
@@ -63,6 +67,16 @@ class DingTalkChannelProvider(BaseChannelProvider):
     def use_ai_card(self) -> bool:
         """Whether to use AI Card for streaming responses."""
         return self.config.get("use_ai_card", True)
+
+    @property
+    def conversation_card_template_id(self) -> str:
+        """Custom streaming-answer card template, if configured."""
+        return str(self.config.get("conversation_card_template_id") or "").strip()
+
+    @property
+    def interaction_card_template_id(self) -> str:
+        """Custom session-control card template, if configured."""
+        return str(self.config.get("interaction_card_template_id") or "").strip()
 
     def _is_configured(self) -> bool:
         """Check if DingTalk is properly configured."""
@@ -109,9 +123,24 @@ class DingTalkChannelProvider(BaseChannelProvider):
             # This reads from database to always get the latest configuration
             # even if the channel configuration is updated without restart
             channel_id = self.channel_id
+            selection_card_service = DingTalkSelectionCardService(
+                client=self._client,
+                channel_id=channel_id,
+                interaction_template_id=self.interaction_card_template_id,
+                get_default_team_id=lambda: get_channel_default_team_id(channel_id),
+                get_default_model_name=lambda: get_channel_default_model_name(
+                    channel_id
+                ),
+                get_user_mapping_config=lambda: get_channel_user_mapping_config(
+                    channel_id
+                ),
+            )
             handler = WegentChatbotHandler(
                 dingtalk_client=self._client,
                 use_ai_card=self.use_ai_card,
+                conversation_card_template_id=self.conversation_card_template_id,
+                interaction_card_template_id=self.interaction_card_template_id,
+                selection_card_service=selection_card_service,
                 get_default_team_id=lambda: get_channel_default_team_id(channel_id),
                 get_default_model_name=lambda: get_channel_default_model_name(
                     channel_id
@@ -125,6 +154,11 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 dingtalk_stream.chatbot.ChatbotMessage.TOPIC,
                 handler,
             )
+            if self.interaction_card_template_id:
+                self._client.register_callback_handler(
+                    dingtalk_stream.CallbackHandler.TOPIC_CARD_CALLBACK,
+                    DingTalkSelectionCardCallbackHandler(selection_card_service),
+                )
 
             # Start client in background task
             self._task = asyncio.create_task(self._run_client())
@@ -257,6 +291,8 @@ class DingTalkChannelProvider(BaseChannelProvider):
         status["extra_info"] = {
             "client_id": f"{self.client_id[:8]}..." if self.client_id else None,
             "use_ai_card": self.use_ai_card,
+            "conversation_card_configured": bool(self.conversation_card_template_id),
+            "interaction_card_configured": bool(self.interaction_card_template_id),
             "default_team_id": self.default_team_id,
         }
         return status

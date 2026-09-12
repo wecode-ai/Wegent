@@ -25,6 +25,27 @@ class TestParseCommand:
         assert result.command == CommandType.DEVICES
         assert result.argument is None
 
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            ("设置", CommandType.STATUS),
+            ("会话设置", CommandType.STATUS),
+            ("切模型", CommandType.MODELS),
+            ("换设备", CommandType.DEVICES),
+            ("切智能体", CommandType.AGENTS),
+            ("切任务", CommandType.SWITCH),
+        ],
+    )
+    def test_parse_exact_natural_language_control_aliases(self, content, expected):
+        result = parse_command(content)
+
+        assert result is not None
+        assert result.command == expected
+        assert result.argument is None
+
+    def test_does_not_parse_control_alias_inside_normal_message(self):
+        assert parse_command("请帮我设置一个新的模型") is None
+
     def test_parse_use_command_with_argument(self):
         """Test parsing /use command with device name."""
         result = parse_command("/use my-mac")

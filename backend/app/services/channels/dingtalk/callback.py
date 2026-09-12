@@ -39,6 +39,12 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
     incoming_message_data: Optional[Dict[str, Any]] = None
     # AI Card instance ID for cross-worker emitter reconstruction
     card_instance_id: Optional[str] = None
+    # Resolved Wegent user needed to authorize a post-run settings action
+    user_id: Optional[int] = None
+    # Preserve the card contract used when the task started. A channel may be
+    # edited or restarted before a different worker receives completion events.
+    conversation_card_template_id: Optional[str] = None
+    interaction_card_template_id: Optional[str] = None
 
     def __init__(
         self,
@@ -47,6 +53,9 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         webhook_url: Optional[str] = None,
         incoming_message_data: Optional[Dict[str, Any]] = None,
         card_instance_id: Optional[str] = None,
+        user_id: Optional[int] = None,
+        conversation_card_template_id: Optional[str] = None,
+        interaction_card_template_id: Optional[str] = None,
     ):
         """Initialize DingTalkCallbackInfo.
 
@@ -65,6 +74,9 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
         self.webhook_url = webhook_url
         self.incoming_message_data = incoming_message_data
         self.card_instance_id = card_instance_id
+        self.user_id = user_id
+        self.conversation_card_template_id = conversation_card_template_id
+        self.interaction_card_template_id = interaction_card_template_id
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for Redis storage."""
@@ -74,6 +86,9 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
                 "webhook_url": self.webhook_url,
                 "incoming_message_data": self.incoming_message_data,
                 "card_instance_id": self.card_instance_id,
+                "user_id": self.user_id,
+                "conversation_card_template_id": self.conversation_card_template_id,
+                "interaction_card_template_id": self.interaction_card_template_id,
             }
         )
         return data
@@ -87,6 +102,9 @@ class DingTalkCallbackInfo(BaseCallbackInfo):
             webhook_url=data.get("webhook_url"),
             incoming_message_data=data.get("incoming_message_data"),
             card_instance_id=data.get("card_instance_id"),
+            user_id=data.get("user_id"),
+            conversation_card_template_id=data.get("conversation_card_template_id"),
+            interaction_card_template_id=data.get("interaction_card_template_id"),
         )
 
 
@@ -267,11 +285,31 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
                     f"{existing_card_id} on task {task_id}"
                 )
 
-            emitter = StreamingResponseEmitter(
-                dingtalk_client=channel._client,
-                incoming_message=incoming_message,
-                existing_card_instance_id=existing_card_id,
-            )
+            emitter_kwargs: Dict[str, Any] = {
+                "dingtalk_client": channel._client,
+                "incoming_message": incoming_message,
+                "existing_card_instance_id": existing_card_id,
+            }
+            conversation_template_id = callback_info.conversation_card_template_id
+            if conversation_template_id is None:
+                conversation_template_id = getattr(
+                    channel, "conversation_card_template_id", ""
+                )
+            interaction_template_id = callback_info.interaction_card_template_id
+            if interaction_template_id is None:
+                interaction_template_id = getattr(
+                    channel, "interaction_card_template_id", ""
+                )
+            if conversation_template_id or interaction_template_id:
+                emitter_kwargs.update(
+                    {
+                        "conversation_card_template_id": conversation_template_id,
+                        "interaction_card_template_id": interaction_template_id,
+                        "channel_id": callback_info.channel_id,
+                        "user_id": callback_info.user_id,
+                    }
+                )
+            emitter = StreamingResponseEmitter(**emitter_kwargs)
 
             # Enable Redis-backed content sharing for multi-pod consistency
             emitter.set_shared_content_key(f"channel:streaming_content:{task_id}")

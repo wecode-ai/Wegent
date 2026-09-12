@@ -67,6 +67,7 @@ async def test_fresh_worker_reconnects_to_persisted_dingtalk_card(
         conversation_id="conv-private",
         incoming_message_data={"msgId": "dingtalk-message-1"},
         card_instance_id="card-instance-1",
+        user_id=9,
     )
     restored = DingTalkCallbackInfo.from_dict(persisted.to_dict())
     service = DingTalkCallbackService()
@@ -87,3 +88,19 @@ async def test_fresh_worker_reconnects_to_persisted_dingtalk_card(
     }
     assert calls["shared_content_key"] == f"channel:streaming_content:{task_id}"
     assert calls["emit_start"] == {"task_id": task_id, "subtask_id": 42}
+
+
+def test_callback_info_preserves_selection_card_contract() -> None:
+    persisted = DingTalkCallbackInfo(
+        channel_id=77,
+        conversation_id="conv-private",
+        user_id=9,
+        conversation_card_template_id="answer.schema",
+        interaction_card_template_id="settings.schema",
+    )
+
+    restored = DingTalkCallbackInfo.from_dict(persisted.to_dict())
+
+    assert restored.user_id == 9
+    assert restored.conversation_card_template_id == "answer.schema"
+    assert restored.interaction_card_template_id == "settings.schema"
