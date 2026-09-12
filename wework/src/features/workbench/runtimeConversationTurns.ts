@@ -329,7 +329,10 @@ function mergeRuntimeConversationTurn(
 ): RuntimeConversationTurn {
   const preserveLocalTerminal =
     isTerminalTurnStatus(local.status) && isUnsettledTurnStatus(snapshot.status)
-  const items = mergeRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
+  const items =
+    snapshot.itemMerge === 'prepend'
+      ? prependRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
+      : mergeRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
   const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
   const preserveStreamingThinking =
     snapshot.status === 'streaming' &&
@@ -339,6 +342,7 @@ function mergeRuntimeConversationTurn(
     ...snapshot,
     clientUserMessageId: snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
+    itemMerge: undefined,
     items,
     status: preserveLocalTerminal || preserveLocalFailure ? local.status : snapshot.status,
     completedAt:
@@ -352,6 +356,30 @@ function mergeRuntimeConversationTurn(
         ? getLatestThinkingContent(processingBlocks(items))
         : snapshot.streamingThinkingContent,
   }
+}
+
+function prependRuntimeConversationItems(
+  localItems: RuntimeConversationItem[],
+  snapshotItems: RuntimeConversationItem[],
+  preserveLocalTerminal: boolean
+): RuntimeConversationItem[] {
+  const matchedLocalIndexes = new Set<number>()
+  const mergedSnapshotItems = snapshotItems.map(snapshotItem => {
+    const localIndex = localItems.findIndex(
+      (localItem, index) => !matchedLocalIndexes.has(index) && localItem.id === snapshotItem.id
+    )
+    if (localIndex < 0) return snapshotItem
+    matchedLocalIndexes.add(localIndex)
+    return mergeRuntimeConversationItem(localItems[localIndex], snapshotItem, preserveLocalTerminal)
+  })
+  const remainingLocalItems = localItems.filter((_, index) => !matchedLocalIndexes.has(index))
+  const leadingUserCount = remainingLocalItems.findIndex(item => item.type !== 'user_message')
+  const insertionIndex = leadingUserCount < 0 ? remainingLocalItems.length : leadingUserCount
+  return [
+    ...remainingLocalItems.slice(0, insertionIndex),
+    ...mergedSnapshotItems,
+    ...remainingLocalItems.slice(insertionIndex),
+  ]
 }
 
 function isTerminalTurnStatus(status: RuntimeConversationTurn['status']): boolean {
