@@ -673,6 +673,7 @@ export interface CloudTodoWorkspaceProps {
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   embedded?: boolean
+  embeddedTitle?: 'workspace' | 'project'
   startupActive?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
@@ -832,6 +833,7 @@ export function CloudTodoWorkspace({
   runtimeTaskLifecycle,
   services,
   embedded = false,
+  embeddedTitle = 'workspace',
   startupActive = false,
   activeProjectRef,
   defaultProjectRequested = false,
@@ -865,9 +867,8 @@ export function CloudTodoWorkspace({
   const cloudWorkspaceApi = services.sharedWorkspaceApi
   const [internalSelectedProjectRef, setSelectedProjectRef] =
     useState<RuntimeProjectSpaceRef | null>(null)
-  const selectedProjectRef =
+  const requestedProjectRef =
     activeProjectRef === undefined ? internalSelectedProjectRef : activeProjectRef
-  const selectedProjectId = selectedProjectRef?.projectId ?? null
   const activeProjectKey =
     activeProjectRef === undefined
       ? undefined
@@ -889,8 +890,8 @@ export function CloudTodoWorkspace({
     api: cloudWorkspaceApi,
     location: {
       projectId:
-        selectedProjectRef?.projectStore === 'backend'
-          ? String(selectedProjectRef.projectId)
+        requestedProjectRef?.projectStore === 'backend'
+          ? String(requestedProjectRef.projectId)
           : null,
       issueId: selectedItem?.project_store === 'backend' ? selectedItem.id : null,
       view:
@@ -971,6 +972,18 @@ export function CloudTodoWorkspace({
       return [defaultProject]
     })
   }, [cloudProjectSpaces, localProjectSpaces, projectSpaceApis.defaultLocation])
+  const defaultProject =
+    defaultProjectRequested && requestedProjectRef === null
+      ? (projects.find(isDefaultWorkItemProject) ?? null)
+      : null
+  const selectedProjectRef =
+    requestedProjectRef ?? (defaultProject ? projectSpaceRef(defaultProject) : null)
+  const selectedProjectId = selectedProjectRef?.projectId ?? null
+  useEffect(() => {
+    if (requestedProjectRef === null && defaultProject) {
+      onActiveProjectChange?.(defaultProject)
+    }
+  }, [defaultProject, onActiveProjectChange, requestedProjectRef])
   const replaceProject = useCallback(
     (currentProject: LocatedCloudProject, updated: CloudProject) => {
       if (currentProject.location === 'cloud') {
@@ -1271,7 +1284,7 @@ export function CloudTodoWorkspace({
       project =>
         project.id === selectedProjectRef?.projectId &&
         project.project_store === selectedProjectRef.projectStore
-    ) ?? (defaultProjectRequested ? (projects.find(isDefaultWorkItemProject) ?? null) : null)
+    ) ?? null
   const selectedProjectForViewAccess =
     selectedProject &&
     selectedProject.project_store === 'backend' &&
@@ -1281,10 +1294,6 @@ export function CloudTodoWorkspace({
       : selectedProject
   const selectedProjectForBoardLoadRef = useRef(selectedProject)
   selectedProjectForBoardLoadRef.current = selectedProject
-  useEffect(() => {
-    if (!defaultProjectRequested || selectedProjectRef || !selectedProject) return
-    onActiveProjectChange?.(selectedProject)
-  }, [defaultProjectRequested, onActiveProjectChange, selectedProject, selectedProjectRef])
   const localProjectOptions = useMemo(() => {
     const runtimeProjectOrder = new Map(
       (runtimeWork?.projects ?? []).flatMap((entry, index) =>
@@ -1639,7 +1648,7 @@ export function CloudTodoWorkspace({
     return 'opened'
   }
   const selectedProjectApi =
-    selectedProject?.task_provider === 'dingtalk_aitable'
+    selectedProject?.location === 'local'
       ? apiForProject(selectedProject)
       : selectedProjectServices?.deliveryApi
   const selectedProjectAgentApi = selectedProjectServices?.projectChatAgentApi
@@ -4538,7 +4547,11 @@ export function CloudTodoWorkspace({
                 ) : null
               }
               sidebarCollapsed={sidebarCollapsed}
-              title={embedded ? t('workbench.workspace_tab_board', '协作') : selectedProject.name}
+              title={
+                embedded && embeddedTitle === 'workspace'
+                  ? t('workbench.workspace_tab_board', '协作')
+                  : selectedProject.name
+              }
               titleIcon={
                 embedded ? (
                   <Grid3X3 className="h-4 w-4 shrink-0 text-text-muted" />

@@ -843,6 +843,28 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
   })
 
+  it('uses the selected project title for an embedded project view', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id), name: '我的任务' }],
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        embeddedTitle="project"
+        activeProjectRef={{
+          projectStore: 'backend',
+          projectId: String(project.id),
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
+  })
+
   it('shows authoritative assignment target names in the project Issue table', async () => {
     const workbenchServices = services()
     const listAssignments = vi.fn(async () => [
@@ -1034,6 +1056,42 @@ describe('CloudTodoWorkspace', () => {
         })
       )
     })
+  })
+
+  it('loads the local default My Tasks board without a separate project click', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      public_id: 'default-work-items',
+      project_key: 'WORK',
+      name: '我的任务',
+      project_store: 'local' as const,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const localServices = services()
+    const localApi = localServices.deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [defaultProject] }))
+    localApi.listLoopItems = vi.fn(async () => ({ items: [] }))
+    const workbenchServices = services({
+      sharedWorkspaceApi: undefined,
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        defaultProjectRequested
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
+    expect(await screen.findByTestId('cloud-todo-column-inbox')).toBeVisible()
+    expect(localApi.getBoardSnapshot).toHaveBeenCalledWith('default-work-items')
   })
 
   it('loads a cloud board through one snapshot request without split reads', async () => {

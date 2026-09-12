@@ -28,7 +28,7 @@ Wework fixed Collaboration tab
 Wework no longer implements the all-workspaces or workspace-resource
 management pages. Its local surface retains only execution-domain capabilities:
 
-- the My Work aggregate view;
+- the system-default My Tasks board view inside the Tasks tab;
 - notifications and Issue deep links;
 - the local execution entry for a concrete Issue;
 - LocalTask creation, Issue/Run binding, execution, and deliverable sync.

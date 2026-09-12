@@ -242,11 +242,11 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
-  test('renders my tasks as a selected special task view', async () => {
+  test('renders My Tasks as the selected default work-items board view', async () => {
     const onOpenMyWork = vi.fn()
 
     renderSidebar({
-      taskListView: 'my-work',
+      taskView: 'default-work-items',
       onOpenMyWork,
     })
 

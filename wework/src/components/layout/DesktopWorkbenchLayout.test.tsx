@@ -2971,19 +2971,42 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
-  test('opens my tasks inside the fixed task tab without navigating to collaboration', async () => {
+  test('opens the existing My Tasks board inside the fixed task tab', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(await screen.findByTestId('task-my-work-button'))
 
-    expect(screen.getByTestId('task-my-work-surface')).toBeVisible()
-    expect(screen.getByTestId('cloud-my-work-view')).toHaveTextContent('我的任务')
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
+    expect(screen.getByTestId('cloud-todo-workspace')).toHaveAttribute('data-embedded', 'true')
+    expect(screen.queryByTestId('cloud-my-work-view')).not.toBeInTheDocument()
     expect(window.location.pathname).toBe('/')
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('new-chat-button'))
 
-    expect(screen.queryByTestId('task-my-work-surface')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
     expect(baseProps.onNewChat).toHaveBeenCalled()
   })
 

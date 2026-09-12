@@ -213,7 +213,7 @@ interface DesktopSidebarProps {
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
-  taskListView?: 'tasks' | 'my-work'
+  taskView?: 'workbench' | 'default-work-items'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
@@ -3035,7 +3035,7 @@ export function DesktopSidebar({
   unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
-  taskListView = 'tasks',
+  taskView = 'workbench',
   localHarnessSessions = [],
   activeLocalHarnessSessionId = null,
   onNewChat,
@@ -4104,7 +4104,7 @@ export function DesktopSidebar({
                   icon={ListTodo}
                   label={t('workbench.work_item_create_title', '我的任务')}
                   testId="task-my-work-button"
-                  selected={taskListView === 'my-work'}
+                  selected={taskView === 'default-work-items'}
                   onClick={onOpenMyWork}
                 />
               ) : null}
