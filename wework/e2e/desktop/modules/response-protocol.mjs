@@ -15,6 +15,7 @@ import {
   OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION,
   assert,
   join,
+  readPositiveInteger,
 } from './shared.mjs'
 
 function createSse(events) {
@@ -189,7 +190,11 @@ function encryptedReasoningItem(id, encryptedContent) {
 }
 
 function streamingMarkdownReport() {
-  const sectionCount = Number(process.env.WEWORK_E2E_MEMORY_SECTION_COUNT ?? 80)
+  const sectionCount = readPositiveInteger(
+    process.env.WEWORK_E2E_MEMORY_SECTION_COUNT,
+    80,
+    'WEWORK_E2E_MEMORY_SECTION_COUNT'
+  )
   const section = index =>
     [
       `### Memory section ${index}`,

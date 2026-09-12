@@ -2360,6 +2360,25 @@ describe('runtimeConversationTurns', () => {
     )
   })
 
+  test('bounds reasoning chunks before direct insertion', () => {
+    const content = `${'r'.repeat(120_010)}reasoning-tail`
+    const turns = reduceRuntimeConversationTurns(
+      [{ id: 'turn-1', items: [], status: 'streaming' }],
+      {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-1',
+        content: '',
+        reasoningChunk: content,
+      }
+    )
+    const item = turns[0].items[0]
+    expect(item.type).toBe('block')
+    if (item.type !== 'block' || item.block.type !== 'thinking') return
+    expect(item.block.content).toHaveLength(120_000)
+    expect(item.block.content.endsWith('reasoning-tail')).toBe(true)
+    expect(item.block.contentOriginalChars).toBe(content.length)
+  })
+
   test('atomically moves final text reclassified as commentary into a process block', () => {
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
       type: 'assistant_chunk',
@@ -2405,6 +2424,36 @@ describe('runtimeConversationTurns', () => {
         ],
       }),
     ])
+  })
+
+  test('bounds a block that directly replaces assistant text', () => {
+    const content = `${'t'.repeat(120_010)}replacement-tail`
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'provisional',
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      replaceAssistantTextItemId: 'message-1',
+      block: {
+        id: 'message-1',
+        subtaskId: 'turn-1',
+        type: 'text',
+        content,
+        status: 'done',
+        createdAt: 1,
+      },
+    })
+
+    const item = turns[0].items[0]
+    expect(item.type).toBe('block')
+    if (item.type !== 'block' || item.block.type !== 'text') return
+    expect(item.block.content).toHaveLength(120_000)
+    expect(item.block.content.endsWith('replacement-tail')).toBe(true)
+    expect(item.block.contentOriginalChars).toBe(content.length)
   })
 
   test('bounds a streaming text block', () => {

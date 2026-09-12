@@ -244,6 +244,7 @@ import {
   join,
   pathToFileURL,
   randomUUID,
+  readNonNegativeNumber,
   withTimeout,
 } from './shared.mjs'
 
@@ -5440,7 +5441,11 @@ class DesktopE2EServer {
 
   async writeStreamingMarkdown(response, responseId, text) {
     const stream = streamingTextEvents(responseId, text)
-    const chunkDelayMs = Number(process.env.WEWORK_E2E_MEMORY_CHUNK_DELAY_MS ?? 5)
+    const chunkDelayMs = readNonNegativeNumber(
+      process.env.WEWORK_E2E_MEMORY_CHUNK_DELAY_MS,
+      5,
+      'WEWORK_E2E_MEMORY_CHUNK_DELAY_MS'
+    )
     response.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-cache',

@@ -1,4 +1,5 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
+import type { TurnFileChangesSummary } from '@/types/api'
 import {
   getLatestThinkingContent,
   limitWorkbenchProcessingBlock,
@@ -822,31 +823,37 @@ function upsertReasoningChunk(
   const itemId = `runtime-reasoning:${subtaskId}`
   const index = items.findIndex(item => item.type === 'block' && item.id === itemId)
   if (index < 0) {
+    const reasoningBlock: ProcessingBlock = {
+      id: itemId,
+      subtaskId,
+      type: 'thinking',
+      content: reasoningChunk,
+      status: 'streaming',
+      createdAt: Date.now(),
+    }
+    const block = limitWorkbenchProcessingBlock<TurnFileChangesSummary>(reasoningBlock)
     return [
       ...items,
       {
         id: itemId,
         type: 'block',
-        block: {
-          id: itemId,
-          subtaskId,
-          type: 'thinking',
-          content: reasoningChunk,
-          status: 'streaming',
-          createdAt: Date.now(),
-        },
+        block,
       },
     ]
   }
   const current = items[index]
   if (current.type !== 'block' || current.block.type !== 'thinking') return items
+  const content = `${current.block.content}${reasoningChunk}`
   return replaceAt(items, index, {
     ...current,
-    block: {
+    block: limitWorkbenchProcessingBlock({
       ...current.block,
-      content: `${current.block.content}${reasoningChunk}`,
+      content,
+      contentOriginalChars:
+        (current.block.contentOriginalChars ?? current.block.content.length) +
+        reasoningChunk.length,
       status: 'streaming',
-    },
+    }),
   })
 }
 
@@ -917,7 +924,7 @@ function replaceAssistantTextWithBlock(
   return replaceAt(items, index, {
     id: block.id,
     type: 'block',
-    block,
+    block: limitWorkbenchProcessingBlock(block),
   })
 }
 
@@ -949,7 +956,7 @@ function upsertRuntimeBlock(
   nextItems.splice(terminalTextIndex, 0, {
     id: block.id,
     type: 'block',
-    block,
+    block: limitWorkbenchProcessingBlock(block),
   })
   return nextItems
 }

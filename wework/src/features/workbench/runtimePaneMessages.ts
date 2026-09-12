@@ -35,6 +35,7 @@ import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@weg
 
 const RUNTIME_MESSAGE_CONTENT_TRUNCATION_THRESHOLD_CHARS = 200_000
 export const MAX_RUNTIME_TASK_STREAM_HANDLERS = 50
+export const MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS = 256
 
 export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFileChangesSummary>
 
@@ -97,9 +98,28 @@ export interface RuntimeConversationStreamHandlers {
 export function createRuntimeConversationStreamHandlers(
   handlers: RuntimeConversationStreamHandlers
 ): ChatStreamHandlers {
-  const taskHandlers = new Map<string, ChatStreamHandlers>()
+  const taskHandlers = new Map<
+    string,
+    {
+      handlers: ChatStreamHandlers
+      activeTurnIds: Set<string>
+    }
+  >()
 
-  const resolve = (payload: { deviceId?: string; taskId?: string }): ChatStreamHandlers | null => {
+  const evictSettledTaskHandlers = () => {
+    while (taskHandlers.size > MAX_RUNTIME_TASK_STREAM_HANDLERS) {
+      let settledKey: string | undefined
+      for (const [key, entry] of taskHandlers) {
+        if (entry.activeTurnIds.size > 0) continue
+        settledKey = key
+        break
+      }
+      if (settledKey === undefined) return
+      taskHandlers.delete(settledKey)
+    }
+  }
+
+  const resolve = (payload: { deviceId?: string; taskId?: string }) => {
     if (!payload.deviceId || !payload.taskId) {
       console.warn('[Wework] Dropped runtime event without task address', {
         deviceId: payload.deviceId ?? null,
@@ -119,14 +139,20 @@ export function createRuntimeConversationStreamHandlers(
       return existing
     }
 
-    const created = createRuntimeTaskStreamHandlers(address, {
+    const activeTurnIds = new Set<string>()
+    const streamHandlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
-      onAssistantStart: turnId => handlers.onAssistantStart?.(address, turnId),
+      onAssistantStart: turnId => {
+        activeTurnIds.add(turnId)
+        handlers.onAssistantStart?.(address, turnId)
+      },
       onAssistantFirstToken: turnId => handlers.onAssistantFirstToken?.(address, turnId),
       onAssistantResponseSize: (turnId, responseSizeBytes) =>
         handlers.onAssistantResponseSize?.(address, turnId, responseSizeBytes),
-      onAssistantSettled: (turnId, outcome) =>
-        handlers.onAssistantSettled?.(address, turnId, outcome),
+      onAssistantSettled: (turnId, outcome) => {
+        activeTurnIds.delete(turnId)
+        handlers.onAssistantSettled?.(address, turnId, outcome)
+      },
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
       onRuntimeTaskTitleUpdated: payload => handlers.onRuntimeTaskTitleUpdated?.(address, payload),
@@ -138,30 +164,42 @@ export function createRuntimeConversationStreamHandlers(
       onRuntimePlanUpdated: payload => handlers.onRuntimePlanUpdated?.(address, payload),
       onGuidanceApplied: payload => handlers.onGuidanceApplied?.(address, payload),
     })
+    const created = { handlers: streamHandlers, activeTurnIds }
     taskHandlers.set(key, created)
-    while (taskHandlers.size > MAX_RUNTIME_TASK_STREAM_HANDLERS) {
-      const oldestKey = taskHandlers.keys().next().value
-      if (oldestKey === undefined) break
-      taskHandlers.delete(oldestKey)
-    }
     return created
   }
 
+  const forward = (
+    payload: { deviceId?: string; taskId?: string },
+    dispatch: (streamHandlers: ChatStreamHandlers) => void
+  ) => {
+    const entry = resolve(payload)
+    if (!entry) return
+    dispatch(entry.handlers)
+    evictSettledTaskHandlers()
+  }
+
   return {
-    onChatStart: payload => resolve(payload)?.onChatStart?.(payload),
-    onChatChunk: payload => resolve(payload)?.onChatChunk?.(payload),
-    onChatDone: payload => resolve(payload)?.onChatDone?.(payload),
-    onChatError: payload => resolve(payload)?.onChatError?.(payload),
-    onBlockCreated: payload => resolve(payload)?.onBlockCreated?.(payload),
-    onBlockUpdated: payload => resolve(payload)?.onBlockUpdated?.(payload),
-    onSubagentActivity: payload => resolve(payload)?.onSubagentActivity?.(payload),
-    onRuntimeTaskTitleUpdated: payload => resolve(payload)?.onRuntimeTaskTitleUpdated?.(payload),
-    onRuntimeGoalUpdated: payload => resolve(payload)?.onRuntimeGoalUpdated?.(payload),
-    onRuntimeGoalCleared: payload => resolve(payload)?.onRuntimeGoalCleared?.(payload),
-    onRuntimeSupervisorUpdated: payload => resolve(payload)?.onRuntimeSupervisorUpdated?.(payload),
-    onRuntimeGoalContinuation: payload => resolve(payload)?.onRuntimeGoalContinuation?.(payload),
-    onRuntimePlanUpdated: payload => resolve(payload)?.onRuntimePlanUpdated?.(payload),
-    onGuidanceApplied: payload => resolve(payload)?.onGuidanceApplied?.(payload),
+    onChatStart: payload => forward(payload, entry => entry.onChatStart?.(payload)),
+    onChatChunk: payload => forward(payload, entry => entry.onChatChunk?.(payload)),
+    onChatDone: payload => forward(payload, entry => entry.onChatDone?.(payload)),
+    onChatError: payload => forward(payload, entry => entry.onChatError?.(payload)),
+    onBlockCreated: payload => forward(payload, entry => entry.onBlockCreated?.(payload)),
+    onBlockUpdated: payload => forward(payload, entry => entry.onBlockUpdated?.(payload)),
+    onSubagentActivity: payload => forward(payload, entry => entry.onSubagentActivity?.(payload)),
+    onRuntimeTaskTitleUpdated: payload =>
+      forward(payload, entry => entry.onRuntimeTaskTitleUpdated?.(payload)),
+    onRuntimeGoalUpdated: payload =>
+      forward(payload, entry => entry.onRuntimeGoalUpdated?.(payload)),
+    onRuntimeGoalCleared: payload =>
+      forward(payload, entry => entry.onRuntimeGoalCleared?.(payload)),
+    onRuntimeSupervisorUpdated: payload =>
+      forward(payload, entry => entry.onRuntimeSupervisorUpdated?.(payload)),
+    onRuntimeGoalContinuation: payload =>
+      forward(payload, entry => entry.onRuntimeGoalContinuation?.(payload)),
+    onRuntimePlanUpdated: payload =>
+      forward(payload, entry => entry.onRuntimePlanUpdated?.(payload)),
+    onGuidanceApplied: payload => forward(payload, entry => entry.onGuidanceApplied?.(payload)),
     onRuntimeTransportReplaced: payload => handlers.onRuntimeTransportReplaced?.(payload),
   }
 }
@@ -174,6 +212,15 @@ export function createRuntimeTaskStreamHandlers(
   const firstTokenSent = new Set<string>()
   const unsettledAssistantTurnIds = new Set<string>()
   const settledAssistantTurnIds = new Set<string>()
+  const rememberSettledAssistantTurn = (turnId: string) => {
+    settledAssistantTurnIds.delete(turnId)
+    settledAssistantTurnIds.add(turnId)
+    while (settledAssistantTurnIds.size > MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS) {
+      const oldestTurnId = settledAssistantTurnIds.values().next().value
+      if (oldestTurnId === undefined) return
+      settledAssistantTurnIds.delete(oldestTurnId)
+    }
+  }
   const settleAssistantTurn = (
     terminalTurnId: string,
     outcome: 'succeeded' | 'failed' | 'cancelled',
@@ -188,8 +235,10 @@ export function createRuntimeTaskStreamHandlers(
       lifecycleTurnId = unsettledAssistantTurnIds.values().next().value ?? terminalTurnId
       unsettledAssistantTurnIds.delete(lifecycleTurnId)
     }
-    settledAssistantTurnIds.add(terminalTurnId)
-    settledAssistantTurnIds.add(lifecycleTurnId)
+    firstTokenSent.delete(terminalTurnId)
+    firstTokenSent.delete(lifecycleTurnId)
+    rememberSettledAssistantTurn(terminalTurnId)
+    rememberSettledAssistantTurn(lifecycleTurnId)
     handlers.onAssistantSettled?.(lifecycleTurnId, outcome)
   }
 

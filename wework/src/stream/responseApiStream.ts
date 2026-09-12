@@ -710,7 +710,10 @@ export function emitResponseApiEvent(
 
   if (eventName === 'response.output_text.done' || eventName === 'response.refusal.done') {
     const content =
-      stringField(data, 'text') ?? stringField(data, 'value') ?? stringField(data, 'output_text')
+      stringField(data, 'text') ??
+      stringField(data, 'value') ??
+      stringField(data, 'output_text') ??
+      stringField(data, 'refusal')
     const itemId = idField(data, 'itemId') ?? idField(data, 'item_id')
     if (!content || !itemId) {
       warnDroppedResponseDelta(eventName, 'missing_completed_text_identity', base, data)

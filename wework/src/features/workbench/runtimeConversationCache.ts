@@ -829,7 +829,7 @@ function updateRuntimeSubagentStatuses(
     updatedAtMs: activity.occurredAtMs ?? Date.now(),
   }
 
-  return [...current.filter(item => item.id !== agentId), nextStatus]
+  return [nextStatus, ...current.filter(item => item.id !== agentId)]
     .sort((left, right) => (right.updatedAtMs ?? 0) - (left.updatedAtMs ?? 0))
     .slice(0, MAX_RUNTIME_SUBAGENT_STATUSES)
 }
@@ -995,9 +995,7 @@ function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {
 }
 
 function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]) {
-  if (turnsByConversation.get(key) !== turns) {
-    projectedMessagesByConversation.delete(key)
-  }
+  projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
     cancelPendingStreamingNotification(evictedKey)

@@ -189,6 +189,29 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test('invalidates a projection when the same snapshot reference is replaced', () => {
+    const snapshot = [
+      {
+        id: 'server-turn',
+        status: 'done' as const,
+        items: [
+          {
+            id: 'server-assistant',
+            type: 'assistant_text' as const,
+            content: 'first projection',
+            createdAt: '2026-09-11T00:00:00Z',
+          },
+        ],
+      },
+    ]
+
+    replaceRuntimeConversationSnapshot(address, snapshot)
+    snapshot[0].items[0].content = 'updated projection'
+    replaceRuntimeConversationSnapshot(address, snapshot)
+
+    expect(getRuntimeConversationMessages(address)[0]?.content).toBe('updated projection')
+  })
+
   test('evicts an unobserved terminal conversation after the idle ttl', () => {
     vi.useFakeTimers()
     applyRuntimeConversationAction(address, {
@@ -598,6 +621,24 @@ describe('runtimeConversationCache', () => {
     expect(statuses).toHaveLength(256)
     expect(statuses[0]?.id).toBe('agent-299')
     expect(statuses.at(-1)?.id).toBe('agent-44')
+  })
+
+  test('retains the newest subagent status when timestamps tie', () => {
+    for (let index = 0; index <= 256; index += 1) {
+      applyRuntimeConversationSubagentActivity(address, {
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        agentId: `agent-${index}`,
+        agentPath: `agents/agent-${index}`,
+        status: 'done',
+        occurredAtMs: 1,
+      })
+    }
+
+    const statuses = getRuntimeConversationMetadata(address).subagentStatuses
+    expect(statuses).toHaveLength(256)
+    expect(statuses[0]?.id).toBe('agent-256')
+    expect(statuses.some(status => status.id === 'agent-0')).toBe(false)
   })
 
   test('does not let an older active Goal snapshot overwrite completion', () => {

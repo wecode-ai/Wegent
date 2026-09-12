@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS,
   MAX_RUNTIME_TASK_STREAM_HANDLERS,
   createRuntimeConversationStreamHandlers,
   createRuntimeTaskStreamHandlers,
@@ -17,7 +18,19 @@ describe('createRuntimeConversationStreamHandlers', () => {
       onAssistantStart,
     })
 
-    for (let index = 0; index <= MAX_RUNTIME_TASK_STREAM_HANDLERS; index += 1) {
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+    })
+    handlers.onChatDone?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+      result: {},
+    })
+
+    for (let index = 1; index <= MAX_RUNTIME_TASK_STREAM_HANDLERS; index += 1) {
       handlers.onChatStart?.({
         deviceId: 'device-1',
         taskId: `task-${index}`,
@@ -31,6 +44,76 @@ describe('createRuntimeConversationStreamHandlers', () => {
     })
 
     expect(onAssistantStart).toHaveBeenCalledTimes(MAX_RUNTIME_TASK_STREAM_HANDLERS + 2)
+  })
+
+  test('does not evict stream state for an active task', () => {
+    const onAssistantFirstToken = vi.fn()
+    const handlers = createRuntimeConversationStreamHandlers({
+      onMessageAction: vi.fn(),
+      onAssistantFirstToken,
+    })
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+    })
+    handlers.onChatChunk?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+      content: 'first',
+    })
+    for (let index = 1; index <= MAX_RUNTIME_TASK_STREAM_HANDLERS; index += 1) {
+      handlers.onChatStart?.({
+        deviceId: 'device-1',
+        taskId: `task-${index}`,
+        subtaskId: 'turn-1',
+      })
+    }
+    handlers.onChatChunk?.({
+      deviceId: 'device-1',
+      taskId: 'task-0',
+      subtaskId: 'turn-1',
+      content: 'second',
+    })
+
+    expect(onAssistantFirstToken).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('createRuntimeTaskStreamHandlers lifecycle retention', () => {
+  test('bounds settled turn deduplication state for a long-running task', () => {
+    const onAssistantStart = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'task-1' },
+      {
+        onMessageAction: vi.fn(),
+        onAssistantStart,
+      }
+    )
+
+    for (let index = 0; index <= MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS; index += 1) {
+      const subtaskId = `turn-${index}`
+      handlers.onChatStart?.({
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        subtaskId,
+      })
+      handlers.onChatDone?.({
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        subtaskId,
+        result: {},
+      })
+    }
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      subtaskId: 'turn-0',
+    })
+
+    expect(onAssistantStart).toHaveBeenCalledTimes(MAX_RUNTIME_SETTLED_ASSISTANT_TURN_IDS + 2)
   })
 })
 

@@ -354,6 +354,36 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps completed Codex refusal text to an item snapshot', () => {
+    const onChatChunk = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatChunk },
+      'response.refusal.done',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: {
+          itemId: 'message-1',
+          refusal: 'I cannot help with that.',
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatChunk).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'I cannot help with that.',
+      contentMode: 'snapshot',
+      result: {
+        itemId: 'message-1',
+        refusal: 'I cannot help with that.',
+      },
+    })
+  })
+
   test('maps Codex token usage notifications to context usage chunks', () => {
     const onChatChunk = vi.fn()
 
