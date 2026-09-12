@@ -633,6 +633,7 @@ async function verifyBackgroundCompletionRestore({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', myWorkButton)
+  await control.command('scrollIntoView', '[data-testid="cloud-todo-column-completed"]')
   await control.command('waitFor', '[data-testid="cloud-todo-column-completed"]', {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,

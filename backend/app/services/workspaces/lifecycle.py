@@ -21,8 +21,8 @@ from app.services.workspaces.storage import (
     COLLABORATION_WORKSPACE_KIND,
     WORKSPACE_ENTITY_TYPE,
     CollaborationWorkspace,
+    active_project_ids_for_workspace,
     get_workspace_kind,
-    project_ids_for_workspace,
     workspace_from_kind,
     workspace_kind_payload,
 )
@@ -192,7 +192,7 @@ class WorkspaceLifecycleService:
         self, db: Session, workspace_id: int, user_id: int, version: int
     ) -> None:
         require_workspace_role(db, workspace_id, user_id, BaseRole.Owner)
-        if project_ids_for_workspace(db, workspace_id):
+        if active_project_ids_for_workspace(db, workspace_id):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Archive or move active Projects before archiving the Workspace",

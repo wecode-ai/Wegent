@@ -27,6 +27,44 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_workspace_can_be_archived_after_its_projects_are_archived(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    workspace_response = test_client.post(
+        "/api/v1/workspaces",
+        headers=_auth(test_token),
+        json={"name": f"归档测试空间 {uuid.uuid4().hex[:6]}"},
+    )
+    assert workspace_response.status_code == 201
+    workspace = workspace_response.json()
+    project_response = test_client.post(
+        f"/api/v1/workspaces/{workspace['id']}/projects",
+        headers=_auth(test_token),
+        json={"name": f"归档测试项目 {uuid.uuid4().hex[:6]}"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    blocked_response = test_client.delete(
+        f"/api/v1/workspaces/{workspace['id']}?version={workspace['version']}",
+        headers=_auth(test_token),
+    )
+    assert blocked_response.status_code == 409
+
+    project_archive_response = test_client.delete(
+        f"/api/v1/cloud-projects/{project['id']}?version={project['version']}",
+        headers=_auth(test_token),
+    )
+    assert project_archive_response.status_code == 204
+
+    workspace_archive_response = test_client.delete(
+        f"/api/v1/workspaces/{workspace['id']}?version={workspace['version']}",
+        headers=_auth(test_token),
+    )
+    assert workspace_archive_response.status_code == 204
+
+
 def _assignment_comments(db: Session, issue_id: str) -> list[LoopItemComment]:
     return [
         comment

@@ -930,7 +930,7 @@ async function verifyDefaultTaskBoardAssociation(control) {
   }
 }
 
-async function requireActiveFixedBoardTab(control, message) {
+async function requireActiveProjectBoardTab(control, message) {
   await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -939,14 +939,21 @@ async function requireActiveFixedBoardTab(control, message) {
     '[data-tab-kind="board"][aria-selected="true"]',
     { value: 'data-testid' }
   )
-  assert.equal(activeBoardTabTestId, FIXED_BOARD_TAB_SELECT_TEST_ID, message)
-  const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
-  assert.deepEqual(
-    boardTabs,
-    [FIXED_BOARD_TAB_ID],
-    'Opening the bound project space created a duplicate board tab'
+  assert.ok(
+    activeBoardTabTestId?.startsWith('workspace-tab-select-board-'),
+    `${message}: ${activeBoardTabTestId}`
   )
-  return FIXED_BOARD_CONTENT_SELECTOR
+  const activeBoardTabId = activeBoardTabTestId.slice('workspace-tab-select-'.length)
+  const activeBoardContentSelector = `[data-testid="workspace-tab-content-${activeBoardTabId}"]`
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-workspace"]`,
+    {
+      visible: true,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  return activeBoardContentSelector
 }
 
 async function verifyTrackedTaskBoardRunningStatus(
@@ -963,9 +970,9 @@ async function verifyTrackedTaskBoardRunningStatus(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The first work-item navigation did not reuse the unresolved fixed project-space tab'
+    'The first work-item navigation did not open its project-space tab'
   )
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
@@ -1061,9 +1068,9 @@ async function verifyTrackedTaskSettledStatus(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The settled work-item navigation did not reuse the fixed project-space tab'
+    'The settled work-item navigation did not open its project-space tab'
   )
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
@@ -1088,9 +1095,9 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The default Issue context test did not reuse the fixed project-space tab'
+    'The default Issue context test did not open its project-space tab'
   )
   const boardCardSelector = [
     `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
@@ -1168,16 +1175,14 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The tracked work-item navigation did not reuse the fixed project-space tab'
+    'The tracked work-item navigation did not open its project-space tab'
   )
   await waitForStableSnapshot(
     control,
     snapshot =>
-      snapshot.location.includes(`workspaceTab=${FIXED_BOARD_ROUTE_TAB_ID}`) &&
       !snapshot.location.includes('itemId=') &&
-      snapshot.testIds.includes(FIXED_BOARD_TAB_CONTENT_TEST_ID) &&
       !snapshot.testIds.includes('cloud-todo-board-loading') &&
       snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
     'The work-item board did not settle on the tracked task awaiting confirmation'
@@ -1266,9 +1271,9 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The source work-item navigation did not reuse the fixed project-space tab'
+    'The source work-item navigation did not open its project-space tab'
   )
   const targetProjectName = 'Existing Task Target Board'
   await control.command('click', `${activeBoardContentSelector} [data-testid="cloud-project-add"]`)
@@ -1368,9 +1373,9 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const movedBoardContentSelector = await requireActiveFixedBoardTab(
+  const movedBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The moved work-item navigation did not continue reusing the fixed project-space tab'
+    'The moved work-item navigation did not open its project-space tab'
   )
   await control.command(
     'waitFor',
@@ -1545,7 +1550,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', `[data-testid="${FIXED_BOARD_TAB_SELECT_TEST_ID}"]`)
   await control.command(
     'waitFor',
-    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="collaboration-platform-root"]`,
+    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="app-iframe-collaboration"]`,
     {
       visible: true,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

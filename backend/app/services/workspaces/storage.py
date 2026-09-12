@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.models.delivery import CloudProject
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -178,6 +179,22 @@ def project_ids_for_workspace(db: Session, workspace_id: int) -> list[int]:
         .all()
     )
     return [int(resource_id) for (resource_id,) in rows]
+
+
+def active_project_ids_for_workspace(db: Session, workspace_id: int) -> list[int]:
+    """Return workspace-bound projects that still block workspace archival."""
+    project_ids = project_ids_for_workspace(db, workspace_id)
+    if not project_ids:
+        return []
+    rows = (
+        db.query(CloudProject.id)
+        .filter(
+            CloudProject.id.in_(project_ids),
+            CloudProject.status == "active",
+        )
+        .all()
+    )
+    return [int(project_id) for (project_id,) in rows]
 
 
 def workspace_ids_for_resources(
