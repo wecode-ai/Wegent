@@ -1076,8 +1076,10 @@ const CanvasViewportFocus = memo(function CanvasViewportFocus({
       previousRightPanelInset.current === 0 && rightPanelInset > 0;
     const addedNode =
       selectedNode.type === "step" && !previousIds.has(selectedNode.id)
-        ? nodes.find((node) => node.id === selectedNode.id)
-        : nodes.find((node) => !previousIds.has(node.id));
+        ? nodes.find(
+            (node) => node.id === selectedNode.id && node.parentId == null,
+          )
+        : undefined;
     const selectedId = selectedCanvasNodeId(selectedNode);
     const selectedAfterDeletion =
       priorSelectedId !== null &&
@@ -1773,7 +1775,6 @@ export function AutomationWorkflowCanvas({
         nodesDraggable
         nodesConnectable
         elementsSelectable
-        onlyRenderVisibleElements
         panOnDrag={interactionMode === "hand" ? true : [1, 2]}
         panOnScroll
         panOnScrollSpeed={0.72}
