@@ -142,6 +142,11 @@ compiler or be removed:
 - `ProjectChatAgent` provides only a Project Agent Binding and runtime-policy
   overrides.
 
+For Codex Shell, a Workflow may leave the model name unspecified. The Run can
+still enter the execution queue, and the local Codex Runtime uses its current
+default model. Backend requires a complete model configuration at enqueue and
+claim time only when the Run explicitly selects a model.
+
 ## Codex Shell
 
 Codex becomes an official Shell type instead of a hard-coded string in a
@@ -203,6 +208,12 @@ capability manifest. Duplicate declarations are deduplicated by stable identity.
 Version or configuration conflicts fail explicitly during enqueue or Runtime
 matching.
 
+The Wework-managed Plugin Manifest is authoritative for installed managed
+capabilities. Even when Codex has not generated `installed_plugins.json`, the
+Executor scans the Manifest's `codex_link` or `store_path` and reports the
+Plugin's Skills. Locally installed Plugins remain in the same report and are
+deduplicated against managed Plugins by Plugin identity.
+
 Device-only authorization and secrets do not enter Ghost and are not persisted
 in Run. Run stores references and permission requirements; the selected Device
 materializes them at startup.
@@ -244,6 +255,12 @@ preferences
 Only a local directory, private credentials, or device-specific capability
 creates a hard binding. Normal Git repository work should allow the scheduler
 to choose from matching Runtimes.
+
+One execution environment may expose a resource-record ID, an app-device ID,
+and a Runtime-reported ID. Backend resolves them into the same authenticated
+device identity set before validating the claim target and workspace source. It
+must not compare the raw strings directly, or one device can be rejected as a
+cross-device execution.
 
 ## Execution Workspace
 

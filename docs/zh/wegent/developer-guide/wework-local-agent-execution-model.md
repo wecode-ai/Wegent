@@ -126,6 +126,10 @@ Plugin 或模型默认值，不得改变已经入队的执行。
 - Plugin 默认值来自 Ghost，Project 和 Run 可以追加允许的覆盖；
 - `ProjectChatAgent` 只提供 Project Agent Binding 和运行策略覆盖。
 
+对于 Codex Shell，Workflow 可以不固化模型名。此时 Run 仍可进入执行队列，由本地
+Codex Runtime 使用自身当前的默认模型。只有明确选择了模型的 Run，Backend 才要求
+该模型配置在入队和领取时完整可用。
+
 ## Codex Shell
 
 Codex 应成为正式 Shell 类型，而不是 Wework 专用分支中的硬编码字符串：
@@ -183,6 +187,11 @@ Ghost Plugin refs
 Plugin 包内发现的 Skill 和 MCP 必须进入统一有效能力清单。重复声明按稳定 identity
 去重；版本或配置冲突在入队或 Runtime 匹配阶段明确失败，不能静默选择一份配置。
 
+Wework 管理的 Plugin Manifest 是已安装能力的事实来源。即使 Codex 本地
+`installed_plugins.json` 尚未生成，Executor 也必须从 Manifest 的 `codex_link`
+或 `store_path` 扫描并上报 Plugin 内的 Skill；本地自行安装的 Plugin 则继续与
+托管 Plugin 合并上报，并按 Plugin identity 去重。
+
 仅限设备的授权和 secret 不进入 Ghost，也不持久化到 Run。Run 只保存引用和权限
 需求，由执行设备在启动时物化。
 
@@ -221,6 +230,10 @@ preferences
 
 只有本地目录、私人凭据或设备专属能力构成硬绑定。普通 Git 仓库任务应允许调度器
 从满足要求的 Runtime 中选择。
+
+同一执行环境可能同时具有资源记录 ID、应用设备 ID 和 Runtime 上报 ID。Backend
+必须把这些值解析成同一组已认证设备 identity，再校验领取目标和工作区来源；不能
+直接比较原始字符串，否则同一台设备会被误判为跨设备执行。
 
 ## Execution Workspace
 
