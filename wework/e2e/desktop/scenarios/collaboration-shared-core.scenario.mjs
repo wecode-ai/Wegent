@@ -76,13 +76,13 @@ async function reservePort() {
   return address.port
 }
 
-async function waitForFrontend(url, child, timeoutMs) {
+async function waitForFrontendRoute(url, pathname, child, timeoutMs) {
   const deadline = Date.now() + timeoutMs
-  let latestError = 'Frontend has not responded'
+  let latestError = `${pathname} has not responded`
   while (Date.now() < deadline) {
     assert.equal(child.exitCode, null, `Collaboration frontend exited with ${child.exitCode}`)
     try {
-      const response = await fetch(`${url}/collaboration`, {
+      const response = await fetch(`${url}${pathname}`, {
         redirect: 'manual',
         signal: AbortSignal.timeout(2_000),
       })
@@ -93,7 +93,13 @@ async function waitForFrontend(url, child, timeoutMs) {
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`Timed out waiting for Collaboration frontend: ${latestError}`)
+  throw new Error(`Timed out waiting for Collaboration frontend ${pathname}: ${latestError}`)
+}
+
+async function prepareFrontendRoutes(url, child, timeoutMs) {
+  for (const pathname of ['/collaboration', '/login/oidc', '/runtime-config']) {
+    await waitForFrontendRoute(url, pathname, child, timeoutMs)
+  }
 }
 
 async function stopChild(child) {
@@ -319,7 +325,7 @@ export function createDesktopScenario({
             stdio: ['ignore', frontendLog, frontendLog],
           }
         )
-        await waitForFrontend(frontendUrl, frontend, workbenchReadyTimeoutMs)
+        await prepareFrontendRoutes(frontendUrl, frontend, workbenchReadyTimeoutMs)
         await cloud.setFrontendUrl(frontendUrl)
       } catch (error) {
         await stopFrontend()
