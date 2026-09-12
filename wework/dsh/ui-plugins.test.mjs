@@ -117,7 +117,15 @@ test('first-party route packages own their routes and sidebar navigation', async
   const actions = registrations.filter(entry => entry.options.name === 'wework.action')
   assert.deepEqual(
     routes.map(entry => entry.descriptor.path),
-    ['/plugins', '/plugins/create', '/plugins/manage', '/sites', '/automations', '/cloud-work']
+    [
+      '/plugins',
+      '/plugins/create',
+      '/plugins/manage',
+      '/sites',
+      '/automations',
+      '/cloud-work',
+      '/device-desktop',
+    ]
   )
   assert.deepEqual(
     navigation.map(entry => entry.descriptor.path),
@@ -127,7 +135,15 @@ test('first-party route packages own their routes and sidebar navigation', async
   assert.ok(actions.some(entry => entry.descriptor.id === 'plugin-center.open'))
   assert.ok(routes.every(entry => /^plugins\/wework-ui-[a-z-]+\.js$/.test(entry.descriptor.module)))
   assert.ok(routes.every(entry => typeof entry.descriptor.icon === 'string'))
-  assert.ok(routes.every(entry => entry.descriptor.restorePolicy === 'session'))
+  assert.ok(
+    routes
+      .filter(entry => entry.descriptor.path !== '/device-desktop')
+      .every(entry => entry.descriptor.restorePolicy === 'session')
+  )
+  assert.equal(
+    routes.find(entry => entry.descriptor.path === '/device-desktop')?.descriptor.restorePolicy,
+    'none'
+  )
   assert.ok(routes.every(entry => typeof entry.descriptor.title === 'string'))
   assert.ok(routes.every(entry => !('component' in entry.descriptor)))
   assert.ok(registrations.every(entry => !('path' in entry.options)))

@@ -113,6 +113,10 @@ export default defineConfig({
         'wework-ui-applications': path.resolve(__dirname, 'dsh/ui-applications/src/route.tsx'),
         'wework-ui-automations': path.resolve(__dirname, 'dsh/ui-automations/src/route.tsx'),
         'wework-ui-cloud-work': path.resolve(__dirname, 'dsh/ui-cloud-work/src/route.tsx'),
+        'wework-ui-device-desktop': path.resolve(
+          __dirname,
+          'dsh/ui-cloud-work/src/device-desktop-route.tsx'
+        ),
         'wework-ui-cloud-work-sidebar': path.resolve(
           __dirname,
           'dsh/ui-cloud-work/src/sidebar-navigation.tsx'
@@ -224,8 +228,13 @@ export default defineConfig({
       'dsh/**/*.test.mjs',
       'e2e/**',
       'electron/**',
+      'scripts/account-auth-command.test.mjs',
+      'scripts/check-telemetry-boundary.test.mjs',
       'scripts/electron-e2e-launch-arguments.test.mjs',
+      'scripts/generate-telemetry-catalog.test.mjs',
       'scripts/harness-runtime-metadata.test.mjs',
+      'scripts/local-plugin-object-storage.test.mjs',
+      'scripts/sync-posthog-event-definitions.test.mjs',
       'test-results/**',
     ],
     coverage: {

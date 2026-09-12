@@ -21,6 +21,13 @@ def _runtime_features():
             "codeServer": False,
             "terminal": True,
         },
+        "desktop": {
+            "version": 1,
+            "available": True,
+            "protocol": "rfb",
+            "transport": "websocket",
+            "clipboard": "extended-text",
+        },
         "worktrees": {
             "version": 1,
             "managed": True,
@@ -54,6 +61,10 @@ def test_heartbeat_runtime_features_use_independent_contract():
     assert payload.runtime_features.interactive_sessions is not None
     assert payload.runtime_features.interactive_sessions.code_server is False
     assert payload.runtime_features.interactive_sessions.terminal is True
+    assert payload.runtime_features.desktop is not None
+    assert payload.runtime_features.desktop.protocol == "rfb"
+    assert payload.runtime_features.desktop.transport == "websocket"
+    assert payload.runtime_features.desktop.clipboard == "extended-text"
     assert payload.runtime_features.worktrees.deferred_prepare is True
     assert payload.runtime_features.worktrees.persistent_storage_verified is True
     assert payload.runtime_features.model_dump(by_alias=True) == _runtime_features()
@@ -120,3 +131,29 @@ def test_interactive_session_features_default_to_enabled_when_members_are_missin
     assert info.runtime_features.interactive_sessions is not None
     assert info.runtime_features.interactive_sessions.code_server is True
     assert info.runtime_features.interactive_sessions.terminal is True
+
+
+def test_runtime_features_drop_only_malformed_desktop_capability():
+    info = DeviceInfo(
+        id=1,
+        device_id="legacy-runtime",
+        name="Legacy",
+        status="online",
+        device_type="remote",
+        runtime_features={
+            "schemaVersion": 4,
+            "runtimeTaskCreate": {"schemaVersions": [1, 2], "features": {"goal": True}},
+            "desktop": {
+                "version": 1,
+                "available": True,
+                "protocol": "http",
+                "transport": "websocket",
+                "clipboard": "extended-text",
+            },
+        },
+    )
+
+    assert info.runtime_features is not None
+    assert info.runtime_features.desktop is None
+    assert info.runtime_features.runtime_task_create is not None
+    assert info.runtime_features.runtime_task_create.features["goal"] is True

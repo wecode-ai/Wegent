@@ -82,6 +82,7 @@ const DEVICE_EXECUTE_COMMAND_EVENT: &str = "device:execute_command";
 const DEVICE_SYNC_CAPABILITIES_EVENT: &str = "device:sync_capabilities";
 const DEVICE_START_TERMINAL_SESSION_EVENT: &str = "device:start_terminal_session";
 const DEVICE_START_CODE_SERVER_SESSION_EVENT: &str = "device:start_code_server_session";
+const DEVICE_START_VNC_SESSION_EVENT: &str = "device:start_vnc_session";
 const TERMINAL_ATTACH_EVENT: &str = "terminal:attach";
 const TERMINAL_ACK_EVENT: &str = "terminal:ack";
 const TERMINAL_INPUT_EVENT: &str = "terminal:input";
@@ -569,6 +570,10 @@ where
         self.client.transport.on(
             DEVICE_START_CODE_SERVER_SESSION_EVENT,
             self.session_start_handler(SessionType::CodeServer),
+        );
+        self.client.transport.on(
+            DEVICE_START_VNC_SESSION_EVENT,
+            self.session_start_handler(SessionType::Vnc),
         );
         self.client
             .transport

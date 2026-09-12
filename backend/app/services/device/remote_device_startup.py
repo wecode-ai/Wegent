@@ -265,6 +265,9 @@ class DefaultRemoteDeviceCommandProvider:
             "EXECUTOR_MODE": "local",
             "DEVICE_CODE_SERVER_ENABLED": "true",
             "DEVICE_TERMINAL_ENABLED": "true",
+            "DEVICE_VNC_DESKTOP_ENABLED": "true",
+            "DEVICE_VNC_RFB_ADDR": "127.0.0.1:5901",
+            "DEVICE_VNC_CLIPBOARD_MODE": "extended-text",
             "WEGENT_EXECUTOR_HOME_ID": context.device_id,
             "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": "true",
             "WEGENT_BACKEND_URL": backend_url,
@@ -298,6 +301,9 @@ class DefaultRemoteDeviceCommandProvider:
             not in {
                 "WEGENT_EXECUTOR_HOME_ID",
                 "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED",
+                "DEVICE_VNC_DESKTOP_ENABLED",
+                "DEVICE_VNC_RFB_ADDR",
+                "DEVICE_VNC_CLIPBOARD_MODE",
             }
         }
         process_command = _build_process_start_command(

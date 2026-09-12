@@ -47,6 +47,7 @@ import {
   supportsCloudSessions,
   supportsDeviceMetrics,
   supportsRemoteSessions,
+  supportsVncDesktop,
 } from '@/lib/device-capabilities'
 import {
   type DeviceLifecyclePhase,
@@ -874,7 +875,7 @@ function DeviceCard({
                       : undefined
                   }
                 />
-                {canUseCloudSessions && cloudDesktopExtension.available && (
+                {supportsVncDesktop(device) && cloudDesktopExtension.available && (
                   <CloudDesktopDeviceAction
                     deviceId={device.device_id}
                     disabled={lifecyclePending || !isOnline}

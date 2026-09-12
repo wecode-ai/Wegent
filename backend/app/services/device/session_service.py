@@ -33,9 +33,10 @@ SESSION_ID_TOKEN_BYTES = 16
 SESSION_RPC_EVENTS = {
     "terminal": "device:start_terminal_session",
     "code_server": "device:start_code_server_session",
+    "vnc": "device:start_vnc_session",
 }
 
-DeviceSessionType = Literal["terminal", "code_server"]
+DeviceSessionType = Literal["terminal", "code_server", "vnc"]
 SESSION_FEATURE_KEYS = {
     "terminal": "terminal",
     "code_server": "codeServer",
@@ -43,6 +44,7 @@ SESSION_FEATURE_KEYS = {
 SESSION_DISABLED_MESSAGES = {
     "terminal": "Terminal sessions are disabled on this device",
     "code_server": "Code-server sessions are disabled on this device",
+    "vnc": "VNC desktop sessions are unavailable on this device",
 }
 
 
@@ -99,7 +101,7 @@ class LocalDeviceSessionService:
             raise DeviceSessionError(
                 f"Device '{route_identity.logical_device_id}' is offline"
             )
-        if not _interactive_session_enabled(online_info, session_type):
+        if not _session_enabled(online_info, session_type):
             raise DeviceSessionError(SESSION_DISABLED_MESSAGES[session_type])
 
         socket_id = online_info.get("socket_id")
@@ -201,7 +203,11 @@ class LocalDeviceSessionService:
     def _build_session_id(
         self, session_type: DeviceSessionType, project_id: int
     ) -> str:
-        prefix = "terminal" if session_type == "terminal" else "code"
+        prefix = {
+            "terminal": "terminal",
+            "code_server": "code",
+            "vnc": "vnc",
+        }[session_type]
         return f"{prefix}-{project_id}-{secrets.token_urlsafe(SESSION_ID_TOKEN_BYTES)}"
 
     def _normalize_ttl(self, ttl_seconds: Any) -> int:
@@ -217,11 +223,21 @@ class LocalDeviceSessionService:
 local_device_session_service = LocalDeviceSessionService()
 
 
-def _interactive_session_enabled(
+def _session_enabled(
     online_info: dict[str, Any],
     session_type: DeviceSessionType,
 ) -> bool:
     runtime_features = online_info.get("runtime_features")
+    if session_type == "vnc":
+        if not isinstance(runtime_features, dict):
+            return False
+        desktop = runtime_features.get("desktop")
+        return (
+            isinstance(desktop, dict)
+            and desktop.get("available") is True
+            and desktop.get("protocol") == "rfb"
+            and desktop.get("transport") == "websocket"
+        )
     if not isinstance(runtime_features, dict):
         return True
     interactive_sessions = runtime_features.get("interactiveSessions")

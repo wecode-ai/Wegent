@@ -26,7 +26,11 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use reqwest::redirect::Policy;
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    task::JoinHandle,
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, Message as UpstreamMessage},
@@ -179,8 +183,10 @@ async fn handle_gateway_request(
         if !is_websocket_request(request.headers()) {
             return session_error(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade request");
         };
-        if let Err(error) = ensure_code_server_login(&state, &session).await {
-            return session_error(StatusCode::BAD_GATEWAY, &error);
+        if session.session_type == SessionType::CodeServer {
+            if let Err(error) = ensure_code_server_login(&state, &session).await {
+                return session_error(StatusCode::BAD_GATEWAY, &error);
+            }
         }
         return upgrade_websocket(state, websocket_upgrade, gateway_request, session).await;
     }
@@ -208,7 +214,7 @@ fn resolve_session(
         .ok_or_else(|| {
             Box::new(session_error(
                 StatusCode::NOT_FOUND,
-                "This terminal or IDE session is no longer available. Return to Wegent and open it again from the workspace tools.",
+            "This terminal, IDE, or desktop session is no longer available. Return to Wegent and open it again from the workspace tools.",
             ))
         })?;
     if !is_authorized(request, &session) {
@@ -220,7 +226,7 @@ fn resolve_session(
     if epoch_seconds() > session.expires_at {
         return Err(Box::new(session_error(
             StatusCode::GONE,
-            "This terminal or IDE session has expired. Return to Wegent and open it again from the workspace tools.",
+            "This terminal, IDE, or desktop session has expired. Return to Wegent and open it again from the workspace tools.",
         )));
     }
     if session.session_type == SessionType::Terminal {
@@ -281,6 +287,12 @@ async fn proxy_http(
     gateway_request: GatewayRequest,
     session: GatewaySessionSnapshot,
 ) -> Response<Body> {
+    if session.session_type == SessionType::Vnc {
+        return session_error(
+            StatusCode::BAD_REQUEST,
+            "VNC desktop sessions require a WebSocket connection",
+        );
+    }
     if let Err(error) = ensure_code_server_login(&state, &session).await {
         return session_error(StatusCode::BAD_GATEWAY, &error);
     }
@@ -343,6 +355,20 @@ async fn upgrade_websocket(
     gateway_request: GatewayRequest,
     session: GatewaySessionSnapshot,
 ) -> Response<Body> {
+    if session.session_type == SessionType::Vnc {
+        let protocols = SessionGateway::new(HashMap::new()).websocket_protocols(&gateway_request);
+        return websocket_upgrade
+            .protocols(protocols)
+            .on_upgrade(move |socket| async move {
+                if let Err(error) = proxy_vnc_websocket(socket, session.port).await {
+                    write_executor_error_line(&format_executor_log(
+                        "session gateway VNC websocket failed",
+                        &[("error", error)],
+                    ));
+                }
+            })
+            .into_response();
+    }
     let utility_session = utility_session(&session);
     let utility = SessionGateway::new(HashMap::new());
     let protocols = utility.websocket_protocols(&gateway_request);
@@ -362,6 +388,52 @@ async fn upgrade_websocket(
             }
         })
         .into_response()
+}
+
+async fn proxy_vnc_websocket(client_socket: WebSocket, port: u16) -> Result<(), String> {
+    let upstream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .map_err(|error| format!("Failed to connect to VNC desktop: {error}"))?;
+    let (mut upstream_reader, mut upstream_writer) = upstream.into_split();
+    let (mut client_sender, mut client_receiver) = client_socket.split();
+    let mut buffer = vec![0_u8; 64 * 1024];
+
+    loop {
+        tokio::select! {
+            client_message = client_receiver.next() => {
+                let Some(client_message) = client_message else {
+                    return Ok(());
+                };
+                match client_message.map_err(|error| format!("VNC client WebSocket failed: {error}"))? {
+                    ClientMessage::Binary(data) => upstream_writer
+                        .write_all(&data)
+                        .await
+                        .map_err(|error| format!("Failed to forward VNC client data: {error}"))?,
+                    ClientMessage::Text(text) => upstream_writer
+                        .write_all(text.as_bytes())
+                        .await
+                        .map_err(|error| format!("Failed to forward VNC client text: {error}"))?,
+                    ClientMessage::Ping(data) => client_sender
+                        .send(ClientMessage::Pong(data))
+                        .await
+                        .map_err(|error| format!("Failed to answer VNC WebSocket ping: {error}"))?,
+                    ClientMessage::Pong(_) => {}
+                    ClientMessage::Close(_) => return Ok(()),
+                }
+            }
+            read = upstream_reader.read(&mut buffer) => {
+                let read = read.map_err(|error| format!("Failed to read VNC desktop data: {error}"))?;
+                if read == 0 {
+                    let _ = client_sender.send(ClientMessage::Close(None)).await;
+                    return Ok(());
+                }
+                client_sender
+                    .send(ClientMessage::Binary(buffer[..read].to_vec().into()))
+                    .await
+                    .map_err(|error| format!("Failed to forward VNC desktop data: {error}"))?;
+            }
+        }
+    }
 }
 
 async fn proxy_websocket(

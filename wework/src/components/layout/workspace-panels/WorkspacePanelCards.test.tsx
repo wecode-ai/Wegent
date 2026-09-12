@@ -208,6 +208,16 @@ const cloudDevices: DeviceInfo[] = [
     is_default: false,
     device_type: 'cloud',
     bind_shell: 'claudecode',
+    runtime_features: {
+      schemaVersion: 4,
+      desktop: {
+        version: 1,
+        available: true,
+        protocol: 'rfb',
+        transport: 'websocket',
+        clipboard: 'extended-text',
+      },
+    },
   },
 ]
 
@@ -770,6 +780,16 @@ describe('WorkspacePanelCards', () => {
             is_default: true,
             device_type: 'local',
             bind_shell: 'claudecode',
+            runtime_features: {
+              schemaVersion: 4,
+              desktop: {
+                version: 1,
+                available: true,
+                protocol: 'rfb',
+                transport: 'websocket',
+                clipboard: 'extended-text',
+              },
+            },
             runtime_routes: [
               {
                 kind: 'local-ipc',
