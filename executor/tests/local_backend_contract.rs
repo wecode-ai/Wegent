@@ -223,6 +223,21 @@ async fn local_backend_heartbeat_reports_vnc_desktop_only_after_rfb_probe_passes
     let rfb_task = std::thread::spawn(move || {
         let (mut stream, _) = rfb_listener.accept().unwrap();
         stream.write_all(b"RFB 003.008\n").unwrap();
+        let mut version = [0_u8; 12];
+        stream.read_exact(&mut version).unwrap();
+        assert_eq!(&version, b"RFB 003.008\n");
+        stream.write_all(&[1, 1]).unwrap();
+        let mut selected_security = [0_u8; 1];
+        stream.read_exact(&mut selected_security).unwrap();
+        assert_eq!(selected_security, [1]);
+        stream.write_all(&0_u32.to_be_bytes()).unwrap();
+        let mut shared = [0_u8; 1];
+        stream.read_exact(&mut shared).unwrap();
+        assert_eq!(shared, [1]);
+        let mut server_init = vec![0_u8; 24];
+        server_init[0..2].copy_from_slice(&1280_u16.to_be_bytes());
+        server_init[2..4].copy_from_slice(&800_u16.to_be_bytes());
+        stream.write_all(&server_init).unwrap();
     });
 
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
