@@ -1750,5 +1750,12 @@
       "save_api_key_failed": "保存 API 密钥失败",
       "sync_failed": "同步服务器失败"
     }
+  },
+  "wework_open": {
+    "title": "打开 {{appName}}",
+    "description": "正在请求打开 {{appName}}，请在浏览器提示中确认。若未出现提示，可点击下方按钮再次打开。",
+    "open": "打开 {{appName}}",
+    "hint": "请先安装 {{appName}}，并允许浏览器打开应用。若钉钉阻止打开，请在系统浏览器中打开此页面。",
+    "invalid": "此链接无效，请从通知中重新打开。"
   }
 }

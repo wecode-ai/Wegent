@@ -16,6 +16,7 @@ from app.services.im.session_service import im_session_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
+from app.services.wework_links import browser_link
 from shared.utils.crypto import encrypt_sensitive_data
 
 
@@ -321,7 +322,8 @@ async def test_runtime_task_update_uses_global_im_notification_target(
     assert result["sent"] == 1
     assert calls[1]["chat_id"] == 100200300
     assert calls[1]["text"] == (
-        "任务「Native Codex task」有新的 AI 回复：\n\n" "Implemented from native Codex"
+        "任务「Native Codex task」有新的 AI 回复：\n\nImplemented from native Codex"
+        f"\n\n{browser_link('wework://tasks/device-1/codex-thread-1')}"
     )
 
 
@@ -669,6 +671,7 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
     assert calls[1]["chat_id"] == 100200301
     assert "Native Codex task" in calls[1]["text"]
     assert "Subscribed update" in calls[1]["text"]
+    assert browser_link("wework://tasks/device-1/codex-thread-1") in calls[1]["text"]
     assert await im_session_service.get_runtime_task_reply_target(
         session=session,
         message_id=3201,

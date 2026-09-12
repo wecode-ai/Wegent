@@ -69,3 +69,5 @@ export type {
   SocketClientStateListener,
   SocketReconnectCallback,
 } from './socket'
+
+export { parseWeworkScheme, type WeworkDestination } from './wework-navigation'

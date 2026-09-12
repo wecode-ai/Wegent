@@ -17,6 +17,7 @@ from app.services.im.session_service import im_session_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
+from app.services.wework_links import browser_link, runtime_task_url
 from shared.utils.crypto import decrypt_sensitive_data
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,8 @@ class IMNotificationDispatcher:
             status=status,
             content=content,
         )
+        destination = runtime_task_url(address["deviceId"], address["localTaskId"])
+        message += f"\n\n{browser_link(destination)}"
         return await self._send_to_sessions(
             db,
             sessions,

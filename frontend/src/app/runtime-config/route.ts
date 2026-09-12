@@ -162,6 +162,7 @@ export async function GET() {
       // External Wework URL for coding entry points.
       // Runtime-only by design; no NEXT_PUBLIC_* fallback.
       weworkCodeUrl: process.env.RUNTIME_WEWORK_CODE_URL || '',
+      weworkAppName: process.env.RUNTIME_WEWORK_APP_NAME?.trim() || 'Wework',
     },
     {
       headers: {
