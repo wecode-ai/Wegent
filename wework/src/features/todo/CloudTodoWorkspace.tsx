@@ -128,7 +128,6 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   findRuntimeTask,
   hydrateRuntimeTaskAddress,
@@ -208,6 +207,7 @@ import {
 import {
   isRuntimeMyWorkItem,
   mergeRuntimeMyWorkItems,
+  projectBoundRuntimeTaskStatuses,
   runtimeMyWorkItems,
   runtimeWorkItemReference,
 } from './runtimeMyWork'
@@ -517,33 +517,6 @@ function toWeworkCloudProject(project: CollaborationProject): CloudProject {
 
 function toCloudLoopItem(issue: Awaited<ReturnType<SharedWorkspaceApi['issues']['get']>>) {
   return issue as CloudLoopItem
-}
-
-function projectActiveRuntimeTaskStatuses(
-  items: LocatedLoopItem[],
-  bindings: LoopItemTaskBinding[],
-  lifecycleSnapshot: RuntimeTaskLifecycleStoreSnapshot | undefined
-): LocatedLoopItem[] {
-  if (!lifecycleSnapshot) return items
-  const runningItemIds = new Set<string>()
-  for (const binding of bindings) {
-    if (!binding.loop_item_id) continue
-    const lifecycle = lifecycleSnapshot.tasks.get(
-      getRuntimeTaskLifecycleKey({
-        deviceId: binding.device_id,
-        taskId: binding.task_id,
-      })
-    )
-    if (lifecycle && runtimeTaskTrackingExecutionStatus(lifecycle) === 'running') {
-      runningItemIds.add(binding.loop_item_id)
-    }
-  }
-  if (runningItemIds.size === 0) return items
-  return items.map(item =>
-    runningItemIds.has(item.id) && item.status !== 'in_progress'
-      ? { ...item, status: 'in_progress' }
-      : item
-  )
 }
 
 function modelSelectionFromExecutionConfig(
@@ -1902,7 +1875,7 @@ export function CloudTodoWorkspace({
     const boundItemIds = new Set(
       bindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
     )
-    return projectActiveRuntimeTaskStatuses(
+    return projectBoundRuntimeTaskStatuses(
       selectedCloudProjectItems.filter(item => boundItemIds.has(item.id)),
       bindings,
       runtimeTaskLifecycle
@@ -2826,11 +2799,7 @@ export function CloudTodoWorkspace({
         const activeItems = selectedItems.filter(item => activeItemIds.has(item.id))
         return {
           ...boardResponse,
-          items: projectActiveRuntimeTaskStatuses(
-            activeItems,
-            activeBindings,
-            runtimeTaskLifecycle
-          ),
+          items: projectBoundRuntimeTaskStatuses(activeItems, activeBindings, runtimeTaskLifecycle),
           task_bindings: activeBindings,
         }
       }

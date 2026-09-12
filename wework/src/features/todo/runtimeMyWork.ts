@@ -3,7 +3,11 @@ import {
   getRuntimeTaskLifecycleKey,
   type RuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import { runtimeTaskBoardState } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import {
+  runtimeTaskBoardState,
+  runtimeTaskTrackingExecutionStatus,
+  type RuntimeTaskTrackingExecutionStatus,
+} from '@/features/workbench/runtimeTaskLifecycle/projection'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeProjectSpaceRef,
@@ -29,6 +33,8 @@ export interface RuntimeIssueBinding {
   device_id: string
   task_id: string
 }
+
+type RuntimeBoundIssueStatus = 'pending' | 'in_progress' | 'in_review' | 'completed'
 
 function runtimeTaskKey(address: Pick<RuntimeTaskAddress, 'deviceId' | 'taskId'>): string {
   return `${address.deviceId}\0${address.taskId}`
@@ -211,6 +217,53 @@ export function mergeRuntimeMyWorkItems<T extends CloudLoopItem>(
       return !boundIssueId || !issueIds.has(boundIssueId)
     }),
   ]
+}
+
+function boundIssueStatus(
+  statuses: RuntimeTaskTrackingExecutionStatus[]
+): RuntimeBoundIssueStatus | null {
+  if (statuses.includes('running')) return 'in_progress'
+  if (statuses.includes('queued')) return 'pending'
+  if (statuses.some(status => status === 'failed' || status === 'cancelled')) {
+    return 'in_review'
+  }
+  if (
+    statuses.length > 0 &&
+    statuses.every(status => status === 'succeeded' || status === 'archived')
+  ) {
+    return 'completed'
+  }
+  return null
+}
+
+export function projectBoundRuntimeTaskStatuses<T extends CloudLoopItem>(
+  items: T[],
+  bindings: RuntimeIssueBinding[],
+  lifecycleSnapshot?: RuntimeTaskLifecycleStoreSnapshot
+): T[] {
+  if (!lifecycleSnapshot) return items
+  const statusesByIssue = new Map<string, RuntimeTaskTrackingExecutionStatus[]>()
+  for (const binding of bindings) {
+    if (!binding.loop_item_id) continue
+    const lifecycle = lifecycleSnapshot.tasks.get(
+      getRuntimeTaskLifecycleKey({
+        deviceId: binding.device_id,
+        taskId: binding.task_id,
+      })
+    )
+    if (!lifecycle) continue
+    const status = runtimeTaskTrackingExecutionStatus(lifecycle)
+    if (!status) continue
+    statusesByIssue.set(binding.loop_item_id, [
+      ...(statusesByIssue.get(binding.loop_item_id) ?? []),
+      status,
+    ])
+  }
+  if (statusesByIssue.size === 0) return items
+  return items.map(item => {
+    const status = boundIssueStatus(statusesByIssue.get(item.id) ?? [])
+    return status && item.status !== status ? { ...item, status } : item
+  })
 }
 
 export function isRuntimeMyWorkItem(item: CloudLoopItem): item is RuntimeMyWorkItem {

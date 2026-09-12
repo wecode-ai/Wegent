@@ -5092,7 +5092,7 @@ describe('CloudTodoWorkspace', () => {
     }
   })
 
-  it('projects an active runtime task when persisted board status lags behind', async () => {
+  it('projects bound Runtime Task lifecycle when persisted board status lags behind', async () => {
     const defaultProject = {
       ...project,
       id: 'default-work-items',
@@ -5207,6 +5207,33 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(
       trackedIssue.title
     )
+    expect(screen.getByTestId('cloud-todo-column-in_review')).not.toHaveTextContent(
+      trackedIssue.title
+    )
+
+    currentRuntimeWork = {
+      ...runtimeWork,
+      projects: runtimeWork.projects.map(projectWork => ({
+        ...projectWork,
+        deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          tasks: workspace.tasks.map(task => ({
+            ...task,
+            running: false,
+            status: 'done',
+            completedAt: 1_700_000_000,
+          })),
+        })),
+      })),
+    }
+    lifecycleStore.syncRuntimeWork(currentRuntimeWork)
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+        trackedIssue.title
+      )
+    })
     expect(screen.getByTestId('cloud-todo-column-in_review')).not.toHaveTextContent(
       trackedIssue.title
     )
