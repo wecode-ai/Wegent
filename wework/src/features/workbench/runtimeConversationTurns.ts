@@ -366,10 +366,7 @@ function prependRuntimeConversationItems(
   const matchedLocalIndexes = new Set<number>()
   const mergedSnapshotItems = snapshotItems.map(snapshotItem => {
     const localIndex = localItems.findIndex(
-      (localItem, index) =>
-        !matchedLocalIndexes.has(index) &&
-        (localItem.id === snapshotItem.id ||
-          isEquivalentAssistantTextRepresentation(localItem, snapshotItem))
+      (localItem, index) => !matchedLocalIndexes.has(index) && localItem.id === snapshotItem.id
     )
     if (localIndex < 0) return snapshotItem
     matchedLocalIndexes.add(localIndex)

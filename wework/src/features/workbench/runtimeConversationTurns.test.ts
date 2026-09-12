@@ -615,6 +615,12 @@ describe('runtimeConversationTurns', () => {
               createdAt: 100,
             },
           },
+          {
+            id: 'assistant-older-same-text',
+            type: 'assistant_text',
+            content: 'Done',
+            createdAt: '2026-08-25T07:20:36.000Z',
+          },
         ],
         status: 'done',
       },
@@ -625,6 +631,7 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0]?.items.map(item => item.id)).toEqual([
       'user-1',
       'tool-older',
+      'assistant-older-same-text',
       'tool-newer',
       'assistant-1',
     ])
