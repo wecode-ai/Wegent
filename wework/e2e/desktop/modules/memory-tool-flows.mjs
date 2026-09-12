@@ -47,9 +47,7 @@ import { tmpdir } from 'node:os'
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
-const MEMORY_RESPONSE_TIMEOUT_MS = Number(
-  process.env.WEWORK_E2E_MEMORY_RESPONSE_TIMEOUT_MS ?? 30_000
-)
+const MEMORY_RESPONSE_TIMEOUT_MS = 30_000
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64'
