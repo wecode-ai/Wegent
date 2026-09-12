@@ -1450,12 +1450,15 @@ async function selectE2EModel(
       'The model selector did not retain the expected provider'
     )
   }
-  await control.command('press', 'body', { key: 'Escape' })
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('model-selector-menu'),
-    'The model selector menu did not close after selecting the E2E model'
-  )
+  const menuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (menuSnapshot.testIds.includes('model-selector-menu')) {
+    await control.command('press', 'body', { key: 'Escape' })
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('model-selector-menu'),
+      'The model selector menu did not close after selecting the E2E model'
+    )
+  }
 }
 
 async function waitForE2EModelLabel(

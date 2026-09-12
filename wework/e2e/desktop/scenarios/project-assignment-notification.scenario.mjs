@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
   assistantMessage,
   createSse,
+  customToolCall,
   mcpToolRequestEvents,
   namespacedFunctionCall,
   requestContainsToolOutput,
@@ -23,6 +26,11 @@ const NOTIFICATION_CALL_ID = 'send-general-notification'
 const NOTIFICATION_SEARCH_ID = 'search-general-notification'
 const CLICK_PROMPT = '给我发个你好的通知，然后点击打开看板页面'
 const CLICK_COMPLETION = 'WEWORK_CLICK_NOTIFICATION_SENT'
+const EXECUTION_PROMPT = '完成当前分配的 Issue：在工作区创建验收文件并写入指定的验证内容。'
+const EXECUTION_COMPLETION = 'WEWORK_ASSIGNMENT_RUNTIME_COMPLETED'
+const EXECUTION_CALL_ID = 'wework-assignment-apply-patch'
+const EXECUTION_ARTIFACT_NAME = 'wework-assignment-runtime-result.txt'
+const EXECUTION_ARTIFACT_CONTENT = 'WEWORK_ASSIGNMENT_RUNTIME_ARTIFACT'
 const MULTI_TURN_RESPONSE_TIMEOUT_MS = 30_000
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
@@ -68,6 +76,17 @@ async function assertNoNotification(control, message, timeoutMs) {
   }
 }
 
+async function waitForApiValue(load, predicate, message, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let latest = null
+  while (Date.now() < deadline) {
+    latest = await load()
+    if (predicate(latest)) return latest
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.fail(`${message}: ${JSON.stringify(latest)}`)
+}
+
 export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspacePath }) {
   let backendUrl = ''
   let ownerToken = ''
@@ -79,11 +98,21 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
   let selfAssignedTask = null
   let modelRequestCount = 0
   let clickRequested = false
+  let executionCompletionReleased = false
+  let releaseExecutionCompletionResolve = null
+  const executionCompletionGate = new Promise(resolve => {
+    releaseExecutionCompletionResolve = resolve
+  })
   const modelRequests = []
 
   const ownerRequest = (pathname, options) => requestJson(backendUrl, ownerToken, pathname, options)
   const assignerRequest = (pathname, options) =>
     requestJson(backendUrl, assignerToken, pathname, options)
+  const releaseExecutionCompletion = () => {
+    if (executionCompletionReleased) return
+    executionCompletionReleased = true
+    releaseExecutionCompletionResolve()
+  }
 
   return {
     requiresCloudEnvironment: true,
@@ -94,6 +123,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       const chunks = []
       for await (const chunk of request) chunks.push(chunk)
       const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const serializedPayload = JSON.stringify(payload)
       modelRequests.push({
         model: payload.model,
         toolNames: (payload.tools ?? []).map(tool => tool.name ?? tool.type),
@@ -102,15 +132,40 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       const responseId = `wework-notification-${++modelRequestCount}`
       // Codex can send its first prewarm before tools or request metadata exist.
       if (
-        JSON.stringify(payload).includes('"request_kind":"prewarm"') ||
+        serializedPayload.includes('"request_kind":"prewarm"') ||
         (modelRequestCount === 1 && !payload.tools?.length)
       ) {
         response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
         response.end(createSse([responseCreated(responseId), responseCompleted(responseId)]))
         return true
       }
+      if (
+        serializedPayload.includes(EXECUTION_PROMPT) ||
+        requestContainsToolOutput(payload, EXECUTION_CALL_ID)
+      ) {
+        let events
+        if (requestContainsToolOutput(payload, EXECUTION_CALL_ID)) {
+          await executionCompletionGate
+          events = [assistantMessage(EXECUTION_COMPLETION)]
+        } else {
+          const applyPatch = (payload.tools ?? []).find(tool => tool?.name === 'apply_patch')
+          assert.ok(applyPatch, 'The real local Codex runtime did not advertise apply_patch')
+          const patch = [
+            '*** Begin Patch',
+            `*** Add File: ${EXECUTION_ARTIFACT_NAME}`,
+            `+${EXECUTION_ARTIFACT_CONTENT}`,
+            '*** End Patch',
+          ].join('\n')
+          events = [customToolCall(EXECUTION_CALL_ID, 'apply_patch', patch)]
+        }
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([responseCreated(responseId), ...events, responseCompleted(responseId)])
+        )
+        return true
+      }
       const withClick = clickRequested
-      assert.ok(JSON.stringify(payload).includes(withClick ? CLICK_PROMPT : NOTIFICATION_PROMPT))
+      assert.ok(serializedPayload.includes(withClick ? CLICK_PROMPT : NOTIFICATION_PROMPT))
       const callId = withClick ? 'send-click-notification' : NOTIFICATION_CALL_ID
       const searchId = withClick ? 'search-click-notification' : NOTIFICATION_SEARCH_ID
       const args = withClick
@@ -311,6 +366,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       await control.command('waitFor', `[data-testid="wework-notification-${saved.id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await captureScreenshot(control, 'assignment-01-notification.png')
       await control.command('click', `[data-testid="wework-notification-${saved.id}"]`)
       await control.command(
         'waitFor',
@@ -326,6 +382,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         ),
         ASSIGNED_TASK_TITLE
       )
+      await captureScreenshot(control, 'assignment-02-issue-opened.png', activeSurface)
       const readInbox = await ownerRequest('/api/v1/wework-notifications')
       assert.ok(
         readInbox.items.find(item => item.id === saved.id)?.read_at,
@@ -340,13 +397,126 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
       )
       assert.equal(forbiddenRead.status, 404, 'Another user must not read the recipient inbox')
 
+      const createTaskButton = `${activeSurface} [data-testid="cloud-todo-create-task"]`
+      const taskPanel = `${activeSurface} [data-testid="work-item-new-task-chat-panel"]`
+      const boundTaskPanel = `${activeSurface} [data-testid="work-item-task-chat-panel"]`
+      const taskComposer = `${taskPanel} [data-testid="chat-message-input"]`
+      await control.command('click', createTaskButton)
+      await control.command('waitFor', `${activeSurface} [data-testid="ai-chat-modal"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', taskPanel, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', taskComposer, { timeoutMs: uiTimeoutMs })
+      const taskBridge = JSON.parse(await control.command('snapshot', activeSurface))
+      assert.ok(
+        taskBridge.text.includes(project.name) &&
+          taskBridge.text.includes(assignedTask.id) &&
+          taskBridge.text.includes(ASSIGNED_TASK_TITLE),
+        'The real Wework Task bridge lost the assigned Project or Issue context'
+      )
+      await selectE2EModel(control, undefined, undefined, taskPanel)
+      await captureScreenshot(control, 'assignment-03-task-created.png', activeSurface)
+
+      try {
+        await control.command('fill', taskComposer, { value: EXECUTION_PROMPT })
+        await control.command('press', taskComposer, { key: 'Enter' })
+        const taskBindings = await waitForApiValue(
+          () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}/tasks`),
+          value => Array.isArray(value) && value.length > 0,
+          'Starting work did not bind a real Runtime Task to the assigned Issue',
+          uiTimeoutMs
+        )
+        const binding = taskBindings[0]
+        assert.equal(
+          binding.loopItemId ?? binding.loop_item_id,
+          assignedTask.id,
+          'The Runtime Task binding points at a different Issue'
+        )
+        assert.ok(
+          binding.deviceId ?? binding.device_id,
+          'The Runtime Task binding has no local Executor device'
+        )
+        assert.ok(
+          binding.taskId ?? binding.task_id,
+          'The Runtime Task binding has no Runtime Task identity'
+        )
+        await control.command('waitFor', boundTaskPanel, { timeoutMs: uiTimeoutMs })
+        const runningIssue = await waitForApiValue(
+          () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
+          value => value?.status === 'in_progress',
+          'The assigned Issue did not enter in_progress while its Runtime Task was running',
+          uiTimeoutMs
+        )
+        assert.equal(runningIssue.status, 'in_progress')
+        await waitForSnapshot(
+          control,
+          snapshot => snapshot.testIds.includes('pause-response-button'),
+          'The real local Executor did not expose the running Runtime Task state',
+          uiTimeoutMs,
+          activeSurface
+        )
+        await captureScreenshot(control, 'assignment-04-task-running.png', activeSurface)
+      } finally {
+        releaseExecutionCompletion()
+      }
+
+      await control.command('waitFor', `${boundTaskPanel} [data-testid="message-assistant"]`, {
+        text: EXECUTION_COMPLETION,
+        timeoutMs: Math.max(uiTimeoutMs, MULTI_TURN_RESPONSE_TIMEOUT_MS),
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('pause-response-button'),
+        'The real local Executor returned a final response but the Runtime Task stayed active',
+        uiTimeoutMs,
+        activeSurface
+      )
+      assert.equal(
+        (await readFile(join(workspacePath, EXECUTION_ARTIFACT_NAME), 'utf8')).trim(),
+        EXECUTION_ARTIFACT_CONTENT,
+        'The real local Executor did not write the expected isolated workspace artifact'
+      )
+      const completedIssue = await waitForApiValue(
+        () => ownerRequest(`/api/v1/loop-items/${assignedTask.id}`),
+        value => value?.status === 'in_review',
+        'Runtime Task completion did not synchronize the assigned Issue to in_review',
+        uiTimeoutMs
+      )
+      assert.equal(completedIssue.status, 'in_review')
+      await captureScreenshot(control, 'assignment-05-task-completed.png', activeSurface)
+      await control.command('click', `${activeSurface} [data-testid="ai-chat-modal-close"]`)
+      await control.command('waitFor', `${activeSurface} [data-testid="ai-chat-modal"]`, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      const synchronizedCard = `${activeSurface} [data-testid="cloud-todo-column-in_review"] [data-testid="cloud-todo-card-${assignedTask.id}"]`
+      await control.command('waitFor', synchronizedCard, { timeoutMs: uiTimeoutMs })
+      await control.command('click', synchronizedCard)
+      await control.command('waitFor', `${activeSurface} [data-testid="cloud-todo-detail"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const synchronizedDetailStatus = await waitForApiValue(
+        () =>
+          control.command('getValue', `${activeSurface} [data-testid="cloud-todo-detail-status"]`),
+        value => value === 'in_review',
+        'The completed Runtime Task status was not reflected in the open Issue detail',
+        uiTimeoutMs
+      )
+      assert.equal(
+        synchronizedDetailStatus,
+        'in_review',
+        'The completed Runtime Task status was not reflected in the open Issue detail'
+      )
+      await captureScreenshot(control, 'assignment-06-issue-synchronized.png', activeSurface)
+
       await control.command('clearSystemNotifications', 'body')
+      const latestAssignedTask = await ownerRequest(`/api/v1/loop-items/${assignedTask.id}`)
       assignedTask = await assignerRequest(
         `/api/v1/cloud-projects/${project.id}/loop-items/${assignedTask.id}/assign`,
         {
           method: 'POST',
           body: JSON.stringify({
-            version: assignedTask.version,
+            version: latestAssignedTask.version,
             assignee_type: 'user',
             assignee_id: String(owner.id),
           }),

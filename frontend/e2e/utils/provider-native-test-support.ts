@@ -19,9 +19,17 @@ export interface ProviderNativeResources {
   prefix: string
   modelName: string
   botName: string
+  botId: number
   teamName: string
   teamId: number
   fixture: ProviderNativeKnowledgeFixture
+}
+
+export interface ProviderNativeSkillRef {
+  skill_id: number
+  namespace: string
+  is_public: boolean
+  content_hash?: string
 }
 
 export interface RecordedProviderCall {
@@ -121,7 +129,16 @@ export async function createProviderNativeResources(
     expect(response.status(), await response.text()).toBe(200)
   }
   await resetMockMcp(request)
-  return { token, prefix, modelName, botName, teamName, teamId: teamId!, fixture }
+  return {
+    token,
+    prefix,
+    modelName,
+    botName,
+    botId: botId!,
+    teamName,
+    teamId: teamId!,
+    fixture,
+  }
 }
 
 export async function deleteProviderNativeResources(
@@ -250,6 +267,51 @@ export async function clearToolScenario(
 export async function resetMockMcp(request: APIRequestContext): Promise<void> {
   const response = await request.post(`${PROVIDER_NATIVE_MOCK_URL}/mcp-control/reset`)
   expect(response.status(), await response.text()).toBe(200)
+}
+
+export function providerNativeMcpServer(
+  service: 'docs' | 'wikispace' | 'ai_table' = 'docs'
+): Record<string, unknown> {
+  return {
+    type: 'streamable-http',
+    url: `${PROVIDER_NATIVE_MCP_URL}/mcp?service=${service}`,
+  }
+}
+
+export async function resolveProviderNativeSkillRef(
+  request: APIRequestContext,
+  token: string,
+  skillName: string
+): Promise<ProviderNativeSkillRef> {
+  const response = await request.get(
+    `${PROVIDER_NATIVE_API_URL}/api/v1/kinds/skills?name=${encodeURIComponent(
+      skillName
+    )}&namespace=default&exact_match=false`,
+    { headers: authHeaders(token) }
+  )
+  expect(response.status(), await response.text()).toBe(200)
+  const body = (await response.json()) as {
+    items?: Array<{
+      metadata?: {
+        namespace?: string
+        labels?: Record<string, string>
+      }
+      status?: {
+        fileHash?: string
+      }
+    }>
+  }
+  const skill =
+    body.items?.find(item => item.metadata?.labels?.name === skillName) ?? body.items?.[0]
+  const skillId = Number(skill?.metadata?.labels?.id)
+  expect(skillId, `Skill ${skillName} should expose metadata.labels.id`).toBeGreaterThan(0)
+  const fileHash = skill?.status?.fileHash
+  return {
+    skill_id: skillId,
+    namespace: skill?.metadata?.namespace || 'default',
+    is_public: skill?.metadata?.labels?.user_id === '0',
+    content_hash: fileHash ? `sha256:${fileHash}` : undefined,
+  }
 }
 
 export async function configureMockMcp(

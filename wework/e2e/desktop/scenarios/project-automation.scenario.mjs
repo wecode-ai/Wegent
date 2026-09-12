@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
@@ -17,15 +18,18 @@ import {
 import {
   assistantMessage,
   createSse,
+  functionCall,
   mcpToolRequestEvents,
   namespacedFunctionCall,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
   selectMcpTool,
+  selectShellToolCommand,
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
 
+const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const PROJECT_ID = '700000000000000001'
 const AGENT_ID = 'agent-project-automation'
 const RULE_ID = 'automation-rule-1'
@@ -44,6 +48,16 @@ const MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION =
   'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP_COMPLETE'
 const MOONSHOT_OVERRIDE_INITIAL_COMPLETION = '真实自动化执行已完成。\n\n[打开任务文件](README.md)'
 const CLOUD_MODEL_UPSTREAM_ID = 'desktop-e2e-public-upstream-model'
+const CODEX_PLUGIN_NAME = 'wework-plugin-example'
+const CODEX_PLUGIN_MARKETPLACE = 'wegent'
+const CODEX_PLUGIN_MCP_NAMESPACE = 'example'
+const CODEX_PLUGIN_SKILL_NAME = 'hello-wework'
+const CODEX_PLUGIN_SKILL_MARKER = '# Hello Wework'
+const CODEX_PLUGIN_PROMPT = '使用 Wework 插件示例向 Collaboration E2E 问好。'
+const CODEX_PLUGIN_COMPLETION = 'Hello, Collaboration E2E!'
+const CODEX_PLUGIN_BOARD_CALL_ID = 'collaboration-codex-plugin-board-item'
+const CODEX_PLUGIN_SKILL_CALL_ID = 'collaboration-codex-plugin-skill'
+const CODEX_PLUGIN_MCP_CALL_ID = 'collaboration-codex-plugin-mcp'
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -440,6 +454,7 @@ export function createDesktopScenario({
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
+  let cloudEnvironment = null
   let cloudRuntimeProfile = null
   let localDefaultAgent = null
   let wegentAgent = null
@@ -448,6 +463,7 @@ export function createDesktopScenario({
   let managerToolCalls = 0
   const upstreamResponseRequests = []
   let moonshotOverrideIssueId = null
+  let codexPluginSkillPath = null
   let uiProject = { ...PROJECT }
   let nextBoardItemSequence = 201
   let orchestratedItemId = null
@@ -592,6 +608,45 @@ export function createDesktopScenario({
     )
     assert.ok(localDefaultDevice?.device_id, 'Real Wework local executor fixture is missing')
     assert.ok(cloudExecutionDevice?.device_id, 'Real Wework cloud executor fixture is missing')
+    assert.ok(cloudEnvironment, 'Real cloud environment was not attached to the scenario')
+    const pluginRelease = await cloudEnvironment.publishPluginRelease({
+      slug: CODEX_PLUGIN_NAME,
+      version: '0.1.0',
+      packageRoot: join(
+        REPOSITORY_ROOT,
+        'wework',
+        'resources',
+        'bundled-plugins',
+        CODEX_PLUGIN_NAME
+      ),
+    })
+    await cloudRequest(
+      `/api/plugins/marketplace/${pluginRelease.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
+      { method: 'POST' }
+    )
+    codexPluginSkillPath = join(
+      cloudEnvironment.remoteCodexHome,
+      'plugins',
+      'cache',
+      CODEX_PLUGIN_MARKETPLACE,
+      CODEX_PLUGIN_NAME,
+      '0.1.0',
+      'skills',
+      CODEX_PLUGIN_SKILL_NAME,
+      'SKILL.md'
+    )
+    await waitForValue(
+      () => readFile(codexPluginSkillPath, 'utf8').catch(() => ''),
+      content => content.includes(CODEX_PLUGIN_SKILL_MARKER),
+      'The collaboration Codex plugin did not synchronize to the cloud execution environment',
+      uiTimeoutMs
+    )
+    const codexPlugin = {
+      id: `${CODEX_PLUGIN_NAME}@${CODEX_PLUGIN_MARKETPLACE}`,
+      pluginName: CODEX_PLUGIN_NAME,
+      marketplaceId: CODEX_PLUGIN_MARKETPLACE,
+      displayName: 'Wework 插件示例',
+    }
     cloudRuntimeProfile = await cloudRequest('/api/v1/runtime-profiles', {
       method: 'POST',
       body: JSON.stringify({
@@ -639,6 +694,7 @@ export function createDesktopScenario({
         executionMode: 'auto',
         executionDeviceId: localDefaultDevice.device_id,
         workspaceBinding: { type: 'standalone' },
+        plugins: [codexPlugin],
       }),
     })
     wegentAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
@@ -664,6 +720,11 @@ export function createDesktopScenario({
     assert.equal(localDefaultAgent.executionDeviceId, localDefaultDevice.device_id)
     assert.equal(localDefaultAgent.model, DEFAULT_MODEL_ID)
     assert.equal(localDefaultAgent.modelType, 'runtime')
+    assert.deepEqual(
+      localDefaultAgent.plugins,
+      [codexPlugin],
+      'The Codex robot response lost its configured plugin'
+    )
     await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -1109,8 +1170,10 @@ export function createDesktopScenario({
         method: 'POST',
         body: JSON.stringify({
           title: MOONSHOT_OVERRIDE_ISSUE_TITLE,
-          description:
+          description: [
             'The robot defaults to a local GPT runtime. This Issue must execute on the cloud public Moonshot fixture and preserve that identity for follow-up messages.',
+            CODEX_PLUGIN_PROMPT,
+          ].join('\n\n'),
           status: 'inbox',
           priority: 'high',
           tags: ['runtime-v2-model-override'],
@@ -1283,11 +1346,28 @@ export function createDesktopScenario({
     const initialIssueRequests = initialMoonshotRequests.filter(request =>
       JSON.stringify(request).includes(`task_id: ${moonshotOverrideIssue.id}`)
     )
-    assert.ok(initialIssueRequests.length > 0, 'The Issue produced no correlated upstream request')
+    assert.equal(
+      initialIssueRequests.length,
+      4,
+      'The Codex plugin flow did not execute Issue read, Skill read, MCP call, and completion'
+    )
     assert.ok(
       initialIssueRequests.every(request => request.model === CLOUD_MODEL_UPSTREAM_ID),
       'The Issue produced a duplicate request through a model other than Moonshot'
     )
+    assert.ok(
+      initialIssueRequests.some(request =>
+        JSON.stringify(request).includes(CODEX_PLUGIN_SKILL_MARKER)
+      ),
+      'The Codex plugin Skill content never returned to the model'
+    )
+    assert.ok(
+      initialIssueRequests.some(request =>
+        JSON.stringify(request).includes(CODEX_PLUGIN_COMPLETION)
+      ),
+      'The Codex plugin MCP output never returned to the model'
+    )
+    await captureScreenshot(control, 'project-automation-codex-plugin-completed.png')
     await control.command('setLocalProxyUrl', 'body', { value: '' })
 
     const runtimeWork = await waitForValue(
@@ -2790,6 +2870,10 @@ export function createDesktopScenario({
   return {
     requiresCloudEnvironment: true,
 
+    setCloudEnvironment(value) {
+      cloudEnvironment = value
+    },
+
     async prepareCloud({ authToken, backendUrl }) {
       cloudApi = { authToken, backendUrl }
       const createdKey = await requestJson(backendUrl, authToken, '/api/api-keys', {
@@ -2890,6 +2974,84 @@ export function createDesktopScenario({
         }
         if (serialized.includes('"request_kind":"prewarm"')) {
           writeEvents([responseCreated(responseId), responseCompleted(responseId)])
+          return true
+        }
+        if (
+          moonshotOverrideIssueId &&
+          serialized.includes(`task_id: ${moonshotOverrideIssueId}`) &&
+          !serialized.includes(MOONSHOT_OVERRIDE_FOLLOW_UP)
+        ) {
+          assert.ok(
+            codexPluginSkillPath,
+            'The Codex plugin execution started before its Skill synchronized'
+          )
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_MCP_CALL_ID)) {
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_COMPLETION),
+              'The Codex plugin MCP result did not return to the model'
+            )
+            writeEvents([
+              responseCreated(responseId),
+              assistantMessage(
+                `${CODEX_PLUGIN_COMPLETION}\n\n${MOONSHOT_OVERRIDE_INITIAL_COMPLETION}`
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_SKILL_CALL_ID)) {
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_SKILL_MARKER),
+              'The Codex plugin Skill file was not read through the real tool loop'
+            )
+            const tool = selectMcpTool(payload, CODEX_PLUGIN_MCP_NAMESPACE, 'hello_wework', {
+              name: 'Collaboration E2E',
+            })
+            writeEvents([
+              responseCreated(responseId),
+              ...namespacedFunctionCall(
+                CODEX_PLUGIN_MCP_CALL_ID,
+                tool.namespace,
+                tool.name,
+                tool.arguments
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, CODEX_PLUGIN_BOARD_CALL_ID)) {
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_PROMPT),
+              'The assigned Codex runtime did not read the Issue before executing its plugin'
+            )
+            assert.ok(
+              serialized.includes(CODEX_PLUGIN_NAME) &&
+                serialized.includes(CODEX_PLUGIN_SKILL_NAME),
+              'The assigned Codex runtime did not load its configured plugin Skill'
+            )
+            const shell = selectShellToolCommand(
+              payload,
+              `sed -n '1,80p' ${JSON.stringify(codexPluginSkillPath)}`,
+              dirname(codexPluginSkillPath)
+            )
+            writeEvents([
+              responseCreated(responseId),
+              ...functionCall(CODEX_PLUGIN_SKILL_CALL_ID, shell.name, shell.arguments),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          const boardTool = selectMcpTool(payload, 'wework_space', 'get_board_item', {})
+          writeEvents([
+            responseCreated(responseId),
+            ...namespacedFunctionCall(
+              CODEX_PLUGIN_BOARD_CALL_ID,
+              boardTool.namespace,
+              boardTool.name,
+              boardTool.arguments
+            ),
+            responseCompleted(responseId),
+          ])
           return true
         }
         if (
