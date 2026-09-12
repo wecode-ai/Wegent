@@ -333,9 +333,10 @@ pub(super) fn load(
             let Some(version) = manifest["version"].as_str() else {
                 continue;
             };
-            if !version
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || "-_ .".contains(character))
+            if version.is_empty()
+                || !version.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || "-_ .".contains(character)
+                })
                 || version.contains("..")
             {
                 return Err("Invalid plugin identity".into());
