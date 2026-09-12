@@ -1818,7 +1818,20 @@ describe('ConnectionsSettingsPage', () => {
 
   test('keeps connection settings open after the cloud desktop extension opens', async () => {
     const onBack = vi.fn()
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        runtime_features: {
+          schemaVersion: 4,
+          desktop: {
+            version: 1,
+            available: true,
+            protocol: 'rfb',
+            transport: 'websocket',
+            clipboard: 'extended-text',
+          },
+        },
+      }),
+    ])
 
     render(<ConnectionsSettingsPage onBack={onBack} />)
 
@@ -1847,7 +1860,21 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test('passes an offline device as disabled to the cloud desktop action', async () => {
-    api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        status: 'offline',
+        runtime_features: {
+          schemaVersion: 4,
+          desktop: {
+            version: 1,
+            available: true,
+            protocol: 'rfb',
+            transport: 'websocket',
+            clipboard: 'extended-text',
+          },
+        },
+      }),
+    ])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 

@@ -182,12 +182,11 @@ export function supportsVncDesktop(device: DeviceLike, deviceId?: string | null)
   const desktop = device.runtime_features?.desktop
   return Boolean(
     isClaudeCodeDevice(device) &&
-      isUsableDevice(device) &&
-      (supportsCloudSessions(device, deviceId) || supportsRemoteSessions(device, deviceId)) &&
-      desktop?.available === true &&
-      desktop.protocol === 'rfb' &&
-      desktop.transport === 'websocket' &&
-      desktop.version >= 1
+    (supportsCloudSessions(device, deviceId) || supportsRemoteSessions(device, deviceId)) &&
+    desktop?.available === true &&
+    desktop.protocol === 'rfb' &&
+    desktop.transport === 'websocket' &&
+    desktop.version >= 1
   )
 }
 
