@@ -376,6 +376,12 @@ jobs:
         if: steps.restore-core-e2e-build.outcome == 'failure'
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
+      - name: Set up Collaboration frontend
+        if: contains(matrix.segments, 'collaboration-shared-core')
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
+
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true

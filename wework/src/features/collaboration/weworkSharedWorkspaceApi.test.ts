@@ -576,10 +576,11 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.deliveries.finalize('delivery-1', { fulfillments: [] })
     await api.deliveries.discardDraft('delivery-1')
 
-    await api.executions.list('project-1', { agentId: 'agent-1', status: 'running' })
+    await api.executions.list('project-1', { includeTerminal: true })
     expect(deliveryApi.listLoopItemExecutions).toHaveBeenCalledWith('project-1', {
-      agent_id: 'agent-1',
-      status: 'running',
+      agent_id: undefined,
+      status: undefined,
+      include_terminal: true,
     })
     await api.executions.stop('project-1', 5)
   })
@@ -642,8 +643,115 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
   })
 
   it('combines every cloud workspace domain behind one complete API', async () => {
+    const workspace = {
+      id: 'workspace-1',
+      name: 'Workspace',
+      description: 'Shared work',
+      access_role: 'Owner',
+      member_count: 2,
+      agent_count: 1,
+      execution_environment_count: 1,
+      project_count: 1,
+      created_by_user_id: 1,
+      version: 1,
+      created_at: '2026-09-11T00:00:00Z',
+      updated_at: '2026-09-11T00:00:00Z',
+    }
     const client = {
       get: vi.fn().mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/v1/workspaces') return { items: [workspace] }
+        if (endpoint === '/v1/workspaces/workspace-1') return workspace
+        if (endpoint === '/v1/workspaces/workspace-1/members') {
+          return {
+            items: [
+              {
+                id: 1,
+                user_id: 1,
+                user_name: 'User',
+                email: 'user@example.com',
+                role: 'Owner',
+              },
+            ],
+          }
+        }
+        if (endpoint === '/v1/workspaces/workspace-1/agents') {
+          return {
+            items: [
+              {
+                id: 'binding-1',
+                team_id: 12,
+                name: 'Codex Team',
+                owner_type: 'workspace',
+                owner_id: 'workspace-1',
+                owner_name: 'Workspace',
+                status: 'available',
+              },
+            ],
+          }
+        }
+        if (endpoint === '/v1/workspaces/workspace-1/execution-environments') {
+          return {
+            items: [
+              {
+                id: 'environment-1',
+                name: 'Local Mac',
+                kind: 'local_device',
+                owner_type: 'workspace',
+                owner_id: 'workspace-1',
+                owner_name: 'Workspace',
+                status: 'online',
+              },
+            ],
+          }
+        }
+        if (endpoint === '/v1/workspaces/workspace-1/projects') {
+          return { items: [project] }
+        }
+        if (endpoint === '/v1/resources') {
+          return {
+            agents: [
+              {
+                id: 'agent-1',
+                name: 'My Agent',
+                owner_type: 'user',
+                owner_id: '1',
+                owner_name: 'User',
+                status: 'available',
+              },
+            ],
+            execution_environments: [
+              {
+                id: 'environment-1',
+                name: 'Local Mac',
+                kind: 'local_device',
+                owner_type: 'user',
+                owner_id: '1',
+                owner_name: 'User',
+                status: 'online',
+              },
+            ],
+          }
+        }
+        if (endpoint === '/v1/loop-items/issue%2F1/assignments') {
+          return {
+            items: [
+              {
+                id: 'comment-assignment-1',
+                issue_id: 'issue/1',
+                target_type: 'human',
+                target_id: '1',
+                target_name: 'User',
+                workflow_step: 'review',
+                body: '',
+                comment_id: 'comment-assignment-1',
+                created_by_user_id: 1,
+                created_by_user_name: 'User',
+                created_at: '2026-09-11T00:00:00Z',
+                updated_at: '2026-09-11T00:00:00Z',
+              },
+            ],
+          }
+        }
         if (endpoint.endsWith('/comments')) {
           return [
             {
@@ -660,7 +768,63 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       }),
       getBlob: vi.fn(),
       post: vi.fn().mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/v1/workspaces') return workspace
+        if (endpoint === '/v1/workspaces/workspace-1/projects') return project
+        if (endpoint === '/v1/workspaces/workspace-1/members') {
+          return {
+            id: 2,
+            user_id: 2,
+            user_name: 'Developer',
+            email: 'developer@example.com',
+            role: 'Developer',
+          }
+        }
+        if (endpoint === '/v1/workspaces/workspace-1/agents') {
+          return {
+            id: 'binding-2',
+            team_id: 13,
+            name: 'Review Team',
+            owner_type: 'user',
+            owner_id: '1',
+            owner_name: 'User',
+            status: 'available',
+            execution_environment_ids: [],
+          }
+        }
+        if (endpoint === '/v1/workspaces/workspace-1/execution-environments') {
+          return {
+            id: 'environment-2',
+            device_id: 22,
+            name: 'Cloud host',
+            kind: 'cloud_host',
+            owner_type: 'user',
+            owner_id: '1',
+            owner_name: 'User',
+            status: 'online',
+            updated_at: '2026-09-11T00:00:00Z',
+          }
+        }
         if (endpoint.endsWith('/message-imports')) return { issue }
+        if (endpoint === '/v1/loop-items/issue%2F1/assignments') {
+          return {
+            assignment: {
+              id: 'comment-assignment-2',
+              issue_id: 'issue/1',
+              target_type: 'agent',
+              target_id: 'agent-1',
+              target_name: 'My Agent',
+              workflow_step: 'implementation',
+              body: '@My Agent implementation',
+              comment_id: 'comment-assignment-2',
+              created_by_user_id: 1,
+              created_by_user_name: 'User',
+              created_at: '2026-09-11T00:00:00Z',
+              updated_at: '2026-09-11T00:00:00Z',
+            },
+            comment: null,
+            issue,
+          }
+        }
         return {
           id: 'comment-1',
           body: 'Comment',
@@ -671,7 +835,30 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         }
       }),
       put: vi.fn(),
-      patch: vi.fn(),
+      patch: vi.fn().mockImplementation(async (endpoint: string) => {
+        if (endpoint === '/v1/workspaces/workspace-1/members/2') {
+          return {
+            id: 2,
+            user_id: 2,
+            user_name: 'Developer',
+            email: 'developer@example.com',
+            role: 'Maintainer',
+          }
+        }
+        if (endpoint === '/v1/workspaces/workspace-1/agents/13') {
+          return {
+            id: 'binding-2',
+            team_id: 13,
+            name: 'Review Team',
+            owner_type: 'workspace',
+            owner_id: 'workspace-1',
+            owner_name: 'Workspace',
+            status: 'available',
+            execution_environment_ids: [],
+          }
+        }
+        return workspace
+      }),
       delete: vi.fn(),
     }
     const projectAutomationApi = {
@@ -713,26 +900,23 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         syncState: 'pending',
       }),
     }
-    const projectChatAgentApi = {
-      list: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-    }
     const api = createWeworkSharedWorkspaceApi({
       client,
       deliveryApi: createMockDeliveryApi(),
       projectAutomationApi: projectAutomationApi as never,
       projectIncomingHookApi: projectIncomingHookApi as never,
       runtimeProfileApi: runtimeProfileApi as never,
-      projectChatAgentApi: projectChatAgentApi as never,
     })
 
     expect(Object.keys(api).sort()).toEqual(
       [
+        'workspaces',
+        'resources',
         'projects',
         'myWork',
         'issues',
         'comments',
+        'assignments',
         'attachments',
         'collaborators',
         'taskBindings',
@@ -748,6 +932,89 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       ].sort()
     )
     expect(WEWORK_SHARED_WORKSPACE_MISSING_METHODS).toEqual([])
+
+    await expect(api.workspaces?.list()).resolves.toEqual([workspace])
+    await expect(api.workspaces?.get('workspace-1')).resolves.toEqual(workspace)
+    await expect(
+      api.workspaces?.create({ name: 'Workspace', description: 'Shared work' })
+    ).resolves.toEqual(workspace)
+    expect(client.post).toHaveBeenCalledWith('/v1/workspaces', {
+      name: 'Workspace',
+      description: 'Shared work',
+    })
+    await expect(
+      api.workspaces?.update('workspace-1', { version: 1, name: 'Workspace' })
+    ).resolves.toEqual(workspace)
+    await api.workspaces?.archive('workspace-1', 1)
+    expect(client.delete).toHaveBeenCalledWith('/v1/workspaces/workspace-1?version=1')
+    await expect(api.workspaces?.listMembers('workspace-1')).resolves.toMatchObject([
+      { user_id: 1, user_name: 'User', role: 'Owner' },
+    ])
+    await expect(api.workspaces?.addMember('workspace-1', { userId: 2 })).resolves.toMatchObject({
+      user_id: 2,
+      role: 'Developer',
+    })
+    expect(client.post).toHaveBeenCalledWith('/v1/workspaces/workspace-1/members', {
+      user_id: 2,
+      role: 'Developer',
+    })
+    await expect(
+      api.workspaces?.updateMember('workspace-1', 2, { role: 'Maintainer' })
+    ).resolves.toMatchObject({
+      user_id: 2,
+      role: 'Maintainer',
+    })
+    expect(client.patch).toHaveBeenCalledWith('/v1/workspaces/workspace-1/members/2', {
+      role: 'Maintainer',
+    })
+    await api.workspaces?.removeMember('workspace-1', 2)
+    expect(client.delete).toHaveBeenCalledWith('/v1/workspaces/workspace-1/members/2')
+    await expect(api.workspaces?.listAgents('workspace-1')).resolves.toMatchObject([
+      { id: '12', team_id: 12 },
+    ])
+    await expect(api.workspaces?.addAgent('workspace-1', { teamId: 13 })).resolves.toMatchObject({
+      id: '13',
+      team_id: 13,
+      owner_type: 'user',
+    })
+    expect(client.post).toHaveBeenCalledWith('/v1/workspaces/workspace-1/agents', {
+      team_id: 13,
+    })
+    await api.workspaces?.removeAgent('workspace-1', 13)
+    expect(client.delete).toHaveBeenCalledWith('/v1/workspaces/workspace-1/agents/13')
+    await expect(api.workspaces?.listExecutionEnvironments('workspace-1')).resolves.toMatchObject([
+      { id: 'environment-1' },
+    ])
+    await expect(
+      api.workspaces?.addExecutionEnvironment('workspace-1', { deviceId: 22 })
+    ).resolves.toMatchObject({
+      id: '22',
+      device_id: 22,
+      owner_type: 'user',
+    })
+    expect(client.post).toHaveBeenCalledWith('/v1/workspaces/workspace-1/execution-environments', {
+      device_id: 22,
+    })
+    await api.workspaces?.removeExecutionEnvironment('workspace-1', 22)
+    expect(client.delete).toHaveBeenCalledWith(
+      '/v1/workspaces/workspace-1/execution-environments/22'
+    )
+
+    await expect(api.projects.list('workspace-1')).resolves.toEqual([project])
+    await api.projects.create({
+      workspaceId: 'workspace-1',
+      projectKey: 'PROJ',
+      name: 'Project',
+    })
+    expect(client.post).toHaveBeenCalledWith('/v1/workspaces/workspace-1/projects', {
+      project_key: 'PROJ',
+      name: 'Project',
+    })
+
+    await expect(api.resources?.list()).resolves.toMatchObject({
+      agents: [{ id: 'agent-1', owner_type: 'user' }],
+      execution_environments: [{ id: 'environment-1', owner_type: 'user' }],
+    })
 
     await expect(api.projects.get('project/1')).resolves.toBe(project)
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1')
@@ -772,6 +1039,41 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     expect(client.get).toHaveBeenCalledWith('/v1/loop-items/issue%2F1/comments')
     expect(client.post).toHaveBeenCalledWith('/v1/loop-items/issue%2F1/comments', {
       body: 'Comment',
+    })
+
+    await expect(api.assignments?.list('issue/1')).resolves.toMatchObject([
+      {
+        id: 'comment-assignment-1',
+        comment_id: 'comment-assignment-1',
+        issue_id: 'issue/1',
+        target_type: 'human',
+        workflow_step: 'review',
+      },
+    ])
+    await expect(
+      api.assignments?.create('issue/1', {
+        targetType: 'agent',
+        targetId: 'agent-1',
+        workflowStep: 'implementation',
+        commentBody: '@My Agent implementation',
+        notifyTarget: true,
+      })
+    ).resolves.toMatchObject({
+      assignment: {
+        id: 'comment-assignment-2',
+        comment_id: 'comment-assignment-2',
+        target_type: 'agent',
+        workflow_step: 'implementation',
+      },
+      comment: null,
+      issue,
+    })
+    expect(client.post).toHaveBeenCalledWith('/v1/loop-items/issue%2F1/assignments', {
+      target_type: 'agent',
+      target_id: 'agent-1',
+      workflow_step: 'implementation',
+      comment_body: '@My Agent implementation',
+      notify_target: true,
     })
 
     await expect(

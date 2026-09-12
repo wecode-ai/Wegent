@@ -1,5 +1,10 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
-import { getLatestThinkingContent, resolveStreamingThinkingContent } from '@wegent/chat-core'
+import type { TurnFileChangesSummary } from '@/types/api'
+import {
+  getLatestThinkingContent,
+  limitWorkbenchProcessingBlock,
+  resolveStreamingThinkingContent,
+} from '@wegent/chat-core'
 import { parseCodeCommentContexts } from '@/lib/code-comment-context'
 import type {
   ProcessingBlock,
@@ -10,6 +15,7 @@ import type {
 } from '@/types/workbench'
 
 const RUNTIME_RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
+export const MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS = 256
 
 export function mergeRuntimeConversationTurns(
   localTurns: RuntimeConversationTurn[],
@@ -133,18 +139,11 @@ export function reduceRuntimeConversationTurns(
         }
         return {
           ...turn,
-          items,
+          ...boundVisibleRuntimeProcessingBlocks(turn, items),
           status: 'streaming',
           streamingThinkingContent: resolveRuntimeStreamingThinkingContent(turn, action, items),
         }
       })
-    case 'assistant_cached':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        items: upsertBlocks(turn.items, action.blocks),
-        status: 'streaming',
-        streamingThinkingContent: undefined,
-      }))
     case 'assistant_done':
       return updateTurn(turns, action.subtaskId, turn => {
         const items = applyCompletedAssistantContent(
@@ -157,7 +156,7 @@ export function reduceRuntimeConversationTurns(
         )
         return {
           ...turn,
-          items,
+          ...boundVisibleRuntimeProcessingBlocks(turn, items),
           status: 'done',
           streamingThinkingContent: undefined,
           completedAt: new Date().toISOString(),
@@ -207,7 +206,7 @@ export function reduceRuntimeConversationTurns(
         )
         return {
           ...turn,
-          items,
+          ...boundVisibleRuntimeProcessingBlocks(turn, items),
           ...(!isTerminalProcessingBlockStatus(action.block.status) && {
             status: 'streaming' as const,
             completedAt: undefined,
@@ -330,7 +329,10 @@ function mergeRuntimeConversationTurn(
 ): RuntimeConversationTurn {
   const preserveLocalTerminal =
     isTerminalTurnStatus(local.status) && isUnsettledTurnStatus(snapshot.status)
-  const items = mergeRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
+  const items =
+    snapshot.itemMerge === 'prepend'
+      ? prependRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
+      : mergeRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
   const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
   const preserveStreamingThinking =
     snapshot.status === 'streaming' &&
@@ -340,6 +342,7 @@ function mergeRuntimeConversationTurn(
     ...snapshot,
     clientUserMessageId: snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
+    itemMerge: undefined,
     items,
     status: preserveLocalTerminal || preserveLocalFailure ? local.status : snapshot.status,
     completedAt:
@@ -353,6 +356,30 @@ function mergeRuntimeConversationTurn(
         ? getLatestThinkingContent(processingBlocks(items))
         : snapshot.streamingThinkingContent,
   }
+}
+
+function prependRuntimeConversationItems(
+  localItems: RuntimeConversationItem[],
+  snapshotItems: RuntimeConversationItem[],
+  preserveLocalTerminal: boolean
+): RuntimeConversationItem[] {
+  const matchedLocalIndexes = new Set<number>()
+  const mergedSnapshotItems = snapshotItems.map(snapshotItem => {
+    const localIndex = localItems.findIndex(
+      (localItem, index) => !matchedLocalIndexes.has(index) && localItem.id === snapshotItem.id
+    )
+    if (localIndex < 0) return snapshotItem
+    matchedLocalIndexes.add(localIndex)
+    return mergeRuntimeConversationItem(localItems[localIndex], snapshotItem, preserveLocalTerminal)
+  })
+  const remainingLocalItems = localItems.filter((_, index) => !matchedLocalIndexes.has(index))
+  const leadingUserCount = remainingLocalItems.findIndex(item => item.type !== 'user_message')
+  const insertionIndex = leadingUserCount < 0 ? remainingLocalItems.length : leadingUserCount
+  return [
+    ...remainingLocalItems.slice(0, insertionIndex),
+    ...mergedSnapshotItems,
+    ...remainingLocalItems.slice(insertionIndex),
+  ]
 }
 
 function isTerminalTurnStatus(status: RuntimeConversationTurn['status']): boolean {
@@ -824,31 +851,37 @@ function upsertReasoningChunk(
   const itemId = `runtime-reasoning:${subtaskId}`
   const index = items.findIndex(item => item.type === 'block' && item.id === itemId)
   if (index < 0) {
+    const reasoningBlock: ProcessingBlock = {
+      id: itemId,
+      subtaskId,
+      type: 'thinking',
+      content: reasoningChunk,
+      status: 'streaming',
+      createdAt: Date.now(),
+    }
+    const block = limitWorkbenchProcessingBlock<TurnFileChangesSummary>(reasoningBlock)
     return [
       ...items,
       {
         id: itemId,
         type: 'block',
-        block: {
-          id: itemId,
-          subtaskId,
-          type: 'thinking',
-          content: reasoningChunk,
-          status: 'streaming',
-          createdAt: Date.now(),
-        },
+        block,
       },
     ]
   }
   const current = items[index]
   if (current.type !== 'block' || current.block.type !== 'thinking') return items
+  const content = `${current.block.content}${reasoningChunk}`
   return replaceAt(items, index, {
     ...current,
-    block: {
+    block: limitWorkbenchProcessingBlock({
       ...current.block,
-      content: `${current.block.content}${reasoningChunk}`,
+      content,
+      contentOriginalChars:
+        (current.block.contentOriginalChars ?? current.block.content.length) +
+        reasoningChunk.length,
       status: 'streaming',
-    },
+    }),
   })
 }
 
@@ -873,10 +906,11 @@ function upsertBlocks(
     const canonicalItem: RuntimeConversationItem = {
       id: block.id,
       type: 'block',
-      block:
+      block: limitWorkbenchProcessingBlock(
         index >= 0 && next[index]?.type === 'block'
           ? preserveProcessingBlockTiming(next[index].block, block)
-          : block,
+          : block
+      ),
     }
     next =
       index < 0
@@ -918,7 +952,7 @@ function replaceAssistantTextWithBlock(
   return replaceAt(items, index, {
     id: block.id,
     type: 'block',
-    block,
+    block: limitWorkbenchProcessingBlock(block),
   })
 }
 
@@ -950,7 +984,7 @@ function upsertRuntimeBlock(
   nextItems.splice(terminalTextIndex, 0, {
     id: block.id,
     type: 'block',
-    block,
+    block: limitWorkbenchProcessingBlock(block),
   })
   return nextItems
 }
@@ -995,6 +1029,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       errorType: isLast ? turn.errorType : undefined,
       completedAt: isLast ? turn.completedAt : undefined,
       stoppedNotice: isLast ? turn.stoppedNotice : undefined,
+      contentTruncated: isLast ? turn.contentTruncated : undefined,
       streamingThinkingContent: isLast ? turn.streamingThinkingContent : undefined,
       references: isLast ? turn.references : undefined,
       memoryCitations: isLast ? turn.memoryCitations : undefined,
@@ -1074,6 +1109,29 @@ function processingBlocks(items: RuntimeConversationItem[]): ProcessingBlock[] {
   return items.flatMap(item => (item.type === 'block' ? [item.block] : []))
 }
 
+function boundVisibleRuntimeProcessingBlocks(
+  turn: RuntimeConversationTurn,
+  items: RuntimeConversationItem[]
+): Pick<RuntimeConversationTurn, 'items' | 'contentTruncated'> {
+  const blockCount = items.reduce((count, item) => count + (item.type === 'block' ? 1 : 0), 0)
+  if (blockCount <= MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS) {
+    return {
+      items,
+      contentTruncated: turn.contentTruncated,
+    }
+  }
+
+  let blocksToDrop = blockCount - MAX_VISIBLE_RUNTIME_PROCESSING_BLOCKS
+  return {
+    items: items.filter(item => {
+      if (item.type !== 'block' || blocksToDrop <= 0) return true
+      blocksToDrop -= 1
+      return false
+    }),
+    contentTruncated: true,
+  }
+}
+
 function settleProcessingBlocks(items: RuntimeConversationItem[]): RuntimeConversationItem[] {
   const completedAt = Date.now()
   return items.map(item => {
@@ -1148,9 +1206,12 @@ function mergeProcessingBlockUpdate(
     typeof contentDelta === 'string' &&
     (merged.type === 'thinking' || merged.type === 'text' || merged.type === 'plan')
   ) {
+    const previousContentChars =
+      block.contentOriginalChars ?? ('content' in block ? block.content.length : 0)
     merged = {
       ...merged,
       content: `${merged.content}${contentDelta}`,
+      contentOriginalChars: previousContentChars + contentDelta.length,
     } as ProcessingBlock
   }
   if (merged.type === 'tool' && block.type === 'tool') {
@@ -1161,7 +1222,7 @@ function mergeProcessingBlockUpdate(
   if (wasActive && isComplete && merged.completedAt === undefined) {
     merged = { ...merged, completedAt: Date.now() } as ProcessingBlock
   }
-  return merged
+  return limitWorkbenchProcessingBlock(merged)
 }
 
 function preserveProcessingBlockTiming(

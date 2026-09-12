@@ -36,6 +36,10 @@
       "types": "./src/project-shell/index.ts",
       "import": "./src/project-shell/index.ts"
     },
+    "./platform": {
+      "types": "./src/platform/index.ts",
+      "import": "./src/platform/index.ts"
+    },
     "./styles.css": "./src/styles.css"
   },
   "scripts": {

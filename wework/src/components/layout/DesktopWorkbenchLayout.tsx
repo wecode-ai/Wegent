@@ -37,7 +37,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { CollaborationWorkspace } from '@/features/todo/CollaborationWorkspace'
+import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { LOCAL_USER } from '@/api/local/localSession'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
 import {
@@ -231,9 +232,15 @@ export function DesktopWorkbenchLayout({
   const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
+  const [taskView, setTaskView] = useState<'workbench' | 'default-work-items'>('workbench')
   const routeWorkItemsOpen =
     surfaceKind === 'board' || (surfaceKind === undefined && currentPath === '/todo')
-  const todoOpen = routeWorkItemsOpen
+  const defaultWorkItemsOpen = taskView === 'default-work-items'
+  const workItemSurfaceOpen = routeWorkItemsOpen || defaultWorkItemsOpen
+  const workItemUser = state.user ?? (defaultWorkItemsOpen ? LOCAL_USER : null)
+  const workItemServicesReady = defaultWorkItemsOpen
+    ? availableProjectSpaceApis.length > 0
+    : Boolean(services.deliveryApi)
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
     []
   )
@@ -363,7 +370,7 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   useEffect(() => {
-    if (todoOpen || !isLocalHarnessAvailable()) return
+    if (workItemSurfaceOpen || !isLocalHarnessAvailable()) return
 
     let cancelled = false
     void loadLocalHarnessSessions()
@@ -395,21 +402,24 @@ export function DesktopWorkbenchLayout({
       cancelled = true
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
-  }, [loadLocalHarnessSessions, todoOpen])
+  }, [loadLocalHarnessSessions, workItemSurfaceOpen])
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
+    setTaskView('workbench')
     setActiveLocalHarnessSessionId(null)
     activateSplitPane(blankPaneKey)
     onNewChat()
   }, [activateSplitPane, blankPaneKey, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
+    setTaskView('workbench')
     setActiveLocalHarnessSessionId(null)
     activateSplitPane(blankPaneKey)
     onStartStandaloneChat()
   }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
+      setTaskView('workbench')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(blankPaneKey)
       onSelectProject(projectId)
@@ -418,6 +428,7 @@ export function DesktopWorkbenchLayout({
   )
   const startNewProjectChatOutsideHarness = useCallback(
     (projectId: number) => {
+      setTaskView('workbench')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(blankPaneKey)
       onStartNewProjectChat(projectId)
@@ -426,6 +437,7 @@ export function DesktopWorkbenchLayout({
   )
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
+      setTaskView('workbench')
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(
         getWorkbenchPaneKey({
@@ -608,7 +620,7 @@ export function DesktopWorkbenchLayout({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (todoOpen) return
+      if (workItemSurfaceOpen) return
       if (event.key.toLowerCase() !== 'k') return
       if (!event.metaKey && !event.ctrlKey) return
       event.preventDefault()
@@ -617,7 +629,7 @@ export function DesktopWorkbenchLayout({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [todoOpen])
+  }, [workItemSurfaceOpen])
 
   useEffect(() => {
     const syncAutoCollapse = () => {
@@ -794,9 +806,9 @@ export function DesktopWorkbenchLayout({
   }, [onGetImNotificationSettings])
 
   useEffect(() => {
-    if (todoOpen) return
+    if (workItemSurfaceOpen) return
     void refreshImNotificationSettings().catch(() => undefined)
-  }, [refreshImNotificationSettings, todoOpen])
+  }, [refreshImNotificationSettings, workItemSurfaceOpen])
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {
@@ -977,6 +989,7 @@ export function DesktopWorkbenchLayout({
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
+      taskView={taskView}
       localHarnessSessions={localHarnessSessions}
       activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}
@@ -995,6 +1008,7 @@ export function DesktopWorkbenchLayout({
       onOpenLocalHarnessSession={openLocalHarnessSession}
       onCloseLocalHarnessSession={closeLocalHarnessSession}
       onOpenSearch={() => setSearchOpen(true)}
+      onOpenMyWork={() => setTaskView('default-work-items')}
       onSelectProject={selectProjectOutsideHarness}
       onStartNewProjectChat={startNewProjectChatOutsideHarness}
       onOpenRuntimeTask={openRuntimeTaskOutsideHarness}
@@ -1093,15 +1107,17 @@ export function DesktopWorkbenchLayout({
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {todoOpen &&
-            (state.user && services.deliveryApi ? (
-              <CollaborationWorkspace
-                user={state.user}
+          {workItemSurfaceOpen &&
+            (workItemUser && workItemServicesReady ? (
+              <CloudTodoWorkspace
+                user={workItemUser}
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
-                startupActive={routeActive && todoOpen}
+                embedded={defaultWorkItemsOpen}
+                embeddedTitle={defaultWorkItemsOpen ? 'project' : 'workspace'}
+                startupActive={routeActive && routeWorkItemsOpen}
                 onCreateLocalCodeProject={onCreateLocalRuntimeProject}
                 onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
                 onListDeviceDirectories={onListDeviceDirectories}
@@ -1117,8 +1133,9 @@ export function DesktopWorkbenchLayout({
                     : undefined
                 }
                 defaultProjectRequested={
-                  ownedWorkspaceTab?.kind === 'board' &&
-                  projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
+                  defaultWorkItemsOpen ||
+                  (ownedWorkspaceTab?.kind === 'board' &&
+                    projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute))
                 }
                 focusedItemId={
                   ownedWorkspaceTab?.kind === 'board'
@@ -1174,9 +1191,9 @@ export function DesktopWorkbenchLayout({
                 {t('workbench.cloud_board_loading', '正在加载云端看板…')}
               </div>
             ))}
-          {!todoOpen ? (
+          {!workItemSurfaceOpen ? (
             <DesktopWorkbenchMain
-              visible={routeActive && !settingsOpen && !todoOpen}
+              visible={routeActive && !settingsOpen}
               sidebarCollapsed={effectiveSidebarCollapsed}
               sidebarResizing={sidebarResizing}
               onSidebarCollapsedChange={updateSidebarCollapsed}

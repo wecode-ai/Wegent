@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import {
   collaborationMessages,
@@ -15,16 +15,21 @@ import {
   type SharedEditorProject,
 } from "./SharedIssueDetailEditor";
 import { createSharedIssueDetailPort } from "./issue-detail";
+import { IssueActivityPanel } from "./issue-detail";
 import {
   dueDateTimeLocalFromSource,
   dueDateTimeLocalToSource,
 } from "./issue-detail/dateTime";
-import { canEditCollaborationIssue } from "./permissions";
+import { getCollaborationIssueActionPermissions } from "./permissions";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import { collaborationTestIds } from "./testIds";
 import type {
+  CollaborationAgent,
+  CollaborationAssignment,
   CollaborationComment,
+  CollaborationExecution,
   CollaborationIssue,
+  CollaborationMember,
   CollaborationProject,
 } from "./types";
 
@@ -38,6 +43,7 @@ interface IssueDetailProps {
     | "issues"
     | "attachments"
     | "comments"
+    | "assignments"
     | "members"
     | "agents"
     | "collaborators"
@@ -50,11 +56,17 @@ interface IssueDetailProps {
   issue: CollaborationIssue;
   allIssues: CollaborationIssue[];
   comments: CollaborationComment[];
+  assignments?: CollaborationAssignment[];
+  executions?: CollaborationExecution[];
+  members?: CollaborationMember[];
+  agents?: CollaborationAgent[];
   messages: Messages;
   translate?: CollaborationTranslate;
   onClose(): void;
   onChange(issue: CollaborationIssue): void;
   onCommentsChange(comments: CollaborationComment[]): void;
+  onAssignmentsChange?(assignments: CollaborationAssignment[]): void;
+  onCreateTask?(workflowStep?: string): void;
   onConflict(): Promise<void>;
   onError(): void;
 }
@@ -176,16 +188,21 @@ export function IssueDetail({
   issue,
   allIssues,
   comments,
+  assignments = [],
+  executions = [],
+  members = [],
+  agents = [],
   messages,
   translate,
   onClose,
   onChange,
   onCommentsChange,
+  onAssignmentsChange = () => undefined,
+  onCreateTask,
   onConflict,
   onError,
 }: IssueDetailProps) {
-  const [comment, setComment] = useState("");
-  const editable = canEditCollaborationIssue(issue);
+  const permissions = getCollaborationIssueActionPermissions(project, issue);
   const port = useBrowserIssueDetailPort(api, onError, onConflict);
   const editorTranslate =
     translate ??
@@ -203,7 +220,7 @@ export function IssueDetail({
           port={port}
           mode="edit"
           item={issue as SharedEditorIssue}
-          editable={editable}
+          editable={permissions.canEdit}
           project={project as SharedEditorProject}
           allItems={allIssues as SharedEditorIssue[]}
           onClose={onClose}
@@ -211,6 +228,9 @@ export function IssueDetail({
           presentation="workspace-panel"
           workspacePanelFill
           showPanelControls
+          showAssignee={false}
+          canStartWork={permissions.canStartWork}
+          onCreateTask={onCreateTask}
           translate={editorTranslate}
           extensions={{
             ...browserDueDateExtensions,
@@ -219,54 +239,22 @@ export function IssueDetail({
               window.open(access.url, "_blank", "noopener,noreferrer");
             },
             renderActivity: () => (
-              <section className="task-detail-comments collaboration-comment">
-                <header className="task-detail-comments-head">
-                  <span className="font-semibold text-text-primary">
-                    {messages.comment}
-                  </span>
-                  <span>{comments.length}</span>
-                </header>
-                <div
-                  className="task-detail-comments-list collaboration-comment-list"
-                  data-testid="collaboration-comments"
-                >
-                  {comments.map((entry) => (
-                    <article key={entry.id}>
-                      <strong>{entry.author}</strong>
-                      <p>{entry.body}</p>
-                    </article>
-                  ))}
-                </div>
-                <div className="collaboration-comment-composer">
-                  <textarea
-                    data-testid={collaborationTestIds.issueComment}
-                    placeholder={messages.commentPlaceholder}
-                    value={comment}
-                    disabled={!editable}
-                    onChange={(event) => setComment(event.target.value)}
-                  />
-                  <button
-                    type="button"
-                    data-testid={collaborationTestIds.issueCommentSubmit}
-                    disabled={!editable || !comment.trim()}
-                    onClick={async () => {
-                      if (!editable) return;
-                      try {
-                        const created = await api.comments.create(
-                          issue.id,
-                          comment.trim(),
-                        );
-                        onCommentsChange([...comments, created]);
-                        setComment("");
-                      } catch {
-                        onError();
-                      }
-                    }}
-                  >
-                    {messages.comment}
-                  </button>
-                </div>
-              </section>
+              <IssueActivityPanel
+                api={api}
+                issue={issue}
+                members={members}
+                agents={agents}
+                assignments={assignments}
+                comments={comments}
+                executions={executions}
+                canComment={permissions.canComment}
+                canAssign={permissions.canAssign}
+                translate={editorTranslate}
+                onIssueChange={onChange}
+                onAssignmentsChange={onAssignmentsChange}
+                onCommentsChange={onCommentsChange}
+                onError={onError}
+              />
             ),
           }}
         />

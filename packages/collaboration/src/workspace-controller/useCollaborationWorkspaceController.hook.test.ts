@@ -321,14 +321,13 @@ describe("useCollaborationWorkspaceController location effects", () => {
       view: "board",
     });
     issueBResponse.resolve(issueB);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    controller = renderController(api, {
-      projectId: null,
-      issueId: issueA.id,
-      view: "board",
+    await vi.waitFor(() => {
+      controller = renderController(api, {
+        projectId: null,
+        issueId: issueA.id,
+        view: "board",
+      });
+      expect(controller.state.selectedIssue).toEqual(issueA);
     });
-    expect(controller.state.selectedIssue).toEqual(issueA);
   });
 });

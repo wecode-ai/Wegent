@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.issue_workflow import (
+    IssueWorkflowInstance,
     ProjectWorkflowDefinition,
     WorkflowExecutionConfig,
     instantiate_workflow,
@@ -79,6 +80,60 @@ def test_custom_robot_config_is_complete_without_runtime_profile() -> None:
     )
 
     assert config.is_complete()
+
+
+def test_robot_node_can_use_runtime_default_model() -> None:
+    workflow = IssueWorkflowInstance(
+        stage_mode="dag",
+        nodes=[
+            {
+                "id": "execute",
+                "name": "Execute",
+                "execution_mode": "robot",
+                "workspace_policy": "none",
+                "execution_config": {
+                    "execution_device_id": "device-1",
+                    "workspace_binding": {"type": "standalone"},
+                },
+            }
+        ],
+    )
+
+    assert not workflow.node_needs_execution_config(workflow.nodes[0])
+
+
+def test_workflow_execution_config_accepts_non_secret_plugin_config() -> None:
+    config = WorkflowExecutionConfig(
+        project_plugins=[
+            {
+                "id": "github@openai",
+                "config": {"repository": "wecode-ai/Wegent", "retries": 2},
+                "credential_refs": [
+                    {"name": "github", "ref": "plugin-connection/github"}
+                ],
+            }
+        ]
+    )
+
+    assert config.project_plugins is not None
+    assert config.project_plugins[0]["config"]["repository"] == "wecode-ai/Wegent"
+
+
+@pytest.mark.parametrize(
+    "secret_config",
+    [
+        {"accessToken": "plaintext-token"},
+        {"auth": {"password": "plaintext-password"}},
+        {"key": "-----BEGIN PRIVATE KEY-----\nplaintext\n-----END PRIVATE KEY-----"},
+    ],
+)
+def test_workflow_execution_config_rejects_plugin_credentials(
+    secret_config: dict,
+) -> None:
+    with pytest.raises(ValidationError, match="use credential_refs"):
+        WorkflowExecutionConfig(
+            project_plugins=[{"id": "github@openai", "config": secret_config}]
+        )
 
 
 def test_node_execution_config_merges_with_shared_robot_config() -> None:

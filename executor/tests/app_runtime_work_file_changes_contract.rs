@@ -973,16 +973,28 @@ fn fake_item_response_case(turn: &mut Value) -> String {
         .iter()
         .map(|item| json!({"turnId": turn_id, "item": item}))
         .collect::<Vec<_>>();
-    let response = json!({
+    let ascending_response = json!({
         "id": "__REQUEST_ID__",
         "result": {"data": data, "nextCursor": null},
     });
+    let descending_response = json!({
+        "id": "__REQUEST_ID__",
+        "result": {
+            "data": data.into_iter().rev().collect::<Vec<_>>(),
+            "nextCursor": null,
+        },
+    });
     format!(
-        r#"        *'"turnId":"{}"'*)
+        r#"        *'"sortDirection":"desc"'*'"turnId":"{}"'*)
+          printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+          ;;
+        *'"turnId":"{}"'*)
           printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
           ;;"#,
         turn_id,
-        shell_single_quote(&response.to_string()),
+        shell_single_quote(&descending_response.to_string()),
+        turn_id,
+        shell_single_quote(&ascending_response.to_string()),
     )
 }
 

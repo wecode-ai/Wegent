@@ -548,6 +548,17 @@ def _resolve_model_for_bot(
     return model_kind, model_spec, model_name, raw_agent_config
 
 
+def resolve_model_name_for_bot(
+    db: Session,
+    bot: Kind,
+    user_id: int,
+) -> Optional[str]:
+    """Return the Bot's configured Model resource name."""
+
+    _, _, model_name, _ = _resolve_model_for_bot(db, bot, user_id)
+    return model_name
+
+
 def build_agent_config_for_bot(
     db: Session,
     bot: Kind,

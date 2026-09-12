@@ -1138,6 +1138,7 @@ async function main() {
         backendUrl: cloudEnvironment.backendUrl,
         databasePath: cloudEnvironment.databasePath,
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
+        setFrontendUrl: frontendUrl => cloudEnvironment.restartBackendWithFrontendUrl(frontendUrl),
       })
     } else {
       executorBinary = await buildExecutor()

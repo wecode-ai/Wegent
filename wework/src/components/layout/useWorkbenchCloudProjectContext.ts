@@ -1037,14 +1037,12 @@ export function useWorkbenchCloudProjectContext({
     const projectRef = projectSpaceRef(boundCloudProject)
     const contentRoute = projectSpaceContentRoute(projectRef)
     if (workspaceTabs) {
-      const existingBoardTab =
-        workspaceTabs.tabs.find(
-          tab =>
-            tab.kind === 'board' && projectSpaceRouteMatchesProject(tab.contentRoute, projectRef)
-        ) ??
-        workspaceTabs.tabs.find(
-          tab => tab.kind === 'board' && tab.fixed && tab.contentRoute === '/todo'
-        )
+      const existingBoardTab = workspaceTabs.tabs.find(
+        tab =>
+          tab.kind === 'board' &&
+          !tab.fixed &&
+          projectSpaceRouteMatchesProject(tab.contentRoute, projectRef)
+      )
       if (existingBoardTab) {
         workspaceTabs.selectTab(existingBoardTab.id, {
           title: boundCloudProject.name,
@@ -1093,38 +1091,35 @@ export function useWorkbenchCloudProjectContext({
   const prepareSubmission = useCallback(
     async (description: string): Promise<CloudSubmissionContext> => {
       let refreshedCloudAdditionalContext = cloudAdditionalContext
-      if (contextRuntimeTask && boundCloudProject && isDefaultWorkItemProject(boundCloudProject)) {
-        const api = projectTaskRuntimeApiForProject(services, boundCloudProject)
-        if (api) {
-          const refreshTaskKey = runtimeTaskKey(contextRuntimeTask)
-          const refreshGeneration = contextLookupGenerationRef.current + 1
-          contextLookupGenerationRef.current = refreshGeneration
-          try {
-            const context = await api.findCloudContextForTask(contextRuntimeTask)
-            if (
-              contextMountedRef.current &&
-              currentContextTaskKeyRef.current === refreshTaskKey &&
-              contextLookupGenerationRef.current === refreshGeneration
-            ) {
-              setBoundCloudProject(context.project)
-              setBoundCloudItem(context.loop_item)
-              setDeliveryItem(
-                context.loop_item
-                  ? cloudItemAsLocalWorkItem(context.loop_item, contextRuntimeTask)
-                  : null
-              )
-            }
-            refreshedCloudAdditionalContext = cloudProjectAdditionalContext(
-              context.project,
+      if (contextRuntimeTask && todoBindingApis.length > 0) {
+        const refreshTaskKey = runtimeTaskKey(contextRuntimeTask)
+        const refreshGeneration = contextLookupGenerationRef.current + 1
+        contextLookupGenerationRef.current = refreshGeneration
+        try {
+          const context = await findProjectSpaceContextForTask(todoBindingApis, contextRuntimeTask)
+          if (
+            contextMountedRef.current &&
+            currentContextTaskKeyRef.current === refreshTaskKey &&
+            contextLookupGenerationRef.current === refreshGeneration
+          ) {
+            setBoundCloudProject(context.project)
+            setBoundCloudItem(context.loop_item)
+            setDeliveryItem(
               context.loop_item
+                ? cloudItemAsLocalWorkItem(context.loop_item, contextRuntimeTask)
+                : null
             )
-          } catch (error) {
-            console.warn('[Wework] Failed to refresh default Issue context before send', {
-              task: contextRuntimeTask,
-              error,
-            })
-            refreshedCloudAdditionalContext = cloudAdditionalContext
           }
+          refreshedCloudAdditionalContext = cloudProjectAdditionalContext(
+            context.project,
+            context.loop_item
+          )
+        } catch (error) {
+          console.warn('[Wework] Failed to refresh project-space context before send', {
+            task: contextRuntimeTask,
+            error,
+          })
+          refreshedCloudAdditionalContext = cloudAdditionalContext
         }
       }
       let submissionProject = contextRuntimeTask ? null : pendingCloudProject
@@ -1183,7 +1178,6 @@ export function useWorkbenchCloudProjectContext({
     },
     [
       cloudAdditionalContext,
-      boundCloudProject,
       contextRuntimeTask,
       defaultCloudProjectSelectionKey,
       defaultProject,
@@ -1192,7 +1186,6 @@ export function useWorkbenchCloudProjectContext({
       pendingCloudProject,
       pendingTodoItem,
       paneKey,
-      projectSpaceApiFor,
       setPendingCloudContext,
       todoBindingApis,
     ]

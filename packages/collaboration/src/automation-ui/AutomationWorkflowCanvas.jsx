@@ -1773,7 +1773,6 @@ export function AutomationWorkflowCanvas({
         nodesDraggable
         nodesConnectable
         elementsSelectable
-        onlyRenderVisibleElements
         panOnDrag={interactionMode === "hand" ? true : [1, 2]}
         panOnScroll
         panOnScrollSpeed={0.72}

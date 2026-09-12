@@ -286,8 +286,6 @@ class WeworkExecutionProfile:
     ) -> "WeworkExecutionProfile":
         metadata = dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         model = str(model_override or metadata.get("model") or "")
-        if not model:
-            raise ValueError("Execution model is required")
         return cls(
             owner_user_id=owner_user_id,
             display_name=display_name or "AI",

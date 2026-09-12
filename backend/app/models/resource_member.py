@@ -6,7 +6,7 @@
 Resource member model for unified resource sharing.
 
 Stores user access permissions to shared resources.
-Supports Team, Task, KnowledgeBase, and Namespace resource types.
+Supports all shareable resource types and polymorphic member entities.
 
 This model replaces the legacy SharedTeam, SharedTask, TaskMember, and NamespaceMember models
 to provide a unified access control system for all shareable resources.
@@ -70,8 +70,8 @@ class ResourceMember(Base):
     - Invitation/review information
     - Task-specific copied resource ID
 
-    Note: resource_id references kinds.id (for Team/KnowledgeBase) or tasks.id (for Task)
-    but without FK constraint. Referential integrity is managed at the application layer.
+    Note: resource_id references kinds.id or tasks.id without an FK constraint.
+    Referential integrity is managed at the application layer.
     """
 
     __tablename__ = "resource_members"
@@ -82,7 +82,7 @@ class ResourceMember(Base):
     resource_type = Column(
         String(50),
         nullable=False,
-        comment="Resource type: Team, Task, KnowledgeBase, Namespace",
+        comment="Polymorphic resource type",
     )
     resource_id = Column(
         big_integer_id_type(),
@@ -91,14 +91,14 @@ class ResourceMember(Base):
     )
 
     # Entity info (polymorphic member identification)
-    # entity_type: "user" (default), "namespace"
-    # entity_id: user_id (for "user") or external identifier (e.g., department UUID)
+    # entity_type: "user" (default), "namespace", or "workspace"
+    # entity_id: identifier interpreted according to entity_type
     entity_type = Column(
         String(20),
         nullable=False,
         default="user",
         server_default="user",
-        comment="Entity type: user, namespace",
+        comment="Entity type: user, namespace, workspace",
     )
     entity_id = Column(
         String(100),

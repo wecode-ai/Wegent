@@ -699,6 +699,16 @@ export async function verifyRemoteDockerCommandFlow(
     authToken: generatedAuthToken,
     interactiveSessions,
   })
+  const connectedDevice = await cloudEnvironment.device(generatedDeviceId)
+  assert.equal(
+    connectedDevice?.status,
+    'online',
+    'The generated remote Executor did not register as online'
+  )
+  assert.ok(
+    connectedDevice?.runtime_instance_id,
+    'The generated remote Executor did not expose a Runtime identity'
+  )
   await waitForSnapshot(
     control,
     snapshot =>
@@ -706,6 +716,15 @@ export async function verifyRemoteDockerCommandFlow(
       snapshot.testIds.includes(`connection-device-${generatedDeviceId}`),
     'The generated remote device did not close the dialog and refresh the device list'
   )
+  await control.command(
+    'waitFor',
+    `[data-testid="connection-device-${generatedDeviceId}"] [data-testid="connection-device-status"]`,
+    {
+      text: '在线',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-generated-remote-device-online.png')
   await control.command('navigate', 'body', { value: '/' })
   return { deviceId: generatedDeviceId, ...generatedDevice }
 }
@@ -805,6 +824,48 @@ export async function verifyDisabledRemoteSessionCapabilities(
     'The project terminal card remained enabled after the Executor disabled terminal sessions'
   )
   await captureVerificationScreenshot(control, 'cloud-00-disabled-session-project.png')
+
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  control.setScenario('cloud_initial')
+  await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, CLOUD_TASK_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequestCount('cloud_initial', 2),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The generated remote Executor did not complete its model tool loop'
+  )
+  const runningTaskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.deviceId === deviceId &&
+      Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    'The generated remote Executor was not selected for the verification task',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const runtimeTaskId = runningTaskSnapshot.workbench.currentRuntimeTask.taskId
+  const runningTaskTestId = `runtime-local-task-running-${runtimeTaskId}`
+  assert.equal(
+    runningTaskSnapshot.workbench.activeWorkspace?.workspacePath,
+    workspacePath,
+    'The generated remote Executor project used the wrong workspace'
+  )
+  assert.equal(
+    (await readFile(join(workspacePath, CLOUD_ARTIFACT_NAME), 'utf8')).trim(),
+    CLOUD_ARTIFACT_CONTENT,
+    'The generated remote Executor did not create the verification artifact'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-00-generated-remote-task-running.png')
+  control.releaseCloudInitialResponse()
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(runningTaskTestId),
+    'The generated remote Executor task did not settle after completion',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-generated-remote-task-completed.png')
 }
 
 export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment) {

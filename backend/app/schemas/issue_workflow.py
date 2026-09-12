@@ -8,6 +8,7 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
 from app.schemas.runtime_work import (
     RuntimeGoalCreateInput,
@@ -108,12 +109,16 @@ class WorkflowExecutionConfig(BaseModel):
             self.execution_device_id.strip() if self.execution_device_id else None
         )
         self.model = self.model.strip() if self.model else None
+        validate_non_secret_plugin_configs(
+            self.project_plugins,
+            field_name="project_plugins",
+        )
         return self
 
-    def is_complete(self) -> bool:
+    def is_complete(self, *, require_model: bool = True) -> bool:
         return bool(
             (self.agent_id or self.execution_device_id)
-            and self.model
+            and (self.model or not require_model)
             and self.workspace_binding
         )
 
@@ -711,7 +716,7 @@ class IssueWorkflowInstance(BaseModel):
         if node.execution_mode != "robot":
             return False
         config = self.execution_config_for(node)
-        if config is None or not config.is_complete():
+        if config is None or not config.is_complete(require_model=False):
             return True
         if node.workspace_policy == "composer":
             binding = config.workspace_binding
