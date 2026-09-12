@@ -108,6 +108,56 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_execution_list_can_include_terminal_history(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "history", "name": "Execution history"},
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
+    execution = LoopItemExecution(
+        loop_item_id="history-issue",
+        cloud_project_id=str(project["id"]),
+        executor_owner_user_id=test_user.id,
+        agent_id="history-agent",
+        status="completed",
+        observed_state="succeeded",
+        sync_state="in_sync",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    test_db.refresh(execution)
+
+    active_response = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(test_token),
+    )
+    history_response = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions?include_terminal=true",
+        headers=_auth(test_token),
+    )
+
+    assert active_response.status_code == 200, active_response.text
+    assert active_response.json() == {"items": [], "total": 0}
+    assert history_response.status_code == 200, history_response.text
+    assert history_response.json()["total"] == 1
+    item = history_response.json()["items"][0]
+    assert item["id"] == execution.id
+    assert item["loopItemId"] == "history-issue"
+    assert item["cloudProjectId"] == str(project["id"])
+    assert item["agentId"] == "history-agent"
+    assert item["status"] == "completed"
+    assert item["displayState"] == "succeeded"
+    assert item["observedState"] == "succeeded"
+    assert item["syncState"] == "in_sync"
+
+
 def _create_chat_message(
     db: Session,
     *,

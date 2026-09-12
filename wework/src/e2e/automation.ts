@@ -2306,8 +2306,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
       const startedAt = Date.now()
       while (Date.now() - startedAt < timeoutMs) {
-        const element = findDesktopControlElements(command.selector).find(candidate =>
-          (candidate.textContent ?? '').includes(text)
+        const element = findDesktopControlElements(command.selector).find(
+          candidate =>
+            (!command.visible || desktopControlElementVisible(candidate)) &&
+            (candidate.textContent ?? '').includes(text)
         )
         if (element) {
           element.dataset.e2eAnchorId = value

@@ -224,6 +224,7 @@ def list_executions(
     agent_id: Optional[str] = Query(default=None),
     assigner_user_id: Optional[int] = Query(default=None),
     status: Optional[str] = Query(default=None),
+    include_terminal: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemExecutionListResponse:
@@ -237,6 +238,7 @@ def list_executions(
         agent_id=agent_id,
         assigner_user_id=assigner_user_id,
         status_filter=status,
+        include_terminal=include_terminal,
     )
     if project.task_provider in {"github", "gitlab"}:
         from app.services.loop_items.external_provider import (

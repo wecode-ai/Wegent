@@ -5212,6 +5212,175 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
+  it('shows an ordinary Runtime Task in My Tasks and opens the real Runtime Task', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      name: '我的任务',
+      project_store: 'local' as const,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const runtimeTask = {
+      deviceId: 'local-device',
+      taskId: 'ordinary-runtime-task',
+      runtime: 'codex' as const,
+      workspacePath: '/tmp/project-a',
+      workspaceKind: 'workspace',
+    }
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [defaultProject],
+    })
+    workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
+      items: [],
+      task_bindings: [],
+      members: [],
+      agents: [],
+    }))
+    workbenchServices.projectSpaceApis = {
+      local: workbenchServices.deliveryApi!,
+      defaultLocation: 'local',
+    }
+    const onOpenRuntimeTask = vi.fn()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
+        runtimeWork={{
+          projects: [
+            {
+              project: { id: 91, key: 'project-a', name: 'Project A' },
+              deviceWorkspaces: [
+                {
+                  deviceId: runtimeTask.deviceId,
+                  workspacePath: runtimeTask.workspacePath,
+                  workspaceKind: runtimeTask.workspaceKind,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: runtimeTask.taskId,
+                      workspacePath: runtimeTask.workspacePath,
+                      workspaceKind: runtimeTask.workspaceKind,
+                      title: 'Ordinary Runtime Task',
+                      runtime: runtimeTask.runtime,
+                      completedAt: 1_700_000_000,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        }}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{
+          projectStore: 'local',
+          projectId: defaultProject.id,
+        }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    const card = await screen.findByTestId(
+      'cloud-todo-card-runtime:local-device:ordinary-runtime-task'
+    )
+
+    await userEvent.click(card)
+
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith(expect.objectContaining(runtimeTask))
+    expect(screen.queryByTestId('cloud-todo-detail-title')).not.toBeInTheDocument()
+  })
+
+  it('shows an Issue-bound Runtime Task only once in the unified My Tasks board', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      name: '我的任务',
+      project_store: 'local' as const,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const persistedIssue = {
+      ...item,
+      id: 'WORK-1',
+      cloud_project_id: defaultProject.id,
+      title: 'Issue-bound Runtime Task',
+      status: 'completed' as const,
+    }
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [defaultProject],
+    })
+    workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
+      items: [persistedIssue],
+      task_bindings: [
+        {
+          id: 1,
+          loop_item_id: persistedIssue.id,
+          task_user_id: 1,
+          device_id: 'local-device',
+          task_id: 'bound-runtime-task',
+          task_title: persistedIssue.title,
+          backend_task_id: null,
+          linked_at: '2026-09-12T00:00:00Z',
+        },
+      ],
+      members: [],
+      agents: [],
+    }))
+    workbenchServices.projectSpaceApis = {
+      local: workbenchServices.deliveryApi!,
+      defaultLocation: 'local',
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
+        runtimeWork={{
+          projects: [
+            {
+              project: { id: 91, key: 'project-a', name: 'Project A' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'local-device',
+                  workspacePath: '/tmp/project-a',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'bound-runtime-task',
+                      workspacePath: '/tmp/project-a',
+                      title: persistedIssue.title,
+                      runtime: 'codex',
+                      completedAt: 1_700_000_000,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        }}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{
+          projectStore: 'local',
+          projectId: defaultProject.id,
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId(`cloud-todo-card-${persistedIssue.id}`)).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('cloud-todo-card-runtime:local-device:bound-runtime-task')
+    ).not.toBeInTheDocument()
+  })
+
   it('shows only current system Issues in My Tasks and batch archives completed tasks', async () => {
     const defaultProject = {
       ...project,

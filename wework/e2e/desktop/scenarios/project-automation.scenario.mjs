@@ -1550,12 +1550,7 @@ export function createDesktopScenario({
     )
     const popupDistanceFromBottom =
       popupScrollMetrics.scrollOrigin === 'bottom'
-        ? Math.max(
-            0,
-            popupScrollMetrics.scrollHeight -
-              popupScrollMetrics.clientHeight +
-              popupScrollMetrics.scrollTop
-          )
+        ? Math.max(0, -popupScrollMetrics.scrollTop)
         : Math.max(
             0,
             popupScrollMetrics.scrollHeight -

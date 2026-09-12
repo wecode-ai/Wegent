@@ -1094,6 +1094,24 @@ if ! grep -q "wework_desktop_core_e2e_matrix" "$wework_workflow" ||
   exit 1
 fi
 
+collaboration_frontend_setup_step="$(
+  extract_named_workflow_step_from_job \
+    "$wework_workflow" \
+    "  wework-desktop-core-e2e:" \
+    "  build-wework-desktop-windows-core-e2e:" \
+    "Set up Collaboration frontend"
+)"
+if ! grep -Fq \
+  "if: contains(matrix.segments, 'collaboration-shared-core')" \
+  <<<"$collaboration_frontend_setup_step" ||
+  ! grep -Fq 'uses: ./.github/actions/setup-node-workspace' \
+    <<<"$collaboration_frontend_setup_step" ||
+  ! grep -Fq 'setup-toolchain: "false"' \
+    <<<"$collaboration_frontend_setup_step"; then
+  printf 'Shared Collaboration Core E2E must restore frontend dependencies only on its owning shard\n' >&2
+  exit 1
+fi
+
 core_build_job="$(
   sed -n '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
     "$wework_workflow"

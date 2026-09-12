@@ -1034,7 +1034,9 @@ export function createWebSharedWorkspaceApi(
         const query = new URLSearchParams()
         if (filters?.agentId) query.set('agent_id', filters.agentId)
         if (filters?.status) query.set('status', filters.status)
-        const suffix = query.size ? `?${query.toString()}` : ''
+        if (filters?.includeTerminal) query.set('include_terminal', 'true')
+        const encodedQuery = query.toString()
+        const suffix = encodedQuery ? `?${encodedQuery}` : ''
         const response = await client.get<{ items: Array<Record<string, unknown>> }>(
           `/v1/cloud-projects/${encoded(projectId)}/executions${suffix}`
         )

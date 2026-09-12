@@ -1019,7 +1019,7 @@ export function createCollaborationWorkspaceControllerCommands({
           api.assignments ? api.assignments.list(issueId) : Promise.resolve([]),
           api.executions?.list
             ? api.executions
-                .list(issue.cloud_project_id)
+                .list(issue.cloud_project_id, { includeTerminal: true })
                 .then((items) =>
                   items.filter(
                     (execution) => execution.loop_item_id === issueId,

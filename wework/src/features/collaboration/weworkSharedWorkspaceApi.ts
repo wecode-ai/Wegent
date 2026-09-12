@@ -740,6 +740,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
           await deliveryApi.listLoopItemExecutions(projectId, {
             agent_id: filters?.agentId,
             status: filters?.status,
+            include_terminal: filters?.includeTerminal,
           })
         ).items.map(mapCollaborationExecutionDto)
       },

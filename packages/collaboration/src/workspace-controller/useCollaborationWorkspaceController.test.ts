@@ -134,6 +134,10 @@ function createApi() {
     comments: {
       list: vi.fn().mockResolvedValue([comment]),
     },
+    executions: {
+      list: vi.fn().mockResolvedValue([]),
+      stop: vi.fn(),
+    },
   } as unknown as SharedWorkspaceApi;
 }
 
@@ -304,6 +308,9 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.get).toHaveBeenCalledWith(issue.id);
     expect(api.attachments.list).toHaveBeenCalledWith(issue.id);
     expect(api.comments.list).toHaveBeenCalledWith(issue.id);
+    expect(api.executions.list).toHaveBeenCalledWith(project.id, {
+      includeTerminal: true,
+    });
     expect(state.selectedIssue).toEqual(issue);
     expect(state.attachments).toEqual([attachment]);
     expect(state.comments).toEqual([comment]);

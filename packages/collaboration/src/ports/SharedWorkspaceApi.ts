@@ -560,7 +560,11 @@ export interface SharedWorkspaceDeliveriesApi {
 export interface SharedWorkspaceExecutionsApi {
   list(
     projectId: string,
-    filters?: { agentId?: string; status?: string },
+    filters?: {
+      agentId?: string;
+      status?: string;
+      includeTerminal?: boolean;
+    },
   ): Promise<CollaborationExecution[]>;
   stop(
     projectId: string,

@@ -205,6 +205,12 @@ import {
   shouldRevealWorkItemWorkflowActions,
   workItemTaskInput,
 } from './workItemTaskInput'
+import {
+  isRuntimeMyWorkItem,
+  mergeRuntimeMyWorkItems,
+  runtimeMyWorkItems,
+  runtimeWorkItemReference,
+} from './runtimeMyWork'
 type ProjectView = Extract<
   CollaborationProjectView,
   'board' | 'table' | 'files' | 'automation' | 'manage'
@@ -642,28 +648,6 @@ type TaskComposerRequest = {
   taskRequest?: RuntimeTaskCreateRequest
   workflowNodeId?: string
   inheritFromTask?: RuntimeTaskAddress | null
-}
-
-function runtimeWorkItemReference(
-  task: RuntimeTaskSummary
-): { projectId: string; itemId: string } | null {
-  const handle = task.runtimeHandle
-  const origin =
-    handle?.origin && typeof handle.origin === 'object'
-      ? (handle.origin as Record<string, unknown>)
-      : null
-  const projectId =
-    handle?.cloudProjectId ??
-    handle?.cloud_project_id ??
-    origin?.cloudProjectId ??
-    origin?.cloud_project_id
-  const itemId =
-    handle?.loopItemId ?? handle?.loop_item_id ?? origin?.loopItemId ?? origin?.loop_item_id
-  return (typeof projectId === 'string' || typeof projectId === 'number') &&
-    typeof itemId === 'string' &&
-    itemId
-    ? { projectId: String(projectId), itemId }
-    : null
 }
 
 export interface CloudTodoWorkspaceProps {
@@ -1924,7 +1908,35 @@ export function CloudTodoWorkspace({
       runtimeTaskLifecycle
     )
   }, [activeItemTaskBindings, isMyTasksBoard, runtimeTaskLifecycle, selectedCloudProjectItems])
-  const activeBoardSourceItems = selectedProject?.location === 'cloud' ? cloudBoardItems : items
+  const persistedBoardItems = selectedProject?.location === 'cloud' ? cloudBoardItems : items
+  const activeBoardSourceItems = useMemo(() => {
+    if (!isMyTasksBoard || !selectedProject) return persistedBoardItems
+    const bindings = Object.values(activeItemTaskBindings).flat()
+    const runtimeItems = runtimeMyWorkItems(
+      runtimeWork,
+      {
+        projectId: String(selectedProject.id),
+        projectStore: selectedProject.project_store,
+        createdByUserId: user.id,
+      },
+      runtimeTaskLifecycle
+    )
+    return mergeRuntimeMyWorkItems(
+      persistedBoardItems,
+      runtimeItems,
+      bindings,
+      selectedProjectBoardItems.map(item => item.id)
+    )
+  }, [
+    activeItemTaskBindings,
+    isMyTasksBoard,
+    persistedBoardItems,
+    runtimeTaskLifecycle,
+    runtimeWork,
+    selectedProject,
+    selectedProjectBoardItems,
+    user.id,
+  ])
   // Only render board items that belong to the selected project. On a project
   // switch this flips to the skeleton in the same render, before the fetch.
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
@@ -4013,6 +4025,21 @@ export function CloudTodoWorkspace({
     closeTaskPanel()
   }, [closeTaskPanel])
 
+  const openBoardItem = useCallback(
+    (item: LocatedLoopItem) => {
+      if (item.can_view_detail === false) return
+      setPinnedBoardPreview(null)
+      setBackgroundTaskItemId(null)
+      closeTaskPanel()
+      if (isRuntimeMyWorkItem(item)) {
+        void openBoardRuntimeTask(item.runtime_address)
+        return
+      }
+      setSelectedItem(item)
+    },
+    [closeTaskPanel, openBoardRuntimeTask]
+  )
+
   function closeTopPanel() {
     closeIssuePanelStack()
   }
@@ -4539,8 +4566,7 @@ export function CloudTodoWorkspace({
                     onQueryChange={setProjectSearchQuery}
                     onFiltersChange={setProjectSearchFilters}
                     onSelect={item => {
-                      if (item.can_view_detail === false) return
-                      setSelectedItem(item)
+                      openBoardItem(item)
                       setProjectSearchOpen(false)
                     }}
                   />
@@ -4962,12 +4988,7 @@ export function CloudTodoWorkspace({
                               : []
                           }
                           onClick={() => {
-                            if (item.can_view_detail !== false) {
-                              setPinnedBoardPreview(null)
-                              setBackgroundTaskItemId(null)
-                              closeTaskPanel()
-                              setSelectedItem(item)
-                            }
+                            openBoardItem(item)
                           }}
                           onConfigureExecution={() =>
                             openExecutionConfiguration({ item, continuation: { type: 'save' } })
@@ -5036,8 +5057,7 @@ export function CloudTodoWorkspace({
                           detailOpened={quickStartDetailOpened}
                           onCreateItem={() => openIssueCreation()}
                           onOpenFirstItem={() => {
-                            if (firstRootBoardItem?.can_view_detail !== false)
-                              setSelectedItem(firstRootBoardItem)
+                            if (firstRootBoardItem) openBoardItem(firstRootBoardItem)
                           }}
                         />
                       ) : null

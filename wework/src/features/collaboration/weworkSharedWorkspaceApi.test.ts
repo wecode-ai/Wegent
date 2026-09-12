@@ -576,10 +576,11 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.deliveries.finalize('delivery-1', { fulfillments: [] })
     await api.deliveries.discardDraft('delivery-1')
 
-    await api.executions.list('project-1', { agentId: 'agent-1', status: 'running' })
+    await api.executions.list('project-1', { includeTerminal: true })
     expect(deliveryApi.listLoopItemExecutions).toHaveBeenCalledWith('project-1', {
-      agent_id: 'agent-1',
-      status: 'running',
+      agent_id: undefined,
+      status: undefined,
+      include_terminal: true,
     })
     await api.executions.stop('project-1', 5)
   })
