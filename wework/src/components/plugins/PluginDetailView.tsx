@@ -796,6 +796,9 @@ export function PluginDetailView({
         if (!value || typeof value !== 'object' || Array.isArray(value)) {
           throw new Error('invalid object')
         }
+        if (Object.keys(value).length > 32) {
+          throw new Error('too-many-headers')
+        }
         parsed = {}
         for (const [name, headerValue] of Object.entries(value)) {
           if (
@@ -810,12 +813,14 @@ export function PluginDetailView({
           }
           parsed[name] = headerValue
         }
-      } catch {
+      } catch (error) {
         setMcpHeadersError(
-          t(
-            'workbench.plugin_mcp_headers_invalid_json',
-            '请输入 JSON 对象，例如 {"Authorization":"Bearer ${{task_token}}"}'
-          )
+          error instanceof Error && error.message === 'too-many-headers'
+            ? t('workbench.plugin_mcp_headers_limit', '最多支持 32 个自定义 Header')
+            : t(
+                'workbench.plugin_mcp_headers_invalid_json',
+                '请输入 JSON 对象，例如 {"Authorization":"Bearer ${{task_token}}"}'
+              )
         )
         return
       }
@@ -1008,7 +1013,7 @@ export function PluginDetailView({
 
         {autoUpdateSection}
 
-        {isInstalled && remoteMcpItems.length > 0 && (
+        {isInstalled && onMcpHeadersSave && remoteMcpItems.length > 0 && (
           <section className="mt-7 space-y-3" data-testid="plugin-mcp-header-settings">
             <div>
               <h2 className="text-base font-medium leading-5 text-text-primary">

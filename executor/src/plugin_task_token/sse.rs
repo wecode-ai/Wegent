@@ -50,13 +50,8 @@ pub(super) fn body(
                 }
                 match stream.next().await {
                     Some(Ok(chunk)) => {
-                        pending.extend_from_slice(&chunk);
                         // Normalize CRLF across chunk boundaries before framing.
-                        pending = pending
-                            .split(|byte| *byte == b'\r')
-                            .flatten()
-                            .copied()
-                            .collect();
+                        pending.extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
                         if pending.len() > 16 * 1024 * 1024 {
                             return Err(io::Error::other("MCP SSE event is too large"));
                         }

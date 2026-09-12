@@ -165,7 +165,7 @@ export async function createDesktopScenario({
       business: {
         type: 'http',
         url: `http://127.0.0.1:${service.address().port}/mcp`,
-        headers: { Authorization: 'Bearer ${{task_token}}' },
+        headers: { 'X-Author-Header': 'author' },
       },
     })
   )
@@ -315,6 +315,28 @@ export async function createDesktopScenario({
     return { address: current, result }
   }
 
+  async function configureCustomMcpHeaders(control, installedId) {
+    await control.command('click', '[data-testid="plugins-button"]')
+    await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('click', `[data-testid="plugins-installed-strip-item-${installedId}"]`)
+    await control.command('waitFor', '[data-testid="plugin-mcp-header-settings"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('click', '[data-testid="plugin-mcp-headers-edit-mcp:business"]')
+    await control.command('fill', '[data-testid="plugin-mcp-headers-input-mcp:business"]', {
+      value: JSON.stringify({ Authorization: 'Bearer ${{task_token}}' }),
+    })
+    await control.command('click', '[data-testid="plugin-mcp-headers-save-mcp:business"]')
+    await control.command('waitFor', '[data-testid="plugin-mcp-header-settings"]', {
+      text: '已覆盖默认值',
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await captureScreenshot(control, 'plugin-task-token-custom-headers.png')
+    await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  }
+
   return {
     requiresCloudEnvironment: true,
     claudeBinary,
@@ -402,9 +424,27 @@ export async function createDesktopScenario({
           'POST'
         )
       }
+      const installed = await api('/plugins/installed')
+      const installedPlugin = installed.items.find(item => item.spec.source.pluginKey === slug)
+      assert.ok(installedPlugin, 'TaskToken plugin was not returned by the installed list')
+      const installedId = installedPlugin.metadata.labels?.id
+      assert.ok(installedId, 'TaskToken plugin did not expose a stable installed id')
+      await configureCustomMcpHeaders(control, installedId)
+      for (const deviceId of [local.device_id, CLOUD_DEVICE_ID]) {
+        await api(
+          `/plugins/installed/sync-device?device_id=${encodeURIComponent(deviceId)}`,
+          'POST'
+        )
+      }
       for (const home of [executorHome, dirname(cloud.remoteCodexHome)]) {
         await wait(
-          async () => JSON.parse(await readFile(join(home, 'capabilities/manifest.json'), 'utf8')),
+          async () =>
+            JSON.parse(
+              await readFile(join(home, 'capabilities/manifest.json'), 'utf8').catch(error => {
+                if (error.code === 'ENOENT') return '{}'
+                throw error
+              })
+            ),
           manifest =>
             Object.values(manifest.plugins ?? {}).some(
               plugin => plugin.name === slug && plugin.enabled

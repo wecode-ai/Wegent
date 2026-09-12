@@ -4,7 +4,9 @@ pub(crate) mod issuer;
 mod package;
 mod sse;
 
-pub(crate) use package::{materialize as materialize_native_plugin, requires_native_proxy};
+pub(crate) use package::{
+    materialize_native_plugin_with_config, requires_native_proxy_with_config,
+};
 
 use crate::{mcp_utils::replace_mcp_server_variables, protocol::ExecutionRequest};
 use axum::{

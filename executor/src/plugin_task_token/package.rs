@@ -141,12 +141,44 @@ fn default_source(root: &Path, runtime: &str) -> Result<Map<String, Value>, Stri
     }
 }
 
-pub(crate) fn requires_native_proxy(root: &Path, claude: bool) -> Result<bool, String> {
-    Ok(declarations(root, claude)?.values().any(declared))
+pub(crate) fn requires_native_proxy_with_config(
+    root: &Path,
+    claude: bool,
+    component_config: &Map<String, Value>,
+) -> Result<bool, String> {
+    Ok(declarations(root, claude)?
+        .into_iter()
+        .any(|(name, server)| {
+            apply_component_config(&name, server, component_config)
+                .as_ref()
+                .is_ok_and(declared)
+        }))
 }
 
-pub(crate) fn materialize(root: &Path, claude: bool) -> Result<BTreeMap<String, Value>, String> {
-    let all = declarations(root, claude)?;
+pub(crate) fn materialize_native_plugin_with_config(
+    root: &Path,
+    claude: bool,
+    component_config: &Map<String, Value>,
+) -> Result<BTreeMap<String, Value>, String> {
+    materialize_with_config(root, claude, component_config)
+}
+
+#[cfg(test)]
+pub(super) fn materialize(root: &Path, claude: bool) -> Result<BTreeMap<String, Value>, String> {
+    materialize_with_config(root, claude, &Map::new())
+}
+
+pub(super) fn materialize_with_config(
+    root: &Path,
+    claude: bool,
+    component_config: &Map<String, Value>,
+) -> Result<BTreeMap<String, Value>, String> {
+    let declared_servers = declarations(root, claude)?;
+    let mut all = BTreeMap::<String, Value>::new();
+    for (name, server) in declared_servers.into_iter() {
+        let server = apply_component_config(&name, server, component_config)?;
+        all.insert(name, server);
+    }
     let authenticated: BTreeMap<_, _> = all
         .iter()
         .filter(|(_, server)| declared(server))
@@ -170,7 +202,12 @@ pub(crate) fn materialize(root: &Path, claude: bool) -> Result<BTreeMap<String, 
         }
         let default = servers(root, &json!("./.mcp.json"))?;
         write(&root.join(DEFAULT_SOURCE), &json!({"mcpServers": default}))?;
-        let filtered: Map<_, _> = default
+        let mut effective_default = Map::new();
+        for (name, server) in default {
+            let server = apply_component_config(&name, server, component_config)?;
+            effective_default.insert(name, server);
+        }
+        let filtered: Map<_, _> = effective_default
             .into_iter()
             .filter(|(_, server)| !declared(server))
             .collect();
@@ -296,6 +333,13 @@ pub(super) fn load(
             let Some(version) = manifest["version"].as_str() else {
                 continue;
             };
+            if !version
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_ .".contains(character))
+                || version.contains("..")
+            {
+                return Err("Invalid plugin identity".into());
+            }
             let path = home
                 .join("plugins/cache")
                 .join(market)
@@ -310,11 +354,10 @@ pub(super) fn load(
             .as_object()
             .cloned()
             .unwrap_or_default();
-        for (server_name, server) in materialize(&path, claude)? {
+        for (server_name, server) in materialize_with_config(&path, claude, &component_config)? {
             if record["component_states"][format!("mcp:{server_name}")] == false {
                 continue;
             }
-            let server = apply_component_config(&server_name, server, &component_config)?;
             let qualified = format!(
                 "plugin_{}_{}",
                 key.replace(['@', '.', '-'], "_"),

@@ -1301,6 +1301,34 @@ export function PluginsWorkspace({
       })
   }
 
+  const savePluginMcpHeaders = async (
+    id: string | number,
+    componentKey: string,
+    headers: Record<string, string> | null
+  ) => {
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    if (!plugin) throw new Error('Installed plugin not found')
+    const request = {
+      componentConfig: {} as Record<string, unknown>,
+    }
+    if (headers) {
+      request.componentConfig[componentKey] = { headers }
+    } else {
+      // The update contract treats null values as explicit deletions.
+      request.componentConfig[componentKey] = null
+    }
+    const updateApi =
+      plugin.origin === 'created' || !plugin.raw.spec.pluginId
+        ? localPluginApi.updateInstalledPlugin(id, request)
+        : pluginApi.updateInstalledPlugin(id, request, currentDeviceId)
+    const updated = await updateApi
+    const nextItem = toInstalledPluginItem(updated)
+    setInstalledPlugins(previous =>
+      previous.map(item => (String(item.id) === String(id) ? nextItem : item))
+    )
+    notifyLocalPluginSkillsChanged()
+  }
+
   const changePluginAutoUpdatePolicy = (plugin: InstalledPluginItem, enabled: boolean) => {
     if (!isCloudManagedInstalledPlugin(plugin.raw)) return
     const updatePolicy = enabled ? 'auto' : 'manual'
@@ -4487,6 +4515,9 @@ export function PluginsWorkspace({
           onComponentToggle={(componentKey, enabled) =>
             togglePluginComponent(selectedPlugin.id, componentKey, enabled)
           }
+          onMcpHeadersSave={(componentKey, headers) =>
+            savePluginMcpHeaders(selectedPlugin.id, componentKey, headers)
+          }
           autoUpdateEnabled={selectedPlugin.raw.spec.updatePolicy === 'auto'}
           autoUpdateSaving={updatingPluginPolicyIds.has(selectedPlugin.id)}
           autoUpdatePaused={
@@ -4776,6 +4807,9 @@ export function PluginsWorkspace({
               togglePluginComponent(installedDetail.id, componentKey, enabled)
             }
           }}
+          onMcpHeadersSave={(componentKey, headers) =>
+            savePluginMcpHeaders(installedDetail!.id, componentKey, headers)
+          }
           autoUpdateEnabled={installedDetail?.raw.spec.updatePolicy === 'auto'}
           autoUpdateSaving={
             installedDetail ? updatingPluginPolicyIds.has(installedDetail.id) : false

@@ -165,6 +165,37 @@ describe('PluginDetailView owner actions', () => {
     })
   })
 
+  test('rejects more than 32 custom MCP headers', async () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.components.mcps = [
+      { name: 'business', server: { url: 'https://business.example/mcp' } },
+    ]
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onMcpHeadersSave={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-edit-mcp:business'))
+    const input = screen.getByTestId('plugin-mcp-headers-input-mcp:business') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: {
+        value: JSON.stringify(
+          Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`X-Header-${index}`, '1']))
+        ),
+      },
+    })
+    fireEvent.click(screen.getByTestId('plugin-mcp-headers-save-mcp:business'))
+
+    expect(await screen.findByText('最多支持 32 个自定义 Header')).toBeInTheDocument()
+  })
+
   test('keeps automatic update controls visible for a materialized outdated release', () => {
     const plugin = createDetailPlugin()
     plugin.raw.spec.source = {

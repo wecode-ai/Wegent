@@ -6,7 +6,15 @@
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -42,6 +50,7 @@ class McpIdentityUserInfo(BaseModel):
 @limiter.limit(settings.RATE_LIMIT_MCP_IDENTITY)
 async def read_mcp_identity_userinfo(
     request: Request,
+    response: Response,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> McpIdentityUserInfo:
@@ -54,6 +63,7 @@ async def read_mcp_identity_userinfo(
     response carries basic user information and never exposes git
     credentials.
     """
+    response.headers["Cache-Control"] = "no-store"
     token = extract_token_from_header(authorization or "")
     token_info = verify_task_token(token or "")
     if token_info is None:

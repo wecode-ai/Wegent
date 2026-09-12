@@ -722,7 +722,14 @@ class DeviceCapabilitySyncService:
         component_states = spec.get("componentStates") or {}
         if component_states:
             payload["component_states"] = component_states
-        component_config = spec.get("componentConfig") or {}
+        raw_component_config = spec.get("componentConfig")
+        if raw_component_config is not None and not isinstance(
+            raw_component_config, dict
+        ):
+            raise DeviceCapabilitySyncError(
+                "InstalledPlugin componentConfig must be an object"
+            )
+        component_config = raw_component_config or {}
         if component_config:
             payload["component_config"] = component_config
         components = spec.get("components") or {}

@@ -27,6 +27,7 @@ def test_get_mcp_identity_user_returns_task_user_info(
     )
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
     body = response.json()
     assert body["id"] == test_user.id
     assert body["user_name"] == test_user.user_name

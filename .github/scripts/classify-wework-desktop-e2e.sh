@@ -794,7 +794,12 @@ classify_path() {
 
   case "$path" in
     executor/src/plugin_task_token/* | backend/app/services/auth/*task_token.py | \
-      backend/tests/api/test_runtime_task_token.py | backend/app/api/endpoints/mcp_identity.py)
+      backend/app/api/endpoints/mcp_identity.py | backend/app/api/ws/plugin_auth_broker.py | \
+      backend/app/api/ws/device_namespace.py | backend/app/services/installed_plugin_service.py | \
+      backend/app/services/device/capability_sync_service.py | \
+      backend/tests/api/test_runtime_task_token.py | \
+      backend/tests/api/test_mcp_identity_api.py | \
+      backend/tests/api/ws/test_plugin_auth_broker.py)
       select_target "cloud:plugin-task-token"
       ;;
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \

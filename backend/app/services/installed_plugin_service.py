@@ -117,6 +117,9 @@ class InstalledPluginService:
             if not isinstance(current_config, dict):
                 current_config = {}
             current_config.update(request.componentConfig)
+            for key, value in list(current_config.items()):
+                if value is None:
+                    del current_config[key]
             spec["componentConfig"] = current_config
         if request.displayName is not None:
             spec["displayName"] = request.displayName
@@ -431,6 +434,7 @@ class InstalledPluginService:
         marketplace_name: str | None = None,
     ) -> InstalledPlugin:
         package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
+        previous_config = self._get_spec(row).get("componentConfig")
         row.json = self._build_payload(
             name=parsed.name,
             parsed=parsed,
@@ -442,6 +446,8 @@ class InstalledPluginService:
             marketplace_id=marketplace_id,
             marketplace_name=marketplace_name,
         )
+        if isinstance(previous_config, dict):
+            row.json["spec"]["componentConfig"] = previous_config
         row.is_active = True
         flag_modified(row, "json")
         self._upsert_package(
