@@ -561,6 +561,83 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('prepends an older provider item page after the leading user message', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'user-1',
+            type: 'user_message',
+            message: userMessage('user-1', 'Prompt'),
+          },
+          {
+            id: 'tool-newer',
+            type: 'block',
+            block: {
+              id: 'tool-newer',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 200,
+            },
+          },
+          {
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'Done',
+            createdAt: '2026-08-25T07:20:37.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const olderPage: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        itemMerge: 'prepend',
+        items: [
+          {
+            id: 'user-1',
+            type: 'user_message',
+            message: userMessage('user-1', 'Prompt'),
+          },
+          {
+            id: 'tool-older',
+            type: 'block',
+            block: {
+              id: 'tool-older',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 100,
+            },
+          },
+          {
+            id: 'assistant-older-same-text',
+            type: 'assistant_text',
+            content: 'Done',
+            createdAt: '2026-08-25T07:20:36.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, olderPage)
+
+    expect(merged[0]?.items.map(item => item.id)).toEqual([
+      'user-1',
+      'tool-older',
+      'assistant-older-same-text',
+      'tool-newer',
+      'assistant-1',
+    ])
+    expect(merged[0]?.itemMerge).toBeUndefined()
+  })
+
   test('does not synthesize a Codex turn from a terminal event', () => {
     const turns = reduceRuntimeConversationTurns(
       [
