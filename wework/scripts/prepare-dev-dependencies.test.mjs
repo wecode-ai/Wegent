@@ -14,4 +14,14 @@ describe('prepare-dev-dependencies', () => {
       2
     )
   })
+
+  test('routes Windows scripts through the shared command wrapper', async () => {
+    const source = await readFile(scriptPath, 'utf8')
+
+    expect(source).toContain(
+      "import { wrapWindowsScriptCommand } from './child-process-command.mjs'"
+    )
+    expect(source).toContain('const resolved = wrapWindowsScriptCommand(command, args)')
+    expect(source).toContain('spawn(resolved.command, resolved.args, {')
+  })
 })

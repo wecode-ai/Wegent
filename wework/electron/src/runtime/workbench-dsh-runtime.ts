@@ -312,7 +312,7 @@ async function npmArchiveName(path: string): Promise<string> {
 }
 
 async function prepareProfile(dshHome: string, profile: string): Promise<void> {
-  const profileRoot = join(dshHome, 'profiles', profile)
+  const profileRoot = profileDirectory(dshHome, profile)
   await rm(profileRoot, { recursive: true, force: true })
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
   await writeFile(
@@ -344,6 +344,22 @@ async function prepareProfile(dshHome: string, profile: string): Promise<void> {
   )
 }
 
+function profileDirectory(dshHome: string, profile: string): string {
+  return join(dshHome, 'profiles', profile)
+}
+
+export interface WorkbenchProfileManifest {
+  name?: string
+  private?: boolean
+  dependencies?: Record<string, string>
+  dsh?: {
+    profile?: {
+      bundles?: string[]
+    }
+  }
+  [key: string]: unknown
+}
+
 async function installPlugins(
   runtime: BundledDshRuntime,
   dshHome: string,
@@ -354,18 +370,14 @@ async function installPlugins(
   run: CommandRunner
 ): Promise<void> {
   if (!packages.length) return
-  await run(
+  await addProfilePackages(
+    runtime,
+    dshHome,
+    profile,
+    packages.map(path => `file:${path}`),
     nodeCommand,
-    runtimeNodeArgs(environment, [
-      runtime.entry,
-      'plugin',
-      '--profile',
-      profile,
-      'add',
-      '--ignore-scripts',
-      ...packages.map(path => `file:${path}`),
-    ]),
-    { cwd: runtime.root, env: environment }
+    environment,
+    run
   )
 }
 
@@ -391,19 +403,87 @@ async function installPluginSpecs(
   await assertPluginDirectories(
     plugins.flatMap(plugin => (plugin.path ? [resolve(packageRoot, plugin.path)] : []))
   )
+  await addProfilePackages(runtime, dshHome, profile, specs, nodeCommand, environment, run)
+}
+
+async function addProfilePackages(
+  runtime: BundledDshRuntime,
+  dshHome: string,
+  profile: string,
+  specs: string[],
+  nodeCommand: string,
+  environment: NodeJS.ProcessEnv,
+  run: CommandRunner
+): Promise<void> {
+  if (!specs.length) return
+  const profileDir = profileDirectory(dshHome, profile)
+  const pnpmEntry = join(runtime.root, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
+  await readFile(pnpmEntry)
+  const before = await readWorkbenchProfileManifest(profileDir)
   await run(
     nodeCommand,
-    runtimeNodeArgs(environment, [
-      runtime.entry,
-      'plugin',
-      '--profile',
-      profile,
-      'add',
-      '--ignore-scripts',
-      ...specs,
-    ]),
-    { cwd: runtime.root, env: environment }
+    runtimeNodeArgs(environment, [pnpmEntry, 'add', '--ignore-scripts', ...specs]),
+    { cwd: profileDir, env: environment }
   )
+  await reconcileProfileBundles(profileDir, before)
+}
+
+export async function reconcileProfileBundles(
+  profileDir: string,
+  before: WorkbenchProfileManifest
+): Promise<void> {
+  const after = await readWorkbenchProfileManifest(profileDir)
+  const beforeDeps = new Set(Object.keys(before.dependencies ?? {}))
+  const dependencyNames = Object.keys(after.dependencies ?? {})
+  const dependencySet = new Set(dependencyNames)
+  const bundleDependencies = new Set<string>()
+  for (const packageName of dependencyNames) {
+    if (await declaresProfilePatch(profileDir, packageName)) bundleDependencies.add(packageName)
+  }
+  const bundles = [...(after.dsh?.profile?.bundles ?? [])]
+  let changed = false
+  for (const packageName of dependencyNames) {
+    if (bundleDependencies.has(packageName) && !bundles.includes(packageName)) {
+      bundles.push(packageName)
+      changed = true
+    }
+  }
+  for (const packageName of [...bundles]) {
+    const wasDependency = beforeDeps.has(packageName) || dependencySet.has(packageName)
+    if (wasDependency && !bundleDependencies.has(packageName)) {
+      bundles.splice(bundles.indexOf(packageName), 1)
+      changed = true
+    }
+  }
+  if (!changed) return
+  const dsh = after.dsh ?? {}
+  dsh.profile = dsh.profile ?? {}
+  dsh.profile.bundles = bundles
+  after.dsh = dsh
+  await writeFile(join(profileDir, 'package.json'), `${JSON.stringify(after, null, 2)}\n`, {
+    mode: 0o600,
+  })
+}
+
+async function readWorkbenchProfileManifest(profileDir: string): Promise<WorkbenchProfileManifest> {
+  return JSON.parse(
+    await readFile(join(profileDir, 'package.json'), 'utf8')
+  ) as WorkbenchProfileManifest
+}
+
+async function declaresProfilePatch(profileDir: string, packageName: string): Promise<boolean> {
+  try {
+    const manifest = JSON.parse(
+      await readFile(
+        join(profileDir, 'node_modules', ...packageName.split('/'), 'package.json'),
+        'utf8'
+      )
+    ) as { dsh?: { bundle?: { patch?: unknown } } }
+    return manifest.dsh?.bundle?.patch !== undefined
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return false
+  }
 }
 
 async function patchModelProvider(path: string): Promise<void> {

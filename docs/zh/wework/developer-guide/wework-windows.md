@@ -34,11 +34,19 @@ Vite watch 构建，再通过 `WEWORK_APP_WEB_ROOT`/`WEWORK_APP_HOT_RELOAD` 让
 一致）。因此切换分支或修改 renderer 源码后，无需手动同步打包插件产物即可
 生效。
 
-运行时与 Executor 构建缓存默认放在 `%LOCALAPPDATA%\wegent\`（可用
-`WEWORK_DEV_CACHE_ROOT`、`WEGENT_CARGO_TARGET_ROOT` 覆盖），首次准备较慢，
-之后为增量。可用 `-- --executor-isolation` 使用临时 Executor Home，或用
-`WEWORK_DRY_RUN=1` 只打印启动配置。若下载卡住，先设置
-`HTTP_PROXY`/`HTTPS_PROXY` 环境变量。
+脚本同样对齐 macOS 的开发实例模型：按 worktree 推导稳定身份和标题，为
+Electron 提供隔离的应用标识与用户数据目录，并为源码 Core DSH 插件生成组件
+资源。重命名可执行文件 bundle 是 macOS 特有实现；Windows 开发标题由
+Electron 进程身份承载。
+
+不可变的 Runtime 归档和 Executor 构建缓存默认放在
+`%LOCALAPPDATA%\wegent\`（可用 `WEWORK_DEV_CACHE_ROOT`、
+`WEGENT_CARGO_TARGET_ROOT` 覆盖）。当系统盘空间不足且尚无可用缓存时，Cargo
+target 会按 `D:` 到 `H:` 的顺序回退。可变且按 worktree 隔离的 materialized
+runtime 仍保留在当前检出的 `wework/node_modules/.cache`，避免不同 worktree
+共享活跃文件。首次准备较慢，之后为增量。可用
+`-- --executor-isolation` 使用临时 Executor Home，或用 `WEWORK_DRY_RUN=1`
+只打印启动配置。若下载卡住，先设置 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量。
 
 ## 构建
 
