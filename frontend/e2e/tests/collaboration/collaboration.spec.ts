@@ -22,16 +22,25 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
 }
 
 async function archiveResource(
+  page: Page,
   request: APIRequestContext,
   resourcePath: string
 ): Promise<{ ok: boolean; stage: 'get' | 'delete'; status: number }> {
-  const resourceResponse = await request.get(`${API_BASE_URL}${resourcePath}`)
+  const authToken = (await page.context().cookies()).find(
+    cookie => cookie.name === 'auth_token'
+  )?.value
+  if (!authToken) {
+    throw new Error('Authenticated browser context is missing auth_token')
+  }
+  const headers = { Authorization: `Bearer ${authToken}` }
+  const resourceResponse = await request.get(`${API_BASE_URL}${resourcePath}`, { headers })
   if (!resourceResponse.ok()) {
     return { ok: false, status: resourceResponse.status(), stage: 'get' }
   }
   const resource = (await resourceResponse.json()) as VersionedResource
   const archiveResponse = await request.delete(
-    `${API_BASE_URL}${resourcePath}?version=${resource.version}`
+    `${API_BASE_URL}${resourcePath}?version=${resource.version}`,
+    { headers }
   )
   return {
     ok: archiveResponse.ok(),
@@ -44,9 +53,10 @@ test.describe('Collaboration module', () => {
   let projectId = ''
   let workspaceId = ''
 
-  test.afterEach(async ({ request }) => {
+  test.afterEach(async ({ page, request }) => {
     if (projectId) {
       const cleanup = await archiveResource(
+        page,
         request,
         `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`
       )
@@ -60,6 +70,7 @@ test.describe('Collaboration module', () => {
 
     if (workspaceId) {
       const cleanup = await archiveResource(
+        page,
         request,
         `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`
       )
