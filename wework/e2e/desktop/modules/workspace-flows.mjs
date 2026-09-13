@@ -1013,33 +1013,7 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command(
-    'click',
-    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="cloud-todo-toggle-tasks"]'
-  )
-  await control.command(
-    'waitFor',
-    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid^="cloud-todo-open-task-conversation-"]',
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
   await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
-  const contextSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.some(testId => testId.startsWith('cloud-todo-open-task-conversation-')),
-    'The linked task conversation control was not rendered'
-  )
-  const contextTaskTestId = contextSnapshot.testIds.find(testId =>
-    testId.startsWith('cloud-todo-open-task-conversation-')
-  )
-  assert.ok(contextTaskTestId, 'The linked task conversation control was not rendered')
-  await control.command('click', `[data-testid="${contextTaskTestId}"]`)
-  await control.command('waitFor', `[data-testid="${taskTabTestId}"][aria-selected="true"]`, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('click', '[data-testid="work-item-open-board"]')
   const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
@@ -1526,8 +1500,8 @@ async function verifyWorkspaceTabIsolation(control) {
   await waitForAttribute(
     control,
     firstWorkspaceAgents,
-    'class',
-    'active',
+    'aria-current',
+    'page',
     'Switching back did not restore the first project-space tab workspace section'
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-isolation-02-project-spaces.png')

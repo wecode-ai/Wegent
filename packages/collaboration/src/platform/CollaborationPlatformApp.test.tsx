@@ -174,9 +174,11 @@ function deferred<T>() {
 function createApi({
   initialWorkspaces = [workspace],
   initialProjects = [project],
+  initialIssues = [issue],
 }: {
   initialWorkspaces?: CollaborationWorkspace[];
   initialProjects?: CollaborationProject[];
+  initialIssues?: CollaborationIssue[];
 } = {}) {
   const workspaces = [...initialWorkspaces];
   const projects = [...initialProjects];
@@ -187,7 +189,7 @@ function createApi({
     agents: [agent, availableAgent],
     execution_environments: [environment, availableEnvironment],
   };
-  const issues = [issue];
+  const issues = [...initialIssues];
   const assignments: CollaborationAssignment[] = [];
   let assignmentSequence = 0;
   const api = {
@@ -978,6 +980,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     const { api } = createApi({
       initialWorkspaces: [],
       initialProjects: [restrictedProject, otherProject],
+      initialIssues: [],
     });
     api.workspaces!.getNavigationContext = vi.fn(async () => ({
       id: workspace.id,
@@ -1004,6 +1007,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
 
     expect(byTestId("collaboration-board")).toBeTruthy();
+    expect(byTestId("collaboration-empty-project")).toBeTruthy();
     expect(
       container.querySelector('[data-testid="collaboration-tab-files"]'),
     ).toBeNull();

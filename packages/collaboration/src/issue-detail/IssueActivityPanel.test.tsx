@@ -69,6 +69,7 @@ describe("IssueActivityPanel", () => {
       api?: Pick<SharedWorkspaceApi, "assignments" | "comments">;
       onAssignmentsChange?: ReturnType<typeof vi.fn>;
       onCommentsChange?: ReturnType<typeof vi.fn>;
+      onError?: ReturnType<typeof vi.fn>;
       canComment?: boolean;
       canAssign?: boolean;
       members?: CollaborationMember[];
@@ -109,7 +110,7 @@ describe("IssueActivityPanel", () => {
           onIssueChange={vi.fn()}
           onAssignmentsChange={onAssignmentsChange}
           onCommentsChange={onCommentsChange}
-          onError={vi.fn()}
+          onError={options.onError ?? vi.fn()}
         />,
       );
     });
@@ -388,6 +389,106 @@ describe("IssueActivityPanel", () => {
       container.querySelector<HTMLElement>(".issue-comment-composer-shell")
         ?.dataset.expanded,
     ).toBe("false");
+  });
+
+  it("clears the composer before a pending comment request resolves", async () => {
+    let resolveComment: ((comment: CollaborationComment) => void) | undefined;
+    const pendingComment = new Promise<CollaborationComment>((resolve) => {
+      resolveComment = resolve;
+    });
+    const comment = {
+      id: "comment-1",
+      issue_id: issue.id,
+      author: "李明",
+      body: "已确认接口契约",
+      created_at: "2026-09-12T00:00:00Z",
+    } satisfies CollaborationComment;
+    const api = {
+      assignments: { create: vi.fn() },
+      comments: { create: vi.fn().mockReturnValue(pendingComment) },
+    } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">;
+    render(issue, { api });
+
+    change("collaboration-issue-comment", comment.body);
+    const submitButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="collaboration-issue-comment-submit"]',
+    );
+    act(() => submitButton?.click());
+
+    expect(
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-comment"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
+
+    await act(async () => {
+      resolveComment?.(comment);
+      await pendingComment;
+    });
+  });
+
+  it("restores the submitted body when comment creation fails", async () => {
+    const onError = vi.fn();
+    const api = {
+      assignments: { create: vi.fn() },
+      comments: {
+        create: vi.fn().mockRejectedValue(new Error("request failed")),
+      },
+    } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">;
+    render(issue, { api, onError });
+
+    change("collaboration-issue-comment", "  保留失败内容  ");
+    await click("collaboration-issue-comment-submit");
+
+    expect(
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-comment"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("  保留失败内容  ");
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("does not restore a stale submission after switching issues", async () => {
+    let rejectComment: ((error: Error) => void) | undefined;
+    const pendingComment = new Promise<CollaborationComment>(
+      (_resolve, reject) => {
+        rejectComment = reject;
+      },
+    );
+    const onError = vi.fn();
+    const api = {
+      assignments: { create: vi.fn() },
+      comments: { create: vi.fn().mockReturnValue(pendingComment) },
+    } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">;
+    render(issue, { api, onError });
+
+    change("collaboration-issue-comment", "旧 Issue 内容");
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="collaboration-issue-comment-submit"]',
+        )
+        ?.click();
+    });
+    render({ ...issue, id: "issue-2", sequence_number: 2 }, { api, onError });
+
+    await act(async () => {
+      rejectComment?.(new Error("request failed"));
+      await pendingComment.catch(() => undefined);
+    });
+
+    expect(
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-comment"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("submits a recognized mention as one assignment comment event", async () => {

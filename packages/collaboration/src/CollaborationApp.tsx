@@ -367,44 +367,51 @@ export function CollaborationApp({
             board:
               issues.length === 0 ? (
                 <div
-                  className="collaboration-empty-project"
-                  data-testid="collaboration-empty-project"
+                  data-testid={collaborationTestIds.board}
+                  className="flex min-h-0 flex-1"
                 >
-                  <div className="collaboration-empty-project-content">
-                    <span className="collaboration-empty-project-icon">◇</span>
-                    <span className="collaboration-empty-project-progress">
-                      {messages.emptyProjectProgress}
-                    </span>
-                    <h2>{messages.emptyProjectTitle}</h2>
-                    <p>{messages.emptyProjectHint}</p>
-                    <button
-                      type="button"
-                      className="collaboration-primary-button"
-                      data-testid="collaboration-empty-project-create"
-                      onClick={() => setCreateIssueOpen(true)}
-                    >
-                      {messages.createIssue}
-                    </button>
-                    <div className="collaboration-empty-project-flow">
-                      {[
-                        [
-                          messages.emptyProjectStepIssue,
-                          messages.emptyProjectStepIssueHint,
-                        ],
-                        [
-                          messages.emptyProjectStepAssign,
-                          messages.emptyProjectStepAssignHint,
-                        ],
-                        [
-                          messages.emptyProjectStepDeliver,
-                          messages.emptyProjectStepDeliverHint,
-                        ],
-                      ].map(([title, hint]) => (
-                        <div key={title}>
-                          <strong>{title}</strong>
-                          <small>{hint}</small>
-                        </div>
-                      ))}
+                  <div
+                    className="collaboration-empty-project"
+                    data-testid="collaboration-empty-project"
+                  >
+                    <div className="collaboration-empty-project-content">
+                      <span className="collaboration-empty-project-icon">
+                        ◇
+                      </span>
+                      <span className="collaboration-empty-project-progress">
+                        {messages.emptyProjectProgress}
+                      </span>
+                      <h2>{messages.emptyProjectTitle}</h2>
+                      <p>{messages.emptyProjectHint}</p>
+                      <button
+                        type="button"
+                        className="collaboration-primary-button"
+                        data-testid="collaboration-empty-project-create"
+                        onClick={() => setCreateIssueOpen(true)}
+                      >
+                        {messages.createIssue}
+                      </button>
+                      <div className="collaboration-empty-project-flow">
+                        {[
+                          [
+                            messages.emptyProjectStepIssue,
+                            messages.emptyProjectStepIssueHint,
+                          ],
+                          [
+                            messages.emptyProjectStepAssign,
+                            messages.emptyProjectStepAssignHint,
+                          ],
+                          [
+                            messages.emptyProjectStepDeliver,
+                            messages.emptyProjectStepDeliverHint,
+                          ],
+                        ].map(([title, hint]) => (
+                          <div key={title}>
+                            <strong>{title}</strong>
+                            <small>{hint}</small>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>

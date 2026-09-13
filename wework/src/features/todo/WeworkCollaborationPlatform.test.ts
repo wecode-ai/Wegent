@@ -9,6 +9,7 @@ import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
+  publishProjectSpaceTaskContextChanged,
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
 import {
@@ -541,7 +542,7 @@ describe('Wework collaboration workspace API', () => {
     ).toHaveAttribute('data-project-ids', currentProject.id)
   })
 
-  it('refreshes only the open project targeted by a task binding change', () => {
+  it('refreshes only the open project targeted by task context and binding changes', () => {
     const projectProps = (projectId: string) => ({
       api: {
         projects: {},
@@ -580,6 +581,28 @@ describe('Wework collaboration workspace API', () => {
     )
 
     act(() => {
+      publishProjectSpaceTaskContextChanged({
+        task: {
+          deviceId: 'local-device',
+          taskId: 'runtime-moved-to-project-a',
+        },
+        project: {
+          projectStore: 'local',
+          projectId: 'local-project-a',
+        },
+      })
+    })
+
+    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project-a')).toHaveAttribute(
+      'data-refresh-key',
+      '1'
+    )
+    expect(screen.getByTestId('collaboration-app-refresh-probe-local-project-b')).toHaveAttribute(
+      'data-refresh-key',
+      '0'
+    )
+
+    act(() => {
       publishProjectSpaceTaskBindingChanged({
         task: {
           deviceId: 'local-device',
@@ -595,7 +618,7 @@ describe('Wework collaboration workspace API', () => {
 
     expect(screen.getByTestId('collaboration-app-refresh-probe-local-project-a')).toHaveAttribute(
       'data-refresh-key',
-      '1'
+      '2'
     )
     expect(screen.getByTestId('collaboration-app-refresh-probe-local-project-b')).toHaveAttribute(
       'data-refresh-key',
@@ -624,12 +647,88 @@ describe('Wework collaboration workspace API', () => {
     ).toBeUndefined()
     expect(screen.getByTestId('collaboration-app-refresh-probe-local-project-a')).toHaveAttribute(
       'data-refresh-key',
-      '2'
+      '3'
     )
     expect(screen.getByTestId('collaboration-app-refresh-probe-local-project-b')).toHaveAttribute(
       'data-refresh-key',
       '0'
     )
+  })
+
+  it('refreshes only the cloud project named by a live Issue change and cleans up subscriptions', async () => {
+    const listeners: Array<(event: { projectId: string }) => void> = []
+    const releases = [vi.fn(), vi.fn()]
+    const subscribeLoopItemChanges = vi.fn(
+      async (listener: (event: { projectId: string }) => void) => {
+        listeners.push(listener)
+        return releases[listeners.length - 1]
+      }
+    )
+    const projectProps = (projectId: string) => ({
+      api: {
+        projects: {},
+        issues: {},
+      } as unknown as SharedWorkspaceApi,
+      detailServices: {
+        projectChatClient: {
+          subscribeLoopItemChanges,
+        },
+      } as unknown as ProjectSpaceDetailServices,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: {
+        platformView: 'project' as const,
+        workspaceId: 'cloud-workspace',
+        workspaceView: 'projects' as const,
+        projectId,
+        projectView: 'board' as const,
+        issueId: null,
+      },
+      project: {
+        id: projectId,
+        name: projectId,
+        project_store: 'backend',
+      } as never,
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: {
+        id: 'cloud-workspace',
+        name: 'Cloud workspace',
+      } as never,
+    })
+    const { unmount } = render(
+      createElement(
+        'div',
+        null,
+        createElement(WeworkSharedProject, projectProps('cloud-project-a')),
+        createElement(WeworkSharedProject, projectProps('cloud-project-b'))
+      )
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(subscribeLoopItemChanges).toHaveBeenCalledTimes(2)
+
+    act(() => {
+      for (const listener of listeners) {
+        listener({ projectId: 'cloud-project-a' })
+      }
+    })
+
+    expect(screen.getByTestId('collaboration-app-refresh-probe-cloud-project-a')).toHaveAttribute(
+      'data-refresh-key',
+      '1'
+    )
+    expect(screen.getByTestId('collaboration-app-refresh-probe-cloud-project-b')).toHaveAttribute(
+      'data-refresh-key',
+      '0'
+    )
+
+    unmount()
+    expect(releases[0]).toHaveBeenCalledOnce()
+    expect(releases[1]).toHaveBeenCalledOnce()
   })
 
   it('exposes local project execution environments through the shared project contract', async () => {

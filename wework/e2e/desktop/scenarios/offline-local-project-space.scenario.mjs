@@ -242,44 +242,18 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped('[data-testid="collaboration-project-settings-dispatch"]')
       )
-      await control.command(
-        'waitFor',
-        scoped('[data-testid="collaboration-project-dispatch-unavailable"]'),
-        {
-          text: '当前空间未启用 AI 项目管家',
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      await control.command('waitFor', scoped('[data-testid="project-automation-policy"]'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped('[data-testid="automation-welcome-create-policy"]'), {
+        text: '创建第一条策略',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureVerificationScreenshot(
         control,
         'offline-local-project-space-02-local-project-settings.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-dispatch-configure-agents"]')
-      )
-      assert.equal(
-        await control.command(
-          'getAttribute',
-          scoped('[data-testid="collaboration-project-settings-agents"]'),
-          { value: 'aria-current' }
-        ),
-        'page',
-        'The unavailable dispatch state did not navigate project managers to available agents'
-      )
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-project-settings-dispatch"]')
-      )
-      await control.command(
-        'click',
-        scoped('[data-testid="collaboration-dispatch-continue-manual"]')
-      )
-      await control.command('waitFor', scoped('[data-testid^="collaboration-issue-"]'), {
-        text: ISSUE_NAME,
-        timeoutMs: uiTimeoutMs,
-      })
       assertLocalIsolation()
       await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
       await control.command('click', scoped('[data-testid="collaboration-project-settings-files"]'))

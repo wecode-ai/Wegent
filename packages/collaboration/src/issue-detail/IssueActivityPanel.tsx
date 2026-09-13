@@ -173,7 +173,9 @@ export function IssueActivityPanel({
     useState<SelectedAssignmentTarget | null>(null);
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const mentionFocusFrameRef = useRef<number | null>(null);
+  const submissionIdRef = useRef(0);
   useEffect(() => {
+    submissionIdRef.current += 1;
     if (mentionFocusFrameRef.current !== null) {
       window.cancelAnimationFrame(mentionFocusFrameRef.current);
       mentionFocusFrameRef.current = null;
@@ -182,6 +184,7 @@ export function IssueActivityPanel({
     setMentionOpen(false);
     setComposerExpanded(false);
     setSelectedAssignment(null);
+    setSending(false);
     return () => {
       if (mentionFocusFrameRef.current !== null) {
         window.cancelAnimationFrame(mentionFocusFrameRef.current);
@@ -222,7 +225,10 @@ export function IssueActivityPanel({
       : null;
   }, [body, canAssign, selectedAssignment]);
   const submit = async () => {
-    const commentBody = body.trim();
+    const submissionId = ++submissionIdRef.current;
+    const submittedIssueId = issue.id;
+    const submittedBody = body;
+    const commentBody = submittedBody.trim();
     if (!commentBody) return;
     const assignmentTarget = pendingAssignment;
     if (!assignmentTarget && !canComment) return;
@@ -230,32 +236,41 @@ export function IssueActivityPanel({
       window.cancelAnimationFrame(mentionFocusFrameRef.current);
       mentionFocusFrameRef.current = null;
     }
+    setBody("");
+    setMentionOpen(false);
+    setComposerExpanded(false);
+    setSelectedAssignment(null);
     setSending(true);
     try {
       if (assignmentTarget) {
         if (!api.assignments) throw new Error("Assignments API is unavailable");
-        const result = await api.assignments.create(issue.id, {
+        const result = await api.assignments.create(submittedIssueId, {
           targetType: assignmentTarget.type,
           targetId: assignmentTarget.targetId,
           workflowStep: null,
           commentBody,
           notifyTarget: assignmentTarget.type === "human",
         });
+        if (submissionId !== submissionIdRef.current) return;
         onAssignmentsChange([...assignments, result.assignment]);
         if (result.comment) onCommentsChange([...comments, result.comment]);
         onIssueChange(result.issue);
       } else {
-        const comment = await api.comments.create(issue.id, commentBody);
+        const comment = await api.comments.create(
+          submittedIssueId,
+          commentBody,
+        );
+        if (submissionId !== submissionIdRef.current) return;
         onCommentsChange([...comments, comment]);
       }
-      setBody("");
-      setMentionOpen(false);
-      setComposerExpanded(false);
-      setSelectedAssignment(null);
     } catch {
+      if (submissionId !== submissionIdRef.current) return;
+      setBody(submittedBody);
+      setComposerExpanded(true);
+      setSelectedAssignment(assignmentTarget);
       onError();
     } finally {
-      setSending(false);
+      if (submissionId === submissionIdRef.current) setSending(false);
     }
   };
   const insertMention = (

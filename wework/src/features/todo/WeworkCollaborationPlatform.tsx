@@ -61,6 +61,7 @@ import {
   reconcileProjectSpaceTaskBindings,
   sameProjectSpace,
   subscribeProjectSpaceTaskBindingChanged,
+  subscribeProjectSpaceTaskContextChanged,
   type LocatedProjectSpace,
 } from './projectSpaceSelection'
 import { weworkAutomationUiHost } from './weworkAutomationUiHost'
@@ -779,6 +780,48 @@ export function WeworkSharedProject({
       }),
     [project.id, project.project_store]
   )
+
+  useEffect(
+    () =>
+      subscribeProjectSpaceTaskContextChanged(change => {
+        if (
+          !sameProjectSpace(change.project, {
+            projectStore: project.project_store,
+            projectId: String(project.id),
+          })
+        ) {
+          return
+        }
+        setRefreshProjectRequestKey(value => value + 1)
+      }),
+    [project.id, project.project_store]
+  )
+
+  useEffect(() => {
+    const subscribe = detailServices?.projectChatClient?.subscribeLoopItemChanges
+    if (!subscribe) return
+    let active = true
+    let unsubscribe: (() => void) | undefined
+    void subscribe(event => {
+      if (!active || event.projectId !== String(project.id)) return
+      setRefreshProjectRequestKey(value => value + 1)
+    })
+      .then(release => {
+        if (!active) {
+          release()
+          return
+        }
+        unsubscribe = release
+      })
+      .catch(error => {
+        if (!active) return
+        console.warn('[Wework collaboration] issue-change subscription failed', error)
+      })
+    return () => {
+      active = false
+      unsubscribe?.()
+    }
+  }, [detailServices?.projectChatClient, project.id])
 
   return (
     <div className="flex h-full min-h-0 min-w-0">
