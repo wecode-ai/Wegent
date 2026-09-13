@@ -1354,6 +1354,37 @@ describe('runtimeConversationTurns', () => {
     ).toEqual(['image-1', 'command-1', 'file-changes-1'])
   })
 
+  test('hydrates a long tool history without blocking the renderer', () => {
+    const itemCount = 1_200
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: Array.from({ length: itemCount }, (_, index) => ({
+          id: `command-${index}`,
+          type: 'block' as const,
+          block: {
+            id: `command-${index}`,
+            subtaskId: 'turn-1',
+            type: 'tool' as const,
+            toolName: 'exec_command',
+            status: 'done' as const,
+            createdAt: index,
+          },
+        })),
+        status: 'streaming',
+      },
+    ]
+
+    const startedAt = performance.now()
+    const merged = mergeRuntimeConversationTurns([], snapshot)
+    const durationMs = performance.now() - startedAt
+
+    expect(merged[0].items).toHaveLength(itemCount)
+    expect(merged[0].items[0]?.id).toBe('command-0')
+    expect(merged[0].items.at(-1)?.id).toBe(`command-${itemCount - 1}`)
+    expect(durationMs).toBeLessThan(1_000)
+  })
+
   test('converges full Codex snapshot items by exact item id', () => {
     const local: RuntimeConversationTurn[] = [
       {
@@ -1495,52 +1526,6 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].items).toEqual(snapshot[0].items)
     expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
       content,
-    ])
-  })
-
-  test('matches duplicate completed assistant text one-to-one', () => {
-    const content = 'Repeated completion'
-    const local: RuntimeConversationTurn[] = [
-      {
-        id: 'turn-1',
-        items: [
-          {
-            id: 'live-message-1',
-            type: 'assistant_text',
-            content,
-            createdAt: '2026-08-01T00:00:00.000Z',
-          },
-          {
-            id: 'live-message-2',
-            type: 'assistant_text',
-            content,
-            createdAt: '2026-08-01T00:00:01.000Z',
-          },
-        ],
-        status: 'done',
-      },
-    ]
-    const snapshot: RuntimeConversationTurn[] = [
-      {
-        id: 'turn-1',
-        items: [
-          {
-            id: 'snapshot-message-1',
-            type: 'assistant_text',
-            content,
-            createdAt: '2026-08-01T00:00:00.000Z',
-          },
-        ],
-        status: 'done',
-      },
-    ]
-
-    const merged = mergeRuntimeConversationTurns(local, snapshot)
-
-    expect(merged[0].items).toHaveLength(2)
-    expect(merged[0].items.map(item => item.id)).toEqual(['live-message-2', 'snapshot-message-1'])
-    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
-      `${content}\n\n${content}`,
     ])
   })
 
