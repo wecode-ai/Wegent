@@ -136,6 +136,17 @@ assertions. A host driver may only:
 Project creation, project home, Issue drag, member management, files, automation, settings, and My
 Work steps must not be copied into two business-flow implementations.
 
+### Navigation ownership
+
+- Top-level module switching, such as Tasks, Collaboration, and Agents, belongs to the host shell.
+- After entering Collaboration, contextual navigation for workspace home, projects, members,
+  agents, execution environments, and settings belongs to the shared collaboration platform. Web
+  must not mount the task or conversation sidebar beside it and create two parallel primary
+  navigations.
+- Desktop uses the shared collaboration sidebar. Mobile presents the same shared navigation items
+  in a horizontally scrollable layout with controls at least `44px` high; it must not fall back to
+  the Tasks sidebar.
+
 ### Self-contained setup and cleanup
 
 - Every new desktop checkpoint creates its own users, projects, members, Issues, files, and

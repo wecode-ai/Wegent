@@ -187,35 +187,42 @@ export function CollaborationPage() {
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {isCollapsed && !isMobile && (
-        <CollapsedSidebarButtons
-          onNewTask={() => router.push('/chat')}
-          onExpand={toggleCollapsed}
-        />
+      {legacyProjectId && (
+        <>
+          {isCollapsed && !isMobile && (
+            <CollapsedSidebarButtons
+              onNewTask={() => router.push('/chat')}
+              onExpand={toggleCollapsed}
+            />
+          )}
+          <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={toggleCollapsed}>
+            <TaskSidebar
+              isMobileSidebarOpen={isMobileSidebarOpen}
+              setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+              pageType="collaboration"
+              isCollapsed={isCollapsed}
+              onToggleCollapsed={toggleCollapsed}
+              projectSection={
+                legacyProjectId ? (
+                  <CollaborationProjectSection
+                    locale={locale}
+                    onAdd={() => setCreateProjectRequestKey(current => current + 1)}
+                    onSelect={nextProjectId =>
+                      router.push(`/collaboration/${encodeURIComponent(nextProjectId)}`)
+                    }
+                    projects={collaborationProjects}
+                    selectedProjectId={legacyProjectId}
+                  />
+                ) : undefined
+              }
+            />
+          </ResizableSidebar>
+        </>
       )}
-      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={toggleCollapsed}>
-        <TaskSidebar
-          isMobileSidebarOpen={isMobileSidebarOpen}
-          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-          pageType="collaboration"
-          isCollapsed={isCollapsed}
-          onToggleCollapsed={toggleCollapsed}
-          projectSection={
-            legacyProjectId ? (
-              <CollaborationProjectSection
-                locale={locale}
-                onAdd={() => setCreateProjectRequestKey(current => current + 1)}
-                onSelect={nextProjectId =>
-                  router.push(`/collaboration/${encodeURIComponent(nextProjectId)}`)
-                }
-                projects={collaborationProjects}
-                selectedProjectId={legacyProjectId}
-              />
-            ) : undefined
-          }
-        />
-      </ResizableSidebar>
-      <main className={`min-w-0 flex-1 ${legacyProjectId ? 'overflow-auto' : 'overflow-hidden'}`}>
+      <main
+        className={`min-w-0 flex-1 ${legacyProjectId ? 'overflow-auto' : 'overflow-hidden'}`}
+        data-testid="collaboration-page-main"
+      >
         {legacyProjectId ? (
           <CollaborationApp
             api={api}
