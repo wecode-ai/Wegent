@@ -4807,8 +4807,11 @@ export function PluginsWorkspace({
               togglePluginComponent(installedDetail.id, componentKey, enabled)
             }
           }}
-          onMcpHeadersSave={(componentKey, headers) =>
-            savePluginMcpHeaders(installedDetail!.id, componentKey, headers)
+          onMcpHeadersSave={
+            installedDetail
+              ? (componentKey, headers) =>
+                  savePluginMcpHeaders(installedDetail.id, componentKey, headers)
+              : undefined
           }
           autoUpdateEnabled={installedDetail?.raw.spec.updatePolicy === 'auto'}
           autoUpdateSaving={

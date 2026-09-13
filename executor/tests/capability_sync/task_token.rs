@@ -48,10 +48,15 @@ async fn task_token_marketplace_sources_are_filtered_copies_of_the_immutable_pac
         assert!(!root.is_symlink());
         let manifest = read_json(root.join(format!(".{runtime}-plugin/plugin.json")));
         let native = read_json(root.join(manifest["mcpServers"].as_str().unwrap()));
-        assert!(native["mcpServers"]["business"].is_null());
-        assert!(native["mcpServers"]["public"].is_object());
+        let native_servers = native["mcpServers"].as_object().unwrap();
+        assert!(!native_servers.contains_key("business"));
+        assert!(native_servers["public"].is_object());
         if runtime == "claude" {
-            assert!(read_json(root.join(".mcp.json"))["mcpServers"]["business"].is_null());
+            let default = read_json(root.join(".mcp.json"));
+            assert!(!default["mcpServers"]
+                .as_object()
+                .unwrap()
+                .contains_key("business"));
         }
     }
 }

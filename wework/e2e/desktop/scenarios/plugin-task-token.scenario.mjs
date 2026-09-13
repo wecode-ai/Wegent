@@ -82,6 +82,7 @@ export async function createDesktopScenario({
       const authorization = request.headers.authorization
       assert.ok(authorization?.startsWith('Bearer '), 'Plugin did not send a Bearer token')
       assert.notEqual(authorization, `Bearer ${cloud.authToken}`, 'Plugin received the login token')
+      assert.equal(request.headers['x-author-header'], 'author')
       tokens.add(authorization.slice(7))
       let identity = verifiedTokens.get(authorization)
       if (!identity) {
@@ -165,7 +166,10 @@ export async function createDesktopScenario({
       business: {
         type: 'http',
         url: `http://127.0.0.1:${service.address().port}/mcp`,
-        headers: { 'X-Author-Header': 'author' },
+        headers: {
+          Authorization: 'Bearer author',
+          'X-Author-Header': 'author',
+        },
       },
     })
   )

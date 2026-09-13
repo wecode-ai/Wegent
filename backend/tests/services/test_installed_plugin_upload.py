@@ -189,7 +189,20 @@ def test_installed_plugin_update_removes_cleared_component_config(
     )
     installed_id = int(installed.metadata["labels"]["id"])
 
-    updated = InstalledPluginService().update_installed_plugin(
+    service = InstalledPluginService()
+    seeded = service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed_id,
+        request=InstalledPluginUpdateRequest(
+            componentConfig={
+                "mcp:business": {"headers": {"Authorization": "Bearer ${{task_token}}"}}
+            },
+        ),
+    )
+    assert "mcp:business" in seeded.spec.componentConfig
+
+    updated = service.update_installed_plugin(
         db=test_db,
         user_id=test_user.id,
         installed_id=installed_id,

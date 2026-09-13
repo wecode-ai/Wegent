@@ -805,6 +805,12 @@ classify_path() {
       backend/tests/api/test_mcp_identity_api.py | \
       backend/tests/api/ws/test_plugin_auth_broker.py)
       select_target "cloud:plugin-task-token"
+      if [[ "$path" == backend/app/api/ws/plugin_auth_broker.py ]]; then
+        select_target "cloud:plugin-account-auth"
+      fi
+      if [[ "$path" == backend/app/api/ws/device_namespace.py ]]; then
+        select_cloud_worktree_checkpoints
+      fi
       ;;
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
       executor/tests/plugin_account_auth_contract.rs | \
