@@ -350,6 +350,13 @@
   color: rgb(var(--color-text-muted));
 }
 
+.task-detail-workspace-description .task-detail-desc.is-collapsed textarea {
+  min-height: 72px;
+  max-height: 72px;
+  overflow: hidden;
+  resize: none;
+}
+
 .task-detail-workspace-description
   .task-detail-desc.is-collapsed[data-overflowing="true"]::after {
   position: absolute;
@@ -936,6 +943,129 @@
 [data-theme="dark"] .task-detail-flat-task-row[data-selected="true"] {
   border-color: rgb(var(--color-focus) / 42%);
   background: rgb(var(--color-focus) / 14%);
+}
+
+.task-detail-current-assignment {
+  margin-top: 22px;
+  padding: 0 0 18px;
+  border-bottom: 1px solid rgb(var(--color-border));
+}
+
+.task-detail-current-assignment-status {
+  margin-left: auto;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+}
+
+.task-detail-current-assignment-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+  background: rgb(var(--color-muted) / 45%);
+}
+
+.task-detail-current-assignment-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-base));
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.task-detail-current-assignment-avatar.is-agent {
+  color: rgb(var(--color-primary));
+  background: rgb(var(--color-primary) / 10%);
+}
+
+.task-detail-current-assignment-main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.task-detail-current-assignment-main strong {
+  overflow: hidden;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-detail-current-assignment-main small,
+.task-detail-current-assignment-source {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+}
+
+.task-detail-current-assignment-source {
+  margin-left: auto;
+  text-align: right;
+}
+
+.task-detail-current-assignment-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  border: 1px dashed rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.task-detail-current-assignment-empty > .task-detail-workspace-empty {
+  flex: 1;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.task-detail-current-assignment-action {
+  flex: 0 0 auto;
+  min-height: 32px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-surface));
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.task-detail-current-assignment-action:hover {
+  border-color: rgb(var(--color-primary));
+  color: rgb(var(--color-primary));
+}
+
+@media (max-width: 700px) {
+  .task-detail-current-assignment-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .task-detail-current-assignment-source {
+    width: 100%;
+    margin-left: 40px;
+    text-align: left;
+  }
+
+  .task-detail-current-assignment-empty {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .task-detail-workspace-meta-pill:hover {

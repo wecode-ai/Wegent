@@ -372,6 +372,40 @@
   line-height: 16px;
 }
 
+.collaboration-project-create-location-summary {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  gap: 12px;
+  border-radius: 12px;
+  background: rgb(var(--color-bg-hover));
+  padding: 10px 12px;
+}
+
+.collaboration-project-create-location-summary > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: rgb(var(--color-text-secondary));
+}
+
+.collaboration-project-create-location-summary > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.collaboration-project-create-location-summary strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.collaboration-project-create-location-summary small {
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+  line-height: 16px;
+}
+
 .collaboration-project-create-field {
   display: grid;
   gap: 8px;
@@ -515,6 +549,78 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.collaboration-current-assignment {
+  margin-bottom: 16px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  background: rgb(var(--color-muted) / 0.45);
+  padding: 12px;
+}
+
+.collaboration-current-assignment > header,
+.collaboration-current-assignment > div {
+  display: flex;
+  align-items: center;
+}
+
+.collaboration-current-assignment > header {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.collaboration-current-assignment > header > span,
+.collaboration-current-assignment > p,
+.collaboration-current-assignment-main small,
+.collaboration-current-assignment-source {
+  color: rgb(var(--color-text-muted));
+}
+
+.collaboration-current-assignment > p {
+  margin: 0;
+}
+
+.collaboration-current-assignment > div {
+  gap: 10px;
+}
+
+.collaboration-current-assignment-avatar {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgb(var(--color-text-primary));
+  color: rgb(var(--color-background));
+  font-weight: 500;
+}
+
+.collaboration-current-assignment-avatar.is-agent {
+  background: rgb(var(--color-muted));
+  color: rgb(var(--color-text-primary));
+}
+
+.collaboration-current-assignment-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.collaboration-current-assignment-main b,
+.collaboration-current-assignment-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-current-assignment-source {
+  flex: 0 1 auto;
+  text-align: right;
 }
 
 .collaboration-dialog footer button:not(.collaboration-primary-button) {

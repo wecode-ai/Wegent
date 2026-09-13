@@ -38,6 +38,10 @@ vi.mock("./workspace-controller", () => ({
 
 import { CollaborationApp } from "./CollaborationApp";
 import { CollaborationSettings } from "./CollaborationSettings";
+import {
+  ProjectDispatchSettings,
+  ProjectSettingsShell,
+} from "./project-manage";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
@@ -223,13 +227,7 @@ describe("CollaborationApp API boundary", () => {
   });
 
   it("keeps the shared project view set free of host-only pages", () => {
-    expect(collaborationProjectViewIds).toEqual([
-      "board",
-      "table",
-      "files",
-      "automation",
-      "manage",
-    ]);
+    expect(collaborationProjectViewIds).toEqual(["board", "table", "manage"]);
     expect(collaborationProjectViewIds).not.toContain("members");
     expect(collaborationProjectViewIds).not.toContain("runs");
   });
@@ -248,10 +246,13 @@ describe("CollaborationApp API boundary", () => {
       renderApp(host),
       CollaborationProjectViewShell,
     );
-    const firstSettings = findByType(
+    const firstSettingsShell = findByType(
       firstShell?.props.slots.manage,
-      CollaborationSettings,
+      ProjectSettingsShell,
     );
+    const firstSettings = firstSettingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "project",
+    )?.content;
 
     collaborationAppMocks.useController.mockReturnValue(
       controllerWithProject(createProject(2)),
@@ -260,14 +261,49 @@ describe("CollaborationApp API boundary", () => {
       renderApp(host),
       CollaborationProjectViewShell,
     );
-    const refreshedSettings = findByType(
+    const refreshedSettingsShell = findByType(
       refreshedShell?.props.slots.manage,
-      CollaborationSettings,
+      ProjectSettingsShell,
     );
+    const refreshedSettings = refreshedSettingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "project",
+    )?.content;
 
+    expect(firstSettings?.type).toBe(CollaborationSettings);
     expect(firstSettings?.key).toContain("project-1");
     expect(refreshedSettings?.key).toBe(firstSettings?.key);
     expect(refreshedSettings?.props.project.version).toBe(2);
+  });
+
+  it("always exposes project ownership and assignment semantics in settings", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject({
+        ...createProject(1),
+        current_user_name: "Project owner",
+      }),
+    );
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const settingsShell = findByType(
+      shell?.props.slots.manage,
+      ProjectSettingsShell,
+    );
+    const dispatchSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "dispatch",
+    );
+
+    expect(dispatchSection).toBeDefined();
+    expect(dispatchSection?.content.type).toBe(ProjectDispatchSettings);
+    expect(dispatchSection?.content.props.project.current_user_name).toBe(
+      "Project owner",
+    );
+    expect(dispatchSection?.content.props.automationContent).toBeUndefined();
   });
 
   it("centralizes permission filtering and host extension placement", () => {

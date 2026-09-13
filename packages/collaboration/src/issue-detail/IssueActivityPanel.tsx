@@ -67,6 +67,7 @@ export function IssueActivityPanel({
   executions,
   canComment,
   canAssign,
+  showCurrentAssignment = true,
   translate,
   onIssueChange,
   onAssignmentsChange,
@@ -82,6 +83,7 @@ export function IssueActivityPanel({
   executions: CollaborationExecution[];
   canComment: boolean;
   canAssign: boolean;
+  showCurrentAssignment?: boolean;
   translate(
     key: string,
     fallback?: string,
@@ -104,6 +106,22 @@ export function IssueActivityPanel({
   const entries = useMemo(
     () => issueActivityEntries(assignments, comments, executions),
     [assignments, comments, executions],
+  );
+  const currentAssignment = useMemo(
+    () =>
+      assignments
+        .filter((assignment) => assignment.status === "active")
+        .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+        .at(-1) ?? null,
+    [assignments],
+  );
+  const currentExecution = useMemo(
+    () =>
+      executions
+        .filter((execution) => execution.loop_item_id === issue.id)
+        .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+        .at(-1) ?? null,
+    [executions, issue.id],
   );
   const selectedTarget = target
     ? target.startsWith("human:")
@@ -162,6 +180,62 @@ export function IssueActivityPanel({
       className="task-detail-comments collaboration-comment collaboration-activity-panel"
       data-testid="collaboration-issue-activity"
     >
+      {showCurrentAssignment ? (
+        <section
+          className="collaboration-current-assignment"
+          data-testid="collaboration-current-assignment"
+        >
+          <header>
+            <strong>{translate("todo.current_assignment", "当前分配")}</strong>
+            <span>
+              {currentAssignment
+                ? currentExecution?.display_state ||
+                  (currentAssignment.target_type === "human"
+                    ? translate("todo.waiting_to_start", "等待开始")
+                    : translate("todo.assigned", "已分配"))
+                : translate("todo.unassigned", "尚未分配")}
+            </span>
+          </header>
+          {currentAssignment ? (
+            <div>
+              <span
+                className={
+                  currentAssignment.target_type === "agent"
+                    ? "collaboration-current-assignment-avatar is-agent"
+                    : "collaboration-current-assignment-avatar"
+                }
+              >
+                {currentAssignment.target_type === "agent"
+                  ? "AI"
+                  : currentAssignment.target_name.slice(0, 1)}
+              </span>
+              <span className="collaboration-current-assignment-main">
+                <b>{currentAssignment.target_name}</b>
+                <small>
+                  {currentAssignment.target_type === "agent"
+                    ? translate("todo.agent", "智能体")
+                    : translate("todo.member", "成员")}
+                  {currentExecution?.runtime_source
+                    ? ` · ${currentExecution.runtime_source}`
+                    : ""}
+                </small>
+              </span>
+              <span className="collaboration-current-assignment-source">
+                {translate("todo.assignment_source", "分配来源")}：
+                {currentAssignment.workflow_step ||
+                  translate("todo.manual_assignment", "Issue 内手动分配")}
+              </span>
+            </div>
+          ) : (
+            <p>
+              {translate(
+                "todo.assignment_empty_hint",
+                "选择成员或智能体完成分配；其他项目成员仍可主动参与。",
+              )}
+            </p>
+          )}
+        </section>
+      ) : null}
       <header className="task-detail-comments-head">
         <span className="font-semibold text-text-primary">
           {translate("todo.activity", "动态与分配")}
@@ -227,77 +301,79 @@ export function IssueActivityPanel({
           );
         })}
       </div>
-      <div className="collaboration-assignment-targets">
-        <span>@</span>
-        <select
-          aria-label={translate("todo.assignment_target", "分配对象")}
-          data-testid="collaboration-assignment-target"
-          disabled={!canAssign || sending || !api.assignments}
-          value={target}
-          onChange={(event) => setTarget(event.target.value)}
-        >
-          <option value="">
-            {translate("todo.no_assignment_target", "仅评论，不分配")}
-          </option>
-          <optgroup label={translate("todo.members", "成员")}>
-            {members.map((member) => (
-              <option key={member.user_id} value={`human:${member.user_id}`}>
-                {member.user_name}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label={translate("todo.agent_teams", "智能体")}>
-            {agents.map((agent) => (
-              <option key={agent.id} value={`agent:${agent.id}`}>
-                {agent.name}
-              </option>
-            ))}
-          </optgroup>
-        </select>
-        <input
-          aria-label={translate("todo.workflow_step", "流程步骤")}
-          data-testid="collaboration-assignment-workflow-step"
-          disabled={!canAssign || !selectedTarget || sending}
-          placeholder={translate(
-            "todo.workflow_step_optional",
-            "流程步骤（可选）",
+      <div className="collaboration-activity-composer-shell">
+        <div className="collaboration-assignment-targets">
+          <span>@</span>
+          <select
+            aria-label={translate("todo.assignment_target", "分配对象")}
+            data-testid="collaboration-assignment-target"
+            disabled={!canAssign || sending || !api.assignments}
+            value={target}
+            onChange={(event) => setTarget(event.target.value)}
+          >
+            <option value="">
+              {translate("todo.no_assignment_target", "仅评论，不分配")}
+            </option>
+            <optgroup label={translate("todo.members", "成员")}>
+              {members.map((member) => (
+                <option key={member.user_id} value={`human:${member.user_id}`}>
+                  {member.user_name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label={translate("todo.agent_teams", "智能体")}>
+              {agents.map((agent) => (
+                <option key={agent.id} value={`agent:${agent.id}`}>
+                  {agent.name}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+          <input
+            aria-label={translate("todo.workflow_step", "流程步骤")}
+            data-testid="collaboration-assignment-workflow-step"
+            disabled={!canAssign || !selectedTarget || sending}
+            placeholder={translate(
+              "todo.workflow_step_optional",
+              "流程步骤（可选）",
+            )}
+            value={workflowStep}
+            onChange={(event) => setWorkflowStep(event.target.value)}
+          />
+        </div>
+        <div className="collaboration-comment-composer">
+          <textarea
+            data-testid="collaboration-issue-comment"
+            placeholder={translate(
+              "todo.comment_or_assign",
+              "写评论，或选择对象完成分配",
+            )}
+            value={body}
+            disabled={!canComment || sending}
+            onChange={(event) => setBody(event.target.value)}
+          />
+          <button
+            type="button"
+            data-testid="collaboration-issue-comment-submit"
+            disabled={
+              sending ||
+              (!body.trim() && !selectedTarget) ||
+              (selectedTarget ? !canAssign : !canComment)
+            }
+            onClick={() => void submit()}
+          >
+            {selectedTarget
+              ? translate("todo.assign_and_send", "分配并发送")
+              : translate("todo.send_comment", "发送")}
+          </button>
+        </div>
+        <p className="collaboration-assignment-note">
+          {translate(
+            "todo.assignment_non_exclusive",
+            "分配用于通知和触发执行，不限制其他成员主动参与。",
           )}
-          value={workflowStep}
-          onChange={(event) => setWorkflowStep(event.target.value)}
-        />
+        </p>
       </div>
-      <div className="collaboration-comment-composer">
-        <textarea
-          data-testid="collaboration-issue-comment"
-          placeholder={translate(
-            "todo.comment_or_assign",
-            "写评论，或选择对象完成分配",
-          )}
-          value={body}
-          disabled={!canComment || sending}
-          onChange={(event) => setBody(event.target.value)}
-        />
-        <button
-          type="button"
-          data-testid="collaboration-issue-comment-submit"
-          disabled={
-            sending ||
-            (!body.trim() && !selectedTarget) ||
-            (selectedTarget ? !canAssign : !canComment)
-          }
-          onClick={() => void submit()}
-        >
-          {selectedTarget
-            ? translate("todo.assign_and_send", "分配并发送")
-            : translate("todo.send_comment", "发送")}
-        </button>
-      </div>
-      <p className="collaboration-assignment-note">
-        {translate(
-          "todo.assignment_non_exclusive",
-          "分配用于通知和触发执行，不限制其他成员主动参与。",
-        )}
-      </p>
     </section>
   );
 }

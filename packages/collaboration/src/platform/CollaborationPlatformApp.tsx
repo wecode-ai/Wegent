@@ -40,6 +40,10 @@ const platformMessages = {
   "zh-CN": {
     allSpaces: "所有空间",
     resources: "资源",
+    myWork: "我的工作",
+    myWorkHint: "跨空间查看分配给我和我正在参与的 Issue。",
+    noWork: "还没有待处理工作",
+    noWorkHint: "当 Issue 分配给你或你主动参与后，会显示在这里。",
     resourcesHint: "管理我拥有的智能体和执行环境，并授权给协作空间使用。",
     workspaceHint: "空间是成员、项目、智能体和执行环境的协作边界。",
     createWorkspace: "创建空间",
@@ -47,6 +51,7 @@ const platformMessages = {
     noSpaces: "还没有协作空间",
     noSpacesHint: "先创建空间，再在空间中组织成员、项目和 AI 资源。",
     workspaceHome: "空间首页",
+    currentWorkspace: "当前空间",
     allProjects: "全部项目",
     members: "成员",
     agents: "智能体",
@@ -77,10 +82,23 @@ const platformMessages = {
     offline: "离线",
     loadFailed: "加载协作空间失败",
     searchSpaces: "搜索空间",
+    firstUseProgress: "开始协作",
+    firstProjectTitle: "创建第一个项目",
+    firstProjectHint:
+      "项目负责组织 Issue、成员和分配方式；智能体与执行环境可以稍后配置。",
+    configureAgents: "配置智能体",
+    inviteMembers: "邀请成员",
+    workspaceResources: "空间资源",
+    viewAll: "查看全部",
   },
   en: {
     allSpaces: "All spaces",
     resources: "Resources",
+    myWork: "My work",
+    myWorkHint: "See issues assigned to you or involving you across spaces.",
+    noWork: "No work yet",
+    noWorkHint:
+      "Issues appear here after they are assigned to you or you join them.",
     resourcesHint:
       "Manage agents and execution environments you own and share them with workspaces.",
     workspaceHint:
@@ -91,6 +109,7 @@ const platformMessages = {
     noSpacesHint:
       "Create a space, then organize members, projects, and AI resources inside it.",
     workspaceHome: "Space home",
+    currentWorkspace: "Current space",
     allProjects: "All projects",
     members: "Members",
     agents: "Agents",
@@ -123,6 +142,14 @@ const platformMessages = {
     offline: "Offline",
     loadFailed: "Failed to load collaboration spaces",
     searchSpaces: "Search spaces",
+    firstUseProgress: "Getting started",
+    firstProjectTitle: "Create your first project",
+    firstProjectHint:
+      "Projects organize issues, members, and assignments. Agents and execution environments can be configured later.",
+    configureAgents: "Configure agents",
+    inviteMembers: "Invite members",
+    workspaceResources: "Workspace resources",
+    viewAll: "View all",
   },
 } as const;
 
@@ -139,12 +166,16 @@ function CollaborationPlatformNavigation({
   host,
   messages,
   workspace,
+  workspaces,
   projects,
+  footer,
 }: {
   host: CollaborationPlatformHostAdapter;
   messages: PlatformMessages;
   workspace: CollaborationWorkspace | null;
+  workspaces: CollaborationWorkspace[];
   projects: CollaborationProject[];
+  footer?: React.ReactNode;
 }) {
   const canManageWorkspace =
     workspace?.access_role === "Owner" ||
@@ -194,6 +225,26 @@ function CollaborationPlatformNavigation({
             <button
               type="button"
               className={
+                host.location.platformView === "my-work" ? "active" : ""
+              }
+              data-testid="collaboration-nav-my-work"
+              onClick={() =>
+                host.navigate({
+                  platformView: "my-work",
+                  workspaceId: null,
+                  workspaceView: "home",
+                  projectId: null,
+                  projectView: "board",
+                  issueId: null,
+                })
+              }
+            >
+              <span>◎</span>
+              {messages.myWork}
+            </button>
+            <button
+              type="button"
+              className={
                 host.location.platformView === "resources" ? "active" : ""
               }
               data-testid="collaboration-nav-resources"
@@ -232,9 +283,35 @@ function CollaborationPlatformNavigation({
           >
             ← {messages.backToSpaces}
           </button>
-          <div className="collaboration-workspace-identity">
+          <label className="collaboration-workspace-identity">
             <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
-            <strong>{workspace.name}</strong>
+            <span>
+              <small>{messages.currentWorkspace}</small>
+              <select
+                aria-label={messages.workspaceHome}
+                data-testid="collaboration-workspace-switcher"
+                value={workspace.id}
+                onChange={(event) =>
+                  host.navigate({
+                    platformView: "spaces",
+                    workspaceId: event.target.value,
+                    workspaceView: "home",
+                    projectId: null,
+                    projectView: "board",
+                    issueId: null,
+                  })
+                }
+              >
+                {workspaces.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name}
+                  </option>
+                ))}
+              </select>
+            </span>
+          </label>
+          <div className="collaboration-platform-sidebar-label">
+            {messages.workspaceHome}
           </div>
           <nav>
             {workspaceNav.map((item) => (
@@ -256,6 +333,18 @@ function CollaborationPlatformNavigation({
                   })
                 }
               >
+                <span aria-hidden="true">
+                  {
+                    {
+                      home: "⌂",
+                      projects: "◆",
+                      members: "♙",
+                      agents: "✦",
+                      "execution-environments": "▣",
+                      settings: "⚙",
+                    }[item.id]
+                  }
+                </span>
                 {item.label}
               </button>
             ))}
@@ -289,6 +378,9 @@ function CollaborationPlatformNavigation({
           </nav>
         </>
       )}
+      {footer ? (
+        <div className="collaboration-platform-sidebar-footer">{footer}</div>
+      ) : null}
     </aside>
   );
 }
@@ -498,6 +590,8 @@ export function CollaborationPlatformApp({
   automationUiHost,
   onCreateTask,
   onReady,
+  renderProject,
+  sidebarFooter,
 }: {
   api: SharedWorkspaceApi;
   host: CollaborationPlatformHostAdapter;
@@ -509,6 +603,11 @@ export function CollaborationPlatformApp({
     workflowStep?: string,
   ): void;
   onReady?(): void;
+  renderProject?(context: {
+    project: CollaborationProject;
+    workspace: CollaborationWorkspace;
+  }): React.ReactNode;
+  sidebarFooter?: React.ReactNode;
 }) {
   const messages = platformMessages[locale];
   const translate = createCollaborationTranslator(locale);
@@ -558,33 +657,88 @@ export function CollaborationPlatformApp({
       </div>
     );
   } else if (host.location.projectId && state.workspace) {
+    const selectedProject =
+      state.projects.find(
+        (project) => String(project.id) === host.location.projectId,
+      ) ?? null;
+    content =
+      selectedProject && renderProject ? (
+        renderProject({ project: selectedProject, workspace: state.workspace })
+      ) : (
+        <CollaborationApp
+          api={scopedApi}
+          locale={locale}
+          automationUiHost={automationUiHost}
+          showProjectBack={false}
+          host={{
+            capabilities: {
+              automation: host.capabilities.automation,
+              dingtalkAitable: host.capabilities.dingtalkAitable,
+            },
+            location: {
+              projectId: host.location.projectId,
+              issueId: host.location.issueId,
+              view: host.location.projectView,
+            },
+            navigate: (location) =>
+              navigateWithin(host, {
+                projectId: location.projectId,
+                issueId: location.issueId,
+                projectView: location.view,
+                workspaceView: "projects",
+              }),
+            notify: host.notify,
+            openExternal: host.openExternal,
+          }}
+          onCreateTask={onCreateTask}
+        />
+      );
+  } else if (!state.workspace && host.location.platformView === "my-work") {
     content = (
-      <CollaborationApp
-        api={scopedApi}
-        locale={locale}
-        automationUiHost={automationUiHost}
-        host={{
-          capabilities: {
-            automation: host.capabilities.automation,
-            dingtalkAitable: host.capabilities.dingtalkAitable,
-          },
-          location: {
-            projectId: host.location.projectId,
-            issueId: host.location.issueId,
-            view: host.location.projectView,
-          },
-          navigate: (location) =>
-            navigateWithin(host, {
-              projectId: location.projectId,
-              issueId: location.issueId,
-              projectView: location.view,
-              workspaceView: "projects",
-            }),
-          notify: host.notify,
-          openExternal: host.openExternal,
-        }}
-        onCreateTask={onCreateTask}
-      />
+      <div className="collaboration-platform-page">
+        <PageHeader title={messages.myWork} subtitle={messages.myWorkHint} />
+        {state.myWork.length ? (
+          <section className="collaboration-platform-panel">
+            <div className="collaboration-my-work-list">
+              {state.myWork.map((issue) => (
+                <button
+                  type="button"
+                  data-testid={`collaboration-my-work-${issue.id}`}
+                  key={issue.id}
+                  onClick={() => {
+                    const projectRequest = api.projects.get?.(
+                      String(issue.cloud_project_id),
+                    );
+                    if (!projectRequest) return;
+                    void projectRequest.then((project) =>
+                      navigateWithin(host, {
+                        workspaceId: project.workspace_id ?? null,
+                        workspaceView: "projects",
+                        projectId: String(issue.cloud_project_id),
+                        projectView: "board",
+                        issueId: issue.id,
+                      }),
+                    );
+                  }}
+                >
+                  <span>
+                    <strong>{issue.title}</strong>
+                    <small>
+                      {issue.project_name} · {issue.status}
+                    </small>
+                  </span>
+                  <em>{issue.has_active_task ? "执行中" : "待处理"}</em>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <EmptyState
+            title={messages.noWork}
+            description={messages.noWorkHint}
+          />
+        )}
+      </div>
     );
   } else if (!state.workspace && host.location.platformView === "resources") {
     content = (
@@ -775,24 +929,71 @@ export function CollaborationPlatformApp({
             action={createProjectAction}
           />
           {host.location.workspaceView === "home" ? (
-            <div className="collaboration-workspace-stats">
-              <div>
-                <strong>{workspace.project_count}</strong>
-                <span>{messages.projectCount}</span>
+            state.projects.length === 0 ? (
+              <section
+                className="collaboration-workspace-starter"
+                data-testid="collaboration-workspace-starter"
+              >
+                <small>{messages.firstUseProgress}</small>
+                <h2>{messages.firstProjectTitle}</h2>
+                <p>{messages.firstProjectHint}</p>
+                <div>
+                  <button
+                    type="button"
+                    className="collaboration-primary-button"
+                    data-testid="collaboration-workspace-starter-create-project"
+                    onClick={() => setProjectDialogOpen(true)}
+                  >
+                    {messages.createProject}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="collaboration-workspace-starter-configure-agents"
+                    onClick={() =>
+                      navigateWithin(host, {
+                        workspaceView: "agents",
+                        projectId: null,
+                        issueId: null,
+                      })
+                    }
+                  >
+                    {messages.configureAgents}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="collaboration-workspace-starter-invite-members"
+                    onClick={() =>
+                      navigateWithin(host, {
+                        workspaceView: "members",
+                        projectId: null,
+                        issueId: null,
+                      })
+                    }
+                  >
+                    {messages.inviteMembers}
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <div className="collaboration-workspace-stats">
+                <div>
+                  <strong>{workspace.project_count}</strong>
+                  <span>{messages.projectCount}</span>
+                </div>
+                <div>
+                  <strong>{workspace.member_count}</strong>
+                  <span>{messages.memberCount}</span>
+                </div>
+                <div>
+                  <strong>{workspace.agent_count}</strong>
+                  <span>{messages.agentCount}</span>
+                </div>
+                <div>
+                  <strong>{workspace.execution_environment_count}</strong>
+                  <span>{messages.environmentCount}</span>
+                </div>
               </div>
-              <div>
-                <strong>{workspace.member_count}</strong>
-                <span>{messages.memberCount}</span>
-              </div>
-              <div>
-                <strong>{workspace.agent_count}</strong>
-                <span>{messages.agentCount}</span>
-              </div>
-              <div>
-                <strong>{workspace.execution_environment_count}</strong>
-                <span>{messages.environmentCount}</span>
-              </div>
-            </div>
+            )
           ) : null}
           <section className="collaboration-platform-panel">
             <h2>{messages.projects}</h2>
@@ -802,6 +1003,67 @@ export function CollaborationPlatformApp({
               onOpen={openProject}
             />
           </section>
+          {host.location.workspaceView === "home" &&
+          state.projects.length > 0 ? (
+            <section className="collaboration-platform-panel">
+              <div className="collaboration-platform-panel-heading">
+                <h2>{messages.workspaceResources}</h2>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigateWithin(host, {
+                      workspaceView: "agents",
+                      projectId: null,
+                      issueId: null,
+                    })
+                  }
+                >
+                  {messages.viewAll}
+                </button>
+              </div>
+              <div className="collaboration-workspace-resource-summary">
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigateWithin(host, {
+                      workspaceView: "members",
+                      projectId: null,
+                      issueId: null,
+                    })
+                  }
+                >
+                  <strong>{messages.members}</strong>
+                  <span>{workspace.member_count}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigateWithin(host, {
+                      workspaceView: "agents",
+                      projectId: null,
+                      issueId: null,
+                    })
+                  }
+                >
+                  <strong>{messages.agents}</strong>
+                  <span>{workspace.agent_count}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigateWithin(host, {
+                      workspaceView: "execution-environments",
+                      projectId: null,
+                      issueId: null,
+                    })
+                  }
+                >
+                  <strong>{messages.environments}</strong>
+                  <span>{workspace.execution_environment_count}</span>
+                </button>
+              </div>
+            </section>
+          ) : null}
         </div>
       );
     }
@@ -816,7 +1078,9 @@ export function CollaborationPlatformApp({
         host={host}
         messages={messages}
         workspace={state.workspace}
+        workspaces={state.workspaces}
         projects={state.projects}
+        footer={sidebarFooter}
       />
       <main className="collaboration-platform-main">{content}</main>
       {workspaceDialogOpen ? (
@@ -839,11 +1103,11 @@ export function CollaborationPlatformApp({
         <ProjectCreateDialog
           targets={[
             {
-              location: "cloud",
+              location: host.capabilities.projectLocation ?? "cloud",
               create: commands.createProject,
             },
           ]}
-          defaultLocation="cloud"
+          defaultLocation={host.capabilities.projectLocation ?? "cloud"}
           allowDingTalkAITable={host.capabilities.dingtalkAitable}
           labels={projectCreateLabels[locale]}
           testIds={{

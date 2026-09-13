@@ -359,7 +359,7 @@ async function verifyDefaultWorkspaceStartupTab(control) {
   })
   await control.command(
     'waitFor',
-    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="app-iframe-collaboration"]`,
+    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="wework-collaboration-platform"]`,
     {
       visible: true,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1550,7 +1550,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', `[data-testid="${FIXED_BOARD_TAB_SELECT_TEST_ID}"]`)
   await control.command(
     'waitFor',
-    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="app-iframe-collaboration"]`,
+    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="wework-collaboration-platform"]`,
     {
       visible: true,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

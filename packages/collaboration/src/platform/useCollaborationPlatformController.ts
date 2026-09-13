@@ -15,6 +15,7 @@ import type {
   CollaborationUser,
   CollaborationWorkspace,
 } from "../types";
+import type { WorkspaceMyWorkItem } from "../ports/SharedWorkspaceApi";
 import type { CollaborationPlatformLocation } from "./types";
 
 export interface CollaborationPlatformState {
@@ -25,6 +26,7 @@ export interface CollaborationPlatformState {
   agents: CollaborationOwnedAgent[];
   executionEnvironments: CollaborationExecutionEnvironment[];
   resources: CollaborationPlatformResources;
+  myWork: WorkspaceMyWorkItem[];
   loading: boolean;
   error: string | null;
 }
@@ -70,6 +72,7 @@ export function useCollaborationPlatformController({
     agents: [],
     executionEnvironments: [],
     resources: emptyResources,
+    myWork: [],
     loading: true,
     error: null,
   });
@@ -95,6 +98,10 @@ export function useCollaborationPlatformController({
           location.platformView === "resources" && api.resources
             ? await api.resources.list()
             : emptyResources;
+        const myWork =
+          location.platformView === "my-work" && api.myWork
+            ? await api.myWork.list()
+            : [];
         if (revision !== loadRevisionRef.current) return;
         setState((current) => ({
           ...current,
@@ -105,6 +112,7 @@ export function useCollaborationPlatformController({
           agents: [],
           executionEnvironments: [],
           resources,
+          myWork,
           loading: false,
         }));
         return;
@@ -134,6 +142,7 @@ export function useCollaborationPlatformController({
         agents,
         executionEnvironments,
         resources,
+        myWork: [],
         loading: false,
       }));
     } catch {

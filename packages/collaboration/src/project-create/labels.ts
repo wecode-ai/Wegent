@@ -10,7 +10,7 @@ export const projectCreateLabels: Record<
   ProjectCreateLabels
 > = {
   "zh-CN": {
-    title: "新建项目空间",
+    title: "新建项目",
     name: "名称",
     namePlaceholder: "例如：Wegent V4",
     location: "保存位置",
@@ -50,19 +50,19 @@ export const projectCreateLabels: Record<
     aitableRuntimeHint:
       "表格读写统一由本机 Executor 通过 DWS 执行。创建后连接钉钉账号，并确保该账号已获得此表格权限。",
     description: "说明",
-    descriptionPlaceholder: "这个项目空间用于什么？",
+    descriptionPlaceholder: "这个项目用于什么？",
     cancel: "取消",
     create: "创建项目",
     creating: "正在创建…",
-    unavailableLocation: "所选项目空间位置当前不可用",
+    unavailableLocation: "所选项目位置当前不可用",
     repositoryRequired: "请输入仓库地址",
     repositoryInvalid: "请输入完整仓库地址，或使用 owner/repository 格式",
     githubRepositoryInvalid: "GitHub 仓库地址应包含 owner/repository",
     gitlabRepositoryInvalid: "GitLab 仓库地址应包含 group/project",
-    createFailed: "创建项目空间失败",
+    createFailed: "创建项目失败",
   },
   en: {
-    title: "New project space",
+    title: "New project",
     name: "Name",
     namePlaceholder: "For example: Wegent V4",
     location: "Storage location",

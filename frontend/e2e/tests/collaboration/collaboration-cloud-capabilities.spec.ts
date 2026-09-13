@@ -646,7 +646,7 @@ test.describe('Collaboration cloud capabilities', () => {
     }
   })
 
-  test('creates and auto-saves an automation, runs it, and exposes persisted run history', async ({
+  test('creates and explicitly saves a dispatch policy, runs it, and exposes Issue-centered history', async ({
     page,
   }) => {
     test.setTimeout(120_000)
@@ -661,37 +661,38 @@ test.describe('Collaboration cloud capabilities', () => {
       const project = await createProjectByApi(page, workspace.id, `Automation ${suffix}`)
       projectId = project.id
       await page.goto(`/collaboration/${encodeURIComponent(project.id)}?view=automation`)
-      await expect(page.getByTestId('project-automation-view')).toBeVisible()
-      await page.getByTestId('automation-create-blank').click()
-      await expect(page.getByTestId('automation-rule-editor')).toBeVisible()
+      await expect(page.getByTestId('project-automation-policy')).toBeVisible()
+      await page.getByTestId('automation-empty-create-policy').click()
 
       const createResponse = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
           response.url().includes(`/api/v1/cloud-projects/${project.id}/automations`)
       )
-      await page.getByTestId('automation-trigger-type').selectOption('schedule')
-      await page.getByTestId('automation-editor-name').click()
-      await page.getByTestId('automation-editor-name-input').fill(`Cloud Automation ${suffix}`)
-      await page.getByTestId('automation-editor-name-input').press('Enter')
+      await page.getByTestId('automation-trigger-schedule').click()
+      await page.getByTestId('automation-policy-name').fill(`Cloud Automation ${suffix}`)
+      await page
+        .getByTestId('automation-coordinator-prompt')
+        .fill(
+          'Inspect pending Issues, create independently verifiable assignments, and keep execution evidence in each Issue.'
+        )
+      await page.getByTestId('automation-save-policy').click()
       expect((await createResponse).ok()).toBe(true)
-      await expect(page.getByTestId('automation-editor-global-actions')).toContainText(
-        /已保存|Saved/
-      )
+      await expect(page.getByTestId('automation-save-policy')).toContainText(/已保存|Saved/)
 
       const runResponse = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
           /\/automations\/[^/]+\/run$/.test(new URL(response.url()).pathname)
       )
-      await page.getByTestId('automation-run').click()
+      await page.getByTestId('automation-run-now').click()
       const run = await runResponse
       expect(run.ok(), `Automation run failed: ${await run.text()}`).toBe(true)
       const runBody = (await run.json()) as CloudAutomationRun
       expect(runBody.automationId).toBeTruthy()
 
-      await page.getByTestId('open-current-automation-runs').click()
-      await expect(page.getByTestId(`current-run-${runBody.id}`)).toBeVisible()
+      await page.getByTestId('automation-open-runs').click()
+      await expect(page.getByTestId(`automation-run-${runBody.id}`)).toBeVisible()
       await page.reload()
       const persistedRunsResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
@@ -920,7 +921,7 @@ test.describe('Collaboration cloud capabilities', () => {
           if (view === 'files') {
             await expect(restricted.page.getByTestId('cloud-files-view')).toHaveCount(0)
           } else if (view === 'automation') {
-            await expect(restricted.page.getByTestId('project-automation-view')).toHaveCount(0)
+            await expect(restricted.page.getByTestId('project-automation-policy')).toHaveCount(0)
           } else {
             await expect(restricted.page.getByText(/管理项目|Manage project/)).toHaveCount(0)
           }

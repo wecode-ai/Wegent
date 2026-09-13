@@ -117,6 +117,7 @@ export interface ProjectBoardAdapterLabels {
   groupStatus: string;
   groupTag: string;
   noIssues: string;
+  noPriority: string;
   noTag: string;
   search: string;
   unassigned: string;
@@ -199,7 +200,7 @@ export function ProjectBoardAdapter({
         statuses,
         items: issues,
         labels: {
-          noPriority: "none",
+          noPriority: labels.noPriority,
           noTag: labels.noTag,
           priority: {
             low: "low",
@@ -249,7 +250,7 @@ export function ProjectBoardAdapter({
   const cardLabels: CollaborationIssueCardLabels = {
     assignee: labels.groupAssignee,
     priority: {
-      none: "none",
+      none: labels.noPriority,
       low: "low",
       medium: "medium",
       high: "high",

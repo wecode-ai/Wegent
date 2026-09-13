@@ -142,6 +142,33 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
             >
               {targets.map((target) => {
                 const isLocal = target.location === "local";
+                if (targets.length === 1) {
+                  return (
+                    <div
+                      className="collaboration-project-create-location-summary"
+                      data-testid={`cloud-project-location-${target.location}`}
+                      key={target.location}
+                    >
+                      {isLocal ? (
+                        <HardDrive aria-hidden="true" />
+                      ) : (
+                        <Cloud aria-hidden="true" />
+                      )}
+                      <span>
+                        <strong>
+                          {isLocal
+                            ? labels.localLocation
+                            : labels.cloudLocation}
+                        </strong>
+                        <small>
+                          {isLocal
+                            ? labels.localLocationDescription
+                            : labels.cloudLocationDescription}
+                        </small>
+                      </span>
+                    </div>
+                  );
+                }
                 return (
                   <ChoiceButton
                     key={target.location}

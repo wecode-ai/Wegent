@@ -766,8 +766,10 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
     await flush();
 
-    expect(container.textContent).toContain(newWorkspace.name);
-    expect(container.textContent).not.toContain(oldWorkspace.name);
+    const switcher = byTestId(
+      "collaboration-workspace-switcher",
+    ) as HTMLSelectElement;
+    expect(switcher.value).toBe(newWorkspace.id);
   });
 
   it("configures workspace members, agents, and execution environments through shared UI", async () => {
@@ -872,13 +874,17 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(byTestId("collaboration-tab-board")).toBeTruthy();
     expect(container.textContent).toContain(issue.title);
-    await click(byTestId("collaboration-project-back"));
+    await click(byTestId("collaboration-workspace-nav-projects"));
     await click(byTestId(`collaboration-project-card-${project.id}`));
     expect(byTestId("collaboration-tab-board")).toBeTruthy();
 
     await click(byTestId("collaboration-tab-table"));
     expect(byTestId("collaboration-issue-table")).toBeTruthy();
-    await click(byTestId(`collaboration-issue-table-row-${issue.id}`));
+    await click(
+      byTestId(`collaboration-issue-table-row-${issue.id}`).querySelector(
+        "button",
+      )!,
+    );
     expect(byTestId("collaboration-issue-activity")).toBeTruthy();
 
     const comment = byTestId(

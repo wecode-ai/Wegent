@@ -234,6 +234,12 @@ export function IssueDetail({
           translate={editorTranslate}
           extensions={{
             ...browserDueDateExtensions,
+            onRequestAssignment: () => {
+              const target = document.querySelector<HTMLSelectElement>(
+                '[data-testid="collaboration-assignment-target"]',
+              );
+              target?.focus();
+            },
             openAttachment: async (attachmentId) => {
               const access = await api.attachments.access(attachmentId);
               window.open(access.url, "_blank", "noopener,noreferrer");
@@ -249,6 +255,7 @@ export function IssueDetail({
                 executions={executions}
                 canComment={permissions.canComment}
                 canAssign={permissions.canAssign}
+                showCurrentAssignment={false}
                 translate={editorTranslate}
                 onIssueChange={onChange}
                 onAssignmentsChange={onAssignmentsChange}

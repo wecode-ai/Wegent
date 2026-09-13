@@ -15,7 +15,7 @@ import type {
   AutomationProject,
   ProjectWorkflowDefinition,
 } from "../automation";
-import type { AutomationIncomingHook } from "./AutomationRulesView.jsx";
+import type { AutomationIncomingHook } from "./AutomationRulesView.types";
 
 function automationRule(rule: WorkspaceAutomationRule): AutomationBackendRule {
   return rule as unknown as AutomationBackendRule;

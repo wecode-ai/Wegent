@@ -7,14 +7,13 @@ import {
   type AutomationProject,
   type AutomationProjectApi,
 } from "../automation";
-import type { WorkspaceAutomationExecutionCatalog } from "../ports/SharedWorkspaceApi";
-import { AutomationRulesView } from "./AutomationRulesView.jsx";
+import { AutomationPolicyView } from "./AutomationPolicyView";
 import {
   AutomationUiHostProvider,
   useTranslation,
   type AutomationUiHost,
 } from "./AutomationUiHost";
-import type { AutomationIncomingHookUiApi } from "./AutomationRulesView.jsx";
+import type { AutomationIncomingHookUiApi } from "./AutomationRulesView.types";
 
 export interface ProjectAutomationRulesViewProps<P extends AutomationProject> {
   automationApi?: AutomationCloudApi;
@@ -27,11 +26,8 @@ export interface ProjectAutomationRulesViewProps<P extends AutomationProject> {
   currentUserId?: string | number;
   canManage: boolean;
   onProjectUpdated?: (project: P) => void;
-  onLoadExecutionCatalog?: () => Promise<WorkspaceAutomationExecutionCatalog>;
-  onLoadExecutionPlugins?: (
-    deviceIds: string[],
-  ) => Promise<WorkspaceAutomationExecutionCatalog["plugins"]>;
   onRunRefreshError?: (error: unknown) => void;
+  onOpenIssue?: (issueId: string) => void;
 }
 
 export function ProjectAutomationRulesView<P extends AutomationProject>(
@@ -53,9 +49,8 @@ function ProjectAutomationRulesContent<P extends AutomationProject>({
   currentUserId = project.current_user_id,
   canManage,
   onProjectUpdated,
-  onLoadExecutionCatalog,
-  onLoadExecutionPlugins,
   onRunRefreshError,
+  onOpenIssue,
 }: ProjectAutomationRulesViewProps<P>) {
   const { t } = useTranslation("common");
   const automation = useAutomationCloudState({
@@ -79,7 +74,7 @@ function ProjectAutomationRulesContent<P extends AutomationProject>({
   });
 
   return (
-    <AutomationRulesView
+    <AutomationPolicyView
       rules={automation.rules}
       runs={automation.runs}
       loading={automation.loading}
@@ -91,9 +86,8 @@ function ProjectAutomationRulesContent<P extends AutomationProject>({
       projectId={String(project.id)}
       project={project}
       onReload={automation.reload}
-      onLoadExecutionCatalog={onLoadExecutionCatalog}
-      onLoadExecutionPlugins={onLoadExecutionPlugins}
       onLoadRuns={automation.refreshRuns}
+      onOpenIssue={onOpenIssue}
       onRunRule={automation.runRule}
       onSaveRule={automation.persistRule}
       onToggleRule={automation.toggleRule}

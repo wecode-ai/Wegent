@@ -135,6 +135,7 @@ export interface AutomationUiRun {
   id: string;
   ruleId: string;
   ruleName: string;
+  issueId?: string | null;
   issue: string;
   status: ProjectAutomationRun["status"];
   triggeredAt: string;
@@ -1465,6 +1466,7 @@ export function automationRunFromBackend(
     id: run.id,
     ruleId: rule.id,
     ruleName: rule.name,
+    issueId: run.taskId,
     issue:
       run.taskTitle ||
       run.taskId ||

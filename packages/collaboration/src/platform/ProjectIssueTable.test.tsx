@@ -86,14 +86,17 @@ describe("ProjectIssueTable", () => {
     return onOpen;
   }
 
-  it.each(["Enter", " "])("opens the focused issue with %j", (key) => {
+  it("opens an issue through a native keyboard-accessible button", () => {
     const onOpen = render({ [issue.id]: [assignment] });
-    const row = container.querySelector("tbody tr") as HTMLTableRowElement;
-    row.focus();
-    expect(document.activeElement).toBe(row);
+    const trigger = container.querySelector(
+      "tbody tr button",
+    ) as HTMLButtonElement;
+    expect(trigger.tagName).toBe("BUTTON");
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
 
     act(() => {
-      row.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      trigger.click();
     });
 
     expect(onOpen).toHaveBeenCalledWith(issue);
@@ -106,6 +109,7 @@ describe("ProjectIssueTable", () => {
 
     render({ [issue.id]: [] });
     expect(container.textContent).toContain("—");
+    expect(container.textContent).not.toContain("Issue 内分配");
     expect(container.textContent).not.toContain("旧负责人");
     expect(visibleIssueAssignments(issue, [])).toEqual([]);
     expect(visibleIssueAssignments(issue, undefined)).toEqual([]);

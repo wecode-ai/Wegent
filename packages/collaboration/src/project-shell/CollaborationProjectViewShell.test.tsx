@@ -64,7 +64,7 @@ describe("CollaborationProjectViewShell permissions", () => {
     },
   );
 
-  it("falls back to board instead of mounting unsupported automation content", () => {
+  it("redirects legacy automation links to project settings", () => {
     const options = buildCollaborationProjectViewOptions({
       project: { access_role: "Owner" },
       labels,
@@ -80,8 +80,8 @@ describe("CollaborationProjectViewShell permissions", () => {
         view: "automation",
       }),
     ).toEqual({
-      content: "board-content",
-      view: "board",
+      content: "manage-content",
+      view: "manage",
       viewChanged: true,
     });
   });
@@ -138,15 +138,15 @@ describe("CollaborationProjectViewShell permissions", () => {
       extensions,
       options,
       slots,
-      view: "files",
+      view: "table",
     });
     const onViewChange = vi.fn();
 
     synchronizeCollaborationProjectView(resolved, onViewChange);
 
     expect(resolved).toEqual({
-      content: "files-content",
-      view: "files",
+      content: "table-content",
+      view: "table",
       viewChanged: false,
     });
     expect(onViewChange).not.toHaveBeenCalled();
@@ -163,8 +163,6 @@ describe("CollaborationProjectViewShell permissions", () => {
     expect(options.map((option) => option.id)).toEqual([
       "board",
       "table",
-      "files",
-      "automation",
       "manage",
     ]);
   });

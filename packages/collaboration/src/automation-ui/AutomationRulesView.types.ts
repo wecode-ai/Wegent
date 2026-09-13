@@ -1,7 +1,10 @@
-import type { ComponentType } from "react";
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import type {
-  AutomationEventSourceCatalogItem,
   AutomationEventCollectionMode,
+  AutomationEventSourceCatalogItem,
   AutomationEventSourceType,
   AutomationProject,
   AutomationUiRule,
@@ -90,6 +93,7 @@ export interface AutomationRulesViewProps {
     deviceIds: string[],
   ) => Promise<WorkspaceAutomationExecutionCatalog["plugins"]>;
   onLoadRuns?: () => Promise<AutomationUiRun[]>;
+  onOpenIssue?: (issueId: string) => void;
   onRunRule?: (rule: AutomationUiRule) => Promise<void>;
   onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>;
   onToggleRule?: (
@@ -99,5 +103,3 @@ export interface AutomationRulesViewProps {
   onDuplicateRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>;
   onDeleteRule?: (rule: AutomationUiRule) => Promise<void>;
 }
-
-export const AutomationRulesView: ComponentType<AutomationRulesViewProps>;

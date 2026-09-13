@@ -4,7 +4,7 @@
 
 import type { CollaborationView } from "../types";
 
-export type CollaborationPlatformView = "spaces" | "resources";
+export type CollaborationPlatformView = "spaces" | "my-work" | "resources";
 
 export type CollaborationWorkspaceView =
   | "home"
@@ -28,6 +28,7 @@ export interface CollaborationPlatformHostAdapter {
   capabilities: {
     automation: boolean;
     dingtalkAitable: boolean;
+    projectLocation?: "cloud" | "local";
   };
   navigate(location: CollaborationPlatformLocation): void;
   notify?(message: string, kind: "success" | "error"): void;

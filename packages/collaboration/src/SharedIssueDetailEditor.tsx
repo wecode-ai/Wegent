@@ -147,6 +147,7 @@ export interface SharedIssueDetailExtensions {
     tasks: SharedIssueDetailTaskBinding[],
   ): SharedIssueWorkflow;
   openAttachment?(attachmentId: string, filename: string): Promise<void>;
+  onRequestAssignment?(): void;
   renderDescriptionEditor?(context: {
     value: string;
     editable: boolean;
@@ -619,6 +620,18 @@ export function TodoEditor(props: TodoEditorProps) {
   const workspacePanel = props.presentation === "workspace-panel";
   const showPanelControls = props.showPanelControls !== false;
   const item = editProps?.item ?? null;
+  const currentAssignee = item
+    ? item.assignee_agent_name
+      ? { kind: "agent", name: item.assignee_agent_name }
+      : item.assignee_team_name
+        ? { kind: "team", name: item.assignee_team_name }
+        : item.assignee_name
+          ? { kind: "member", name: item.assignee_name }
+          : null
+    : null;
+  const assignmentSource = item?.automation
+    ? t("todo.project_dispatch_policy", "项目调度原则")
+    : t("todo.manual_assignment", "Issue 内分配");
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
   const project = createProps?.project ?? editProps?.project;
@@ -2410,6 +2423,76 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
+                  <section
+                    className="task-detail-current-assignment"
+                    data-testid="cloud-todo-current-assignment"
+                  >
+                    <div className="task-detail-workspace-section-head">
+                      <h3 className="task-detail-workspace-section-title">
+                        {t("todo.current_assignment", "当前分配")}
+                      </h3>
+                      <span className="task-detail-current-assignment-status">
+                        {item.execution_state
+                          ? t(
+                              `todo.execution_${item.execution_state}`,
+                              item.execution_state,
+                            )
+                          : currentAssignee
+                            ? t("todo.assigned", "已分配")
+                            : t("todo.unassigned", "尚未分配")}
+                      </span>
+                    </div>
+                    {currentAssignee ? (
+                      <div className="task-detail-current-assignment-card">
+                        <span
+                          className={cn(
+                            "task-detail-current-assignment-avatar",
+                            currentAssignee.kind !== "member" && "is-agent",
+                          )}
+                        >
+                          {currentAssignee.kind === "agent"
+                            ? "AI"
+                            : currentAssignee.name.slice(0, 1)}
+                        </span>
+                        <span className="task-detail-current-assignment-main">
+                          <strong>{currentAssignee.name}</strong>
+                          <small>
+                            {currentAssignee.kind === "agent"
+                              ? t("todo.agent", "智能体")
+                              : currentAssignee.kind === "team"
+                                ? t("todo.team", "智能体团队")
+                                : t("todo.member", "成员")}
+                          </small>
+                        </span>
+                        <span className="task-detail-current-assignment-source">
+                          {t("todo.assignment_source", "分配来源")}：
+                          {assignmentSource}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="task-detail-current-assignment-empty">
+                        <p className="task-detail-workspace-empty">
+                          {t(
+                            "todo.assignment_empty_hint",
+                            "选择成员或智能体完成分配；其他项目成员仍可主动参与。",
+                          )}
+                        </p>
+                        {editable && extensions?.onRequestAssignment ? (
+                          <button
+                            type="button"
+                            className="task-detail-current-assignment-action"
+                            data-testid="collaboration-current-assignment-action"
+                            onClick={extensions.onRequestAssignment}
+                          >
+                            {t(
+                              "todo.choose_assignment_target",
+                              "分配成员或智能体",
+                            )}
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
+                  </section>
                   {item.workflow?.advancement_policy === "ai" ? (
                     <IssueWorkflowPlanSection
                       plan={sharedIssueDetailWorkflowPlanView(workflowPlan)}
