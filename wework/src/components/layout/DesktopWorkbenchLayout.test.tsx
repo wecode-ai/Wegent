@@ -141,6 +141,9 @@ const sharedWorkspaceApiMock = {
       if (!project) throw new Error(`Project ${projectId} was not found`)
       return { ...project, id: String(project.id) }
     },
+    async listExecutionEnvironments() {
+      return []
+    },
   },
   issues: {
     async getBoardSnapshot(projectId: string) {
