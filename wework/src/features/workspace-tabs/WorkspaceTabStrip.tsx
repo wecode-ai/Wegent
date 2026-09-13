@@ -41,6 +41,10 @@ interface WorkspaceTabStripProps {
   availableKinds?: readonly WorkspaceTabKind[]
 }
 
+function requiresCloudWorkspace(kind: WorkspaceTabKind): boolean {
+  return kind === 'board' || kind === 'agent'
+}
+
 function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
   const pathname = tab.contentRoute.split('?', 1)[0]
   const routeIcon = resolveDshRoute(pathname)?.icon
@@ -50,13 +54,13 @@ function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
   if (routeIcon !== undefined) {
     return <DshIcon name={routeIcon} aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
+  if (unavailable) {
+    return <CloudOff aria-hidden="true" className="h-4 w-4 shrink-0 opacity-60" />
+  }
   if (tab.kind === 'board') {
     return <Columns3 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
   if (tab.kind === 'agent') {
-    if (unavailable) {
-      return <CloudOff aria-hidden="true" className="h-4 w-4 shrink-0 opacity-60" />
-    }
     return <Bot aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
   return <CheckSquare2 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
@@ -104,8 +108,8 @@ function WorkspaceTabButton({
   onDragEndTab,
   onDragOverTab,
   onContextMenu,
-  agentAvailable,
-  onUnavailableAgent,
+  cloudWorkspaceAvailable,
+  onUnavailableCloudWorkspace,
 }: {
   tab: WorkspaceTab
   active: boolean
@@ -114,13 +118,13 @@ function WorkspaceTabButton({
   onDragEndTab: () => void
   onDragOverTab: (tabId: string) => void
   onContextMenu: (position: MenuPosition, tabId: string) => void
-  agentAvailable: boolean
-  onUnavailableAgent: () => void
+  cloudWorkspaceAvailable: boolean
+  onUnavailableCloudWorkspace: () => void
 }) {
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
   const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title: tab.title })
-  const unavailable = tab.kind === 'agent' && !agentAvailable
+  const unavailable = requiresCloudWorkspace(tab.kind) && !cloudWorkspaceAvailable
   const tabTitle = unavailable
     ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
     : tab.title
@@ -163,7 +167,7 @@ function WorkspaceTabButton({
         data-unavailable={unavailable || undefined}
         onClick={() => {
           if (unavailable) {
-            onUnavailableAgent()
+            onUnavailableCloudWorkspace()
             return
           }
           selectTab(tab.id)
@@ -249,7 +253,7 @@ export function WorkspaceTabStrip({
     dshWorkspaceTabs.getTabs,
     dshWorkspaceTabs.getTabs
   )
-  const agentAvailable = Boolean(cloud.isConnected && cloud.webUrl)
+  const cloudWorkspaceAvailable = Boolean(cloud.isConnected && cloud.webUrl)
   const availableKindSet = useMemo(() => new Set(availableKinds), [availableKinds])
   const visibleTabs = useMemo(
     () => tabs.filter(tab => availableKindSet.has(tab.kind)),
@@ -313,12 +317,24 @@ export function WorkspaceTabStrip({
         const tab = visibleTabs[index]
         if (!tab) return
         event.preventDefault()
+        if (requiresCloudWorkspace(tab.kind) && !cloudWorkspaceAvailable) {
+          setCloudConnectionOpen(true)
+          return
+        }
         selectTab(tab.id)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTabId, closeTab, restoreClosedTab, selectTab, visibleActiveTabId, visibleTabs])
+  }, [
+    activeTabId,
+    closeTab,
+    cloudWorkspaceAvailable,
+    restoreClosedTab,
+    selectTab,
+    visibleActiveTabId,
+    visibleTabs,
+  ])
 
   const openNewTab = (kind: WorkspaceTabKind) => {
     if (!availableKindSet.has(kind)) return
@@ -397,8 +413,8 @@ export function WorkspaceTabStrip({
                   setAddMenuPosition(null)
                   setContextMenu({ tabId, ...position })
                 }}
-                agentAvailable={agentAvailable}
-                onUnavailableAgent={() => setCloudConnectionOpen(true)}
+                cloudWorkspaceAvailable={cloudWorkspaceAvailable}
+                onUnavailableCloudWorkspace={() => setCloudConnectionOpen(true)}
               />
             </div>
           ))}
@@ -437,7 +453,7 @@ export function WorkspaceTabStrip({
                   role="menuitem"
                   data-testid={`workspace-tab-add-${kind}`}
                   onClick={() => {
-                    if (kind === 'agent' && !agentAvailable) {
+                    if (requiresCloudWorkspace(kind) && !cloudWorkspaceAvailable) {
                       setAddMenuPosition(null)
                       setCloudConnectionOpen(true)
                       return
@@ -446,7 +462,7 @@ export function WorkspaceTabStrip({
                   }}
                   className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
                 >
-                  {kind === 'agent' && !agentAvailable ? (
+                  {requiresCloudWorkspace(kind) && !cloudWorkspaceAvailable ? (
                     <CloudOff aria-hidden="true" className="h-4 w-4 text-text-muted" />
                   ) : (
                     <Icon aria-hidden="true" className="h-4 w-4 text-text-secondary" />
