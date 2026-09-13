@@ -111,7 +111,7 @@
 
 .collaboration-project-manager-link:hover {
   color: rgb(var(--color-text-secondary));
-  text-decoration-color: currentColor;
+  text-decoration-color: currentcolor;
 }
 
 .collaboration-empty-project {

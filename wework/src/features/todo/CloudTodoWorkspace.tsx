@@ -4634,7 +4634,10 @@ export function CloudTodoWorkspace({
                             <LocalFilesView api={selectedProjectApi!} project={selectedProject} />
                           ),
                       },
-                      ...(selectedProjectAutomationSupported && selectedProjectServices
+                      ...(selectedProjectAutomationSupported &&
+                      (selectedProject.location === 'cloud'
+                        ? Boolean(cloudWorkspaceApi)
+                        : Boolean(selectedProjectServices))
                         ? [
                             {
                               id: 'dispatch',
@@ -4655,12 +4658,12 @@ export function CloudTodoWorkspace({
                                   }
                                   projectAutomationApi={
                                     selectedProject.location === 'local'
-                                      ? selectedProjectServices.projectAutomationApi
+                                      ? selectedProjectServices?.projectAutomationApi
                                       : undefined
                                   }
                                   projectIncomingHookApi={
                                     selectedProject.location === 'local'
-                                      ? selectedProjectServices.projectIncomingHookApi
+                                      ? selectedProjectServices?.projectIncomingHookApi
                                       : undefined
                                   }
                                   project={selectedProject}
@@ -4686,12 +4689,20 @@ export function CloudTodoWorkspace({
                                           ? selectedProjectApi.getLoopItem(issueId)
                                           : null
                                     if (!issueRequest) return
-                                    void issueRequest.then(issue =>
-                                      setSelectedItem({
-                                        ...(issue as LocatedLoopItem),
-                                        project_store: selectedProject.project_store,
-                                      })
-                                    )
+                                    void issueRequest
+                                      .then(issue =>
+                                        setSelectedItem({
+                                          ...(issue as LocatedLoopItem),
+                                          project_store: selectedProject.project_store,
+                                        })
+                                      )
+                                      .catch(cause =>
+                                        setBoardError(
+                                          cause instanceof Error
+                                            ? cause.message
+                                            : t('todo.work_item_detail_load_failed')
+                                        )
+                                      )
                                   }}
                                 />
                               ),

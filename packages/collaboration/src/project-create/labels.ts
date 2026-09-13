@@ -105,7 +105,7 @@ export const projectCreateLabels: Record<
     aitableRuntimeHint:
       "Table access runs through DWS on the local executor. Connect DingTalk after creation.",
     description: "Description",
-    descriptionPlaceholder: "What is this project space for?",
+    descriptionPlaceholder: "What is this project for?",
     cancel: "Cancel",
     create: "Create project",
     creating: "Creating…",
@@ -116,6 +116,6 @@ export const projectCreateLabels: Record<
     githubRepositoryInvalid:
       "A GitHub repository must include owner/repository",
     gitlabRepositoryInvalid: "A GitLab repository must include group/project",
-    createFailed: "Failed to create project space",
+    createFailed: "Failed to create project",
   },
 };

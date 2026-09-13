@@ -46,13 +46,15 @@ component. Do not weaken its business steps or replace real backend requests wit
 
 ### Mount structure
 
-The current code does not prove shared UI:
+The current code establishes the shared UI boundary:
 
-- `frontend/src/features/collaboration/CollaborationPage.tsx` mounts `CollaborationApp` from
-  `@wegent/collaboration`.
-- `wework/src/features/todo/CollaborationWorkspace.tsx` mounts the local `CloudTodoWorkspace`.
-- The hosts therefore use different UI roots. Sharing a backend does not satisfy the shared UI
-  requirement.
+- `frontend/src/features/collaboration/CollaborationPage.tsx` mounts the shared
+  `CollaborationPlatformApp` from `@wegent/collaboration`.
+- Wework's fixed Collaboration tab mounts `WeworkCollaborationPlatform`, which adapts local and
+  cloud APIs and renders that same shared `CollaborationPlatformApp`.
+- `CloudTodoWorkspace` remains only in the separate legacy `defaultWorkItemsOpen` path. It is not
+  the UI root of the fixed Collaboration tab and must not be used as the shared-mount acceptance
+  target.
 
 ### Web Playwright
 
@@ -76,8 +78,9 @@ Missing coverage:
 
 ### Wework desktop checkpoints
 
-Existing Wework scenarios provide broad desktop regression coverage, but primarily bind to private
-`cloud-*`, `cloud-todo-*`, and other desktop-specific test IDs:
+Wework scenarios now enter the native shared module through `wework-collaboration-platform` and
+`collaboration-platform-root`. Feature-specific selectors remain where a shared Issue editor or
+desktop runtime capability owns them:
 
 | Existing checkpoint or flow        | Existing evidence                                                                                                    | What it does not prove                                      |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -85,12 +88,12 @@ Existing Wework scenarios provide broad desktop regression coverage, but primari
 | My Work flow in `task-status-sync` | Completed task appears in My Work; stale runtime state does not revive it                                            | Web My Work or complete view/filter parity                  |
 | `offline-local-project-space`      | Local project creation, empty-board guide, Issue create/update/drag, and entry points for files, members, automation | Cloud parity or CRUD in those secondary views               |
 | `board-focus-view`                 | Running state, grouping, focus view, column width, and state restoration                                             | Web parity or shared DOM structure                          |
-| `project-automation`               | Extensive real-backend automation, workflow, execution, agent, settings, and conflict desktop flows                  | Web using the same automation UI or full base-module parity |
+| `project-automation`               | Native shared mount plus project-settings dispatch-policy creation and persistence through the real backend          | Every runtime execution branch or complete Web parity       |
 | `task-attachments`                 | Cloud delivery file tree, breadcrumbs, and preview                                                                   | Cross-host shared-file upload, rename, delete, and download |
 | `project-assignment-notification`  | Assignment notifications and user isolation                                                                          | Role visibility and action permissions inside Collaboration |
 
-These scenarios remain valuable, but they cannot prove cross-host shared UI because Web does not run
-them and their selectors belong to the Wework implementation.
+These scenarios provide real desktop evidence. Cross-host parity still also requires the Web
+Playwright suite because Web does not run desktop checkpoints.
 
 ### First executable shared checkpoint
 
@@ -239,8 +242,9 @@ Add a standalone Wework checkpoint named `collaboration-cloud-parity` and regist
 - desktop E2E CI classification and sharding;
 - classification-script tests.
 
-Do not modify existing `workspace-tabs`, `offline-local-project-space`, `board-focus-view`,
-`project-automation`, or any other existing E2E.
+When the shared architecture removes a private Wework surface or selector, update the affected
+existing E2E to enter the native shared module and preserve its still-valid business assertions.
+Do not retain canvas-only or iframe-only assertions for product surfaces that no longer exist.
 
 ### Layer 4: cross-host consistency and concurrency
 
@@ -373,18 +377,19 @@ This suite covers cloud shared files. Wework reveal/local-path actions remain se
 The current shared `CollaborationApp` automation page is a capability placeholder. That is a P0
 capability gap and cannot pass because an entry point exists.
 
-1. Open the automation list and create a rule.
-2. Configure trigger, conditions, execution nodes, agent/team, model, and workspace binding.
+1. Open Project settings and select Assignment and dispatch.
+2. Create a dispatch policy with its trigger, schedule, timezone, assignment mode, and manager
+   instructions.
 3. Save and assert the real backend definition.
-4. Edit, enable, disable, and archive the rule.
+4. Select another policy, create an additional policy, edit, enable, disable, and delete.
 5. Run now and assert the resulting run and related Issue/Task.
-6. Open run detail and verify state, start/end time, and errors.
-7. Reload and open the same rule and run from the other host.
+6. Open run history and verify state, start/end time, and errors.
+7. Reload and open the same policy and run from the other host.
 8. Unsaved draft, leave confirmation, and version-conflict behavior are identical.
-9. Non-managers see only permitted read-only information.
+9. Non-managers see only permitted read-only information or a clear administrator-contact state.
 
-Existing `project-automation` coverage can continue to own complex editor details, but the shared
-parity suite must cover the complete primary lifecycle.
+The project-level graph canvas is intentionally not part of this lifecycle. The shared parity suite
+owns the complete dispatch-policy primary flow.
 
 ### 8. Project settings
 

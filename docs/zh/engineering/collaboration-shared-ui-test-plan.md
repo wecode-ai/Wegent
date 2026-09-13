@@ -39,13 +39,14 @@ sidebar_position: 25
 
 ### 挂载结构
 
-当前代码不能证明共享 UI：
+当前代码已经建立共享 UI 边界：
 
-- Web 的 `frontend/src/features/collaboration/CollaborationPage.tsx` 直接挂载
-  `@wegent/collaboration` 的 `CollaborationApp`。
-- Wework 的 `wework/src/features/todo/CollaborationWorkspace.tsx` 挂载本地
-  `CloudTodoWorkspace`。
-- 因此当前是两个不同的 UI 根组件。即使二者访问同一后端，也不满足“同一共享 UI”。
+- Web 的 `frontend/src/features/collaboration/CollaborationPage.tsx` 挂载
+  `@wegent/collaboration` 的共享 `CollaborationPlatformApp`。
+- Wework 固定“协作”标签挂载 `WeworkCollaborationPlatform`，由它适配本地与云端 API，并渲染
+  同一个共享 `CollaborationPlatformApp`。
+- `CloudTodoWorkspace` 只保留在独立的 legacy `defaultWorkItemsOpen` 路径中，不是固定“协作”
+  标签的 UI 根节点，也不能再作为共享挂载验收目标。
 
 ### Web Playwright
 
@@ -67,21 +68,22 @@ sidebar_position: 25
 
 ### Wework desktop checkpoints
 
-现有 Wework 场景覆盖较广，但主要绑定 `cloud-*`、`cloud-todo-*` 和其他桌面专属
-`data-testid`：
+Wework 场景现在从 `wework-collaboration-platform` 和
+`collaboration-platform-root` 进入原生共享模块；共享 Issue 编辑器或桌面 Runtime 能力仍保留
+各自的功能选择器：
 
-| 现有 checkpoint / 流程               | 已有证据                                                                       | 不能证明的内容                                    |
-| ------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------- |
-| `workspace-tabs`                     | 固定项目空间 tab、默认关联项目、“我的任务”上下文、避免重复 tab                 | Web 路由；共享组件挂载                            |
-| `task-status-sync` 中的 My Work 流程 | 完成任务进入“我的任务”，陈旧运行态不会复活任务                                 | Web 的我的任务；完整视图与筛选对等                |
-| `offline-local-project-space`        | 本地项目创建、空看板引导、Issue 创建/更新/拖拽，并能进入文件、成员和自动化入口 | 云端双端对等；文件/成员/自动化的 CRUD             |
-| `board-focus-view`                   | 看板运行态、分组、专注视图、列宽和状态恢复                                     | Web 对等；共享 DOM 结构                           |
-| `project-automation`                 | 大量真实后端自动化、工作流、执行、机器人、设置与冲突相关桌面流程               | Web 使用同一自动化 UI；基础协作模块的完整能力矩阵 |
-| `task-attachments`                   | 云端交付物文件树、面包屑和预览                                                 | 普通共享文件的上传、重命名、删除、下载双端对等    |
-| `project-assignment-notification`    | 分配通知和用户隔离                                                             | 协作页面上的角色可见性和操作权限矩阵              |
+| 现有 checkpoint / 流程               | 已有证据                                                                       | 不能证明的内容                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `workspace-tabs`                     | 固定项目空间 tab、默认关联项目、“我的任务”上下文、避免重复 tab                 | Web 路由；共享组件挂载                         |
+| `task-status-sync` 中的 My Work 流程 | 完成任务进入“我的任务”，陈旧运行态不会复活任务                                 | Web 的我的任务；完整视图与筛选对等             |
+| `offline-local-project-space`        | 本地项目创建、空看板引导、Issue 创建/更新/拖拽，并能进入文件、成员和自动化入口 | 云端双端对等；文件/成员/自动化的 CRUD          |
+| `board-focus-view`                   | 看板运行态、分组、专注视图、列宽和状态恢复                                     | Web 对等；共享 DOM 结构                        |
+| `project-automation`                 | 原生共享挂载，以及通过真实后端创建和恢复“项目设置”内的调度策略                 | 所有 Runtime 执行分支；完整 Web 对等矩阵       |
+| `task-attachments`                   | 云端交付物文件树、面包屑和预览                                                 | 普通共享文件的上传、重命名、删除、下载双端对等 |
+| `project-assignment-notification`    | 分配通知和用户隔离                                                             | 协作页面上的角色可见性和操作权限矩阵           |
 
-历史 Wework 场景仍有保留价值，但它们不能作为“双端共享 UI”的证据，因为 Web 不运行这些
-场景，且选择器来自 Wework 私有实现。
+这些场景提供真实桌面证据；由于 Web 不运行桌面 checkpoint，双端对等仍需结合 Web
+Playwright 套件验收。
 
 ### 首个可执行共享 checkpoint
 
@@ -219,8 +221,8 @@ Wework 新增独立 checkpoint：`collaboration-cloud-parity`。它必须同时�
 - desktop E2E CI 分类和分片；
 - 分类脚本自身测试。
 
-不要修改现有 `workspace-tabs`、`offline-local-project-space`、`board-focus-view`、
-`project-automation` 或其他历史 E2E。
+共享架构删除 Wework 私有页面或选择器时，应更新受影响的现有 E2E，使其进入原生共享模块，并保留
+仍然有效的业务断言。已经不存在的画布或 iframe 页面不得继续作为验收目标。
 
 ### 第四层：跨端一致性与并发
 
@@ -359,18 +361,17 @@ CI 资源不适合在一个 job 中同时启动两个宿主，可用两个阶段
 
 步骤与断言：
 
-1. 打开自动化列表并创建规则。
-2. 配置触发器、条件、执行节点、机器人/智能体、模型和工作区绑定。
+1. 打开“项目设置”，进入“分配与调度”。
+2. 创建调度策略，配置触发方式、计划、时区、分配模式和管理者指令。
 3. 保存后验证真实后端 definition。
-4. 编辑、启用、停用和归档规则。
+4. 切换其他策略、新建额外策略，并验证编辑、启用、停用和删除。
 5. 执行“立即运行”，验证生成运行记录和关联 Issue/Task。
-6. 打开运行详情，验证状态、开始/结束时间和错误。
-7. 刷新并从另一端打开相同规则与运行记录。
+6. 打开运行记录，验证状态、开始/结束时间和错误。
+7. 刷新并从另一端打开相同策略与运行记录。
 8. 未保存草稿、离开确认和版本冲突行为两端一致。
-9. 无管理权限时只展示允许的只读信息。
+9. 无管理权限时只展示允许的只读信息，或明确提示联系项目管理员。
 
-复杂编辑器细节可继续由现有 `project-automation` 回归覆盖，但共享 parity suite 至少必须覆盖完整
-生命周期主路径。
+项目级流程画布不再属于此生命周期；共享 parity suite 负责覆盖完整的调度策略主流程。
 
 ### 8. 项目设置
 
