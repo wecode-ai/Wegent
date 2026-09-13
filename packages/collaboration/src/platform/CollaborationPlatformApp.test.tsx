@@ -546,11 +546,13 @@ function PlatformHarness({
   api,
   start = initialLocation,
   onReady,
+  notify,
   capabilities = { automation: false, dingtalkAitable: false },
 }: {
   api: SharedWorkspaceApi;
   start?: CollaborationPlatformLocation;
   onReady?(): void;
+  notify?: CollaborationPlatformHostAdapter["notify"];
   capabilities?: CollaborationPlatformHostAdapter["capabilities"];
 }) {
   const [location, setLocation] = useState(start);
@@ -558,6 +560,7 @@ function PlatformHarness({
     location,
     capabilities,
     navigate: setLocation,
+    notify,
   };
   return (
     <>
@@ -667,6 +670,42 @@ describe("CollaborationPlatformApp real component flow", () => {
         "data-location",
       ),
     ).toBe("cloud");
+  });
+
+  it.each([
+    ["the project lookup fails", () => Promise.reject(new Error("failed"))],
+    [
+      "the project has no workspace scope",
+      () => Promise.resolve({ ...project, workspace_id: null }),
+    ],
+  ])("keeps My Work open and reports an error when %s", async (_, lookup) => {
+    const { api } = createApi();
+    api.myWork = {
+      list: emptyAsync([
+        {
+          ...issue,
+          project_key: project.project_key,
+          project_name: project.name,
+          has_active_task: false,
+        },
+      ]),
+    };
+    api.projects.get = vi.fn(lookup);
+    const notify = vi.fn();
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, platformView: "my-work" }}
+        notify={notify}
+      />,
+    );
+
+    await click(byTestId(`collaboration-my-work-${issue.id}`));
+
+    expect(notify).toHaveBeenCalledWith("加载协作空间失败", "error");
+    expect(JSON.parse(byTestId("test-location").textContent ?? "{}")).toEqual(
+      expect.objectContaining({ platformView: "my-work", projectId: null }),
+    );
   });
 
   it("creates the first workspace and exposes platform and workspace navigation", async () => {

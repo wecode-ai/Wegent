@@ -10,7 +10,10 @@ import {
   type CollaborationLocale,
 } from "../i18n";
 import type { AutomationUiHost } from "../automation-ui";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import type {
+  SharedWorkspaceApi,
+  WorkspaceMyWorkItem,
+} from "../ports/SharedWorkspaceApi";
 import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
 import type {
   CollaborationExecutionEnvironment,
@@ -758,6 +761,26 @@ export function CollaborationPlatformApp({
       projectView: "board",
       issueId: null,
     });
+  const openMyWorkIssue = async (issue: WorkspaceMyWorkItem) => {
+    try {
+      const project = await api.projects.get?.(
+        String(issue.cloud_project_id),
+      );
+      if (!project?.workspace_id) {
+        host.notify?.(messages.loadFailed, "error");
+        return;
+      }
+      navigateWithin(host, {
+        workspaceId: project.workspace_id,
+        workspaceView: "projects",
+        projectId: String(issue.cloud_project_id),
+        projectView: "board",
+        issueId: issue.id,
+      });
+    } catch {
+      host.notify?.(messages.loadFailed, "error");
+    }
+  };
 
   let content: React.ReactNode;
   if (state.loading) {
@@ -821,21 +844,7 @@ export function CollaborationPlatformApp({
                   type="button"
                   data-testid={`collaboration-my-work-${issue.id}`}
                   key={issue.id}
-                  onClick={() => {
-                    const projectRequest = api.projects.get?.(
-                      String(issue.cloud_project_id),
-                    );
-                    if (!projectRequest) return;
-                    void projectRequest.then((project) =>
-                      navigateWithin(host, {
-                        workspaceId: project.workspace_id ?? null,
-                        workspaceView: "projects",
-                        projectId: String(issue.cloud_project_id),
-                        projectView: "board",
-                        issueId: issue.id,
-                      }),
-                    );
-                  }}
+                  onClick={() => void openMyWorkIssue(issue)}
                 >
                   <span>
                     <strong>{issue.title}</strong>
