@@ -5143,6 +5143,68 @@ async fn execution_mapper_drops_notifications_after_stop_is_requested() {
 }
 
 #[tokio::test]
+async fn execution_mapper_keeps_same_turn_subagent_text_out_of_root_conversation() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("execution-mapper-subagent-text");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "runtime-subtask-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    let execution_id = start_test_execution(&handler, local_task_id);
+    handler.begin_active_codex_transcript(local_task_id, "thread-root", "turn-1");
+    let active_turn = ActiveCodexTurn {
+        execution_id,
+        thread_id: "thread-root".to_owned(),
+        turn_id: "turn-1".to_owned(),
+    };
+    let mut execution_mapper = CodexNotificationEventMapper::default();
+
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            Some(active_turn),
+            &mut execution_mapper,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "thread-child",
+                    "turnId": "turn-1",
+                    "itemId": "message-child",
+                    "delta": "Child agent output"
+                }
+            }),
+        )
+        .await;
+
+    let event = event_rx
+        .try_recv()
+        .expect("the child message should be emitted as a nested block");
+    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(
+        event["payload"]["data"]["block"]["parent_tool_use_id"],
+        "subagent-thread-child"
+    );
+    assert_eq!(
+        event["payload"]["data"]["block"]["content"],
+        "Child agent output"
+    );
+    assert!(event_rx.try_recv().is_err());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
 async fn execution_mapper_persists_historical_completion_without_remapping_it() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("execution-mapper-completion-race");
