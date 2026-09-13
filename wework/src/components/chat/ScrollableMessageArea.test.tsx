@@ -1999,6 +1999,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:00.000Z',
         runtimeMessageIndex: 100,
+        turnId: 'virtual-active-turn-1',
       },
       {
         id: 'virtual-active-assistant-1',
@@ -2015,6 +2016,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:02.000Z',
         runtimeMessageIndex: 102,
+        turnId: 'virtual-active-turn-2',
       },
       {
         id: 'virtual-active-assistant-2',
@@ -2031,6 +2033,7 @@ describe('ScrollableMessageArea', () => {
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:04.000Z',
         runtimeMessageIndex: 104,
+        turnId: 'virtual-active-turn-3',
       },
       {
         id: 'virtual-active-unindexed-assistant',
@@ -2050,7 +2053,34 @@ describe('ScrollableMessageArea', () => {
             Transient response without a transcript index
           </div>
         </div>
-        <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
+        <MessageTurnNavigation
+          messages={messages}
+          turnNavigation={[
+            {
+              id: 'virtual-active-turn-1',
+              turnId: 'virtual-active-turn-1',
+              turnIndex: 0,
+              messageIndex: 0,
+              promptPreview: '',
+            },
+            {
+              id: 'virtual-active-turn-2',
+              turnId: 'virtual-active-turn-2',
+              turnIndex: 1,
+              messageIndex: 1,
+              promptPreview: '',
+            },
+            {
+              id: 'virtual-active-turn-3',
+              turnId: 'virtual-active-turn-3',
+              turnIndex: 2,
+              messageIndex: 2,
+              promptPreview: '',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
       </div>
     )
 
@@ -2620,6 +2650,7 @@ describe('ScrollableMessageArea', () => {
     )
     const latestMessage = {
       id: 'client-latest-user',
+      turnId: 'turn-latest',
       role: 'user' as const,
       content: '最新需求',
       status: 'done' as const,
@@ -2629,6 +2660,7 @@ describe('ScrollableMessageArea', () => {
     const turnNavigation = [
       {
         id: 'runtime-older-user',
+        turnId: 'turn-older',
         turnIndex: 0,
         messageIndex: 0,
         cursor: 'offset:0',
@@ -2637,6 +2669,7 @@ describe('ScrollableMessageArea', () => {
       },
       {
         id: 'runtime-latest-user',
+        turnId: 'turn-latest',
         turnIndex: 1,
         messageIndex: 2,
         cursor: 'offset:2',
@@ -2677,6 +2710,7 @@ describe('ScrollableMessageArea', () => {
         messages={[
           {
             id: 'client-older-user',
+            turnId: 'turn-older',
             role: 'user',
             content: '历史需求',
             status: 'done',

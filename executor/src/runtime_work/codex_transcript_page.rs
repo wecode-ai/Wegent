@@ -18,6 +18,8 @@ const CODEX_ITEM_LOAD_CONCURRENCY: usize = 5;
 const CODEX_INITIAL_ITEM_BUDGET_TURN_CAP: usize = 5;
 const CODEX_FULL_TRANSCRIPT_MAX_TURNS: usize = 500;
 const CODEX_INCREMENTAL_CURSOR_PREFIX: &str = "wework-codex-items:";
+const CODEX_NAVIGATION_CURSOR_PREFIX: &str = "wework-codex-navigation:";
+const CODEX_NAVIGATION_MAX_PAGES: usize = 10;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum CodexTranscriptDirection {
@@ -50,6 +52,18 @@ pub(crate) struct CodexTranscriptPage {
     pub prepend_item_turn_ids: HashSet<String>,
 }
 
+#[derive(Clone)]
+pub(crate) struct CodexTranscriptNavigationTurn {
+    pub turn_id: String,
+    pub cursor: Option<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CodexTranscriptNavigation {
+    pub turns: Vec<CodexTranscriptNavigationTurn>,
+    pub complete: bool,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexIncrementalCursor {
@@ -63,6 +77,13 @@ struct CodexTurnItemCursor {
     turn: Value,
     cursor: Option<String>,
     started: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexNavigationCursor {
+    page_backwards_cursor: String,
+    descending_offset: usize,
 }
 
 pub(crate) async fn load_codex_transcript(
@@ -87,13 +108,26 @@ pub(crate) async fn load_codex_transcript(
             return Ok(page);
         }
     }
+    let navigation_cursor = request
+        .cursor
+        .map(parse_navigation_cursor)
+        .transpose()?
+        .flatten();
+    let resolved_navigation_cursor = if let Some(cursor) = navigation_cursor.as_ref() {
+        if request.direction != CodexTranscriptDirection::Descending {
+            return Err("Codex navigation cursors only support descending pagination".to_owned());
+        }
+        Some(resolve_navigation_cursor(client, request.thread_id, cursor).await?)
+    } else {
+        None
+    };
+    let request_cursor = resolved_navigation_cursor.as_deref().or(request.cursor);
     let paginated_history = thread_uses_paginated_history(&thread);
     let incremental_cursor = if paginated_history
         && !request.full_content
         && request.direction == CodexTranscriptDirection::Descending
     {
-        request
-            .cursor
+        request_cursor
             .map(parse_incremental_cursor)
             .transpose()?
             .flatten()
@@ -109,7 +143,7 @@ pub(crate) async fn load_codex_transcript(
     let mut cursor = incremental_cursor
         .as_ref()
         .and_then(|cursor| cursor.turn_cursor.clone())
-        .or_else(|| request.cursor.map(ToOwned::to_owned));
+        .or_else(|| request_cursor.map(ToOwned::to_owned));
     let mut turns = Vec::new();
     let mut backwards_cursor = None;
     let mut pending_turns = Vec::new();
@@ -187,6 +221,141 @@ pub(crate) async fn load_codex_transcript(
         }
         cursor = Some(next_cursor);
     }
+}
+
+pub(crate) async fn load_codex_transcript_navigation(
+    client: &CodexAppServerClient,
+    thread: &Value,
+    thread_id: &str,
+    prefer_rollout_history: bool,
+) -> Result<CodexTranscriptNavigation, String> {
+    if prefer_rollout_history {
+        if let Some(path) = string_field(thread, "path") {
+            match tokio::fs::read_to_string(Path::new(&path)).await {
+                Ok(text) => {
+                    let turns = rollout_turns(&text)?;
+                    let mut navigation_turns = Vec::with_capacity(turns.len());
+                    for (index, turn) in turns.into_iter().enumerate() {
+                        let turn_id = string_field(&turn, "id").ok_or_else(|| {
+                            "canonical Codex rollout returned a turn without id".to_owned()
+                        })?;
+                        navigation_turns.push(CodexTranscriptNavigationTurn {
+                            turn_id,
+                            cursor: Some(rollout_cursor(index + 1)),
+                        });
+                    }
+                    return Ok(CodexTranscriptNavigation {
+                        turns: navigation_turns,
+                        complete: true,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "failed to read canonical Codex rollout {}: {error}",
+                        Path::new(&path).display()
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut cursor = None;
+    let mut turns = Vec::new();
+    let mut seen_cursors = HashSet::new();
+    for _ in 0..CODEX_NAVIGATION_MAX_PAGES {
+        let page = client
+            .request(
+                "thread/turns/list",
+                json!({
+                    "threadId": thread_id,
+                    "cursor": cursor,
+                    "limit": CODEX_ITEM_PAGE_SIZE,
+                    "sortDirection": "desc",
+                    "itemsView": "notLoaded",
+                }),
+            )
+            .await?;
+        let page_backwards_cursor = string_field(&page, "backwardsCursor");
+        let page_turns = page
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !page_turns.is_empty() && page_backwards_cursor.is_none() {
+            return Err(
+                "thread/turns/list returned navigation turns without backwardsCursor".to_owned(),
+            );
+        }
+        for (descending_offset, turn) in page_turns.into_iter().enumerate() {
+            let turn_id = string_field(&turn, "id").ok_or_else(|| {
+                "thread/turns/list returned a navigation turn without id".to_owned()
+            })?;
+            turns.push(CodexTranscriptNavigationTurn {
+                turn_id,
+                cursor: page_backwards_cursor
+                    .as_ref()
+                    .map(|page_cursor| navigation_cursor(page_cursor, descending_offset)),
+            });
+        }
+        let Some(next_cursor) = string_field(&page, "nextCursor") else {
+            turns.reverse();
+            return Ok(CodexTranscriptNavigation {
+                turns,
+                complete: true,
+            });
+        };
+        if !seen_cursors.insert(next_cursor.clone()) {
+            return Err("thread/turns/list returned a repeated navigation cursor".to_owned());
+        }
+        cursor = Some(next_cursor);
+    }
+    Ok(CodexTranscriptNavigation {
+        turns: Vec::new(),
+        complete: false,
+    })
+}
+
+fn navigation_cursor(page_backwards_cursor: &str, descending_offset: usize) -> String {
+    serde_json::to_string(&CodexNavigationCursor {
+        page_backwards_cursor: page_backwards_cursor.to_owned(),
+        descending_offset,
+    })
+    .map(|encoded| format!("{CODEX_NAVIGATION_CURSOR_PREFIX}{encoded}"))
+    .expect("Codex navigation cursor should always serialize")
+}
+
+fn parse_navigation_cursor(cursor: &str) -> Result<Option<CodexNavigationCursor>, String> {
+    let Some(encoded) = cursor.strip_prefix(CODEX_NAVIGATION_CURSOR_PREFIX) else {
+        return Ok(None);
+    };
+    serde_json::from_str(encoded)
+        .map(Some)
+        .map_err(|error| format!("invalid Codex navigation cursor: {error}"))
+}
+
+async fn resolve_navigation_cursor(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    cursor: &CodexNavigationCursor,
+) -> Result<String, String> {
+    if cursor.descending_offset == 0 {
+        return Ok(cursor.page_backwards_cursor.clone());
+    }
+    let page = client
+        .request(
+            "thread/turns/list",
+            json!({
+                "threadId": thread_id,
+                "cursor": cursor.page_backwards_cursor,
+                "limit": cursor.descending_offset,
+                "sortDirection": "desc",
+                "itemsView": "notLoaded",
+            }),
+        )
+        .await?;
+    string_field(&page, "nextCursor")
+        .ok_or_else(|| "Codex navigation cursor did not resolve to the requested turn".to_owned())
 }
 
 const ROLLOUT_CURSOR_PREFIX: &str = "wework-rollout:";

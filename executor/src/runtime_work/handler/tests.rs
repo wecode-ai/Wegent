@@ -5,6 +5,7 @@
 use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
+use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "execution_timestamp_tests.rs"]
 mod execution_timestamp_tests;
@@ -3717,19 +3718,124 @@ fn transcript_presentation_matches_a_complete_reference_token() {
 
 #[test]
 fn transcript_navigation_uses_client_user_message_id_for_live_message_matching() {
-    let navigation = transcript_turn_navigation(
-        &[json!({
-            "id": "provider-user",
-            "clientUserMessageId": "runtime-local-pane-1",
-            "role": "user",
-            "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
-        })],
-        false,
-    );
+    let navigation = transcript_turn_navigation(&[json!({
+        "id": "provider-user",
+        "clientUserMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+    })]);
 
     assert_eq!(navigation.len(), 1);
     assert_eq!(navigation[0]["id"], "runtime-local-pane-1");
     assert_eq!(navigation[0]["promptPreview"], "Fix the sidebar");
+}
+
+#[test]
+fn codex_transcript_navigation_uses_lightweight_turn_skeletons() {
+    let navigation = transcript_navigation_from_codex_turns(CodexTranscriptNavigation {
+        turns: vec![
+            CodexTranscriptNavigationTurn {
+                turn_id: "turn-old".to_owned(),
+                cursor: Some("opaque-old".to_owned()),
+            },
+            CodexTranscriptNavigationTurn {
+                turn_id: "turn-new".to_owned(),
+                cursor: Some("opaque-new".to_owned()),
+            },
+        ],
+        complete: true,
+    });
+
+    assert_eq!(
+        Value::Array(navigation),
+        json!([
+            {
+                "id": "turn-old",
+                "turnId": "turn-old",
+                "turnIndex": 0,
+                "messageIndex": 0,
+                "promptPreview": "",
+                "responsePreview": "",
+                "cursor": "opaque-old",
+            },
+            {
+                "id": "turn-new",
+                "turnId": "turn-new",
+                "turnIndex": 1,
+                "messageIndex": 1,
+                "promptPreview": "",
+                "responsePreview": "",
+                "cursor": "opaque-new",
+            },
+        ])
+    );
+}
+
+#[test]
+fn incomplete_codex_transcript_navigation_is_hidden() {
+    let navigation = transcript_navigation_from_codex_turns(CodexTranscriptNavigation {
+        turns: vec![CodexTranscriptNavigationTurn {
+            turn_id: "turn-1".to_owned(),
+            cursor: Some("opaque".to_owned()),
+        }],
+        complete: false,
+    });
+
+    assert!(navigation.is_empty());
+}
+
+#[test]
+fn transcript_navigation_is_not_limited_to_the_visible_message_page() {
+    let messages = vec![
+        json!({
+            "id": "user-old",
+            "turnId": "turn-old",
+            "role": "user",
+            "content": "old prompt",
+        }),
+        json!({
+            "id": "assistant-old",
+            "turnId": "turn-old",
+            "role": "assistant",
+            "content": "old answer",
+        }),
+        json!({
+            "id": "user-new",
+            "turnId": "turn-new",
+            "role": "user",
+            "content": "new prompt",
+        }),
+        json!({
+            "id": "assistant-new",
+            "turnId": "turn-new",
+            "role": "assistant",
+            "content": "new answer",
+        }),
+    ];
+    let turn_navigation = transcript_turn_navigation(&messages);
+
+    let response = transcript_response(TranscriptResponseInput {
+        local_task_id: "task-1".to_owned(),
+        workspace_path: "/tmp/project".to_owned(),
+        runtime: "claude_code".to_owned(),
+        messages,
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Offset {
+            limit: Some(2),
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: false,
+        turn_item_source: TranscriptTurnItemSource::CachedMessages,
+        turn_navigation,
+    });
+
+    assert_eq!(response["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(response["messages"][0]["content"], "new prompt");
+    assert_eq!(response["turnNavigation"].as_array().unwrap().len(), 2);
+    assert_eq!(response["turnNavigation"][0]["promptPreview"], "old prompt");
+    assert_eq!(response["turnNavigation"][1]["promptPreview"], "new prompt");
 }
 
 #[test]
