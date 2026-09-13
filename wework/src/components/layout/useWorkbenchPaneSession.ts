@@ -688,6 +688,7 @@ export function useWorkbenchPaneSession({
     }
 
     let cancelled = false
+    let cancelNavigationLoad = () => {}
     const hydrationToken = beginRuntimeConversationHydration(address)
     rebuildingTranscriptRef.current = true
     rebuildingTranscriptIdentityRef.current = runtimeTaskLoadTarget.identityKey
@@ -750,6 +751,30 @@ export function useWorkbenchPaneSession({
             type: 'reset',
             messages: nextMessages,
           })
+          if (
+            transcript.runtime === 'codex' &&
+            transcript.fullContent !== true &&
+            runtimeTranscriptHasMoreBefore(transcript) &&
+            (!transcript.turnNavigation || transcript.turnNavigation.length === 0)
+          ) {
+            cancelNavigationLoad = scheduleRuntimeTurnNavigationLoad(() => {
+              void loadRuntimeTranscriptForPaneRef
+                .current(address, { navigationOnly: true })
+                .then(navigationTranscript => {
+                  if (!cancelled && navigationTranscript.turnNavigation) {
+                    setTurnNavigation(navigationTranscript.turnNavigation)
+                  }
+                })
+                .catch(error => {
+                  if (!cancelled) {
+                    console.error('[Wework] Runtime turn navigation load failed', {
+                      address,
+                      error,
+                    })
+                  }
+                })
+            })
+          }
           rebuildingTranscriptRef.current = false
           rebuildingTranscriptIdentityRef.current = null
         }
@@ -781,6 +806,7 @@ export function useWorkbenchPaneSession({
 
     return () => {
       cancelled = true
+      cancelNavigationLoad()
       abortRuntimeConversationHydration(address, hydrationToken)
       if (rebuildingTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey) {
         rebuildingTranscriptRef.current = false
@@ -3428,11 +3454,18 @@ function cursorOffset(cursor: string | null | undefined): number | null {
   return Number.parseInt(match[1], 10)
 }
 
-function runtimeTurnNavigationLoadOptions(
+export function runtimeTurnNavigationLoadOptions(
   item: RuntimeTurnNavigationItem,
   loadedRanges: LoadedTranscriptRange[],
   pageSize: number
 ) {
+  if (item.cursor && !item.cursor.startsWith('offset:')) {
+    return {
+      limit: pageSize,
+      beforeCursor: item.cursor,
+    }
+  }
+
   const messageIndex = Number.isFinite(item.messageIndex) ? Math.max(0, item.messageIndex) : 0
   const sortedRanges = mergeTranscriptRanges(loadedRanges, [])
   const nextLoadedRange = sortedRanges.find(range => range.start > messageIndex)
@@ -3445,6 +3478,15 @@ function runtimeTurnNavigationLoadOptions(
     limit: pageSize,
     beforeCursor: `offset:${pageEnd}`,
   }
+}
+
+export function scheduleRuntimeTurnNavigationLoad(callback: () => void): () => void {
+  if (typeof window.requestIdleCallback === 'function') {
+    const requestId = window.requestIdleCallback(callback, { timeout: 2000 })
+    return () => window.cancelIdleCallback(requestId)
+  }
+  const timeoutId = window.setTimeout(callback, 0)
+  return () => window.clearTimeout(timeoutId)
 }
 
 function hasUnsettledRuntimePaneState(messages: WorkbenchMessage[]): boolean {

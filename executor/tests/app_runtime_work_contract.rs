@@ -352,6 +352,46 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
         }))
         .await
         .expect("older transcript page should succeed");
+    let navigation = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "navigationOnly": true
+            }
+        }))
+        .await
+        .expect("turn navigation should succeed");
+    let cached_navigation = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "navigationOnly": true
+            }
+        }))
+        .await
+        .expect("cached turn navigation should succeed");
+    let navigation_cursor = navigation["turnNavigation"][0]["cursor"]
+        .as_str()
+        .expect("older navigation turn should have an opaque cursor");
+    let targeted_older = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 1,
+                "beforeCursor": navigation_cursor
+            }
+        }))
+        .await
+        .expect("navigation cursor should resolve the exact older turn");
     let newer = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
@@ -375,6 +415,22 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     assert_eq!(latest["rangeStart"], Value::Null);
     assert_eq!(latest["rangeEnd"], Value::Null);
     assert_eq!(latest["turnNavigation"], json!([]));
+    assert_eq!(navigation["messages"], json!([]));
+    assert_eq!(navigation["turns"], json!([]));
+    assert_eq!(navigation["turnNavigation"].as_array().unwrap().len(), 2);
+    assert_eq!(navigation["turnNavigation"][0]["id"], "turn-old");
+    assert_eq!(navigation["turnNavigation"][0]["turnId"], "turn-old");
+    assert_eq!(navigation["turnNavigation"][0]["promptPreview"], "");
+    assert_eq!(navigation["turnNavigation"][1]["id"], "turn-new");
+    assert_eq!(navigation["turnNavigation"][1]["cursor"], Value::Null);
+    assert_eq!(
+        navigation["turnNavigation"],
+        cached_navigation["turnNavigation"]
+    );
+    assert!(navigation["turnNavigation"][0]["cursor"]
+        .as_str()
+        .is_some_and(|cursor| cursor.starts_with("wework-codex-navigation:")));
+    assert_eq!(targeted_older["messages"][0]["content"], "old prompt");
     assert_eq!(older["messages"].as_array().unwrap().len(), 2);
     assert_eq!(older["messages"][0]["content"], "old prompt");
     assert_eq!(older["hasMoreBefore"], false);
@@ -397,12 +453,18 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
         .iter()
         .filter(|line| line["method"] == "thread/items/list")
         .count();
-    assert_eq!(read_count, 3);
-    assert_eq!(turns_list_count, 3);
-    assert_eq!(items_list_count, 3);
-    assert!(calls.iter().all(|call| {
-        call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "notLoaded"
-    }));
+    assert_eq!(read_count, 5);
+    assert_eq!(turns_list_count, 6);
+    assert_eq!(items_list_count, 4);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/turns/list"
+                && call["params"]["itemsView"] == "notLoaded"
+                && call["params"]["limit"] == 100)
+            .count(),
+        2
+    );
     assert!(calls.iter().any(|call| {
         call["method"] == "thread/turns/list"
             && call["params"]["cursor"] == "newer-from-old"
@@ -1202,6 +1264,12 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/turns/list"'*'"cursor":"older-turns"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*'"cursor":"newer-from-old"'*'"sortDirection":"desc"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*'"limit":100'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/turns/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'

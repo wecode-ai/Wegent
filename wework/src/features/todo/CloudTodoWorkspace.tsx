@@ -4237,10 +4237,12 @@ export function CloudTodoWorkspace({
                 const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
                 const spaceKey = projectSpaceKey(projectSpaceRef(project))
                 return {
+                  actionsAvailable: !isDefaultWorkItemProject(project),
                   canManage:
-                    project.created_by_user_id === user.id ||
-                    project.access_role === 'Owner' ||
-                    project.access_role === 'Maintainer',
+                    !isDefaultWorkItemProject(project) &&
+                    (project.created_by_user_id === user.id ||
+                      project.access_role === 'Owner' ||
+                      project.access_role === 'Maintainer'),
                   count: collaborationProjectCounts[spaceKey],
                   icon: (
                     <ProjectLocationIcon className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]" />
@@ -4372,6 +4374,7 @@ export function CloudTodoWorkspace({
                 manage: 'cloud-project-manage-view',
               }}
               automationSupported={selectedProjectAutomationSupported}
+              enabledStandardViews={isMyTasksBoard ? ['board'] : undefined}
               compactSwitcherIcon={<ChevronDown className="h-3 w-3" />}
               onViewChange={view => setProjectView(view as ProjectView)}
               assistantAction={{

@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+
+const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
 interface VersionedResource {
   version: number
@@ -21,33 +23,41 @@ async function capture(page: Page, testInfo: TestInfo, name: string): Promise<vo
 
 async function archiveResource(
   page: Page,
+  request: APIRequestContext,
   resourcePath: string
 ): Promise<{ ok: boolean; stage: 'get' | 'delete'; status: number }> {
-  return page.evaluate(async path => {
-    const resourceResponse = await fetch(path)
-    if (!resourceResponse.ok) {
-      return { ok: false, status: resourceResponse.status, stage: 'get' as const }
-    }
-    const resource = (await resourceResponse.json()) as VersionedResource
-    const archiveResponse = await fetch(`${path}?version=${resource.version}`, {
-      method: 'DELETE',
-    })
-    return {
-      ok: archiveResponse.ok,
-      status: archiveResponse.status,
-      stage: 'delete' as const,
-    }
-  }, resourcePath)
+  const authToken = (await page.context().cookies()).find(
+    cookie => cookie.name === 'auth_token'
+  )?.value
+  if (!authToken) {
+    throw new Error('Authenticated browser context is missing auth_token')
+  }
+  const headers = { Authorization: `Bearer ${authToken}` }
+  const resourceResponse = await request.get(`${API_BASE_URL}${resourcePath}`, { headers })
+  if (!resourceResponse.ok()) {
+    return { ok: false, status: resourceResponse.status(), stage: 'get' }
+  }
+  const resource = (await resourceResponse.json()) as VersionedResource
+  const archiveResponse = await request.delete(
+    `${API_BASE_URL}${resourcePath}?version=${resource.version}`,
+    { headers }
+  )
+  return {
+    ok: archiveResponse.ok(),
+    status: archiveResponse.status(),
+    stage: 'delete',
+  }
 }
 
 test.describe('Collaboration module', () => {
   let projectId = ''
   let workspaceId = ''
 
-  test.afterEach(async ({ page }) => {
+  test.afterEach(async ({ page, request }) => {
     if (projectId) {
       const cleanup = await archiveResource(
         page,
+        request,
         `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`
       )
       expect(cleanup, `Failed to archive E2E project during ${cleanup.stage}`).toEqual({
@@ -61,6 +71,7 @@ test.describe('Collaboration module', () => {
     if (workspaceId) {
       const cleanup = await archiveResource(
         page,
+        request,
         `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`
       )
       expect(cleanup, `Failed to archive E2E workspace during ${cleanup.stage}`).toEqual({

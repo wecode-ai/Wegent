@@ -21,6 +21,7 @@ let mockPathname = '/collaboration'
 let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
 let capturedProjectHost: CollaborationHostAdapter | null = null
+let mockIsMobile = false
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -80,13 +81,15 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
-  useIsMobile: () => false,
+  useIsMobile: () => mockIsMobile,
 }))
 
 jest.mock('@/features/tasks/components/sidebar', () => ({
   CollapsedSidebarButtons: () => null,
-  ResizableSidebar: ({ children }: { children: React.ReactNode }) => <aside>{children}</aside>,
-  TaskSidebar: () => null,
+  ResizableSidebar: ({ children }: { children: React.ReactNode }) => (
+    <aside data-testid="task-sidebar-shell">{children}</aside>
+  ),
+  TaskSidebar: () => <div data-testid="task-sidebar" />,
 }))
 
 jest.mock('sonner', () => ({
@@ -101,6 +104,7 @@ describe('CollaborationPage platform routing', () => {
     mockSearchParams = new URLSearchParams()
     capturedHost = null
     capturedProjectHost = null
+    mockIsMobile = false
     localStorage.clear()
   })
 
@@ -119,6 +123,8 @@ describe('CollaborationPage platform routing', () => {
       automation: true,
       dingtalkAitable: false,
     })
+    expect(screen.queryByTestId('task-sidebar-shell')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
 
     fireEvent.click(screen.getByTestId('open-resources'))
     expect(mockPush).toHaveBeenCalledWith('/collaboration/resources')
@@ -141,6 +147,15 @@ describe('CollaborationPage platform routing', () => {
     expect(capturedProjectHost).toBeNull()
   })
 
+  it('keeps the collaboration-owned navigation shell on mobile', () => {
+    mockIsMobile = true
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost).not.toBeNull()
+    expect(screen.queryByTestId('task-sidebar-shell')).not.toBeInTheDocument()
+  })
+
   it.each(['automation', 'manage', 'files'] as const)(
     'routes a legacy Project %s URL to the mature project application',
     view => {
@@ -150,6 +165,7 @@ describe('CollaborationPage platform routing', () => {
       render(<CollaborationPage />)
 
       expect(capturedHost).toBeNull()
+      expect(screen.getByTestId('task-sidebar-shell')).toBeInTheDocument()
       expect(capturedProjectHost?.location).toEqual({
         projectId: 'project 1',
         issueId: null,

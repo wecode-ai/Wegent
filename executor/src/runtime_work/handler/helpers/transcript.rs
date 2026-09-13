@@ -8,6 +8,7 @@ fn cached_transcript_response(
     after_cursor: Option<&str>,
 ) -> Value {
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
+    let turn_navigation = transcript_turn_navigation(&messages);
     transcript_response(TranscriptResponseInput {
         local_task_id: link.local_task_id.clone(),
         workspace_path: link.workspace_path.clone(),
@@ -23,6 +24,7 @@ fn cached_transcript_response(
         ),
         full_content: false,
         turn_item_source: TranscriptTurnItemSource::CachedMessages,
+        turn_navigation,
     })
 }
 
@@ -122,6 +124,7 @@ struct TranscriptResponseInput {
     pagination: TranscriptPagination,
     full_content: bool,
     turn_item_source: TranscriptTurnItemSource,
+    turn_navigation: Vec<Value>,
 }
 
 enum TranscriptPagination {
@@ -144,7 +147,6 @@ struct ResolvedTranscriptPagination {
     before_cursor: Option<String>,
     has_more_after: bool,
     after_cursor: Option<String>,
-    opaque_cursor: bool,
 }
 
 fn transcript_pagination(
@@ -177,6 +179,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         pagination,
         full_content,
         turn_item_source,
+        turn_navigation,
     } = input;
     let ResolvedTranscriptPagination {
         messages,
@@ -186,7 +189,6 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         before_cursor,
         has_more_after,
         after_cursor,
-        opaque_cursor,
     } = match pagination {
         TranscriptPagination::Offset {
             limit,
@@ -207,7 +209,6 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
                 before_cursor: page.before_cursor,
                 has_more_after: page.has_more_after,
                 after_cursor: page.after_cursor,
-                opaque_cursor: false,
             }
         }
         TranscriptPagination::Opaque {
@@ -224,11 +225,9 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
                 before_cursor,
                 has_more_after,
                 after_cursor,
-                opaque_cursor: true,
             }
         }
     };
-    let turn_navigation = transcript_turn_navigation(&messages, opaque_cursor);
     let turns = transcript_canonical_turns(&messages, turn_item_source);
     json!({
         "success": true,
@@ -393,10 +392,7 @@ fn transcript_context_usage(thread: &Value) -> Option<Value> {
     rollout_context_usage(thread)
 }
 
-fn transcript_turn_navigation(messages: &[Value], opaque_cursor: bool) -> Vec<Value> {
-    if opaque_cursor {
-        return Vec::new();
-    }
+fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
     let mut turns: Vec<Value> = Vec::new();
     let mut pending_response_turn_indexes: Vec<usize> = Vec::new();
 
@@ -429,6 +425,52 @@ fn transcript_turn_navigation(messages: &[Value], opaque_cursor: bool) -> Vec<Va
     }
 
     turns
+}
+
+fn transcript_navigation_from_codex_turns(
+    navigation: CodexTranscriptNavigation,
+) -> Vec<Value> {
+    if !navigation.complete {
+        return Vec::new();
+    }
+    navigation
+        .turns
+        .into_iter()
+        .enumerate()
+        .map(|(turn_index, entry)| {
+            json!({
+                "id": entry.turn_id,
+                "turnId": entry.turn_id,
+                "turnIndex": turn_index,
+                "messageIndex": turn_index,
+                "promptPreview": "",
+                "responsePreview": "",
+                "cursor": entry.cursor,
+            })
+        })
+        .collect()
+}
+
+fn transcript_navigation_response(
+    local_task_id: String,
+    workspace_path: String,
+    turn_navigation: Vec<Value>,
+) -> Value {
+    transcript_response(TranscriptResponseInput {
+        local_task_id,
+        workspace_path,
+        runtime: "codex".to_owned(),
+        messages: Vec::new(),
+        context_usage: None,
+        running: false,
+        pagination: TranscriptPagination::Opaque {
+            before_cursor: None,
+            after_cursor: None,
+        },
+        full_content: false,
+        turn_item_source: TranscriptTurnItemSource::CodexItems,
+        turn_navigation,
+    })
 }
 
 fn transcript_navigation_message_id(message: &Value, message_index: usize) -> String {

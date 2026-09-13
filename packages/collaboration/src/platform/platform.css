@@ -653,10 +653,44 @@
 @media (max-width: 767px) {
   .collaboration-platform-app {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .collaboration-platform-sidebar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgb(var(--color-border));
+  }
+
+  .collaboration-platform-brand,
+  .collaboration-platform-sidebar-label {
     display: none;
+  }
+
+  .collaboration-platform-sidebar nav {
+    display: flex;
+    flex: none;
+    gap: 3px;
+  }
+
+  .collaboration-platform-sidebar nav button,
+  .collaboration-platform-back {
+    width: auto;
+    min-height: 44px;
+    flex: none;
+  }
+
+  .collaboration-platform-back {
+    margin-bottom: 0;
+  }
+
+  .collaboration-workspace-identity {
+    flex: none;
+    padding: 0 6px 0 0;
   }
 
   .collaboration-platform-page {
