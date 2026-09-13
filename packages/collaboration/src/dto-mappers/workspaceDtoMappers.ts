@@ -254,6 +254,7 @@ export function mapCollaborationWorkspaceDto(
   const row = asRecord(input);
   return {
     id: String(row.id),
+    location: "cloud",
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
     access_role: (row.access_role ??

@@ -5,15 +5,20 @@
 import type { ReactNode } from "react";
 
 import type { CollaborationTranslate } from "../i18n";
-import type { CollaborationProject } from "../types";
 
 export function ProjectDispatchSettings({
   automationContent,
-  project,
+  canManage,
+  managerName,
+  onConfigureAgents,
+  onContinueManualAssignment,
   translate,
 }: {
   automationContent?: ReactNode;
-  project: CollaborationProject;
+  canManage: boolean;
+  managerName: string;
+  onConfigureAgents(): void;
+  onContinueManualAssignment(): void;
   translate: CollaborationTranslate;
 }) {
   return (
@@ -36,10 +41,7 @@ export function ProjectDispatchSettings({
             className="mt-3 rounded-xl bg-muted px-4 py-4"
             data-testid="collaboration-project-manager-summary"
           >
-            <strong className="block text-sm font-medium">
-              {project.current_user_name ??
-                translate("todo.current_user", "我自己")}
-            </strong>
+            <strong className="block text-sm font-medium">{managerName}</strong>
             <span className="mt-1 block text-sm text-text-muted">
               {translate(
                 "todo.project_manager_description",
@@ -67,16 +69,46 @@ export function ProjectDispatchSettings({
             {automationContent}
           </section>
         ) : (
-          <section className="mt-6 border-t border-border pt-5">
+          <section
+            className="mt-6 border-t border-border pt-5"
+            data-testid="collaboration-project-dispatch-unavailable"
+          >
             <h2 className="text-heading-sm font-semibold">
               {translate("todo.dispatch_policy", "项目调度原则")}
             </h2>
             <p className="mt-2 text-sm text-text-muted">
               {translate(
-                "todo.dispatch_policy_unavailable",
-                "当前空间未启用 AI 项目管家。成员仍可在 Issue 中手动分配或主动开始处理。",
+                canManage
+                  ? "todo.dispatch_policy_unavailable_manager"
+                  : "todo.dispatch_policy_unavailable_member",
+                canManage
+                  ? "当前空间未启用 AI 项目管家。先配置本项目可用智能体，再返回这里设置调度原则。"
+                  : "当前空间未启用 AI 项目管家。请联系项目管理员配置；你仍可手动分配 Issue 或主动开始处理。",
               )}
             </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {canManage ? (
+                <button
+                  type="button"
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                  data-testid="collaboration-dispatch-configure-agents"
+                  onClick={onConfigureAgents}
+                >
+                  {translate("todo.configure_project_agents", "配置项目智能体")}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-muted"
+                data-testid="collaboration-dispatch-continue-manual"
+                onClick={onContinueManualAssignment}
+              >
+                {translate(
+                  "todo.continue_manual_assignment",
+                  "继续使用手动分配",
+                )}
+              </button>
+            </div>
           </section>
         )}
       </div>

@@ -29,6 +29,8 @@ export interface CollaborationPlatformHostAdapter {
     automation: boolean;
     dingtalkAitable: boolean;
     projectLocation?: "cloud" | "local";
+    workspaceLocations?: readonly ("local" | "cloud")[];
+    sidebarPresentation?: "full" | "context";
   };
   navigate(location: CollaborationPlatformLocation): void;
   notify?(message: string, kind: "success" | "error"): void;

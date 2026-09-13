@@ -60,6 +60,7 @@ import {
 import { IssueWorkflowDag, type SharedWorkflowNode } from "./issue-detail";
 import "./issue-detail/issue-detail.css";
 import type {
+  CollaborationAssignment,
   CollaborationAttachment,
   CollaborationIssue,
   CollaborationMember,
@@ -567,6 +568,7 @@ export type TodoEditorProps = {
   ) => string;
   loadTeams?: () => Promise<SharedEditorTeam[]>;
   currentUserId?: string | number;
+  currentAssignment?: CollaborationAssignment | null;
   allItems: CloudLoopItem[];
   onClose: () => void;
   presentation?: "modal" | "workspace-panel";
@@ -629,8 +631,8 @@ export function TodoEditor(props: TodoEditorProps) {
           ? { kind: "member", name: item.assignee_name }
           : null
     : null;
-  const assignmentSource = item?.automation
-    ? t("todo.project_dispatch_policy", "项目调度原则")
+  const assignmentSource = props.currentAssignment?.workflow_step
+    ? props.currentAssignment.workflow_step
     : t("todo.manual_assignment", "Issue 内分配");
   const isAITableEdit =
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";

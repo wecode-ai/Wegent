@@ -42,7 +42,9 @@ import {
   ProjectDispatchSettings,
   ProjectSettingsShell,
 } from "./project-manage";
+import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
+import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
   CollaborationProjectViewShell,
@@ -53,6 +55,7 @@ import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type {
   CollaborationCapabilities,
   CollaborationHostAdapter,
+  CollaborationIssue,
   CollaborationLocation,
   CollaborationProject,
 } from "./types";
@@ -140,6 +143,9 @@ function controllerWithProject(project: CollaborationProject) {
       agents: [],
       selectedIssue: null,
       comments: [],
+      assignments: [],
+      executions: [],
+      taskBindings: [],
       loading: false,
       error: null,
     },
@@ -285,6 +291,8 @@ describe("CollaborationApp API boundary", () => {
     collaborationAppMocks.useController.mockReturnValue(
       controllerWithProject({
         ...createProject(1),
+        access_role: "Owner",
+        current_user_id: 1,
         current_user_name: "Project owner",
       }),
     );
@@ -300,10 +308,135 @@ describe("CollaborationApp API boundary", () => {
 
     expect(dispatchSection).toBeDefined();
     expect(dispatchSection?.content.type).toBe(ProjectDispatchSettings);
-    expect(dispatchSection?.content.props.project.current_user_name).toBe(
-      "Project owner",
-    );
+    expect(dispatchSection?.content.props.managerName).toBe("Project owner");
+    expect(dispatchSection?.content.props.canManage).toBe(true);
     expect(dispatchSection?.content.props.automationContent).toBeUndefined();
+
+    const configureAgents = vi.fn();
+    const continueManualAssignment = vi.fn();
+    const unavailableState = ProjectDispatchSettings({
+      canManage: true,
+      managerName: "Project owner",
+      onConfigureAgents: configureAgents,
+      onContinueManualAssignment: continueManualAssignment,
+      translate: (_key, fallback) => fallback,
+    });
+    findByTestId(
+      unavailableState,
+      "collaboration-dispatch-configure-agents",
+    )?.props.onClick();
+    findByTestId(
+      unavailableState,
+      "collaboration-dispatch-continue-manual",
+    )?.props.onClick();
+    expect(configureAgents).toHaveBeenCalledOnce();
+    expect(continueManualAssignment).toHaveBeenCalledOnce();
+
+    dispatchSection?.content.props.onContinueManualAssignment();
+    expect(host.navigate).toHaveBeenLastCalledWith({
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    });
+
+    const memberState = ProjectDispatchSettings({
+      canManage: false,
+      managerName: "Project owner",
+      onConfigureAgents: vi.fn(),
+      onContinueManualAssignment: vi.fn(),
+      translate: (_key, fallback) => fallback,
+    });
+    expect(
+      findByTestId(memberState, "collaboration-dispatch-configure-agents"),
+    ).toBeUndefined();
+    expect(
+      findByTestId(memberState, "collaboration-dispatch-continue-manual"),
+    ).toBeDefined();
+  });
+
+  it("keeps project files inside the shared settings module", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "manage",
+    };
+    collaborationAppMocks.useController.mockReturnValue(
+      controllerWithProject(createProject(1)),
+    );
+
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const settingsShell = findByType(
+      shell?.props.slots.manage,
+      ProjectSettingsShell,
+    );
+    const filesSection = settingsShell?.props.sections.find(
+      (section: { id: string }) => section.id === "files",
+    );
+
+    expect(filesSection?.testId).toBe("collaboration-project-settings-files");
+    expect(filesSection?.content.type).toBe(CollaborationFilesAdapter);
+  });
+
+  it("passes runtime bindings and the host card renderer through the shared board", () => {
+    const host = createHost(false, "home");
+    host.location = {
+      projectId: "project-1",
+      issueId: null,
+      view: "board",
+    };
+    const project = createProject(1);
+    const binding = {
+      id: "binding-1",
+      projectId: project.id,
+      issueId: "issue-1",
+      taskUserId: 1,
+      deviceId: "device-1",
+      taskId: "task-1",
+      taskTitle: "Runtime task",
+      backendTaskId: null,
+      linkedAt: "2026-09-13T00:00:00Z",
+    };
+    const renderBoardIssueCard = vi.fn();
+    const controller = controllerWithProject(project);
+    const issue: CollaborationIssue = {
+      id: "issue-1",
+      cloud_project_id: project.id,
+      sequence_number: 1,
+      parent_id: null,
+      created_by_user_id: 1,
+      assignee_user_id: null,
+      title: "Issue",
+      description: "",
+      status: "inbox",
+      priority: "none",
+      due_at: null,
+      tags: [],
+      sort_order: 0,
+      version: 1,
+      created_at: "2026-09-13T00:00:00Z",
+      updated_at: "2026-09-13T00:00:00Z",
+      completed_at: null,
+    };
+    collaborationAppMocks.useController.mockReturnValue({
+      ...controller,
+      state: {
+        ...controller.state,
+        issues: [issue],
+        taskBindings: [binding],
+      },
+    });
+
+    const app = CollaborationApp({
+      api: {} as SharedWorkspaceApi,
+      host,
+      renderBoardIssueCard,
+    });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+
+    expect(board?.props.taskBindings).toEqual([binding]);
+    expect(board?.props.renderIssueCard).toBe(renderBoardIssueCard);
   });
 
   it("centralizes permission filtering and host extension placement", () => {

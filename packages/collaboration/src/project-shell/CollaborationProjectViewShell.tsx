@@ -71,8 +71,14 @@ export function resolveCollaborationProjectView({
   slots: CollaborationProjectViewSlots;
   view: CollaborationProjectView;
 }): ResolvedCollaborationProjectView {
-  const requestedView =
-    view === "automation" || view === "files" ? "manage" : view;
+  const exactExtension = extensions.find(
+    (extension) => extension.id === view && extension.available !== false,
+  );
+  const requestedView = exactExtension
+    ? view
+    : view === "automation" || view === "files"
+      ? "manage"
+      : view;
   const accessibleView = options.some((option) => option.id === requestedView)
     ? requestedView
     : "board";

@@ -209,6 +209,11 @@ export function IssueDetail({
     createCollaborationTranslator(
       messages === collaborationMessages.en ? "en" : "zh-CN",
     );
+  const currentAssignment =
+    assignments
+      .filter((assignment) => assignment.status === "active")
+      .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+      .at(-1) ?? null;
 
   return (
     <div
@@ -229,6 +234,7 @@ export function IssueDetail({
           workspacePanelFill
           showPanelControls
           showAssignee={false}
+          currentAssignment={currentAssignment}
           canStartWork={permissions.canStartWork}
           onCreateTask={onCreateTask}
           translate={editorTranslate}

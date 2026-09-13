@@ -44,9 +44,19 @@ const platformMessages = {
     myWorkHint: "跨空间查看分配给我和我正在参与的 Issue。",
     noWork: "还没有待处理工作",
     noWorkHint: "当 Issue 分配给你或你主动参与后，会显示在这里。",
+    running: "执行中",
+    pending: "待处理",
     resourcesHint: "管理我拥有的智能体和执行环境，并授权给协作空间使用。",
     workspaceHint: "空间是成员、项目、智能体和执行环境的协作边界。",
-    createWorkspace: "创建空间",
+    createWorkspace: "创建云端空间",
+    cloudStorageNotice:
+      "空间、项目与 Issue 将保存在 Wegent 云端，可在 Wework 和网页端跨设备协作。",
+    localStorage: "本地 · 仅当前设备",
+    cloudStorage: "云端 · 可跨设备协作",
+    localSpaces: "当前设备",
+    cloudSpaces: "云端空间",
+    localOnlyHint:
+      "当前仅显示本地空间。创建云端空间后即可邀请成员并跨设备协作。",
     joinWorkspace: "加入空间",
     noSpaces: "还没有协作空间",
     noSpacesHint: "先创建空间，再在空间中组织成员、项目和 AI 资源。",
@@ -99,11 +109,21 @@ const platformMessages = {
     noWork: "No work yet",
     noWorkHint:
       "Issues appear here after they are assigned to you or you join them.",
+    running: "Running",
+    pending: "Pending",
     resourcesHint:
       "Manage agents and execution environments you own and share them with workspaces.",
     workspaceHint:
       "A workspace is the collaboration boundary for members, projects, agents, and execution environments.",
-    createWorkspace: "Create space",
+    createWorkspace: "Create cloud space",
+    cloudStorageNotice:
+      "The space, projects, and issues are stored in Wegent Cloud for cross-device collaboration in Wework and on the web.",
+    localStorage: "Local · This device only",
+    cloudStorage: "Cloud · Cross-device",
+    localSpaces: "This device",
+    cloudSpaces: "Cloud spaces",
+    localOnlyHint:
+      "Only the local space is available. Create a cloud space to invite members and collaborate across devices.",
     joinWorkspace: "Join space",
     noSpaces: "No collaboration spaces yet",
     noSpacesHint:
@@ -195,12 +215,14 @@ function CollaborationPlatformNavigation({
   }
   return (
     <aside
-      className="collaboration-platform-sidebar"
+      className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}`}
       data-testid="collaboration-platform-sidebar"
     >
       {!workspace ? (
         <>
-          <div className="collaboration-platform-brand">Wegent</div>
+          {host.capabilities.sidebarPresentation !== "context" ? (
+            <div className="collaboration-platform-brand">Wegent</div>
+          ) : null}
           <nav>
             <button
               type="button"
@@ -286,9 +308,14 @@ function CollaborationPlatformNavigation({
           <label className="collaboration-workspace-identity">
             <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
             <span>
-              <small>{messages.currentWorkspace}</small>
+              <small>
+                {messages.currentWorkspace} ·{" "}
+                {workspace.location === "local"
+                  ? messages.localStorage
+                  : messages.cloudStorage}
+              </small>
               <select
-                aria-label={messages.workspaceHome}
+                aria-label={messages.currentWorkspace}
                 data-testid="collaboration-workspace-switcher"
                 value={workspace.id}
                 onChange={(event) =>
@@ -465,6 +492,90 @@ function ProjectCards({
   );
 }
 
+function WorkspaceCards({
+  workspaces,
+  messages,
+  separateByLocation,
+  onOpen,
+}: {
+  workspaces: CollaborationWorkspace[];
+  messages: PlatformMessages;
+  separateByLocation: boolean;
+  onOpen(workspace: CollaborationWorkspace): void;
+}) {
+  const groups = separateByLocation
+    ? ([
+        {
+          location: "local" as const,
+          title: messages.localSpaces,
+          items: workspaces.filter(
+            (workspace) => workspace.location === "local",
+          ),
+        },
+        {
+          location: "cloud" as const,
+          title: messages.cloudSpaces,
+          items: workspaces.filter(
+            (workspace) => workspace.location === "cloud",
+          ),
+        },
+      ] as const)
+    : ([
+        {
+          location: "cloud" as const,
+          title: "",
+          items: workspaces,
+        },
+      ] as const);
+
+  return (
+    <div className="collaboration-workspace-groups">
+      {groups.map((group) =>
+        group.items.length ? (
+          <section
+            className="collaboration-workspace-group"
+            data-location={group.location}
+            key={group.location}
+          >
+            {group.title ? <h2>{group.title}</h2> : null}
+            <div className="collaboration-workspace-card-grid">
+              {group.items.map((workspace) => (
+                <button
+                  type="button"
+                  className="collaboration-workspace-card"
+                  data-location={workspace.location}
+                  data-testid={`collaboration-workspace-${workspace.id}`}
+                  key={workspace.id}
+                  onClick={() => onOpen(workspace)}
+                >
+                  <div className="collaboration-workspace-card-heading">
+                    <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
+                    <small className="collaboration-workspace-storage">
+                      {workspace.location === "local"
+                        ? messages.localStorage
+                        : messages.cloudStorage}
+                    </small>
+                  </div>
+                  <strong>{workspace.name}</strong>
+                  <p>{workspace.description}</p>
+                  <small className="collaboration-workspace-counts">
+                    {workspace.member_count} {messages.memberCount} ·{" "}
+                    {workspace.agent_count} {messages.agentCount} ·{" "}
+                    {workspace.execution_environment_count}{" "}
+                    {messages.environmentCount} · {workspace.project_count}{" "}
+                    {messages.projectCount}
+                  </small>
+                  <em>{messages.enterWorkspace} →</em>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null,
+      )}
+    </div>
+  );
+}
+
 function WorkspaceResourceList({
   title,
   kind,
@@ -619,6 +730,11 @@ export function CollaborationPlatformApp({
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const workspaceLocations = host.capabilities.workspaceLocations ?? ["cloud"];
+  const showsLocalAndCloud =
+    workspaceLocations.includes("local") &&
+    workspaceLocations.includes("cloud");
+  const canCreateCloudWorkspace = workspaceLocations.includes("cloud");
   useEffect(() => {
     if (!state.loading && !state.error) onReady?.();
   }, [onReady, state.error, state.loading]);
@@ -727,7 +843,11 @@ export function CollaborationPlatformApp({
                       {issue.project_name} · {issue.status}
                     </small>
                   </span>
-                  <em>{issue.has_active_task ? "执行中" : "待处理"}</em>
+                  <em>
+                    {issue.has_active_task
+                      ? messages.running
+                      : messages.pending}
+                  </em>
                 </button>
               ))}
             </div>
@@ -778,16 +898,26 @@ export function CollaborationPlatformApp({
           title={messages.allSpaces}
           subtitle={messages.workspaceHint}
           action={
-            <button
-              type="button"
-              className="collaboration-primary-button"
-              data-testid="collaboration-workspace-create"
-              onClick={() => setWorkspaceDialogOpen(true)}
-            >
-              ＋ {messages.createWorkspace}
-            </button>
+            canCreateCloudWorkspace ? (
+              <button
+                type="button"
+                className="collaboration-primary-button"
+                data-testid="collaboration-workspace-create"
+                onClick={() => setWorkspaceDialogOpen(true)}
+              >
+                ＋ {messages.createWorkspace}
+              </button>
+            ) : null
           }
         />
+        {!canCreateCloudWorkspace ? (
+          <div
+            className="collaboration-platform-notice"
+            data-testid="collaboration-local-only-notice"
+          >
+            {messages.localOnlyHint}
+          </div>
+        ) : null}
         <label className="collaboration-platform-search">
           <span>⌕</span>
           <input
@@ -798,48 +928,33 @@ export function CollaborationPlatformApp({
           />
         </label>
         {workspaces.length ? (
-          <div className="collaboration-workspace-card-grid">
-            {workspaces.map((workspace) => (
-              <button
-                type="button"
-                className="collaboration-workspace-card"
-                data-testid={`collaboration-workspace-${workspace.id}`}
-                key={workspace.id}
-                onClick={() =>
-                  navigateWithin(host, {
-                    workspaceId: workspace.id,
-                    workspaceView: "home",
-                    projectId: null,
-                    issueId: null,
-                  })
-                }
-              >
-                <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
-                <strong>{workspace.name}</strong>
-                <p>{workspace.description}</p>
-                <small>
-                  {workspace.member_count} {messages.memberCount} ·{" "}
-                  {workspace.agent_count} {messages.agentCount} ·{" "}
-                  {workspace.execution_environment_count}{" "}
-                  {messages.environmentCount} · {workspace.project_count}{" "}
-                  {messages.projectCount}
-                </small>
-                <em>{messages.enterWorkspace} →</em>
-              </button>
-            ))}
-          </div>
+          <WorkspaceCards
+            workspaces={workspaces}
+            messages={messages}
+            separateByLocation={showsLocalAndCloud}
+            onOpen={(workspace) =>
+              navigateWithin(host, {
+                workspaceId: workspace.id,
+                workspaceView: "home",
+                projectId: null,
+                issueId: null,
+              })
+            }
+          />
         ) : (
           <EmptyState
             title={messages.noSpaces}
             description={messages.noSpacesHint}
             action={
-              <button
-                type="button"
-                className="collaboration-primary-button"
-                onClick={() => setWorkspaceDialogOpen(true)}
-              >
-                {messages.createWorkspace}
-              </button>
+              canCreateCloudWorkspace ? (
+                <button
+                  type="button"
+                  className="collaboration-primary-button"
+                  onClick={() => setWorkspaceDialogOpen(true)}
+                >
+                  {messages.createWorkspace}
+                </button>
+              ) : undefined
             }
           />
         )}
@@ -1147,6 +1262,9 @@ function WorkspaceCreateDialog({
         aria-label={messages.createWorkspace}
       >
         <h2>{messages.createWorkspace}</h2>
+        <p className="collaboration-workspace-storage-notice">
+          {messages.cloudStorageNotice}
+        </p>
         <label>
           {messages.name}
           <input

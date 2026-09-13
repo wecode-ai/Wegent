@@ -208,7 +208,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         assert.equal(persistedWorkspace.project_count, 1)
         const persistedProjects = await request(`/api/v1/workspaces/${workspace.id}/projects`)
         assert.ok(persistedProjects.items.some(candidate => candidate.id === project.id))
-        await control.command('waitFor', scoped('[data-testid="collaboration-board"]'), {
+        await control.command('waitFor', scoped('[data-testid="collaboration-root"]'), {
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
@@ -256,30 +259,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           }),
         })
 
-        await control.command('click', '[data-testid="workspace-tab-add"]')
-        await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('click', '[data-testid="workspace-tab-add-board"]')
-        await control.command('waitFor', scoped('[data-testid="cloud-todo-workspace"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('navigate', 'body', {
-          value: `/todo?projectStore=backend&projectId=${encodeURIComponent(project.id)}`,
-        })
-        await control.command('waitFor', scoped('[data-testid="cloud-todo-workspace"]'), {
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`), {
-          text: ISSUE_TITLE,
-          timeoutMs: uiTimeoutMs,
-        })
-        await capture(control, 'collaboration-shared-core-05-project-board.png')
-
-        await control.command('click', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
         await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'), {
           timeoutMs: uiTimeoutMs,
         })
+        await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
         const activityComposerSelector = scoped('[data-testid="cloud-task-activity-composer"]')
@@ -287,7 +270,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         assert.equal(
           await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
           ISSUE_TITLE,
-          'The mature Wework Issue detail did not load the selected real backend Issue'
+          'The shared Wework Issue detail did not load the selected real backend Issue'
         )
 
         await control.command('fill', activityComposerSelector, {

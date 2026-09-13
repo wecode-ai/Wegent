@@ -86,6 +86,35 @@ describe("CollaborationProjectViewShell permissions", () => {
     });
   });
 
+  it("honors an exact files extension before applying legacy remapping", () => {
+    const fileExtension: CollaborationProjectViewExtension = {
+      id: "files",
+      label: "Files",
+      testId: "files-extension",
+      content: "host-files-content",
+    };
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+      automationSupported: false,
+      extensions: [fileExtension],
+    });
+
+    expect(
+      resolveCollaborationProjectView({
+        extensions: [fileExtension],
+        options,
+        slots,
+        view: "files",
+      }),
+    ).toEqual({
+      content: "host-files-content",
+      view: "files",
+      viewChanged: false,
+    });
+  });
+
   it("limits a system board to its explicitly enabled standard views", () => {
     const options = buildCollaborationProjectViewOptions({
       project: { access_role: "Owner" },

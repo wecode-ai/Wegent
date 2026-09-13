@@ -825,10 +825,23 @@ export function createLocalDeliveryApi(
         version: number
       }
     ) {
-      const record = await request<LocalLoopItemRecord>('projects.update', {
-        project_id: projectId,
-        project: data,
-      })
+      const update = (version: number) =>
+        request<LocalLoopItemRecord>('projects.update', {
+          project_id: projectId,
+          project: { ...data, version },
+        })
+      let record: LocalLoopItemRecord
+      try {
+        record = await update(data.version)
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+        if (code !== 'version_conflict') throw error
+        const current = (await request<LocalLoopItemRecord[]>('projects.list')).find(
+          project => String(project.id) === String(projectId)
+        )
+        if (!current) throw error
+        record = await update(current.version)
+      }
       return localProject(record)
     },
     async archiveCloudProject(projectId: CloudProjectId, version: number) {

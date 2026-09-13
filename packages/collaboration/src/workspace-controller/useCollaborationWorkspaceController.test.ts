@@ -606,6 +606,35 @@ describe("collaboration workspace controller", () => {
     ]);
   });
 
+  it("reconciles an open Issue with the latest project snapshot", async () => {
+    const completedIssue = {
+      ...issue,
+      status: "completed" as const,
+      version: 2,
+      completed_at: "2026-09-13T09:00:00Z",
+    };
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+    };
+    const api = createApi();
+    api.issues.getBoardSnapshot = vi.fn().mockResolvedValue({
+      items: [completedIssue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    const { commands } = createController(api);
+
+    await commands.loadProjectSnapshot(project.id);
+
+    expect(state.issues).toEqual([completedIssue]);
+    expect(state.selectedIssue).toEqual(completedIssue);
+  });
+
   it("ignores a project response that finishes after a newer project load", async () => {
     const newerProject = {
       ...project,

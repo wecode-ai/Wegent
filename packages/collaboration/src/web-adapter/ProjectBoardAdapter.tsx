@@ -9,6 +9,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type HTMLAttributes,
   type ReactNode,
 } from "react";
 
@@ -24,6 +25,7 @@ import {
   type ProjectBoardGroupBy,
   type StandardCloudBoardMutation,
 } from "../project-board";
+import type { WorkspaceTaskBinding } from "../ports/SharedWorkspaceApi";
 import { canEditCollaborationIssue } from "../permissions";
 import { collaborationTestIds } from "../testIds";
 import type {
@@ -123,6 +125,29 @@ export interface ProjectBoardAdapterLabels {
   unassigned: string;
 }
 
+export interface ProjectBoardIssueCardRenderContext {
+  column: ProjectBoardColumn;
+  defaultCard: ReactNode;
+  display: {
+    showAssignee: boolean;
+    showDate: boolean;
+    showPriority: boolean;
+    showTags: boolean;
+  };
+  focused: boolean;
+  issue: CollaborationIssue;
+  nativeContainerProps: Omit<
+    HTMLAttributes<HTMLElement>,
+    "children" | "className" | "style"
+  >;
+  onOpen(): void;
+  taskBindings: WorkspaceTaskBinding[];
+}
+
+export type ProjectBoardIssueCardRenderer = (
+  context: ProjectBoardIssueCardRenderContext,
+) => ReactNode;
+
 interface ProjectBoardAdapterProps {
   boardError: string | null;
   agents: CollaborationAgent[];
@@ -131,6 +156,7 @@ interface ProjectBoardAdapterProps {
   members: CollaborationMember[];
   project: CollaborationProject;
   statuses: CollaborationStatus[];
+  taskBindings: WorkspaceTaskBinding[];
   onCreateIssue(): void;
   onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
@@ -138,6 +164,7 @@ interface ProjectBoardAdapterProps {
     issue: CollaborationIssue,
     mutation: StandardCloudBoardMutation<CollaborationIssue>,
   ): Promise<void>;
+  renderIssueCard?: ProjectBoardIssueCardRenderer;
 }
 
 function issueSearchText(
@@ -169,7 +196,9 @@ export function ProjectBoardAdapter({
   onMove,
   onOpen,
   project,
+  renderIssueCard,
   statuses,
+  taskBindings,
 }: ProjectBoardAdapterProps) {
   const createColumns = useCallback(
     (groupBy: ProjectBoardGroupBy): ProjectBoardColumn[] =>
@@ -370,19 +399,9 @@ export function ProjectBoardAdapter({
             </select>
           </label>
         )}
-        renderItem={(issue, column) => (
-          <CollaborationIssueCard
-            item={issue}
-            reference={`${project.project_key}-${issue.sequence_number}`}
-            labels={cardLabels}
-            display={{
-              showAssignee: display.show_assignee,
-              showDate: display.show_date,
-              showPriority: display.show_priority,
-              showTags: display.show_tags,
-            }}
-            articleTestId={collaborationTestIds.issue(issue.id)}
-            articleProps={{
+        renderItem={(issue, column) => {
+          const nativeContainerProps: ProjectBoardIssueCardRenderContext["nativeContainerProps"] =
+            {
               draggable: canEditCollaborationIssue(issue),
               onDragStart: (event) => {
                 if (!canEditCollaborationIssue(issue)) {
@@ -407,22 +426,51 @@ export function ProjectBoardAdapter({
                   controller.moveItem(itemId, column, issue.id);
                 }
               },
-            }}
-            detailButtonProps={{ onClick: () => onOpen(issue) }}
-            childrenAction={
-              issues.some((candidate) => candidate.parent_id === issue.id) ? (
-                <button
-                  type="button"
-                  data-testid={`collaboration-issue-children-${issue.id}`}
-                  onClick={() => controller.setCurrentParentId(issue.id)}
-                  className="mx-3 mb-3 text-xs text-text-secondary hover:text-text-primary"
-                >
-                  查看子任务
-                </button>
-              ) : null
-            }
-          />
-        )}
+            };
+          const issueDisplay = {
+            showAssignee: display.show_assignee,
+            showDate: display.show_date,
+            showPriority: display.show_priority,
+            showTags: display.show_tags,
+          };
+          const defaultCard = (
+            <CollaborationIssueCard
+              item={issue}
+              reference={`${project.project_key}-${issue.sequence_number}`}
+              labels={cardLabels}
+              display={issueDisplay}
+              articleTestId={collaborationTestIds.issue(issue.id)}
+              articleProps={nativeContainerProps}
+              detailButtonProps={{ onClick: () => onOpen(issue) }}
+              childrenAction={
+                issues.some((candidate) => candidate.parent_id === issue.id) ? (
+                  <button
+                    type="button"
+                    data-testid={`collaboration-issue-children-${issue.id}`}
+                    onClick={() => controller.setCurrentParentId(issue.id)}
+                    className="mx-3 mb-3 text-xs text-text-secondary hover:text-text-primary"
+                  >
+                    查看子任务
+                  </button>
+                ) : null
+              }
+            />
+          );
+          return (
+            renderIssueCard?.({
+              column,
+              defaultCard,
+              display: issueDisplay,
+              focused: controller.state.focusExecutionColumns,
+              issue,
+              nativeContainerProps,
+              onOpen: () => onOpen(issue),
+              taskBindings: taskBindings.filter(
+                (binding) => binding.issueId === issue.id,
+              ),
+            }) ?? defaultCard
+          );
+        }}
         renderSearchIcon={() => <span aria-hidden="true">⌕</span>}
         renderSkeleton={() => null}
         renderTooltip={(_label, child) => child}

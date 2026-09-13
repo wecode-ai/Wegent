@@ -425,6 +425,68 @@ describe('local delivery API', () => {
     })
   })
 
+  test('retries a local project update with the latest version after task creation', async () => {
+    const conflict = Object.assign(new Error('task changed'), {
+      code: 'version_conflict',
+    })
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce([{ ...projectRecord, version: 2 }])
+      .mockResolvedValueOnce({
+        ...projectRecord,
+        version: 3,
+        metadata: {
+          ...projectRecord.metadata,
+          board_config: {
+            group_by: 'priority',
+            processing_start_status_id: 'pending',
+            statuses: [],
+          },
+        },
+      })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.updateCloudProject('project-1', {
+        version: 1,
+        board_config: {
+          group_by: 'priority',
+          processing_start_status_id: 'pending',
+          statuses: [],
+        },
+      })
+    ).resolves.toMatchObject({
+      version: 3,
+      board_config: {
+        group_by: 'priority',
+      },
+    })
+    expect(request).toHaveBeenNthCalledWith(1, 'projects.update', {
+      project_id: 'project-1',
+      project: {
+        version: 1,
+        board_config: {
+          group_by: 'priority',
+          processing_start_status_id: 'pending',
+          statuses: [],
+        },
+      },
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'projects.list')
+    expect(request).toHaveBeenNthCalledWith(3, 'projects.update', {
+      project_id: 'project-1',
+      project: {
+        version: 2,
+        board_config: {
+          group_by: 'priority',
+          processing_start_status_id: 'pending',
+          statuses: [],
+        },
+      },
+    })
+  })
+
   test('persists the local coding project without exposing its system tag', async () => {
     const associatedRecord = {
       ...taskRecord,

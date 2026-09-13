@@ -60,6 +60,20 @@ interface SearchUser {
   user_name: string
 }
 
+function collaborationProjectPath(
+  workspaceId: string,
+  projectId: string,
+  options: { issueId?: string; view?: string } = {}
+): string {
+  const base = `/collaboration/workspaces/${encodeURIComponent(
+    workspaceId
+  )}/projects/${encodeURIComponent(projectId)}`
+  const path = options.issueId ? `${base}/issues/${encodeURIComponent(options.issueId)}` : base
+  return options.view && options.view !== 'board'
+    ? `${path}?view=${encodeURIComponent(options.view)}`
+    : path
+}
+
 async function captureEvidence(page: Page, name: string): Promise<void> {
   if (!evidenceDir) return
   await mkdir(evidenceDir, { recursive: true })
@@ -155,7 +169,7 @@ async function createProjectByUi(
     `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`
   )
 
-  await page.getByTestId('collaboration-project-back').click()
+  await page.getByTestId('collaboration-workspace-nav-projects').click()
   await expect(page.getByTestId(`collaboration-project-card-${project.id}`)).toContainText(
     project.name
   )
@@ -322,6 +336,7 @@ async function dragIssueTo(page: Page, issueId: string, columnKey: string): Prom
 async function openRestrictedProject(
   browser: Browser,
   ownerPage: Page,
+  workspaceId: string,
   projectId: string,
   view: 'files' | 'automation' | 'manage'
 ) {
@@ -340,7 +355,7 @@ async function openRestrictedProject(
     ),
   })
   const page = await context.newPage()
-  await page.goto(`/collaboration/${encodeURIComponent(projectId)}?view=${view}`)
+  await page.goto(collaborationProjectPath(workspaceId, projectId, { view }))
   return { context, page }
 }
 
@@ -385,24 +400,26 @@ test.describe('Collaboration cloud capabilities', () => {
 
       await page.getByTestId(`collaboration-project-card-${project.id}`).click()
       await expect(page.getByTestId('collaboration-board')).toBeVisible()
-      await page.goto(`/collaboration/${encodeURIComponent(project.id)}`)
+      await page.goto(collaborationProjectPath(workspace.id, project.id))
       await expect(page.getByTestId('collaboration-root')).toBeVisible()
-      await expect(page.getByTestId(`cloud-sidebar-project-${project.id}`)).toContainText(
+      await expect(page.getByTestId(`collaboration-workspace-project-${project.id}`)).toContainText(
         project.name
       )
-      await expect(page.getByTestId('cloud-project-header-title')).toContainText(project.name)
-      await expect(page.getByTestId('cloud-projects-home-my-work')).toHaveCount(0)
-
-      const sidebarProject = page.getByTestId(`cloud-sidebar-project-${project.id}`)
-      await expect(sidebarProject).toContainText(project.name)
-      await expect(sidebarProject).toHaveCSS('color', 'rgb(51, 51, 51)')
-      await sidebarProject.click()
-      await expect(page).toHaveURL(new RegExp(`/collaboration/${project.id}$`))
+      await expect(page.getByTestId(`collaboration-workspace-project-${project.id}`)).toHaveClass(
+        /active/
+      )
+      await page.getByTestId(`collaboration-workspace-project-${project.id}`).click()
+      await expect(page).toHaveURL(
+        new RegExp(
+          `${collaborationProjectPath(workspace.id, project.id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`
+        )
+      )
       const member = await regularUser(page)
       await addProjectMember(page, project.id, member.id, 'Developer')
       await page.reload()
-      await expect(sidebarProject).toContainText(project.name)
-      await expect(sidebarProject).toHaveCSS('color', 'rgb(51, 51, 51)')
+      await expect(page.getByTestId(`collaboration-workspace-project-${project.id}`)).toContainText(
+        project.name
+      )
 
       await page.getByTestId('collaboration-issue-create').click()
       await page.getByTestId('cloud-todo-title').fill(`Cloud Issue ${suffix}`)
@@ -417,9 +434,9 @@ test.describe('Collaboration cloud capabilities', () => {
         )
       })
       const issueDetailNavigation = page.waitForURL(url =>
-        new RegExp(`/collaboration/${encodeURIComponent(project.id)}/issues/[^/?]+$`).test(
-          url.pathname
-        )
+        new RegExp(
+          `${collaborationProjectPath(workspace.id, project.id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/issues/[^/?]+$`
+        ).test(url.pathname)
       )
       await page.getByTestId('cloud-todo-create-confirm').click()
       const [createdIssueResponse] = await Promise.all([issueCreateResponse, issueDetailNavigation])
@@ -429,9 +446,9 @@ test.describe('Collaboration cloud capabilities', () => {
       ).toBe(true)
       const createdIssue = (await createdIssueResponse.json()) as CloudIssue
       expect(new URL(page.url()).pathname).toBe(
-        `/collaboration/${encodeURIComponent(project.id)}/issues/${encodeURIComponent(
-          createdIssue.id
-        )}`
+        collaborationProjectPath(workspace.id, project.id, {
+          issueId: createdIssue.id,
+        })
       )
       await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
       const issueId = createdIssue.id
@@ -504,7 +521,7 @@ test.describe('Collaboration cloud capabilities', () => {
       })
       const created = await createIssueByApi(page, project.id, `Grouped Issue ${suffix}`)
 
-      await page.goto(`/collaboration/${encodeURIComponent(project.id)}`)
+      await page.goto(collaborationProjectPath(workspace.id, project.id))
       await expect(page.getByTestId(`collaboration-issue-${created.id}`)).toBeVisible()
 
       await selectGroupBy(page, project.id, 'priority')
@@ -567,7 +584,8 @@ test.describe('Collaboration cloud capabilities', () => {
         taskAttachmentName,
         'cloud task attachment evidence'
       )
-      await page.goto(`/collaboration/${encodeURIComponent(project.id)}?view=files`)
+      await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
+      await page.getByTestId('collaboration-project-settings-files').click()
       await expect(page.getByTestId('cloud-files-view')).toBeVisible()
       await expect(page.getByTestId(`task-attachment-${taskAttachment.id}`)).toContainText(
         taskAttachmentName
@@ -660,9 +678,10 @@ test.describe('Collaboration cloud capabilities', () => {
       workspaceId = workspace.id
       const project = await createProjectByApi(page, workspace.id, `Automation ${suffix}`)
       projectId = project.id
-      await page.goto(`/collaboration/${encodeURIComponent(project.id)}?view=automation`)
+      await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
+      await page.getByTestId('collaboration-project-settings-dispatch').click()
       await expect(page.getByTestId('project-automation-policy')).toBeVisible()
-      await page.getByTestId('automation-empty-create-policy').click()
+      await page.getByTestId('automation-welcome-create-policy').click()
 
       const createResponse = page.waitForResponse(
         response =>
@@ -761,9 +780,7 @@ test.describe('Collaboration cloud capabilities', () => {
         },
       })
 
-      await page.goto(
-        `/collaboration/${encodeURIComponent(project.id)}/issues/${encodeURIComponent(created.id)}`
-      )
+      await page.goto(collaborationProjectPath(workspace.id, project.id, { issueId: created.id }))
       await expect(page.getByTestId('cloud-todo-workflow-dag')).toBeVisible()
       await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
       await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toBeVisible()
@@ -821,8 +838,9 @@ test.describe('Collaboration cloud capabilities', () => {
       const project = await createProjectByApi(page, workspace.id, `Manage ${suffix}`)
       projectId = project.id
       const member = await regularUser(page)
-      await page.goto(`/collaboration/${encodeURIComponent(project.id)}?view=manage`)
+      await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
 
+      await page.getByTestId('collaboration-project-settings-members').click()
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
       await page.getByTestId('cloud-member-role').selectOption('Reporter')
@@ -838,6 +856,7 @@ test.describe('Collaboration cloud capabilities', () => {
         })
         .toBe('Reporter')
 
+      await page.getByTestId('collaboration-project-settings-project').click()
       await page.getByTestId('cloud-project-manage-visibility-public').click()
       await expect
         .poll(async () => {
@@ -911,10 +930,21 @@ test.describe('Collaboration cloud capabilities', () => {
       )
 
       for (const view of ['files', 'automation', 'manage'] as const) {
-        const restricted = await openRestrictedProject(browser, page, project.id, view)
+        const restricted = await openRestrictedProject(
+          browser,
+          page,
+          workspace.id,
+          project.id,
+          view
+        )
         try {
           await expect(restricted.page).toHaveURL(
-            new RegExp(`/collaboration/${project.id}(?:\\?view=board)?$`)
+            new RegExp(
+              `${collaborationProjectPath(workspace.id, project.id).replace(
+                /[.*+?^${}()|[\]\\]/g,
+                '\\$&'
+              )}(?:\\?view=board)?$`
+            )
           )
           await expect(restricted.page.getByTestId('collaboration-board')).toBeVisible()
           await expect(restricted.page.getByTestId(`collaboration-tab-${view}`)).toHaveCount(0)

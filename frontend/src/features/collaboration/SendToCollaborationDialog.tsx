@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 
 import { apiClient } from '@/apis/client'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { collaborationLocationPath } from '@/features/collaboration/routes'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -75,9 +76,22 @@ export function SendToCollaborationDialog({
             : { kind: 'existing_issue', issueId },
         note: note.trim() || undefined,
       })
+      const project =
+        projects.find(candidate => candidate.id === projectId) ??
+        (await api.projects.get(projectId))
+      if (!project.workspace_id) {
+        throw new Error('Project is not linked to a collaboration workspace')
+      }
       toast.success(t('collaboration.success'))
       onOpenChange(false)
-      window.location.href = `/collaboration/${encodeURIComponent(projectId)}/issues/${encodeURIComponent(response.issue.id)}`
+      window.location.href = collaborationLocationPath({
+        platformView: 'spaces',
+        workspaceId: project.workspace_id,
+        workspaceView: 'projects',
+        projectId,
+        projectView: 'board',
+        issueId: response.issue.id,
+      })
     } catch {
       toast.error(t('collaboration.failed'))
     } finally {

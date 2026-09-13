@@ -141,6 +141,34 @@
   backdrop-filter: blur(12px);
 }
 
+.automation-policy-editor-heading {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.automation-policy-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.automation-policy-switcher select {
+  min-width: 220px;
+  max-width: 420px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  outline: 0;
+  padding: 7px 30px 7px 10px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-surface));
+}
+
+.automation-policy-switcher select:focus {
+  border-color: rgb(var(--color-primary));
+  box-shadow: 0 0 0 2px rgb(var(--color-primary) / 0.1);
+}
+
 .automation-policy-editor-header input {
   width: min(480px, 48vw);
   border: 0;
@@ -317,6 +345,12 @@
 .automation-policy-inline-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.automation-policy-schedule-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 
@@ -501,7 +535,7 @@
 
 .automation-policy-run-list article {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
   gap: 11px;
   align-items: center;
   padding: 14px 16px;
@@ -524,6 +558,14 @@
 .automation-policy-run-list article > span:last-child {
   color: rgb(var(--color-text-muted));
   font-size: 12px;
+}
+
+.automation-policy-run-list article > button {
+  border: 0;
+  padding: 5px 0;
+  color: rgb(var(--color-primary));
+  background: transparent;
+  cursor: pointer;
 }
 
 .automation-policy-run-status {
@@ -577,10 +619,6 @@
 }
 
 @media (max-width: 900px) {
-  .automation-policy {
-    grid-template-columns: 220px minmax(0, 1fr);
-  }
-
   .automation-policy-choice-grid {
     grid-template-columns: 1fr;
   }
@@ -590,15 +628,6 @@
   .automation-policy {
     display: block;
     overflow: auto;
-  }
-
-  .automation-policy-sidebar {
-    border-right: 0;
-    border-bottom: 1px solid rgb(var(--color-border));
-  }
-
-  .automation-policy-rule-list {
-    max-height: 210px;
   }
 
   .automation-policy-editor-header,
@@ -613,5 +642,15 @@
 
   .automation-policy-header-actions {
     justify-content: flex-start;
+  }
+
+  .automation-policy-switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .automation-policy-switcher select {
+    width: 100%;
+    max-width: none;
   }
 }

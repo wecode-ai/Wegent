@@ -119,7 +119,10 @@ test.describe('Collaboration module', () => {
     workspaceId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(workspaceId).not.toBe('')
     await expect(page.getByTestId('collaboration-workspace-back')).toBeVisible()
-    await expect(page.getByText(workspaceName, { exact: true }).first()).toBeVisible()
+    await expect(page.getByTestId('collaboration-workspace-switcher')).toHaveValue(workspaceId)
+    await expect(
+      page.getByTestId('collaboration-workspace-switcher').locator('option:checked')
+    ).toHaveText(workspaceName)
 
     await page.getByTestId('collaboration-workspace-back').click()
     await expect(page).toHaveURL(/\/collaboration$/)

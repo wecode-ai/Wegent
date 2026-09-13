@@ -2,13 +2,34 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
+const WORKSPACE = {
+  id: 'workspace-task-attachments',
+  name: '附件验收空间',
+  description: '远程项目附件验收空间',
+  access_role: 'Owner',
+  member_count: 1,
+  agent_count: 0,
+  execution_environment_count: 0,
+  project_count: 1,
+  created_by_user_id: 9001,
+  version: 1,
+  created_at: '2026-08-17T00:00:00',
+  updated_at: '2026-08-17T00:00:00',
+}
+
 const PROJECT = {
   id: '896185331840201807',
   public_id: 'e2e-task-attachments',
   project_key: 'TA',
   name: '任务附件验收',
   description: '远程项目仅在显式交付后共享文件',
+  workspace_id: WORKSPACE.id,
+  access_role: 'Owner',
   project_store: 'backend',
+  task_provider: 'local',
+  provider_config: {},
+  tags: [],
+  visibility: 'private',
   created_by_user_id: 9001,
   status: 'active',
   version: 1,
@@ -73,8 +94,44 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
 
+      if (url.pathname === '/api/v1/workspaces') {
+        json(response, 200, { items: [WORKSPACE] })
+        return true
+      }
+
+      if (url.pathname === `/api/v1/workspaces/${WORKSPACE.id}`) {
+        json(response, 200, WORKSPACE)
+        return true
+      }
+
+      if (url.pathname === `/api/v1/workspaces/${WORKSPACE.id}/projects`) {
+        json(response, 200, { items: [PROJECT] })
+        return true
+      }
+
+      if (
+        [
+          `/api/v1/workspaces/${WORKSPACE.id}/members`,
+          `/api/v1/workspaces/${WORKSPACE.id}/agents`,
+          `/api/v1/workspaces/${WORKSPACE.id}/execution-environments`,
+        ].includes(url.pathname)
+      ) {
+        json(response, 200, { items: [] })
+        return true
+      }
+
+      if (url.pathname === '/api/v1/resources') {
+        json(response, 200, { agents: [], execution_environments: [] })
+        return true
+      }
+
       if (url.pathname === '/api/v1/cloud-projects') {
         json(response, 200, { items: [PROJECT] })
+        return true
+      }
+
+      if (url.pathname === `/api/v1/cloud-projects/${PROJECT.id}`) {
+        json(response, 200, PROJECT)
         return true
       }
 
@@ -85,6 +142,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           members: [],
           agents: [AGENT],
         })
+        return true
+      }
+
+      if (url.pathname === `/api/v1/cloud-projects/${PROJECT.id}/members`) {
+        json(response, 200, { items: [] })
         return true
       }
 
@@ -134,31 +196,56 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
-      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="workspace-tab-add"]')
-      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', '[data-testid="workspace-tab-add-board"]')
-      await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
       await control.command(
-        'click',
-        `${activeBoard} [data-testid="cloud-sidebar-project-${PROJECT.id}"]`,
-        { visible: true }
+        'waitFor',
+        `${activeBoard} [data-testid="wework-collaboration-platform"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
       )
-      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-card-TA-1"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-
       await control.command(
         'click',
-        `${activeBoard} [data-testid="cloud-project-files-view"]`,
-        { visible: true }
+        `${activeBoard} [data-testid="collaboration-workspace-${WORKSPACE.id}"]`
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="collaboration-workspace-project-${PROJECT.id}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="collaboration-workspace-project-${PROJECT.id}"]`
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="collaboration-board"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="collaboration-issue-${TASK.id}"]`,
+        {
+          text: TASK.title,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+
+      await control.command('click', `${activeBoard} [data-testid="collaboration-tab-manage"]`)
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="collaboration-project-settings-files"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="collaboration-project-settings-files"]`
       )
       await captureScreenshot(control, 'task-attachments-after-files-click.png')
       const filesView = `${activeBoard} [data-testid="cloud-files-view"]`
@@ -176,8 +263,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         await control.command('waitFor', entrySelector, { timeoutMs: uiTimeoutMs })
         await control.command('click', `${entrySelector} button`)
       }
-      const deliveryFileSelector =
-        `${filesView} [data-testid="delivery-file-${DELIVERY_FILE.asset_id}"]`
+      const deliveryFileSelector = `${filesView} [data-testid="delivery-file-${DELIVERY_FILE.asset_id}"]`
       await control.command('waitFor', deliveryFileSelector, {
         timeoutMs: uiTimeoutMs,
       })
@@ -213,11 +299,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       assert.match(previewTitle, /reports\/result\.pdf/)
 
-      await captureScreenshot(
-        control,
-        'task-attachments-remote-delivery-only.png',
-        activeBoard
-      )
+      await captureScreenshot(control, 'task-attachments-remote-delivery-only.png', activeBoard)
     },
 
     diagnostics() {

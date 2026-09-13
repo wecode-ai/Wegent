@@ -594,8 +594,12 @@ const sharedMessages: Record<
     "todo.assignment_source_description":
       "手动分配、成员主动参与和项目调度会分别记录来源；流程标识只说明分配来自哪个流程，不改变执行任务。",
     "todo.dispatch_policy": "项目调度原则",
-    "todo.dispatch_policy_unavailable":
-      "当前空间未启用 AI 项目管家。成员仍可在 Issue 中手动分配或主动开始处理。",
+    "todo.dispatch_policy_unavailable_manager":
+      "当前空间未启用 AI 项目管家。先配置本项目可用智能体，再返回这里设置调度原则。",
+    "todo.dispatch_policy_unavailable_member":
+      "当前空间未启用 AI 项目管家。请联系项目管理员配置；你仍可手动分配 Issue 或主动开始处理。",
+    "todo.configure_project_agents": "配置项目智能体",
+    "todo.continue_manual_assignment": "继续使用手动分配",
     "todo.workflow_open_task": "打开任务",
     "todo.workflow_outcome_passed": "已通过验收",
     "todo.workflow_runtime_title": "执行记录",
@@ -972,8 +976,12 @@ const sharedMessages: Record<
     "todo.assignment_source_description":
       "Manual assignment, self-participation, and project dispatch record distinct sources. A flow identifier explains where an assignment came from without changing task execution.",
     "todo.dispatch_policy": "Project dispatch policy",
-    "todo.dispatch_policy_unavailable":
-      "This workspace has no AI project manager enabled. Members can still assign issues manually or start work themselves.",
+    "todo.dispatch_policy_unavailable_manager":
+      "This workspace has no AI project manager enabled. Configure the agents available to this project, then return here to define its dispatch policy.",
+    "todo.dispatch_policy_unavailable_member":
+      "This workspace has no AI project manager enabled. Contact a project administrator to configure one; you can still assign issues manually or start work yourself.",
+    "todo.configure_project_agents": "Configure project agents",
+    "todo.continue_manual_assignment": "Continue with manual assignment",
     "todo.workflow_open_task": "Open task",
     "todo.workflow_outcome_passed": "Review passed",
     "todo.workflow_runtime_title": "Execution history",

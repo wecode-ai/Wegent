@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   collaborationMessages,
@@ -16,9 +16,13 @@ import { IssueCreate, IssueDetail } from "./IssueDetail";
 import { CollaborationProjectViewShell } from "./project-shell";
 import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
-import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
+import {
+  ProjectBoardAdapter,
+  type ProjectBoardIssueCardRenderer,
+} from "./web-adapter/ProjectBoardAdapter";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import type {
+  CollaborationAssignment,
   CollaborationHostAdapter,
   CollaborationIssue,
   CollaborationProject,
@@ -41,6 +45,17 @@ import {
   ProjectSettingsShell,
 } from "./project-manage";
 
+export interface CollaborationIssueDetailRenderContext {
+  api: SharedWorkspaceApi;
+  project: CollaborationProject;
+  issue: CollaborationIssue;
+  allIssues: CollaborationIssue[];
+  assignments: CollaborationAssignment[];
+  onClose(): void;
+  onChange(issue: CollaborationIssue): void;
+  onCreateTask?(workflowStep?: string): void;
+}
+
 interface CollaborationAppProps {
   api: SharedWorkspaceApi;
   host: CollaborationHostAdapter;
@@ -48,12 +63,15 @@ interface CollaborationAppProps {
   pollIntervalMs?: number;
   automationUiHost?: AutomationUiHost;
   createProjectRequestKey?: number;
+  refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
   onCreateTask?(
     project: CollaborationProject,
     issue: CollaborationIssue,
     workflowStep?: string,
   ): void;
+  renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
+  renderBoardIssueCard?: ProjectBoardIssueCardRenderer;
 }
 
 function projectStatuses(
@@ -79,16 +97,6 @@ function projectStatuses(
       ];
 }
 
-function requireAutomationUiHost(
-  host: AutomationUiHost | undefined,
-): AutomationUiHost {
-  if (!host)
-    throw new Error(
-      "CollaborationApp automationUiHost is required for automation view",
-    );
-  return host;
-}
-
 export function CollaborationApp({
   api,
   host,
@@ -96,8 +104,11 @@ export function CollaborationApp({
   pollIntervalMs = 15_000,
   automationUiHost,
   createProjectRequestKey = 0,
+  refreshProjectRequestKey = 0,
   showProjectBack = true,
   onCreateTask,
+  renderBoardIssueCard,
+  renderIssueDetail,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
   const translate = useMemo(
@@ -128,6 +139,7 @@ export function CollaborationApp({
     comments,
     assignments,
     executions,
+    taskBindings,
     loading,
     error,
   } = state;
@@ -146,6 +158,13 @@ export function CollaborationApp({
         : null,
     [api, host.location.view],
   );
+  const projectManagerName = project
+    ? (members.find((member) => member.user_id === project.created_by_user_id)
+        ?.user_name ??
+      (project.created_by_user_id === project.current_user_id
+        ? (project.current_user_name ?? messages.currentUser)
+        : `#${project.created_by_user_id}`))
+    : messages.currentUser;
 
   useEffect(() => {
     host.onProjectsChange?.(projects);
@@ -154,6 +173,11 @@ export function CollaborationApp({
   useEffect(() => {
     if (createProjectRequestKey > 0) setCreateProjectOpen(true);
   }, [createProjectRequestKey]);
+
+  useEffect(() => {
+    if (refreshProjectRequestKey <= 0 || !project) return;
+    void commands.loadProjectSnapshot(project.id);
+  }, [commands, project?.id, refreshProjectRequestKey]);
 
   const navigateView = (view: CollaborationView) => {
     host.navigate({ projectId: project?.id ?? null, issueId: null, view });
@@ -303,8 +327,7 @@ export function CollaborationApp({
                     navigateView("manage");
                   }}
                 >
-                  {messages.projectManager}:{" "}
-                  {project.current_user_name ?? messages.currentUser}
+                  {messages.projectManager}: {projectManagerName}
                 </button>
               </small>
             </span>
@@ -395,6 +418,7 @@ export function CollaborationApp({
                   issues={issues}
                   members={members ?? []}
                   statuses={projectStatuses(project, messages, translate)}
+                  taskBindings={taskBindings}
                   labels={{
                     noIssues: messages.noIssues,
                     noPriority: translate("todo.priority_none", "无优先级"),
@@ -464,6 +488,7 @@ export function CollaborationApp({
                       ),
                     })
                   }
+                  renderIssueCard={renderBoardIssueCard}
                 />
               ),
             table: (
@@ -481,6 +506,12 @@ export function CollaborationApp({
                   projectKey={project.project_key}
                   searchPlaceholder={messages.searchIssues}
                   createLabel={messages.createIssue}
+                  allLabel={locale === "zh-CN" ? "全部" : "All"}
+                  tagLabel={messages.issueTags}
+                  manualAssignmentLabel={translate(
+                    "todo.manual_assignment",
+                    locale === "zh-CN" ? "Issue 内分配" : "Assigned in Issue",
+                  )}
                   statusName={(status) =>
                     projectStatuses(project, messages, translate).find(
                       (candidate) => candidate.id === status,
@@ -583,10 +614,22 @@ export function CollaborationApp({
                     testId: "collaboration-project-settings-dispatch",
                     content: (
                       <ProjectDispatchSettings
-                        project={project}
+                        canManage={
+                          project.access_role === "Owner" ||
+                          project.access_role === "Maintainer"
+                        }
+                        managerName={projectManagerName}
+                        onConfigureAgents={() => setSettingsSectionId("agents")}
+                        onContinueManualAssignment={() =>
+                          host.navigate({
+                            projectId: project.id,
+                            issueId: null,
+                            view: "board",
+                          })
+                        }
                         translate={translate}
                         automationContent={
-                          automationPorts ? (
+                          automationPorts && automationUiHost ? (
                             <ProjectAutomationRulesView
                               automationApi={automationPorts.automationApi}
                               automationCacheSource={api.automations}
@@ -595,7 +638,7 @@ export function CollaborationApp({
                                 automationPorts.incomingHooksApi
                               }
                               locale={locale}
-                              uiHost={requireAutomationUiHost(automationUiHost)}
+                              uiHost={automationUiHost}
                               project={
                                 project as CollaborationProject &
                                   AutomationProject
@@ -646,6 +689,18 @@ export function CollaborationApp({
                         }
                         translate={translate}
                         section="board"
+                      />
+                    ),
+                  },
+                  {
+                    id: "files",
+                    label: messages.files,
+                    testId: "collaboration-project-settings-files",
+                    content: (
+                      <CollaborationFilesAdapter
+                        api={api}
+                        project={project}
+                        locale={locale}
                       />
                     ),
                   },
@@ -703,43 +758,64 @@ export function CollaborationApp({
           onError={() => commands.reportError(messages.saveFailed)}
         />
       )}
-      {selectedIssue && project && (
-        <IssueDetail
-          api={api}
-          project={project}
-          issue={selectedIssue}
-          allIssues={issues}
-          comments={comments}
-          assignments={assignments}
-          executions={executions}
-          members={members}
-          agents={agents}
-          messages={messages}
-          translate={translate}
-          onClose={() => {
-            commands.clearSelectedIssue();
-            host.navigate({
-              projectId: project.id,
-              issueId: null,
-              view: host.location.view,
-            });
-          }}
-          onChange={commands.replaceIssue}
-          onCommentsChange={commands.replaceComments}
-          onAssignmentsChange={(nextAssignments) => {
-            commands.replaceAssignments(nextAssignments);
-            replaceIssueAssignments(selectedIssue.id, nextAssignments);
-          }}
-          onCreateTask={
-            onCreateTask
+      {selectedIssue && project
+        ? (renderIssueDetail?.({
+            api,
+            project,
+            issue: selectedIssue,
+            allIssues: issues,
+            assignments,
+            onClose: () => {
+              commands.clearSelectedIssue();
+              host.navigate({
+                projectId: project.id,
+                issueId: null,
+                view: host.location.view,
+              });
+            },
+            onChange: commands.replaceIssue,
+            onCreateTask: onCreateTask
               ? (workflowStep) =>
                   onCreateTask(project, selectedIssue, workflowStep)
-              : undefined
-          }
-          onConflict={commands.refreshSelectedIssue}
-          onError={() => commands.reportError(messages.saveFailed)}
-        />
-      )}
+              : undefined,
+          }) ?? (
+            <IssueDetail
+              api={api}
+              project={project}
+              issue={selectedIssue}
+              allIssues={issues}
+              comments={comments}
+              assignments={assignments}
+              executions={executions}
+              members={members}
+              agents={agents}
+              messages={messages}
+              translate={translate}
+              onClose={() => {
+                commands.clearSelectedIssue();
+                host.navigate({
+                  projectId: project.id,
+                  issueId: null,
+                  view: host.location.view,
+                });
+              }}
+              onChange={commands.replaceIssue}
+              onCommentsChange={commands.replaceComments}
+              onAssignmentsChange={(nextAssignments) => {
+                commands.replaceAssignments(nextAssignments);
+                replaceIssueAssignments(selectedIssue.id, nextAssignments);
+              }}
+              onCreateTask={
+                onCreateTask
+                  ? (workflowStep) =>
+                      onCreateTask(project, selectedIssue, workflowStep)
+                  : undefined
+              }
+              onConflict={commands.refreshSelectedIssue}
+              onError={() => commands.reportError(messages.saveFailed)}
+            />
+          ))
+        : null}
     </section>
   );
 }

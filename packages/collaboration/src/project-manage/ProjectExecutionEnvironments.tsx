@@ -22,9 +22,12 @@ export function ProjectExecutionEnvironments({
 }) {
   const [items, setItems] = useState<CollaborationExecutionEnvironment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
+    setItems([]);
+    setError("");
     if (!project.workspace_id || !api.workspaces) {
       setLoading(false);
       return;
@@ -35,13 +38,24 @@ export function ProjectExecutionEnvironments({
       .then((environments) => {
         if (active) setItems(environments);
       })
+      .catch((loadError) => {
+        if (!active) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : translate(
+                "todo.execution_environments_load_failed",
+                "加载执行环境失败",
+              ),
+        );
+      })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [api, project.workspace_id]);
+  }, [api, project.workspace_id, translate]);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
@@ -60,10 +74,21 @@ export function ProjectExecutionEnvironments({
             <p className="text-sm text-text-muted">
               {translate("common.loading", "加载中…")}
             </p>
+          ) : error ? (
+            <div
+              className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700"
+              data-testid="collaboration-project-execution-environments-error"
+              role="alert"
+            >
+              {error}
+            </div>
           ) : items.length === 0 ? (
             <div className="rounded-xl bg-muted px-4 py-5">
               <p className="text-sm font-medium">
-                {translate("todo.no_execution_environments", "还没有可用执行环境")}
+                {translate(
+                  "todo.no_execution_environments",
+                  "还没有可用执行环境",
+                )}
               </p>
               <p className="mt-1 text-sm text-text-muted">
                 {translate(

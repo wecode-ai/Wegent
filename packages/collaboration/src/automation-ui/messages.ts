@@ -20,6 +20,9 @@ const zhCN: AutomationMessages = {
   "automation.policy.welcomeDescription":
     "调度策略负责决定 Issue 何时进入执行、项目经理智能体如何拆解和分配任务。具体执行仍然发生在 Issue 内，不需要绘制流程图。",
   "automation.policy.createFirst": "创建第一条策略",
+  "automation.policy.select": "选择调度策略",
+  "automation.policy.discardChangesConfirm":
+    "当前策略有未保存的更改。放弃更改并继续吗？",
   "automation.policy.loading": "正在读取项目调度策略…",
   "automation.policy.defaultName": "Issue 智能调度",
   "automation.policy.defaultManager": "项目经理智能体",
@@ -37,6 +40,7 @@ const zhCN: AutomationMessages = {
   "automation.policy.updateFailed": "更新失败",
   "automation.policy.runFailed": "运行失败，请重试",
   "automation.policy.deleteConfirm": "删除“{{name}}”？此操作无法撤销。",
+  "automation.policy.deleteFailed": "删除失败，请重试",
   "automation.policy.reload": "重新加载",
   "automation.policy.ruleDescription":
     "每次触发时，系统都会在对应 Issue 中留下分配与执行记录。",
@@ -67,6 +71,15 @@ const zhCN: AutomationMessages = {
   "automation.policy.daily": "每天",
   "automation.policy.weekdays": "工作日",
   "automation.policy.weekly": "每周",
+  "automation.policy.weekday": "星期",
+  "automation.policy.timezone": "时区",
+  "automation.policy.monday": "周一",
+  "automation.policy.tuesday": "周二",
+  "automation.policy.wednesday": "周三",
+  "automation.policy.thursday": "周四",
+  "automation.policy.friday": "周五",
+  "automation.policy.saturday": "周六",
+  "automation.policy.sunday": "周日",
   "automation.policy.coordinatorTitle": "项目经理智能体如何协调？",
   "automation.policy.coordinatorDescription":
     "这是一段给调度模型的自然语言说明，不是需要连线的规则引擎。",
@@ -598,6 +611,9 @@ const en: AutomationMessages = {
   "automation.policy.welcomeDescription":
     "Dispatch policies decide when an Issue enters execution and how the project manager agent breaks down and assigns work. Execution still happens inside the Issue, without drawing a flowchart.",
   "automation.policy.createFirst": "Create the first policy",
+  "automation.policy.select": "Select dispatch policy",
+  "automation.policy.discardChangesConfirm":
+    "This policy has unsaved changes. Discard them and continue?",
   "automation.policy.loading": "Loading project dispatch policies…",
   "automation.policy.defaultName": "Smart Issue dispatch",
   "automation.policy.defaultManager": "Project manager agent",
@@ -616,6 +632,7 @@ const en: AutomationMessages = {
   "automation.policy.runFailed": "Run failed. Try again.",
   "automation.policy.deleteConfirm":
     "Delete “{{name}}”? This action cannot be undone.",
+  "automation.policy.deleteFailed": "Delete failed. Try again.",
   "automation.policy.reload": "Reload",
   "automation.policy.ruleDescription":
     "Each trigger leaves assignment and execution records in the corresponding Issue.",
@@ -647,6 +664,15 @@ const en: AutomationMessages = {
   "automation.policy.daily": "Daily",
   "automation.policy.weekdays": "Weekdays",
   "automation.policy.weekly": "Weekly",
+  "automation.policy.weekday": "Day of week",
+  "automation.policy.timezone": "Timezone",
+  "automation.policy.monday": "Monday",
+  "automation.policy.tuesday": "Tuesday",
+  "automation.policy.wednesday": "Wednesday",
+  "automation.policy.thursday": "Thursday",
+  "automation.policy.friday": "Friday",
+  "automation.policy.saturday": "Saturday",
+  "automation.policy.sunday": "Sunday",
   "automation.policy.coordinatorTitle":
     "How should the project manager agent coordinate?",
   "automation.policy.coordinatorDescription":

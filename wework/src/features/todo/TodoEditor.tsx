@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react'
 import {
   TodoEditor as SharedIssueDetailEditor,
+  type CollaborationAssignment,
   createSharedIssueDetailPort,
   type SharedEditorIssue,
   type SharedEditorProject,
@@ -79,6 +80,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   projectChatClient?: ProjectChatClient
   selfManagedExecution?: boolean
   currentUserId?: string | number
+  currentAssignment?: CollaborationAssignment | null
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
   onClose: () => void
@@ -226,6 +228,7 @@ export function TodoEditor(props: TodoEditorProps) {
     taskRefreshKey: props.taskRefreshKey,
     headerActions: props.headerActions,
     selectedTaskId: props.selectedTaskId,
+    currentAssignment: props.currentAssignment,
     onCreateTask: props.onCreateTask,
     onOpenTaskConversation: props.onOpenTaskConversation
       ? (task: SharedIssueDetailTaskBinding) =>

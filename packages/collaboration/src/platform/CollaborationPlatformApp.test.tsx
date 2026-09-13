@@ -28,6 +28,7 @@ import type {
 
 const workspace: CollaborationWorkspace = {
   id: "workspace-1",
+  location: "cloud",
   name: "研发协作空间",
   description: "产品与研发共同交付",
   access_role: "Owner",
@@ -545,15 +546,17 @@ function PlatformHarness({
   api,
   start = initialLocation,
   onReady,
+  capabilities = { automation: false, dingtalkAitable: false },
 }: {
   api: SharedWorkspaceApi;
   start?: CollaborationPlatformLocation;
   onReady?(): void;
+  capabilities?: CollaborationPlatformHostAdapter["capabilities"];
 }) {
   const [location, setLocation] = useState(start);
   const host: CollaborationPlatformHostAdapter = {
     location,
-    capabilities: { automation: false, dingtalkAitable: false },
+    capabilities,
     navigate: setLocation,
   };
   return (
@@ -599,6 +602,71 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(api.workspaces?.list).toHaveBeenCalledOnce();
     expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it("shows explicit local and cloud storage boundaries for the Wework host", async () => {
+    const localWorkspace: CollaborationWorkspace = {
+      ...workspace,
+      id: "wework-local-workspace",
+      location: "local",
+      name: "本地空间",
+    };
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace, workspace],
+    });
+
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          workspaceLocations: ["local", "cloud"],
+          sidebarPresentation: "full",
+        }}
+      />,
+    );
+
+    expect(container.textContent).toContain("当前设备");
+    expect(container.textContent).toContain("云端空间");
+    expect(
+      byTestId("collaboration-workspace-wework-local-workspace").getAttribute(
+        "data-location",
+      ),
+    ).toBe("local");
+    expect(
+      byTestId("collaboration-workspace-workspace-1").getAttribute(
+        "data-location",
+      ),
+    ).toBe("cloud");
+    expect(container.textContent).toContain("本地 · 仅当前设备");
+    expect(container.textContent).toContain("云端 · 可跨设备协作");
+
+    await click(byTestId("collaboration-workspace-create"));
+    expect(container.textContent).toContain("保存在 Wegent 云端");
+  });
+
+  it("uses context navigation and exposes cloud storage only for the Web host", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          workspaceLocations: ["cloud"],
+          sidebarPresentation: "context",
+        }}
+      />,
+    );
+
+    expect(container.querySelector(".collaboration-platform-brand")).toBeNull();
+    expect(container.textContent).not.toContain("当前设备");
+    expect(
+      byTestId("collaboration-workspace-workspace-1").getAttribute(
+        "data-location",
+      ),
+    ).toBe("cloud");
   });
 
   it("creates the first workspace and exposes platform and workspace navigation", async () => {

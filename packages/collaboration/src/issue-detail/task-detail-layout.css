@@ -1644,9 +1644,16 @@
 .task-detail-workspace-panel
   .task-detail-comments-head
   .task-detail-activity-tools,
-.task-detail-workspace-panel .task-detail-comment-bar,
 .task-detail-workspace-panel .task-detail-comment-card-composer {
   display: none;
+}
+
+.task-detail-workspace-panel .task-detail-comment-bar {
+  margin-right: -2px;
+  margin-left: -2px;
+  padding: 10px 2px 2px;
+  border-top: 1px solid rgb(var(--color-border));
+  box-shadow: 0 -12px 24px rgb(0 0 0 / 5%);
 }
 
 .task-detail-workspace-panel .task-detail-comments-list {

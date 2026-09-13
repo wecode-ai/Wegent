@@ -19,6 +19,9 @@ export function ProjectIssueTable({
   projectKey,
   searchPlaceholder,
   createLabel,
+  allLabel = "All",
+  tagLabel = "Tags",
+  manualAssignmentLabel = "Assigned in Issue",
   statusName = (status) => status,
   onCreate,
   onOpen,
@@ -35,20 +38,79 @@ export function ProjectIssueTable({
   projectKey?: string;
   searchPlaceholder?: string;
   createLabel?: string;
+  allLabel?: string;
+  tagLabel?: string;
+  manualAssignmentLabel?: string;
   statusName?(status: string): string;
   onCreate?(): void;
   onOpen(issue: CollaborationIssue): void;
 }) {
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  const currentAssignmentByIssueId = useMemo(
+    () =>
+      Object.fromEntries(
+        issues.map((issue) => [
+          issue.id,
+          (assignmentsByIssueId[issue.id] ?? [])
+            .filter((assignment) => assignment.status === "active")
+            .sort((left, right) =>
+              left.updated_at.localeCompare(right.updated_at),
+            )
+            .at(-1) ?? null,
+        ]),
+      ) as Record<string, CollaborationAssignment | null>,
+    [assignmentsByIssueId, issues],
+  );
+  const filterOptions = useMemo(
+    () => ({
+      statuses: [...new Set(issues.map((issue) => issue.status))],
+      assignees: [
+        ...new Map(
+          Object.values(currentAssignmentByIssueId)
+            .filter(
+              (assignment): assignment is CollaborationAssignment =>
+                assignment !== null,
+            )
+            .map((assignment) => [
+              `${assignment.target_type}:${assignment.target_id}`,
+              assignment.target_name,
+            ]),
+        ).entries(),
+      ],
+      tags: [...new Set(issues.flatMap((issue) => issue.tags))],
+    }),
+    [currentAssignmentByIssueId, issues],
+  );
   const visibleIssues = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return issues;
-    return issues.filter((issue) =>
-      `${projectKey ?? ""}-${issue.sequence_number} ${issue.title}`
-        .toLocaleLowerCase()
-        .includes(normalized),
-    );
-  }, [issues, projectKey, query]);
+    return issues.filter((issue) => {
+      const assignment = currentAssignmentByIssueId[issue.id];
+      const matchesQuery =
+        !normalized ||
+        `${projectKey ?? ""}-${issue.sequence_number} ${issue.title}`
+          .toLocaleLowerCase()
+          .includes(normalized);
+      const matchesStatus = !statusFilter || issue.status === statusFilter;
+      const matchesAssignee =
+        !assigneeFilter ||
+        (assignment !== null &&
+          `${assignment.target_type}:${assignment.target_id}` ===
+            assigneeFilter);
+      const matchesTag = !tagFilter || issue.tags.includes(tagFilter);
+      return matchesQuery && matchesStatus && matchesAssignee && matchesTag;
+    });
+  }, [
+    assigneeFilter,
+    currentAssignmentByIssueId,
+    issues,
+    projectKey,
+    query,
+    statusFilter,
+    tagFilter,
+  ]);
 
   if (issues.length === 0) {
     return (
@@ -83,6 +145,51 @@ export function ProjectIssueTable({
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
+        <select
+          aria-label={statusLabel}
+          data-testid="collaboration-issue-table-status-filter"
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value)}
+        >
+          <option value="">
+            {allLabel} {statusLabel}
+          </option>
+          {filterOptions.statuses.map((status) => (
+            <option key={status} value={status}>
+              {statusName(status)}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label={assignmentsLabel}
+          data-testid="collaboration-issue-table-assignee-filter"
+          value={assigneeFilter}
+          onChange={(event) => setAssigneeFilter(event.target.value)}
+        >
+          <option value="">
+            {allLabel} {assignmentsLabel}
+          </option>
+          {filterOptions.assignees.map(([id, name]) => (
+            <option key={id} value={id}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label={tagLabel}
+          data-testid="collaboration-issue-table-tag-filter"
+          value={tagFilter}
+          onChange={(event) => setTagFilter(event.target.value)}
+        >
+          <option value="">
+            {allLabel} {tagLabel}
+          </option>
+          {filterOptions.tags.map((tag) => (
+            <option key={tag} value={tag}>
+              {tag}
+            </option>
+          ))}
+        </select>
         {onCreate && createLabel ? (
           <button
             type="button"
@@ -110,13 +217,7 @@ export function ProjectIssueTable({
         </thead>
         <tbody>
           {visibleIssues.map((issue) => {
-            const currentAssignment =
-              (assignmentsByIssueId[issue.id] ?? [])
-                .filter((assignment) => assignment.status === "active")
-                .sort((left, right) =>
-                  left.updated_at.localeCompare(right.updated_at),
-                )
-                .at(-1) ?? null;
+            const currentAssignment = currentAssignmentByIssueId[issue.id];
             return (
               <tr
                 key={issue.id}
@@ -137,7 +238,7 @@ export function ProjectIssueTable({
                 {assignmentSourceLabel ? (
                   <td>
                     {currentAssignment
-                      ? currentAssignment.workflow_step || "Issue 内分配"
+                      ? currentAssignment.workflow_step || manualAssignmentLabel
                       : "—"}
                   </td>
                 ) : null}

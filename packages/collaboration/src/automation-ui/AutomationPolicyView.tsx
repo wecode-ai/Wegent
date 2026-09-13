@@ -34,6 +34,24 @@ type Translate = (
   values?: Record<string, string | number | null | undefined>,
 ) => string;
 
+const WEEKDAYS = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+
+const TIMEZONES = [
+  "UTC",
+  "Asia/Shanghai",
+  "America/Los_Angeles",
+  "America/New_York",
+  "Europe/London",
+] as const;
+
 function cloneRule(rule: AutomationUiRule): AutomationUiRule {
   const cloneStep = (step: AutomationUiStep): AutomationUiStep => ({
     ...step,
@@ -208,14 +226,24 @@ export function AutomationPolicyView({
   const [actionError, setActionError] = useState("");
   const [showRuns, setShowRuns] = useState(false);
   const [running, setRunning] = useState(false);
+  const [deletedRuleIds, setDeletedRuleIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const availableRules = useMemo(
+    () => rules.filter((rule) => !deletedRuleIds.has(rule.id)),
+    [deletedRuleIds, rules],
+  );
 
   useEffect(() => {
     if (saveState === "dirty" || saveState === "saving") return;
     const selected =
-      rules.find((rule) => rule.id === selectedId) ?? rules[0] ?? null;
+      availableRules.find((rule) => rule.id === selectedId) ??
+      availableRules[0] ??
+      null;
     setSelectedId(selected?.id ?? null);
     setDraft(selected ? cloneRule(selected) : null);
-  }, [rules, saveState, selectedId]);
+  }, [availableRules, saveState, selectedId]);
 
   const selectedRuns = useMemo(
     () =>
@@ -236,11 +264,34 @@ export function AutomationPolicyView({
     setActionError("");
   };
 
+  const canDiscardDraft = () =>
+    saveState !== "dirty" && saveState !== "error" && saveState !== "saving";
+
+  const confirmDiscardDraft = () =>
+    canDiscardDraft() ||
+    window.confirm(t("automation.policy.discardChangesConfirm"));
+
   const createRule = () => {
+    if (!confirmDiscardDraft()) return;
     const rule = newPolicyRule(t);
     setSelectedId(rule.id);
     setDraft(rule);
     setSaveState("dirty");
+    setActionError("");
+    setShowRuns(false);
+  };
+
+  const selectRule = (ruleId: string) => {
+    if (ruleId === selectedId) return;
+    if (!confirmDiscardDraft()) {
+      setDraft((current) => (current ? cloneRule(current) : current));
+      return;
+    }
+    const selected = availableRules.find((rule) => rule.id === ruleId);
+    if (!selected) return;
+    setSelectedId(selected.id);
+    setDraft(cloneRule(selected));
+    setSaveState("idle");
     setActionError("");
     setShowRuns(false);
   };
@@ -317,10 +368,22 @@ export function AutomationPolicyView({
       )
     )
       return;
-    await onDeleteRule(draft);
-    setSelectedId(null);
-    setDraft(null);
-    setSaveState("idle");
+    setActionError("");
+    try {
+      await onDeleteRule(draft);
+      const nextRule = availableRules.find((rule) => rule.id !== draft.id);
+      setDeletedRuleIds((current) => new Set(current).add(draft.id));
+      setSelectedId(nextRule?.id ?? null);
+      setDraft(nextRule ? cloneRule(nextRule) : null);
+      setSaveState("idle");
+      setShowRuns(false);
+    } catch (deleteError) {
+      setActionError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : t("automation.policy.deleteFailed"),
+      );
+    }
   };
 
   if (loading && !draft && rules.length === 0) {
@@ -384,12 +447,19 @@ export function AutomationPolicyView({
         ) : draft ? (
           <PolicyEditor
             rule={draft}
+            rules={
+              availableRules.some((rule) => rule.id === draft.id)
+                ? availableRules
+                : [draft, ...availableRules]
+            }
             projectTags={projectTags}
             canManage={canManage}
             saveState={saveState}
             running={running}
             t={t}
             updateDraft={updateDraft}
+            onSelectRule={selectRule}
+            onCreateRule={createRule}
             onSave={() => void save()}
             onToggle={() => void toggleEnabled()}
             onRun={() => void runNow()}
@@ -421,24 +491,30 @@ export function AutomationPolicyView({
 
 function PolicyEditor({
   rule,
+  rules,
   projectTags,
   canManage,
   saveState,
   running,
   t,
   updateDraft,
+  onSelectRule,
+  onCreateRule,
   onSave,
   onToggle,
   onRun,
   onDelete,
 }: {
   rule: AutomationUiRule;
+  rules: AutomationUiRule[];
   projectTags: string[];
   canManage: boolean;
   saveState: SaveState;
   running: boolean;
   t: Translate;
   updateDraft(update: (rule: AutomationUiRule) => AutomationUiRule): void;
+  onSelectRule(ruleId: string): void;
+  onCreateRule(): void;
   onSave(): void;
   onToggle(): void;
   onRun(): void;
@@ -459,7 +535,37 @@ function PolicyEditor({
   return (
     <div className="automation-policy-editor">
       <header className="automation-policy-editor-header">
-        <div>
+        <div className="automation-policy-editor-heading">
+          <div className="automation-policy-switcher">
+            <select
+              value={rule.id}
+              disabled={saveState === "saving"}
+              aria-label={t("automation.policy.select")}
+              data-testid="automation-policy-selector"
+              onChange={(event) => onSelectRule(event.target.value)}
+            >
+              {rules.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                  {!option.persisted
+                    ? ` · ${t("automation.policy.unsaved")}`
+                    : ""}
+                </option>
+              ))}
+            </select>
+            {canManage ? (
+              <button
+                type="button"
+                className="automation-policy-secondary-button"
+                disabled={saveState === "saving"}
+                data-testid="automation-create-policy"
+                onClick={onCreateRule}
+              >
+                <Plus size={16} />
+                {t("automation.policy.create")}
+              </button>
+            ) : null}
+          </div>
           <input
             value={rule.name}
             disabled={!canManage}
@@ -655,7 +761,7 @@ function PolicyEditor({
               </datalist>
             </label>
           ) : (
-            <div className="automation-policy-inline-fields">
+            <div className="automation-policy-schedule-fields">
               <label className="automation-policy-field">
                 <span>{t("automation.policy.frequency")}</span>
                 <select
@@ -691,6 +797,34 @@ function PolicyEditor({
                   </option>
                 </select>
               </label>
+              {rule.trigger.schedule.frequency === "weekly" ? (
+                <label className="automation-policy-field">
+                  <span>{t("automation.policy.weekday")}</span>
+                  <select
+                    value={rule.trigger.schedule.weekday}
+                    disabled={!canManage}
+                    data-testid="automation-schedule-weekday"
+                    onChange={(event) =>
+                      updateDraft((current) => ({
+                        ...current,
+                        trigger: {
+                          ...current.trigger,
+                          schedule: {
+                            ...current.trigger.schedule,
+                            weekday: event.target.value,
+                          },
+                        },
+                      }))
+                    }
+                  >
+                    {WEEKDAYS.map((weekday) => (
+                      <option key={weekday} value={weekday}>
+                        {t(`automation.policy.${weekday}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label className="automation-policy-field">
                 <span>{t("automation.policy.time")}</span>
                 <input
@@ -711,6 +845,40 @@ function PolicyEditor({
                     }))
                   }
                 />
+              </label>
+              <label className="automation-policy-field">
+                <span>{t("automation.policy.timezone")}</span>
+                <select
+                  value={rule.trigger.schedule.timezone}
+                  disabled={!canManage}
+                  data-testid="automation-schedule-timezone"
+                  onChange={(event) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      trigger: {
+                        ...current.trigger,
+                        schedule: {
+                          ...current.trigger.schedule,
+                          timezone: event.target.value,
+                        },
+                      },
+                    }))
+                  }
+                >
+                  {!TIMEZONES.includes(
+                    rule.trigger.schedule
+                      .timezone as (typeof TIMEZONES)[number],
+                  ) ? (
+                    <option value={rule.trigger.schedule.timezone}>
+                      {rule.trigger.schedule.timezone}
+                    </option>
+                  ) : null}
+                  {TIMEZONES.map((timezone) => (
+                    <option key={timezone} value={timezone}>
+                      {timezone}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
           )}

@@ -118,10 +118,15 @@ export function IssueActivityPanel({
   const currentExecution = useMemo(
     () =>
       executions
-        .filter((execution) => execution.loop_item_id === issue.id)
+        .filter(
+          (execution) =>
+            execution.loop_item_id === issue.id &&
+            (!currentAssignment ||
+              execution.created_at >= currentAssignment.updated_at),
+        )
         .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
         .at(-1) ?? null,
-    [executions, issue.id],
+    [currentAssignment, executions, issue.id],
   );
   const selectedTarget = target
     ? target.startsWith("human:")

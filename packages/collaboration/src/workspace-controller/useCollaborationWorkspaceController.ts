@@ -302,6 +302,12 @@ export function collaborationWorkspaceControllerReducer(
     case "project-snapshot-loaded":
       return {
         ...state,
+        selectedIssue:
+          state.selectedIssue && state.project?.id === action.projectId
+            ? (action.snapshot.items.find(
+                (item) => item.id === state.selectedIssue?.id,
+              ) ?? state.selectedIssue)
+            : state.selectedIssue,
         issues:
           state.project?.id === action.projectId
             ? action.snapshot.items
@@ -370,6 +376,11 @@ export function collaborationWorkspaceControllerReducer(
         },
         project: action.project,
         issues: action.snapshot.items,
+        selectedIssue: state.selectedIssue
+          ? (action.snapshot.items.find(
+              (item) => item.id === state.selectedIssue?.id,
+            ) ?? state.selectedIssue)
+          : null,
         members: action.snapshot.members,
         agents: action.snapshot.agents,
         taskBindings: action.snapshot.taskBindings,

@@ -24,6 +24,10 @@
   background: rgb(var(--color-bg-subtle));
 }
 
+.collaboration-platform-sidebar-context {
+  background: rgb(var(--color-bg-base));
+}
+
 .collaboration-platform-sidebar-footer {
   margin-top: auto;
   padding-top: 12px;
@@ -196,6 +200,29 @@
   background: transparent;
 }
 
+.collaboration-platform-notice {
+  max-width: 680px;
+  margin: -10px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-surface));
+  font-size: 13px;
+}
+
+.collaboration-workspace-groups {
+  display: grid;
+  gap: 24px;
+}
+
+.collaboration-workspace-group > h2 {
+  margin: 0 0 10px;
+  color: rgb(var(--color-text-secondary));
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .collaboration-workspace-card-grid,
 .collaboration-project-card-grid {
   display: grid;
@@ -228,17 +255,43 @@
   background: rgb(var(--color-bg-hover));
 }
 
-.collaboration-workspace-card > span {
+.collaboration-workspace-card-heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.collaboration-workspace-card-heading > span {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 36px;
   height: 36px;
-  margin-bottom: 12px;
+  flex: none;
   border-radius: 10px;
   color: #4338ca;
   background: #eef2ff;
   font-weight: 700;
+}
+
+.collaboration-workspace-card[data-location="local"]
+  .collaboration-workspace-card-heading
+  > span {
+  color: #047857;
+  background: #ecfdf5;
+}
+
+.collaboration-workspace-storage {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-subtle));
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .collaboration-workspace-card strong,
@@ -258,7 +311,7 @@
   -webkit-line-clamp: 2;
 }
 
-.collaboration-workspace-card small {
+.collaboration-workspace-counts {
   margin-top: auto;
   padding-top: 18px;
 }
@@ -676,6 +729,16 @@
   width: min(520px, calc(100vw - 32px));
 }
 
+.collaboration-workspace-storage-notice {
+  margin: 6px 0 18px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-surface));
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .collaboration-workspace-create-dialog footer {
   display: flex;
   justify-content: flex-end;
@@ -726,6 +789,18 @@
   color: rgb(var(--color-text-primary));
   background: transparent;
   font: inherit;
+}
+
+.collaboration-issue-table-toolbar > select {
+  min-width: 118px;
+  height: 32px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  padding: 0 28px 0 9px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-base));
+  font: inherit;
+  font-size: 12px;
 }
 
 .collaboration-issue-table {

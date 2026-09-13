@@ -146,6 +146,7 @@ export interface CollaborationAssignment {
 
 export interface CollaborationWorkspace {
   id: string;
+  location: "local" | "cloud";
   name: string;
   description: string;
   access_role: CollaborationRole | "Member";
