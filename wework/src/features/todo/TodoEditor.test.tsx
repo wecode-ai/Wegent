@@ -123,6 +123,7 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
       '交付结果 · 1 个附件'
     )
@@ -270,6 +271,7 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('cloud-todo-open-task-conversation-7')).toHaveTextContent(
       '立即显示的本地任务'
     )
@@ -316,6 +318,7 @@ describe('TodoEditor external item sync', () => {
     )
     const view = render(renderEditor(baseItem, 0))
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(baseItem, 1))
@@ -611,6 +614,7 @@ describe('TodoEditor workflow plans', () => {
     )
 
     await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
     await vi.waitFor(() =>
       expect(screen.getByTestId('cloud-todo-workflow-plan')).toHaveTextContent('Approved plan')
@@ -653,6 +657,7 @@ describe('TodoEditor workflow plans', () => {
     )
 
     await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-toggle-tasks'))
     await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
     await vi.waitFor(() => expect(workflowApi.approveWorkflowPlan).toHaveBeenCalledTimes(1))
 
@@ -710,6 +715,7 @@ describe('TodoEditor workflow plans', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     expect(await screen.findByTestId('cloud-todo-workflow-error-summary')).toHaveTextContent(
       '启动超时'
     )
@@ -774,6 +780,7 @@ describe('TodoEditor workflow node actions', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     await userEvent.click(await screen.findByTestId('cloud-todo-run-workflow-node-implementation'))
 
     await vi.waitFor(() => {
@@ -860,6 +867,7 @@ describe('TodoEditor workflow node actions', () => {
       />
     )
 
+    await user.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
     await user.click(await screen.findByTestId('cloud-todo-approve-workflow-node-review'))
     const deliverable = screen.getByTestId('workflow-deliverable-input-summary')
     await user.type(deliverable.querySelector('textarea')!, '通过共享流程完成')

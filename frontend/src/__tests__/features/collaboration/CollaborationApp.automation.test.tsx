@@ -111,6 +111,7 @@ describe('CollaborationApp shared automation', () => {
       projects: {
         get: jest.fn().mockResolvedValue(project),
         update: jest.fn().mockResolvedValue(project),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
       },
       issues: {
         getBoardSnapshot: jest.fn().mockResolvedValue({

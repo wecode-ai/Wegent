@@ -4685,7 +4685,11 @@ export function CloudTodoWorkspace({
                                   managerName={selectedProjectManagerName}
                                   onConfigureAgents={() => setProjectSettingsSectionId('project')}
                                   onContinueManualAssignment={() => setProjectView('board')}
-                                  translate={(key, fallback, options) => t(key, fallback, options)}
+                                  translate={(key, fallback, options) =>
+                                    fallback === undefined
+                                      ? t(key, options)
+                                      : t(key, fallback, options)
+                                  }
                                   automationContent={
                                     <ProjectAutomationView
                                       key={selectedProject.id}
