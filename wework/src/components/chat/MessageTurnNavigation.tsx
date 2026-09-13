@@ -608,9 +608,10 @@ function buildUserTurnsFromNavigation(
   const uniqueNavigation = deduplicateNavigationItems(navigation, loadedTurnsByIndex)
 
   const navigationTurns = uniqueNavigation.map((item, index) => {
-    const loadedTurn = item.turnId
-      ? loadedTurnsByTurnId.get(item.turnId)
-      : (loadedTurnsByIndex.get(item.messageIndex) ?? loadedTurnsById.get(item.id))
+    const loadedTurn =
+      (item.turnId ? loadedTurnsByTurnId.get(item.turnId) : undefined) ??
+      loadedTurnsByIndex.get(item.messageIndex) ??
+      loadedTurnsById.get(item.id)
     return {
       id: loadedTurn?.id ?? item.id,
       turnId: item.turnId ?? loadedTurn?.turnId,
@@ -776,7 +777,7 @@ function findLoadedNavigationMessageId(
     const turnMessage = messages.find(
       message => message.role === 'user' && message.turnId === target.turnId
     )
-    return turnMessage?.id ?? null
+    if (turnMessage) return turnMessage.id
   }
 
   const indexedMessage = messages.find(

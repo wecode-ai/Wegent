@@ -422,6 +422,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     assert_eq!(navigation["turnNavigation"][0]["turnId"], "turn-old");
     assert_eq!(navigation["turnNavigation"][0]["promptPreview"], "");
     assert_eq!(navigation["turnNavigation"][1]["id"], "turn-new");
+    assert_eq!(navigation["turnNavigation"][1]["cursor"], Value::Null);
     assert_eq!(
         navigation["turnNavigation"],
         cached_navigation["turnNavigation"]
@@ -462,7 +463,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
                 && call["params"]["itemsView"] == "notLoaded"
                 && call["params"]["limit"] == 100)
             .count(),
-        1
+        2
     );
     assert!(calls.iter().any(|call| {
         call["method"] == "thread/turns/list"
@@ -1261,11 +1262,14 @@ while IFS= read -r line; do
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","turns":[]}}}}}}'
       ;;
-    *'"method":"thread/turns/list"'*'"limit":100'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}},{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"navigation-head"}}}}'
-      ;;
     *'"method":"thread/turns/list"'*'"cursor":"older-turns"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*'"cursor":"newer-from-old"'*'"sortDirection":"desc"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*'"limit":100'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/turns/list"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'

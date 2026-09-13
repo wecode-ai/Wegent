@@ -282,11 +282,6 @@ pub(crate) async fn load_codex_transcript_navigation(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        if !page_turns.is_empty() && page_backwards_cursor.is_none() {
-            return Err(
-                "thread/turns/list returned navigation turns without backwardsCursor".to_owned(),
-            );
-        }
         for (descending_offset, turn) in page_turns.into_iter().enumerate() {
             let turn_id = string_field(&turn, "id").ok_or_else(|| {
                 "thread/turns/list returned a navigation turn without id".to_owned()
