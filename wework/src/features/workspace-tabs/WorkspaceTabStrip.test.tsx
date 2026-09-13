@@ -9,26 +9,6 @@ import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } fr
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const listHarnessApps = vi.hoisted(() => vi.fn().mockResolvedValue([]))
-const cloudConnection = vi.hoisted(() => ({
-  status: 'connected' as const,
-  backendUrl: 'https://api.example.com',
-  apiBaseUrl: 'https://api.example.com/api',
-  webUrl: 'https://app.example.com',
-  socketBaseUrl: 'wss://api.example.com',
-  socketPath: '/ws',
-  socketBaseUrlOverride: null,
-  credentialMode: 'oauth' as const,
-  token: 'token',
-  tokenExpiresAt: null,
-  user: { id: 1, user_name: 'tester', email: 'tester@example.com' },
-  connectedAt: '2026-09-13T00:00:00Z',
-  error: null,
-  isConnected: true,
-  serviceKey: 'cloud:test',
-  connectWithAuthorization: vi.fn(),
-  refreshUser: vi.fn(),
-  disconnect: vi.fn(),
-}))
 
 vi.mock('./workspaceWindow', () => ({
   openWorkspaceTabWindow: (tab: unknown) => openWorkspaceTabWindow(tab),
@@ -42,10 +22,6 @@ vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: {
     list: listHarnessApps,
   },
-}))
-
-vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
-  useOptionalCloudConnection: () => cloudConnection,
 }))
 
 const labels = {
@@ -101,8 +77,6 @@ describe('WorkspaceTabStrip', () => {
     experimentalFeatures.enabled = true
     listHarnessApps.mockReset()
     listHarnessApps.mockResolvedValue([])
-    cloudConnection.isConnected = true
-    cloudConnection.webUrl = 'https://app.example.com'
     window.history.replaceState({}, '', '/')
     delete window.__WEWORK_DSH_UI__
   })
@@ -399,52 +373,15 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.getByTestId('workspace-tab-context-menu')).toBeVisible()
   })
 
-  test.each([
-    ['协作', '任务'],
-    ['智能体', '任务'],
-  ])('opens cloud connection when the default %s tab is unavailable', async tabName => {
-    cloudConnection.isConnected = false
-    cloudConnection.webUrl = ''
+  test('opens cloud connection when the default agent tab is unavailable', async () => {
     const user = userEvent.setup()
     renderStrip()
 
-    await user.click(screen.getByRole('tab', { name: tabName }))
+    await user.click(screen.getByRole('tab', { name: '智能体' }))
 
     expect(screen.getByTestId('cloud-connection-dialog')).toBeVisible()
     expect(screen.getByRole('tab', { name: '任务' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute('aria-selected', 'false')
-  })
-
-  test.each([
-    ['board', '协作'],
-    ['agent', '智能体'],
-  ])('opens cloud connection instead of adding an unavailable %s tab', async (kind, tabName) => {
-    cloudConnection.isConnected = false
-    cloudConnection.webUrl = ''
-    const user = userEvent.setup()
-    renderStrip()
-
-    await user.click(screen.getByTestId('workspace-tab-add'))
-    await user.click(screen.getByTestId(`workspace-tab-add-${kind}`))
-
-    expect(screen.getByTestId('cloud-connection-dialog')).toBeVisible()
-    expect(screen.getAllByRole('tab', { name: tabName })).toHaveLength(1)
-    expect(screen.getByRole('tab', { name: '任务' })).toHaveAttribute('aria-selected', 'true')
-  })
-
-  test.each([
-    ['2', '协作'],
-    ['3', '智能体'],
-  ])('keeps cloud workspace shortcut %s behind the connection prompt', (key, tabName) => {
-    cloudConnection.isConnected = false
-    cloudConnection.webUrl = ''
-    renderStrip()
-
-    fireEvent.keyDown(window, { key, metaKey: true })
-
-    expect(screen.getByTestId('cloud-connection-dialog')).toBeVisible()
-    expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByRole('tab', { name: '任务' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '智能体' })).toHaveAttribute('aria-selected', 'false')
   })
 
   test('reorders tabs during dragover without reading drag payload data', async () => {
