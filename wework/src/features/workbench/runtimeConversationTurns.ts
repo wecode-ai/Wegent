@@ -463,29 +463,104 @@ function removeEquivalentAssistantTextItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[]
 ): RuntimeConversationItem[] {
-  const snapshotIndexesByContent = new Map<string, number[]>()
+  const candidateGroups = new Map<string, AssistantTextCandidateGroup>()
   snapshotItems.forEach((item, index) => {
     const content = assistantTextRepresentationContent(item)
     if (content === undefined) return
-    const indexes = snapshotIndexesByContent.get(content) ?? []
-    indexes.push(index)
-    snapshotIndexesByContent.set(content, indexes)
+    const group = candidateGroups.get(content) ?? createAssistantTextCandidateGroup()
+    const queue = assistantTextCandidateQueue(group, item)
+    queue.candidates.push({
+      item,
+      queueIndex: queue.candidates.length,
+      snapshotIndex: index,
+    })
+    candidateGroups.set(content, group)
   })
-  const matchedSnapshotIndexes = new Set<number>()
   return localItems.filter(localItem => {
     const content = assistantTextRepresentationContent(localItem)
     if (content === undefined) return true
-    const snapshotIndex = snapshotIndexesByContent
-      .get(content)
-      ?.find(
-        index =>
-          !matchedSnapshotIndexes.has(index) &&
-          isEquivalentAssistantTextRepresentation(localItem, snapshotItems[index])
+    const group = candidateGroups.get(content)
+    if (!group) return true
+    const match = assistantTextCandidateQueues(group, localItem)
+      .map(queue => ({ queue, candidate: peekAssistantTextCandidate(queue, localItem) }))
+      .filter(
+        (
+          entry
+        ): entry is {
+          queue: AssistantTextCandidateQueue
+          candidate: AssistantTextCandidate
+        } => entry.candidate !== undefined
       )
-    if (snapshotIndex === undefined) return true
-    matchedSnapshotIndexes.add(snapshotIndex)
+      .sort((left, right) => left.candidate.snapshotIndex - right.candidate.snapshotIndex)[0]
+    if (!match) return true
+    consumeAssistantTextCandidate(match.queue, match.candidate)
     return false
   })
+}
+
+interface AssistantTextCandidate {
+  item: RuntimeConversationItem
+  queueIndex: number
+  snapshotIndex: number
+}
+
+interface AssistantTextCandidateQueue {
+  candidates: AssistantTextCandidate[]
+  cursor: number
+  consumedIndexes: Set<number>
+}
+
+interface AssistantTextCandidateGroup {
+  assistantText: AssistantTextCandidateQueue
+  textBlock: AssistantTextCandidateQueue
+}
+
+function createAssistantTextCandidateGroup(): AssistantTextCandidateGroup {
+  const queue = (): AssistantTextCandidateQueue => ({
+    candidates: [],
+    cursor: 0,
+    consumedIndexes: new Set(),
+  })
+  return { assistantText: queue(), textBlock: queue() }
+}
+
+function assistantTextCandidateQueue(
+  group: AssistantTextCandidateGroup,
+  item: RuntimeConversationItem
+): AssistantTextCandidateQueue {
+  return item.type === 'assistant_text' ? group.assistantText : group.textBlock
+}
+
+function assistantTextCandidateQueues(
+  group: AssistantTextCandidateGroup,
+  localItem: RuntimeConversationItem
+): AssistantTextCandidateQueue[] {
+  return localItem.type === 'assistant_text'
+    ? [group.assistantText, group.textBlock]
+    : [group.assistantText]
+}
+
+function peekAssistantTextCandidate(
+  queue: AssistantTextCandidateQueue,
+  localItem: RuntimeConversationItem
+): AssistantTextCandidate | undefined {
+  while (queue.consumedIndexes.has(queue.cursor)) queue.cursor += 1
+  for (let index = queue.cursor; index < queue.candidates.length; index += 1) {
+    if (queue.consumedIndexes.has(index)) continue
+    const candidate = queue.candidates[index]
+    if (candidate && isEquivalentAssistantTextRepresentation(localItem, candidate.item)) {
+      return candidate
+    }
+  }
+  return undefined
+}
+
+function consumeAssistantTextCandidate(
+  queue: AssistantTextCandidateQueue,
+  candidate: AssistantTextCandidate
+): void {
+  queue.consumedIndexes.add(candidate.queueIndex)
+  while (queue.consumedIndexes.has(queue.cursor)) queue.cursor += 1
 }
 
 interface RuntimeConversationItemNode {

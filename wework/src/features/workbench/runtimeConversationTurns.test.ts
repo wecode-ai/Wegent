@@ -1356,6 +1356,26 @@ describe('runtimeConversationTurns', () => {
 
   test('hydrates a long tool history without blocking the renderer', () => {
     const itemCount = 1_200
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'command-600',
+            type: 'block',
+            block: {
+              id: 'command-600',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'streaming',
+              createdAt: 600,
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
     const snapshot: RuntimeConversationTurn[] = [
       {
         id: 'turn-1',
@@ -1376,12 +1396,35 @@ describe('runtimeConversationTurns', () => {
     ]
 
     const startedAt = performance.now()
-    const merged = mergeRuntimeConversationTurns([], snapshot)
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
     const durationMs = performance.now() - startedAt
 
     expect(merged[0].items).toHaveLength(itemCount)
     expect(merged[0].items[0]?.id).toBe('command-0')
     expect(merged[0].items.at(-1)?.id).toBe(`command-${itemCount - 1}`)
+    expect(durationMs).toBeLessThan(1_000)
+  })
+
+  test('reconciles repeated assistant text without quadratic rescanning', () => {
+    const itemCount = 1_200
+    const turn = (prefix: string): RuntimeConversationTurn => ({
+      id: 'turn-1',
+      items: Array.from({ length: itemCount }, (_, index) => ({
+        id: `${prefix}-${index}`,
+        type: 'assistant_text',
+        content: 'Repeated completion',
+        createdAt: '2026-09-13T00:00:00.000Z',
+      })),
+      status: 'done',
+    })
+
+    const startedAt = performance.now()
+    const merged = mergeRuntimeConversationTurns([turn('local')], [turn('snapshot')])
+    const durationMs = performance.now() - startedAt
+
+    expect(merged[0].items).toHaveLength(itemCount)
+    expect(merged[0].items[0]?.id).toBe('snapshot-0')
+    expect(merged[0].items.at(-1)?.id).toBe(`snapshot-${itemCount - 1}`)
     expect(durationMs).toBeLessThan(1_000)
   })
 
