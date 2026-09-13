@@ -236,8 +236,6 @@ describe("ProjectManageView project scope", () => {
     const projectB = project("project-b", "private");
 
     let tree = renderView(api, host, projectA, onProjectUpdated);
-    findByTestId(tree, "cloud-project-members-toggle").props.onClick();
-    tree = renderView(api, host, projectA, onProjectUpdated);
     findByTestId(
       tree,
       "cloud-project-manage-visibility-public",
@@ -245,8 +243,6 @@ describe("ProjectManageView project scope", () => {
     await flushPromises();
 
     renderView(api, host, projectB, onProjectUpdated);
-    tree = renderView(api, host, projectB, onProjectUpdated);
-    findByTestId(tree, "cloud-project-members-toggle").props.onClick();
     tree = renderView(api, host, projectB, onProjectUpdated);
     expect(
       findByTestId(tree, "cloud-project-manage-visibility-private").props

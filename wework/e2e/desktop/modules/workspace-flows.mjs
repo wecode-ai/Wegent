@@ -212,11 +212,15 @@ async function waitForControlValue(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   const startedAt = Date.now()
+  let lastValue = ''
   while (Date.now() - startedAt < timeoutMs) {
-    if ((await control.command('getValue', selector)) === expected) return
+    lastValue = await control.command('getValue', selector)
+    if (lastValue === expected) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(message)
+  throw new Error(
+    `${message}: expected=${JSON.stringify(expected)}, received=${JSON.stringify(lastValue)}`
+  )
 }
 
 function normalizeComposerText(value) {
@@ -558,10 +562,11 @@ async function verifyWorkspaceIssueCreation(control) {
 
   const createIssueSelector = `${boardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${boardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
+  const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
   const createIssueTitle = `${createIssueDialog} [data-testid="cloud-todo-title"]`
   const createIssueDescription = `${createIssueDialog} [data-testid="cloud-todo-detail-description"]`
   await control.command('click', createIssueSelector)
-  await control.command('waitFor', createIssueDialog, {
+  await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -573,12 +578,12 @@ async function verifyWorkspaceIssueCreation(control) {
   })
   await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png')
   await control.command('click', `${createIssueDialog} [data-testid="cloud-todo-modal-close"]`)
-  await control.command('waitFor', createIssueDialog, {
+  await control.command('waitFor', createIssuePanel, {
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', createIssueSelector)
-  await control.command('waitFor', createIssueDialog, {
+  await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -845,7 +850,7 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command(
-    'drag',
+    'dragDataTransfer',
     `${activeBoardContentSelector} [data-e2e-anchor-id="running-work-item-card"]`,
     {
       target: `${activeBoardContentSelector} [data-testid="cloud-todo-column-dropzone-in_review"]`,
@@ -1110,8 +1115,9 @@ async function verifyExistingTaskBoardAssociation(
   const existingTargetTitle = 'WEWORK_EXISTING_BOARD_CARD'
   const createIssueSelector = `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${activeBoardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
+  const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
   await control.command('click', createIssueSelector)
-  await control.command('waitFor', createIssueDialog, {
+  await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

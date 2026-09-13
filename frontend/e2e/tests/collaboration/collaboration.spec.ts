@@ -148,7 +148,7 @@ test.describe('Collaboration module', () => {
     )
     projectId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(projectId).not.toBe('')
-    await expect(page.getByTestId('collaboration-board')).toBeVisible()
+    await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
 
     await page.getByTestId('collaboration-issue-create').click()
     await page.getByTestId('cloud-todo-title').fill(issueTitle)

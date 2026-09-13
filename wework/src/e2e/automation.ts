@@ -1155,7 +1155,7 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
   )
 }
 
-function fillDesktopControlElement(element: HTMLElement, value: string) {
+async function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
 
   const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
@@ -1180,6 +1180,32 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
         : HTMLTextAreaElement.prototype
     const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     setter?.call(element, value)
+  } else if (element.isContentEditable) {
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    if (!value) {
+      document.execCommand('delete', false)
+      return
+    }
+    const windowLabel = getDesktopWindowLabel()
+    const lines = value.replace(/\r\n?/g, '\n').split('\n')
+    for (const [index, line] of lines.entries()) {
+      if (index > 0) {
+        await invokeDesktopHost('e2e.pressKey', {
+          windowLabel,
+          key: 'Enter',
+          phase: 'press',
+        })
+        await waitForDesktopControlTick()
+      }
+      if (!line) continue
+      await invokeDesktopHost('e2e.insertText', { windowLabel, text: line })
+      await waitForDesktopControlTick()
+    }
+    return
   } else {
     const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
     if (valueSetter) {
@@ -1206,6 +1232,12 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
     })
   )
   element.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+function desktopControlTextWithLineBreaks(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
+  if (node instanceof HTMLBRElement) return '\n'
+  return Array.from(node.childNodes).map(desktopControlTextWithLineBreaks).join('')
 }
 
 function selectDesktopControlText(selector: string, value: string): string {
@@ -2065,6 +2097,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const declaredValue =
         element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
       if (declaredValue !== null && declaredValue !== undefined) return declaredValue
+      if (element.isContentEditable) {
+        const blockValues = Array.from(
+          element.querySelectorAll<HTMLElement>('.bn-block-content[data-content-type]')
+        ).map(block => desktopControlTextWithLineBreaks(block).trim())
+        if (blockValues.length > 0) return blockValues.join('\n').trim()
+        return element.innerText.replace(/\r\n?/g, '\n').trim()
+      }
       return element.textContent?.trim() ?? ''
     }
     case 'getSelectionOffset': {
@@ -2377,7 +2416,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'fill': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      fillDesktopControlElement(element, command.value ?? '')
+      await fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
     case 'finishAnimations': {
@@ -2519,7 +2558,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const form = element instanceof HTMLFormElement ? element : element.closest('form')
       if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
       if (command.value !== undefined) {
-        fillDesktopControlElement(element, command.value)
+        await fillDesktopControlElement(element, command.value)
       }
       form.requestSubmit()
       return ''

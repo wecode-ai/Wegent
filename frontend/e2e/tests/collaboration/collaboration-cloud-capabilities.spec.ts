@@ -174,7 +174,7 @@ async function createProjectByUi(
     project.name
   )
   await page.getByTestId(`collaboration-project-card-${project.id}`).click()
-  await expect(page.getByTestId('collaboration-board')).toBeVisible()
+  await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
 
   return { project, workspace }
 }
@@ -399,7 +399,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await captureEvidence(page, 'web-01-project-home')
 
       await page.getByTestId(`collaboration-project-card-${project.id}`).click()
-      await expect(page.getByTestId('collaboration-board')).toBeVisible()
+      await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
       await page.goto(collaborationProjectPath(workspace.id, project.id))
       await expect(page.getByTestId('collaboration-root')).toBeVisible()
       await expect(page.getByTestId(`collaboration-workspace-project-${project.id}`)).toContainText(
@@ -704,6 +704,7 @@ test.describe('Collaboration cloud capabilities', () => {
           response.request().method() === 'POST' &&
           /\/automations\/[^/]+\/run$/.test(new URL(response.url()).pathname)
       )
+      page.once('dialog', dialog => dialog.accept())
       await page.getByTestId('automation-run-now').click()
       const run = await runResponse
       expect(run.ok(), `Automation run failed: ${await run.text()}`).toBe(true)

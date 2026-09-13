@@ -247,6 +247,10 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
 
     await expect(api.projects.list()).resolves.toEqual([project])
+    await expect(api.projects.get('project-1')).resolves.toEqual(project)
+    await expect(api.projects.get('missing-project')).rejects.toThrow(
+      'Project missing-project was not found'
+    )
     await api.projects.create({
       projectKey: 'PROJ',
       name: 'Project',
@@ -596,13 +600,14 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     }
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.projects).toEqual([
       'list',
+      'get',
       'create',
       'update',
       'archive',
     ])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list'])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS).toEqual({
-      projects: ['get', 'importMessages'],
+      projects: ['importMessages'],
       comments: ['list', 'create'],
       automations: [
         'list',
@@ -657,6 +662,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       created_at: '2026-09-11T00:00:00Z',
       updated_at: '2026-09-11T00:00:00Z',
     }
+    const mappedWorkspace = { ...workspace, location: 'cloud' as const }
     const client = {
       get: vi.fn().mockImplementation(async (endpoint: string) => {
         if (endpoint === '/v1/workspaces') return { items: [workspace] }
@@ -933,18 +939,18 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     )
     expect(WEWORK_SHARED_WORKSPACE_MISSING_METHODS).toEqual([])
 
-    await expect(api.workspaces?.list()).resolves.toEqual([workspace])
-    await expect(api.workspaces?.get('workspace-1')).resolves.toEqual(workspace)
+    await expect(api.workspaces?.list()).resolves.toEqual([mappedWorkspace])
+    await expect(api.workspaces?.get('workspace-1')).resolves.toEqual(mappedWorkspace)
     await expect(
       api.workspaces?.create({ name: 'Workspace', description: 'Shared work' })
-    ).resolves.toEqual(workspace)
+    ).resolves.toEqual(mappedWorkspace)
     expect(client.post).toHaveBeenCalledWith('/v1/workspaces', {
       name: 'Workspace',
       description: 'Shared work',
     })
     await expect(
       api.workspaces?.update('workspace-1', { version: 1, name: 'Workspace' })
-    ).resolves.toEqual(workspace)
+    ).resolves.toEqual(mappedWorkspace)
     await api.workspaces?.archive('workspace-1', 1)
     expect(client.delete).toHaveBeenCalledWith('/v1/workspaces/workspace-1?version=1')
     await expect(api.workspaces?.listMembers('workspace-1')).resolves.toMatchObject([

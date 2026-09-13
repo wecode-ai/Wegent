@@ -676,7 +676,10 @@ export function ProjectManageView<
                 ? host.translate("todo.project_agents", "可用智能体")
                 : section === "board"
                   ? host.translate("todo.board_settings", "看板设置")
-                  : host.translate("todo.project_basic_information", "基本信息")}
+                  : host.translate(
+                      "todo.project_basic_information",
+                      "基本信息",
+                    )}
           </h1>
           <p className="mt-1 text-sm text-text-muted">
             {section === "members"
@@ -734,6 +737,41 @@ export function ProjectManageView<
                 </dd>
               </div>
             </dl>
+          </section>
+        )}
+
+        {(section === "all" || section === "overview") && (
+          <section className="border-t border-border py-6">
+            <h2 className="text-heading-md font-semibold">
+              {host.translate("todo.project_access", "项目访问范围")}
+            </h2>
+            <p className="mt-1 text-sm text-text-muted">
+              {host.translate(
+                "todo.project_access_description",
+                "决定空间成员是否可以发现并进入这个项目。",
+              )}
+            </p>
+            <div className="mt-4 grid max-w-md grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+              {(["private", "public"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`cloud-project-manage-visibility-${value}`}
+                  disabled={visibilityBusy}
+                  onClick={() => void saveVisibility(value)}
+                  className={classNames(
+                    "h-8 rounded-md text-xs",
+                    visibility === value
+                      ? "bg-background shadow-sm"
+                      : "text-text-muted",
+                  )}
+                >
+                  {value === "private"
+                    ? host.translate("todo.private_project", "私有项目")
+                    : host.translate("todo.public_project", "公开项目")}
+                </button>
+              ))}
+            </div>
           </section>
         )}
 
@@ -939,27 +977,6 @@ export function ProjectManageView<
                   </span>
                 </button>
               ))}
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-background/70 p-1">
-                {(["private", "public"] as const).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    data-testid={`cloud-project-manage-visibility-${value}`}
-                    disabled={visibilityBusy}
-                    onClick={() => void saveVisibility(value)}
-                    className={classNames(
-                      "h-8 rounded-md text-xs",
-                      visibility === value
-                        ? "bg-background shadow-sm"
-                        : "text-text-muted",
-                    )}
-                  >
-                    {value === "private"
-                      ? host.translate("todo.private_project", "私有项目")
-                      : host.translate("todo.public_project", "公开项目")}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
         </section>
@@ -1110,7 +1127,9 @@ export function ProjectManageView<
           </div>
         </section>
 
-        <div className={section === "all" || section === "agents" ? "" : "hidden"}>
+        <div
+          className={section === "all" || section === "agents" ? "" : "hidden"}
+        >
           {renderProviderSettings?.({
             updateProject: (values) => updateProject(values, projectScope),
             reportError,
