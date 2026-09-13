@@ -1111,12 +1111,19 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="subagent-activity-chip"]', {
       timeoutMs: uiTimeoutMs,
     })
+    await subagentPartialWritten
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_PARTIAL
+      ),
+      false,
+      'The child agent stream leaked into the root conversation'
+    )
     await capture(control, 'streaming-text-subagent-01-inline-activity.png')
     await control.command('click', '[data-testid="subagent-activity-chip"]')
     await control.command('waitFor', '[data-testid="subagent-conversation-panel"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await subagentPartialWritten
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
