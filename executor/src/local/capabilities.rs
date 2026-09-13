@@ -318,6 +318,7 @@ pub struct PluginSyncSpec {
     checksum: Option<String>,
     download_path: Option<String>,
     component_states: Value,
+    component_config: Value,
 }
 
 impl PluginSyncSpec {
@@ -356,6 +357,11 @@ impl PluginSyncSpec {
                 .or_else(|| value.get("componentStates"))
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
+            component_config: value
+                .get("component_config")
+                .or_else(|| value.get("componentConfig"))
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new())),
         })
     }
 
@@ -390,6 +396,11 @@ impl PluginSyncSpec {
             download_path: None,
             component_states: plugin
                 .get("component_states")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new())),
+            component_config: plugin
+                .get("component_config")
+                .or_else(|| plugin.get("componentConfig"))
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
         }
@@ -429,6 +440,34 @@ impl ManagedCapabilityManifest {
             + 1;
         value["revision"] = json!(revision);
         write_json(&self.path, &value)
+    }
+}
+
+fn prepare_native_marketplace_plugin(
+    source: &Path,
+    destination: &Path,
+    claude: bool,
+    component_config: &Value,
+) -> Result<(), CapabilitySyncError> {
+    let component_config = component_config.as_object().ok_or_else(|| {
+        CapabilitySyncError::invalid_payload("Plugin component config must be an object")
+    })?;
+    if crate::plugin_task_token::requires_native_proxy_with_config(source, claude, component_config)
+        .map_err(CapabilitySyncError::invalid_payload)?
+    {
+        // Native local marketplaces can load their source directly. Keep the
+        // immutable package intact and expose a filtered runtime copy there too.
+        copy_dir_atomic_prepared(source, destination, |temporary| {
+            crate::plugin_task_token::materialize_native_plugin_with_config(
+                temporary,
+                claude,
+                component_config,
+            )
+            .map(|_| ())
+            .map_err(CapabilitySyncError::invalid_payload)
+        })
+    } else {
+        link_or_copy_dir(source, destination)
     }
 }
 
@@ -540,6 +579,11 @@ impl GlobalCapabilityStore {
                 download_path: None,
                 component_states: plugin
                     .get("component_states")
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Map::new())),
+                component_config: plugin
+                    .get("component_config")
+                    .or_else(|| plugin.get("componentConfig"))
                     .cloned()
                     .unwrap_or_else(|| Value::Object(Map::new())),
             };
@@ -861,7 +905,12 @@ impl GlobalCapabilityStore {
             .join("marketplaces")
             .join(&spec.marketplace);
         let marketplace_link = marketplace_dir.join("plugins").join(&spec.name);
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        prepare_native_marketplace_plugin(
+            store_path,
+            &marketplace_link,
+            false,
+            &spec.component_config,
+        )?;
 
         let marketplace_json_path = marketplace_dir.join(".agents/plugins/marketplace.json");
         let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
@@ -990,7 +1039,12 @@ impl GlobalCapabilityStore {
             .join(&spec.marketplace);
         let marketplace_plugins_dir = marketplace_dir.join("plugins");
         let marketplace_link = marketplace_plugins_dir.join(plugin_codex_link_name(spec));
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        prepare_native_marketplace_plugin(
+            store_path,
+            &marketplace_link,
+            true,
+            &spec.component_config,
+        )?;
 
         let marketplace_source = json!({
             "source": "directory",

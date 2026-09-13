@@ -4,9 +4,17 @@
 
 """Public endpoint that resolves the Wegent user behind a task token."""
 
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -21,18 +29,28 @@ router = APIRouter(prefix="/external/mcp-identity", tags=["mcp-identity"])
 limiter = get_limiter()
 
 
+class McpTaskIdentity(BaseModel):
+    """Use kind, device_id and id together with the user id for authorization."""
+
+    kind: Literal["runtime", "wegent"]
+    id: str
+    device_id: Optional[str] = None
+
+
 class McpIdentityUserInfo(BaseModel):
     """Basic current user info resolvable from a Wegent task token."""
 
     id: int
     user_name: str
     email: Optional[str] = None
+    task: Optional[McpTaskIdentity] = None
 
 
 @router.get("/userinfo", response_model=McpIdentityUserInfo)
 @limiter.limit(settings.RATE_LIMIT_MCP_IDENTITY)
 async def read_mcp_identity_userinfo(
     request: Request,
+    response: Response,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> McpIdentityUserInfo:
@@ -45,6 +63,7 @@ async def read_mcp_identity_userinfo(
     response carries basic user information and never exposes git
     credentials.
     """
+    response.headers["Cache-Control"] = "no-store"
     token = extract_token_from_header(authorization or "")
     token_info = verify_task_token(token or "")
     if token_info is None:
@@ -64,8 +83,18 @@ async def read_mcp_identity_userinfo(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
+    task = None
+    if token_info.runtime_task is not None:
+        task = McpTaskIdentity(
+            kind="runtime",
+            id=token_info.runtime_task.task_id,
+            device_id=token_info.runtime_task.device_id,
+        )
+    elif token_info.task_id > 0:
+        task = McpTaskIdentity(kind="wegent", id=str(token_info.task_id))
     return McpIdentityUserInfo(
         id=user.id,
         user_name=user.user_name,
         email=user.email,
+        task=task,
     )

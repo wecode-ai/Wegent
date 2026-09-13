@@ -20,6 +20,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-development',
   'plugin-auto-update',
   'plugin-account-auth',
+  'plugin-task-token',
   'plugin-workspace-publication',
   'project-ai-settings',
   'model-routing',

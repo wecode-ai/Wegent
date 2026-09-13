@@ -9,6 +9,7 @@ import zipfile
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 import app.services.builtin_plugin_service as builtin_plugin_service_module
 from app.api.endpoints.installed_plugins import (
@@ -17,6 +18,7 @@ from app.api.endpoints.installed_plugins import (
 )
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
+from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.schemas.installed_plugin import BuiltinPluginInstallRequest
 from app.services.builtin_plugin_registry import (
@@ -138,6 +140,78 @@ def test_upload_plugin_accepts_codex_plugin_manifest(test_db, test_user):
     assert installed.spec.displayName == "Superpowers"
     assert installed.spec.interface is not None
     assert installed.spec.interface.shortDescription == "Codex test plugin"
+
+
+def test_upload_plugin_reactivation_preserves_component_config(
+    test_db: Session, test_user: User
+) -> None:
+    service = InstalledPluginService()
+    package_bytes = _create_plugin_zip()
+    installed = service.upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=package_bytes,
+        filename="superpowers.zip",
+    )
+    component_config = {
+        "mcp:business": {"headers": {"Authorization": "Bearer ${{task_token}}"}}
+    }
+    payload = dict(installed.model_dump())
+    payload["spec"]["componentConfig"] = component_config
+    existing = (
+        test_db.query(Kind)
+        .filter(Kind.id == int(installed.metadata["labels"]["id"]))
+        .one()
+    )
+    existing.json = payload
+    test_db.commit()
+
+    reactivated = service.upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=package_bytes,
+        filename="superpowers.zip",
+    )
+
+    assert reactivated.spec.componentConfig == component_config
+
+
+def test_installed_plugin_update_removes_cleared_component_config(
+    test_db: Session, test_user: User
+) -> None:
+    from app.schemas.installed_plugin import InstalledPluginUpdateRequest
+
+    installed = InstalledPluginService().upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=_create_plugin_zip(),
+        filename="superpowers.zip",
+    )
+    installed_id = int(installed.metadata["labels"]["id"])
+
+    service = InstalledPluginService()
+    seeded = service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed_id,
+        request=InstalledPluginUpdateRequest(
+            componentConfig={
+                "mcp:business": {"headers": {"Authorization": "Bearer ${{task_token}}"}}
+            },
+        ),
+    )
+    assert "mcp:business" in seeded.spec.componentConfig
+
+    updated = service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed_id,
+        request=InstalledPluginUpdateRequest(
+            componentConfig={"mcp:business": None},
+        ),
+    )
+
+    assert updated.spec.componentConfig == {}
 
 
 def test_upload_plugin_accepts_claude_plugin_manifest(test_db, test_user):

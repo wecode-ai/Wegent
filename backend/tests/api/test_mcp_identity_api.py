@@ -27,12 +27,29 @@ def test_get_mcp_identity_user_returns_task_user_info(
     )
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
     body = response.json()
     assert body["id"] == test_user.id
     assert body["user_name"] == test_user.user_name
     assert body["email"] == test_user.email
+    assert body["task"] == {"kind": "wegent", "id": "1", "device_id": None}
     assert "git_info" not in body
     assert "git_token" not in body
+
+
+def test_legacy_runtime_token_has_no_concrete_task(test_client, test_user):
+    token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
+    response = test_client.get(
+        "/api/external/mcp-identity/userinfo",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["task"] is None
 
 
 def test_get_mcp_identity_user_rejects_invalid_token(
