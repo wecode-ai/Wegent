@@ -173,16 +173,36 @@
   background: rgb(0 0 0 / 0.35);
 }
 
+.collaboration-dialog-backdrop.collaboration-issue-detail-backdrop {
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+  background: rgb(15 23 42 / 0.14);
+}
+
 .collaboration-issue-detail-shared-host {
   position: fixed;
   top: 38px;
   right: 0;
   bottom: 0;
-  width: min(760px, calc(100vw - 48px));
+  width: min(760px, calc(100vw - 320px));
   overflow: hidden;
   border-left: 1px solid rgb(var(--color-border));
   background: rgb(var(--color-bg-surface));
-  box-shadow: -16px 0 40px rgb(0 0 0 / 0.18);
+  box-shadow: -12px 0 32px rgb(15 23 42 / 0.16);
+}
+
+@media (max-width: 1040px) {
+  .collaboration-issue-detail-shared-host {
+    width: min(760px, calc(100vw - 48px));
+  }
+}
+
+@media (max-width: 720px) {
+  .collaboration-issue-detail-shared-host {
+    top: 0;
+    width: 100vw;
+  }
 }
 
 .shared-issue-detail-confirm-backdrop {

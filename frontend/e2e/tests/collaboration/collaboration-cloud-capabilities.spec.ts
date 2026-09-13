@@ -714,6 +714,8 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.getByTestId('automation-open-runs').click()
       await expect(page.getByTestId(`automation-run-${runBody.id}`)).toBeVisible()
       await page.reload()
+      await page.getByTestId('collaboration-project-settings-dispatch').click()
+      await expect(page.getByTestId('project-automation-policy')).toBeVisible()
       const persistedRunsResponse = page.waitForResponse(response => {
         const pathname = new URL(response.url()).pathname
         return (
@@ -890,6 +892,7 @@ test.describe('Collaboration cloud capabilities', () => {
             `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`
           )
         ).board_config?.statuses.length ?? 0
+      await page.getByTestId('collaboration-project-settings-board').click()
       await page.getByTestId('cloud-board-status-add').click()
       await expect(page.locator('[data-testid^="cloud-board-status-status-"]')).toHaveCount(1)
       await expect

@@ -10,6 +10,10 @@ interface VersionedResource {
   version: number
 }
 
+interface WorkspaceMemberList {
+  items: Array<{ user_id: number; user_name: string }>
+}
+
 function escaped(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -85,6 +89,7 @@ test.describe('Collaboration module', () => {
 
   test('persists the Workspace → Project → Issue collaboration flow', async ({
     page,
+    request,
   }, testInfo) => {
     const suffix = `${Date.now()}`
     const workspaceName = `Workspace E2E ${suffix}`
@@ -93,7 +98,6 @@ test.describe('Collaboration module', () => {
     const updatedIssueTitle = `${issueTitle} updated`
     const comment = `Persistent E2E comment ${suffix}`
     const assignmentComment = `Assignment E2E comment ${suffix}`
-    const workflowStep = '交互设计'
 
     await page.goto('/collaboration')
     await expect(page).toHaveURL(/\/collaboration$/)
@@ -177,23 +181,25 @@ test.describe('Collaboration module', () => {
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
 
-    const assignmentTarget = page.getByTestId('collaboration-assignment-target')
-    const assignedMemberName = await assignmentTarget
-      .locator('optgroup')
-      .first()
-      .locator('option')
-      .first()
-      .textContent()
-    expect(assignedMemberName?.trim()).not.toBe('')
-    await assignmentTarget.selectOption({ index: 1 })
-    await page.getByTestId('collaboration-assignment-workflow-step').fill(workflowStep)
-    await page.getByTestId('collaboration-issue-comment').fill(assignmentComment)
+    const authToken = (await page.context().cookies()).find(
+      cookie => cookie.name === 'auth_token'
+    )?.value
+    expect(authToken).toBeTruthy()
+    const memberResponse = await request.get(
+      `${API_BASE_URL}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/members`,
+      { headers: { Authorization: `Bearer ${authToken}` } }
+    )
+    expect(memberResponse.ok()).toBe(true)
+    const memberList = (await memberResponse.json()) as WorkspaceMemberList
+    const assignedMember = memberList.items[0]
+    const assignedMemberName = assignedMember?.user_name
+    if (!assignedMember || !assignedMemberName) throw new Error('Workspace owner member is missing')
+    await page.getByTestId('collaboration-issue-mention-trigger').click()
+    await page.getByTestId(`collaboration-issue-mention-member-${assignedMember.user_id}`).click()
+    await page.getByTestId('collaboration-issue-comment').pressSequentially(assignmentComment)
     await page.getByTestId('collaboration-issue-comment-submit').click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
-    await expect(page.getByTestId('collaboration-comments')).toContainText(workflowStep)
-    await expect(page.getByTestId('collaboration-comments')).toContainText(
-      assignedMemberName?.trim() ?? ''
-    )
+    await expect(page.getByTestId('collaboration-comments')).toContainText(assignedMemberName)
     await capture(page, testInfo, '02-issue-activity')
 
     await page.getByTestId('cloud-todo-detail-close').click()
@@ -206,8 +212,8 @@ test.describe('Collaboration module', () => {
     await expect(page).toHaveURL(new RegExp(`${escaped(projectPath)}\\?view=table$`))
     const tableRow = page.getByTestId(`collaboration-issue-table-row-${issueId}`)
     await expect(tableRow).toContainText(updatedIssueTitle)
-    await expect(tableRow).toContainText('pending')
-    await expect(tableRow).toContainText(assignedMemberName?.trim() ?? '')
+    await expect(tableRow).toContainText(/待处理|To do/)
+    await expect(tableRow).toContainText(assignedMemberName)
 
     await page.reload()
     await expect(page).toHaveURL(new RegExp(`${escaped(projectPath)}\\?view=table$`))
@@ -224,7 +230,6 @@ test.describe('Collaboration module', () => {
     await page.getByTestId(`collaboration-issue-${issueId}`).getByRole('button').first().click()
     await expect(page.getByTestId('collaboration-comments')).toContainText(comment)
     await expect(page.getByTestId('collaboration-comments')).toContainText(assignmentComment)
-    await expect(page.getByTestId('collaboration-comments')).toContainText(workflowStep)
     await capture(page, testInfo, '03-persisted-issue')
   })
 })

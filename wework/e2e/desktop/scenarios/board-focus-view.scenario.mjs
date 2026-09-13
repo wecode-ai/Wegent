@@ -231,6 +231,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.ok(itemTestId, 'The board focus fixture did not create an Issue card')
       const itemId = itemTestId.slice('collaboration-issue-'.length)
       const cardSelector = `${ACTIVE_BOARD} [data-testid="${itemTestId}"]`
+      const progressTrigger = `${ACTIVE_BOARD} [data-testid="cloud-todo-card-tasks-${itemId}"]`
 
       await control.command('click', cardSelector)
       await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail"]`, {
@@ -306,6 +307,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         text: SHORT_PROCESS_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', `${ACTIVE_BOARD} [data-testid="ai-chat-modal-back"]`, {
+        visible: true,
+      })
+      await control.command('waitFor', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail-close"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', `${ACTIVE_BOARD} [data-testid="cloud-todo-detail-close"]`, {
         visible: true,
       })
@@ -374,35 +382,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `[data-testid="cloud-todo-card-drop-${itemId}"]`,
         { value: 'transform' }
       )
-      await control.command('hover', `[data-testid="cloud-todo-card-drop-${itemId}"]`, {
+      await control.command('click', progressTrigger, {
         visible: true,
       })
       await control.command('waitFor', progressPopup, {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await new Promise(resolve => setTimeout(resolve, 1_000))
       await control.command('waitFor', progressPopup, {
-        visible: true,
+        attribute: 'data-pinned',
+        value: 'true',
         timeoutMs: uiTimeoutMs,
       })
-      const [popupScrollMetrics] = JSON.parse(
-        await control.command(
-          'getElementMetrics',
-          `${progressPopup} [data-testid="right-workspace-chat-scroll-area"]`
-        )
-      )
+      await control.command('waitFor', `${progressPopup} [data-testid="message-assistant"]`, {
+        text: '正在读取运行中卡片的界面状态。',
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
-        popupScrollMetrics.scrollOrigin,
+        await control.command(
+          'getAttribute',
+          `${progressPopup} [data-testid="right-workspace-chat-scroll-area"]`,
+          { value: 'data-scroll-origin' }
+        ),
         'bottom',
-        `The progress popup did not use bottom-origin scrolling: ${JSON.stringify(popupScrollMetrics)}`
-      )
-      assert.ok(
-        Math.abs(popupScrollMetrics.scrollTop) <= 2,
-        `The progress popup did not start at position zero: ${JSON.stringify(popupScrollMetrics)}`
+        'The progress popup did not use bottom-origin scrolling'
       )
       const popupText = await control.command('getText', progressPopup)
-      assert.ok(popupText.includes("'正在验证运行中卡片'"))
+      assert.ok(popupText.includes('正在验证运行中卡片'))
       assert.ok(
         !/\/bin\/zsh|powershell(?:\.exe)?/iu.test(popupText),
         'The progress popup exposed the Shell wrapper path'
@@ -424,8 +430,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'Hover applied an unstable transform to the card'
       )
       await captureScreenshot(control, '03-running-card-hover-stable.png', 'body')
+      await control.command(
+        'click',
+        `[data-testid="cloud-todo-card-progress-popup-${itemId}-close"]`,
+        {
+          visible: true,
+        }
+      )
+      await control.command('waitFor', progressPopup, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
 
-      await control.command('hover', '[data-testid="cloud-board-focus-running"]')
       const [toolbarMetrics] = JSON.parse(
         await control.command('getElementMetrics', '[data-testid="cloud-board-toolbar"]')
       )

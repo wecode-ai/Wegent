@@ -815,7 +815,9 @@ describe("collaboration workspace controller", () => {
     api.issues.update = vi
       .fn()
       .mockResolvedValue({ ...issue, status: "completed", version: 2 });
-    api.issues.reorder = vi.fn().mockRejectedValue({ status: 409 });
+    api.issues.reorder = vi
+      .fn()
+      .mockRejectedValue({ code: "version_conflict" });
     const { commands, notify } = createController(api);
     const optimisticIssue = { ...issue, status: "completed" };
 
@@ -930,5 +932,138 @@ describe("collaboration workspace controller", () => {
 
     expect(api.projects.get).not.toHaveBeenCalled();
     expect(state.project).toEqual(assigneeProject);
+  });
+
+  it("reapplies a group change to the latest project after a version conflict", async () => {
+    const statusProject = {
+      ...project,
+      board_config: {
+        group_by: "status" as const,
+        processing_start_status_id: "processing",
+        statuses: [],
+      },
+    };
+    const latestProject = { ...statusProject, version: 2 };
+    const assigneeProject = {
+      ...latestProject,
+      board_config: {
+        ...latestProject.board_config,
+        group_by: "assignee" as const,
+      },
+      version: 3,
+    };
+    state = { ...state, projects: [statusProject], project: statusProject };
+    const api = createApi();
+    api.projects.get = vi.fn().mockResolvedValue(latestProject);
+    api.projects.update = vi
+      .fn()
+      .mockRejectedValueOnce({ status: 409 })
+      .mockResolvedValueOnce(assigneeProject);
+    const { commands, notify } = createController(api);
+
+    await commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "assignee",
+      defaultStatuses: [],
+    });
+
+    expect(api.projects.get).toHaveBeenCalledWith(project.id);
+    expect(api.projects.update).toHaveBeenLastCalledWith(project.id, {
+      version: 2,
+      boardConfig: {
+        ...latestProject.board_config,
+        group_by: "assignee",
+      },
+    });
+    expect(state.project).toEqual(assigneeProject);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("recognizes the local version_conflict error protocol", async () => {
+    const statusProject = {
+      ...project,
+      board_config: {
+        group_by: "status" as const,
+        processing_start_status_id: "processing",
+        statuses: [],
+      },
+    };
+    const latestProject = { ...statusProject, version: 2 };
+    const priorityProject = {
+      ...latestProject,
+      board_config: {
+        ...latestProject.board_config,
+        group_by: "priority" as const,
+      },
+      version: 3,
+    };
+    state = { ...state, projects: [statusProject], project: statusProject };
+    const api = createApi();
+    api.projects.get = vi.fn().mockResolvedValue(latestProject);
+    api.projects.update = vi
+      .fn()
+      .mockRejectedValueOnce({ code: "version_conflict" })
+      .mockResolvedValueOnce(priorityProject);
+    const { commands, notify } = createController(api);
+
+    await commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "priority",
+      defaultStatuses: [],
+    });
+
+    expect(api.projects.get).toHaveBeenCalledWith(project.id);
+    expect(state.project).toEqual(priorityProject);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older group change overwrite the latest selection", async () => {
+    const statusProject = {
+      ...project,
+      board_config: {
+        group_by: "status" as const,
+        processing_start_status_id: "processing",
+        statuses: [],
+      },
+    };
+    const tagProject = {
+      ...statusProject,
+      board_config: {
+        ...statusProject.board_config,
+        group_by: "tag" as const,
+      },
+      version: 2,
+    };
+    let rejectOlder!: (error: unknown) => void;
+    const olderUpdate = new Promise<CollaborationProject>(
+      (_resolve, reject) => {
+        rejectOlder = reject;
+      },
+    );
+    state = { ...state, projects: [statusProject], project: statusProject };
+    const api = createApi();
+    api.projects.update = vi
+      .fn()
+      .mockReturnValueOnce(olderUpdate)
+      .mockResolvedValueOnce(tagProject);
+    const { commands, notify } = createController(api);
+
+    const olderChange = commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "priority",
+      defaultStatuses: [],
+    });
+    await commands.changeProjectGroup({
+      project: statusProject,
+      groupBy: "tag",
+      defaultStatuses: [],
+    });
+    rejectOlder({ status: 409 });
+    await olderChange;
+
+    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.update).toHaveBeenCalledTimes(2);
+    expect(state.project).toEqual(tagProject);
+    expect(notify).not.toHaveBeenCalled();
   });
 });

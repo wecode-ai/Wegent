@@ -10,12 +10,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
+  CollaborationAgent,
   CollaborationAssignment,
   CollaborationComment,
   CollaborationExecution,
   CollaborationIssue,
+  CollaborationMember,
 } from "../types";
-import { issueActivityEntries, IssueActivityPanel } from "./IssueActivityPanel";
+import {
+  issueActivityEntries,
+  IssueActivityPanel,
+  reconcileSelectedAssignmentTarget,
+} from "./IssueActivityPanel";
 
 const issue = {
   id: "issue-1",
@@ -58,41 +64,55 @@ describe("IssueActivityPanel", () => {
     options: {
       assignments?: CollaborationAssignment[];
       executions?: CollaborationExecution[];
+      comments?: CollaborationComment[];
+      api?: Pick<SharedWorkspaceApi, "assignments" | "comments">;
+      onAssignmentsChange?: ReturnType<typeof vi.fn>;
+      onCommentsChange?: ReturnType<typeof vi.fn>;
+      canComment?: boolean;
+      canAssign?: boolean;
+      members?: CollaborationMember[];
+      agents?: CollaborationAgent[];
     } = {},
   ) {
+    const api =
+      options.api ??
+      ({
+        assignments: { create: vi.fn() },
+        comments: { create: vi.fn() },
+      } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">);
+    const onAssignmentsChange = options.onAssignmentsChange ?? vi.fn();
+    const onCommentsChange = options.onCommentsChange ?? vi.fn();
     act(() => {
       root.render(
         <IssueActivityPanel
-          api={
-            {
-              assignments: { create: vi.fn() },
-              comments: { create: vi.fn() },
-            } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">
-          }
+          api={api}
           issue={targetIssue}
-          members={[
-            {
-              id: 1,
-              user_id: 7,
-              user_name: "李明",
-              email: null,
-              role: "Developer",
-            },
-          ]}
-          agents={[]}
+          members={
+            options.members ?? [
+              {
+                id: 1,
+                user_id: 7,
+                user_name: "李明",
+                email: null,
+                role: "Developer",
+              },
+            ]
+          }
+          agents={options.agents ?? []}
           assignments={options.assignments ?? []}
-          comments={[]}
+          comments={options.comments ?? []}
           executions={options.executions ?? []}
-          canComment
-          canAssign
+          canComment={options.canComment ?? true}
+          canAssign={options.canAssign ?? true}
           translate={(_key, fallback) => fallback ?? ""}
           onIssueChange={vi.fn()}
-          onAssignmentsChange={vi.fn()}
-          onCommentsChange={vi.fn()}
+          onAssignmentsChange={onAssignmentsChange}
+          onCommentsChange={onCommentsChange}
           onError={vi.fn()}
         />,
       );
     });
+    return { api, onAssignmentsChange, onCommentsChange };
   }
 
   function change(testId: string, value: string) {
@@ -115,11 +135,21 @@ describe("IssueActivityPanel", () => {
     });
   }
 
-  it("clears the draft assignment when the issue changes", () => {
+  async function click(testId: string) {
+    const target = container.querySelector<HTMLButtonElement>(
+      `[data-testid="${testId}"]`,
+    );
+    expect(target).toBeTruthy();
+    await act(async () => {
+      target?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("keeps one comment composer and clears it when the issue changes", () => {
     render(issue);
     change("collaboration-issue-comment", "正在处理");
-    change("collaboration-assignment-target", "human:7");
-    change("collaboration-assignment-workflow-step", "开发");
 
     render({ ...issue, id: "issue-2", sequence_number: 2 });
 
@@ -131,19 +161,290 @@ describe("IssueActivityPanel", () => {
       ).value,
     ).toBe("");
     expect(
-      (
-        container.querySelector(
-          '[data-testid="collaboration-assignment-target"]',
-        ) as HTMLSelectElement
-      ).value,
-    ).toBe("");
+      container.querySelector(
+        '[data-testid="collaboration-assignment-target"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-assignment-workflow-step"]',
+      ),
+    ).toBeNull();
+    expect(container.querySelectorAll("textarea")).toHaveLength(1);
+  });
+
+  it("expands the one-line composer on focus and collapses it when empty", () => {
+    render(issue);
+
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="collaboration-issue-comment"]',
+    );
+    const composer = textarea?.closest<HTMLElement>(
+      ".issue-comment-composer-shell",
+    );
+    expect(composer?.dataset.expanded).toBe("false");
+
+    act(() => textarea?.focus());
+    expect(composer?.dataset.expanded).toBe("true");
+
+    act(() => textarea?.blur());
+    expect(composer?.dataset.expanded).toBe("false");
+
+    act(() => textarea?.focus());
+    change("collaboration-issue-comment", "补充上下文");
+    act(() => textarea?.blur());
+    expect(composer?.dataset.expanded).toBe("true");
+  });
+
+  it("inserts a selected mention into the shared comment body", async () => {
+    render(issue);
+
+    await click("collaboration-issue-mention-trigger");
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-mention-popup"]',
+      ),
+    ).toBeTruthy();
+    await click("collaboration-issue-mention-member-7");
+
     expect(
       (
         container.querySelector(
-          '[data-testid="collaboration-assignment-workflow-step"]',
-        ) as HTMLInputElement
+          '[data-testid="collaboration-issue-comment"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("@李明 ");
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-assignment-preview"]',
+      )?.textContent,
+    ).toContain("将分配给 @李明");
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-comment-submit"]',
+      )?.textContent,
+    ).toBe("分配并评论");
+  });
+
+  it("keeps the selected target when collaborator names share a prefix", async () => {
+    const prefixMember = {
+      id: 2,
+      user_id: 8,
+      user_name: "李",
+      email: null,
+      role: "Developer",
+    } satisfies CollaborationMember;
+    render(issue, {
+      members: [
+        prefixMember,
+        {
+          id: 1,
+          user_id: 7,
+          user_name: "李明",
+          email: null,
+          role: "Developer",
+        },
+      ],
+    });
+
+    await click("collaboration-issue-mention-trigger");
+    await click("collaboration-issue-mention-member-7");
+
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-assignment-preview"]',
+      )?.textContent,
+    ).toContain("将分配给 @李明");
+  });
+
+  it("cancels assignment intent without deleting the mention from the comment", async () => {
+    render(issue);
+
+    await click("collaboration-issue-mention-trigger");
+    await click("collaboration-issue-mention-member-7");
+    await click("collaboration-issue-assignment-cancel");
+
+    expect(
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-comment"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("@李明 ");
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-assignment-preview"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-comment-submit"]',
+      )?.textContent,
+    ).toBe("评论");
+    expect(
+      container.querySelector<HTMLElement>(".issue-comment-composer-shell")
+        ?.dataset.expanded,
+    ).toBe("true");
+  });
+
+  it("does not infer an assignment from manually typed mention text", () => {
+    render(issue, {
+      members: [
+        {
+          id: 2,
+          user_id: 8,
+          user_name: "李",
+          email: null,
+          role: "Developer",
+        },
+      ],
+    });
+
+    change("collaboration-issue-comment", "@李明 看一下");
+
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-assignment-preview"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-comment-submit"]',
+      )?.textContent,
+    ).toBe("评论");
+  });
+
+  it("does not guess between a member and an agent with the same name", async () => {
+    render(issue, {
+      agents: [{ id: "agent-1", name: "李明" }],
+    });
+
+    await click("collaboration-issue-mention-trigger");
+    await click("collaboration-issue-mention-agent-agent-1");
+
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-assignment-preview"]',
+      )?.textContent,
+    ).toContain("发送后开始执行");
+  });
+
+  it("keeps an assignment-only composer disabled until a target is mentioned", async () => {
+    render(issue, { canComment: false, canAssign: true });
+
+    change("collaboration-issue-comment", "请处理登录异常");
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-issue-comment-submit"]',
+      )?.disabled,
+    ).toBe(true);
+
+    await click("collaboration-issue-mention-trigger");
+    await click("collaboration-issue-mention-member-7");
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-issue-comment-submit"]',
+      )?.disabled,
+    ).toBe(false);
+  });
+
+  it("submits a plain body through comments.create", async () => {
+    const comment = {
+      id: "comment-1",
+      issue_id: issue.id,
+      author: "李明",
+      body: "已确认接口契约",
+      created_at: "2026-09-12T00:00:00Z",
+    } satisfies CollaborationComment;
+    const api = {
+      assignments: { create: vi.fn() },
+      comments: { create: vi.fn().mockResolvedValue(comment) },
+    } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">;
+    const { onCommentsChange } = render(issue, { api });
+
+    change("collaboration-issue-comment", comment.body);
+    await click("collaboration-issue-comment-submit");
+
+    expect(api.comments.create).toHaveBeenCalledWith(issue.id, comment.body);
+    expect(api.assignments?.create).not.toHaveBeenCalled();
+    expect(onCommentsChange).toHaveBeenCalledWith([comment]);
+    expect(
+      container.querySelector<HTMLElement>(".issue-comment-composer-shell")
+        ?.dataset.expanded,
+    ).toBe("false");
+  });
+
+  it("submits a recognized mention as one assignment comment event", async () => {
+    const assignment = {
+      id: "assignment-1",
+      issue_id: issue.id,
+      target_type: "human",
+      target_id: "7",
+      target_name: "李明",
+      workflow_step: null,
+      body: "@李明 请处理登录异常",
+      comment_id: "comment-1",
+      created_by_user_id: 1,
+      created_by_user_name: "项目经理",
+      status: "active",
+      created_at: "2026-09-12T00:00:00Z",
+      updated_at: "2026-09-12T00:00:00Z",
+    } satisfies CollaborationAssignment;
+    const comment = {
+      id: "comment-1",
+      issue_id: issue.id,
+      author: "项目经理",
+      body: assignment.body,
+      created_at: assignment.created_at,
+    } satisfies CollaborationComment;
+    const api = {
+      assignments: {
+        create: vi.fn().mockResolvedValue({
+          issue,
+          assignment,
+          comment,
+        }),
+      },
+      comments: { create: vi.fn() },
+    } as unknown as Pick<SharedWorkspaceApi, "assignments" | "comments">;
+    const { onAssignmentsChange, onCommentsChange } = render(issue, { api });
+
+    await click("collaboration-issue-mention-trigger");
+    await click("collaboration-issue-mention-member-7");
+    change("collaboration-issue-comment", assignment.body);
+    await click("collaboration-issue-comment-submit");
+
+    expect(api.assignments?.create).toHaveBeenCalledWith(issue.id, {
+      targetType: "human",
+      targetId: "7",
+      workflowStep: null,
+      commentBody: assignment.body,
+      notifyTarget: true,
+    });
+    expect(api.comments.create).not.toHaveBeenCalled();
+    expect(onAssignmentsChange).toHaveBeenCalledWith([assignment]);
+    expect(onCommentsChange).toHaveBeenCalledWith([comment]);
+    expect(
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-comment"]',
+        ) as HTMLTextAreaElement
       ).value,
     ).toBe("");
+    expect(
+      container.querySelector<HTMLElement>(".issue-comment-composer-shell")
+        ?.dataset.expanded,
+    ).toBe("false");
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-assignment-preview"]',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-issue-comment-submit"]',
+      )?.textContent,
+    ).toBe("评论");
   });
 
   it("renders an assignment comment event only once", () => {
@@ -164,6 +465,34 @@ describe("IssueActivityPanel", () => {
         assignment,
       },
     ]);
+  });
+
+  it("clears only a selected mention that is edited or removed", () => {
+    const target = {
+      type: "human",
+      targetId: "7",
+      name: "李明",
+      start: 0,
+      end: 3,
+    } as const;
+
+    expect(
+      reconcileSelectedAssignmentTarget(
+        "@李明 请处理",
+        "前置说明 @李明 请处理",
+        target,
+      ),
+    ).toEqual({ ...target, start: 5, end: 8 });
+    expect(
+      reconcileSelectedAssignmentTarget(
+        "@李明 请处理",
+        "@李明 请处理，今天完成",
+        target,
+      ),
+    ).toEqual(target);
+    expect(
+      reconcileSelectedAssignmentTarget("@李明 请处理", "@李 请处理", target),
+    ).toBeNull();
   });
 
   it("does not show an execution from before the current assignment", () => {

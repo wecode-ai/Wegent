@@ -26,9 +26,15 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('@wegent/collaboration', () => ({
-  CollaborationPlatformApp: ({ host }: { host: CollaborationPlatformHostAdapter }) => {
+  CollaborationPlatformApp: ({
+    host,
+    renderShell,
+  }: {
+    host: CollaborationPlatformHostAdapter
+    renderShell?: (shell: { main: React.ReactNode; sidebar: React.ReactNode }) => React.ReactNode
+  }) => {
     capturedHost = host
-    return (
+    const main = (
       <button
         type="button"
         data-testid="open-resources"
@@ -44,7 +50,40 @@ jest.mock('@wegent/collaboration', () => ({
         }
       />
     )
+    return renderShell?.({
+      main,
+      sidebar: <div data-testid="shared-collaboration-sidebar">spaces</div>,
+    })
   },
+}))
+
+jest.mock('@/features/tasks/components/sidebar', () => ({
+  CollapsedSidebarButtons: () => <div data-testid="collapsed-sidebar-buttons" />,
+  ResizableSidebar: ({ children }: { children: React.ReactNode }) => (
+    <aside data-testid="resizable-sidebar">{children}</aside>
+  ),
+  TaskSidebar: ({ contextSection }: { contextSection?: React.ReactNode }) => (
+    <div data-testid="task-sidebar">
+      <div data-testid="task-sidebar-system-navigation">system navigation</div>
+      <div data-testid="task-sidebar-collaboration-context">{contextSection}</div>
+    </div>
+  ),
+}))
+
+jest.mock(
+  '@/features/layout/TopNavigation',
+  () =>
+    function MockTopNavigation() {
+      return <div data-testid="top-navigation" />
+    }
+)
+
+jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
+  useIsMobile: () => false,
+}))
+
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({ selectTask: jest.fn() }),
 }))
 
 jest.mock('@/features/collaboration/shared-api', () => ({
@@ -97,6 +136,10 @@ describe('CollaborationPage platform routing', () => {
       sidebarPresentation: 'context',
     })
     expect(screen.getByTestId('collaboration-page-main')).toHaveClass('flex-1', 'overflow-hidden')
+    expect(screen.getByTestId('task-sidebar-system-navigation')).toBeInTheDocument()
+    expect(screen.getByTestId('task-sidebar-collaboration-context')).toContainElement(
+      screen.getByTestId('shared-collaboration-sidebar')
+    )
 
     fireEvent.click(screen.getByTestId('open-resources'))
     expect(mockPush).toHaveBeenCalledWith('/collaboration/resources')

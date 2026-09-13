@@ -731,13 +731,21 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     await click(byTestId("collaboration-workspace-create-confirm"));
 
-    expect(byTestId("collaboration-workspace-back").textContent).toContain(
-      "返回所有空间",
-    );
     expect(
       container.querySelector('[data-testid="collaboration-nav-all-spaces"]'),
     ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="collaboration-workspace-back"]'),
+    ).toBeNull();
+    expect(byTestId("collaboration-workspace-nav-home")).toBeTruthy();
+    expect(byTestId("collaboration-workspace-nav-projects")).toBeTruthy();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-workspace-nav-members"]',
+      ),
+    ).toBeNull();
 
+    await click(byTestId("collaboration-workspace-management-toggle"));
     await click(byTestId("collaboration-workspace-nav-members"));
     expect(container.textContent).toContain(member.user_name);
     await click(byTestId("collaboration-workspace-nav-agents"));
@@ -746,10 +754,6 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.textContent).toContain(environment.name);
     await click(byTestId("collaboration-workspace-nav-settings"));
     expect(byTestId("collaboration-workspace-settings-save")).toBeTruthy();
-
-    await click(byTestId("collaboration-workspace-back"));
-    expect(byTestId("collaboration-nav-all-spaces")).toBeTruthy();
-    expect(byTestId("collaboration-nav-resources")).toBeTruthy();
   });
 
   it.each(["Owner", "Maintainer"] as const)(
@@ -1004,30 +1008,29 @@ describe("CollaborationPlatformApp real component flow", () => {
       "请先确认接口契约",
     );
 
-    const target = byTestId(
-      "collaboration-assignment-target",
-    ) as HTMLSelectElement;
-    await change(target, `human:${member.user_id}`);
-    await change(
-      byTestId("collaboration-assignment-workflow-step") as HTMLInputElement,
-      "交互设计",
+    await click(byTestId("collaboration-issue-mention-trigger"));
+    await click(
+      byTestId(`collaboration-issue-mention-member-${member.user_id}`),
     );
+    await change(comment, `@${member.user_name} 请处理交互设计`);
     await click(byTestId("collaboration-issue-comment-submit"));
     expect(api.assignments?.create).toHaveBeenLastCalledWith(issue.id, {
       targetType: "human",
       targetId: String(member.user_id),
-      workflowStep: "交互设计",
-      commentBody: undefined,
+      workflowStep: null,
+      commentBody: `@${member.user_name} 请处理交互设计`,
       notifyTarget: true,
     });
 
-    await change(target, `agent:${agent.id}`);
+    await click(byTestId("collaboration-issue-mention-trigger"));
+    await click(byTestId(`collaboration-issue-mention-agent-${agent.id}`));
+    await change(comment, `@${agent.name} 请开始实现`);
     await click(byTestId("collaboration-issue-comment-submit"));
     expect(api.assignments?.create).toHaveBeenLastCalledWith(issue.id, {
       targetType: "agent",
       targetId: agent.id,
       workflowStep: null,
-      commentBody: undefined,
+      commentBody: `@${agent.name} 请开始实现`,
       notifyTarget: false,
     });
   });
@@ -1101,9 +1104,10 @@ describe("Issue permission separation in the real shared editor", () => {
       (byTestId("collaboration-issue-comment") as HTMLTextAreaElement).disabled,
     ).toBe(false);
     expect(
-      (byTestId("collaboration-assignment-target") as HTMLSelectElement)
-        .disabled,
-    ).toBe(true);
+      container.querySelector(
+        '[data-testid="collaboration-assignment-target"]',
+      ),
+    ).toBeNull();
     await click(byTestId("cloud-todo-create-task"));
     expect(onCreateTask).toHaveBeenCalledOnce();
   });

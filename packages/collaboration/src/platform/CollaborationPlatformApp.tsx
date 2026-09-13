@@ -3,6 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  Bot,
+  Boxes,
+  BriefcaseBusiness,
+  ChevronRight,
+  LayoutGrid,
+  MonitorCog,
+  Settings,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 
 import { CollaborationApp } from "../CollaborationApp";
 import {
@@ -70,8 +81,8 @@ const platformMessages = {
     agents: "智能体",
     environments: "执行环境",
     settings: "空间设置",
-    backToSpaces: "返回所有空间",
     projects: "项目",
+    workspaceManagement: "空间管理",
     createProject: "创建项目",
     noProjects: "还没有项目",
     noProjectsHint: "创建项目后即可使用看板和表格组织 Issue。",
@@ -138,8 +149,8 @@ const platformMessages = {
     agents: "Agents",
     environments: "Execution environments",
     settings: "Space settings",
-    backToSpaces: "Back to all spaces",
     projects: "Projects",
+    workspaceManagement: "Space management",
     createProject: "Create project",
     noProjects: "No projects yet",
     noProjectsHint:
@@ -203,19 +214,101 @@ function CollaborationPlatformNavigation({
   const canManageWorkspace =
     workspace?.access_role === "Owner" ||
     workspace?.access_role === "Maintainer";
-  const workspaceNav: Array<{
+  const managementNav: Array<{
     id: CollaborationWorkspaceView;
     label: string;
+    icon: LucideIcon;
+    count?: number;
   }> = [
-    { id: "home", label: messages.workspaceHome },
-    { id: "projects", label: messages.allProjects },
-    { id: "members", label: messages.members },
-    { id: "agents", label: messages.agents },
-    { id: "execution-environments", label: messages.environments },
+    {
+      id: "members",
+      label: messages.members,
+      icon: Users,
+      count: workspace?.member_count,
+    },
+    {
+      id: "agents",
+      label: messages.agents,
+      icon: Bot,
+      count: workspace?.agent_count,
+    },
+    {
+      id: "execution-environments",
+      label: messages.environments,
+      icon: MonitorCog,
+      count: workspace?.execution_environment_count,
+    },
   ];
   if (canManageWorkspace) {
-    workspaceNav.push({ id: "settings", label: messages.settings });
+    managementNav.push({
+      id: "settings",
+      label: messages.settings,
+      icon: Settings,
+    });
   }
+  const managementActive =
+    !host.location.projectId &&
+    managementNav.some((item) => item.id === host.location.workspaceView);
+  const [managementOpen, setManagementOpen] = useState(managementActive);
+  useEffect(() => {
+    if (managementActive) setManagementOpen(true);
+  }, [managementActive]);
+  const openWorkspaceHome = () =>
+    navigateWithin(host, {
+      workspaceView: "home",
+      projectId: null,
+      issueId: null,
+    });
+  const openAllProjects = () =>
+    navigateWithin(host, {
+      workspaceView: "projects",
+      projectId: null,
+      issueId: null,
+    });
+  const renderManagementNav = () => (
+    <nav className="collaboration-platform-management-nav">
+      {managementNav.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            type="button"
+            className={
+              !host.location.projectId &&
+              host.location.workspaceView === item.id
+                ? "active"
+                : ""
+            }
+            aria-current={
+              !host.location.projectId &&
+              host.location.workspaceView === item.id
+                ? "page"
+                : undefined
+            }
+            title={item.label}
+            data-testid={`collaboration-workspace-nav-${item.id}`}
+            key={item.id}
+            onClick={() =>
+              navigateWithin(host, {
+                workspaceView: item.id,
+                projectId: null,
+                issueId: null,
+              })
+            }
+          >
+            <Icon aria-hidden="true" />
+            <span className="collaboration-platform-nav-text">
+              {item.label}
+            </span>
+            {item.count !== undefined ? (
+              <span className="collaboration-platform-nav-count">
+                {item.count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </nav>
+  );
   return (
     <aside
       className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}`}
@@ -232,6 +325,9 @@ function CollaborationPlatformNavigation({
               className={
                 host.location.platformView === "spaces" ? "active" : ""
               }
+              aria-current={
+                host.location.platformView === "spaces" ? "page" : undefined
+              }
               data-testid="collaboration-nav-all-spaces"
               onClick={() =>
                 host.navigate({
@@ -244,13 +340,16 @@ function CollaborationPlatformNavigation({
                 })
               }
             >
-              <span>▦</span>
+              <LayoutGrid aria-hidden="true" />
               {messages.allSpaces}
             </button>
             <button
               type="button"
               className={
                 host.location.platformView === "my-work" ? "active" : ""
+              }
+              aria-current={
+                host.location.platformView === "my-work" ? "page" : undefined
               }
               data-testid="collaboration-nav-my-work"
               onClick={() =>
@@ -264,13 +363,16 @@ function CollaborationPlatformNavigation({
                 })
               }
             >
-              <span>◎</span>
+              <BriefcaseBusiness aria-hidden="true" />
               {messages.myWork}
             </button>
             <button
               type="button"
               className={
                 host.location.platformView === "resources" ? "active" : ""
+              }
+              aria-current={
+                host.location.platformView === "resources" ? "page" : undefined
               }
               data-testid="collaboration-nav-resources"
               onClick={() =>
@@ -284,128 +386,110 @@ function CollaborationPlatformNavigation({
                 })
               }
             >
-              <span>◇</span>
+              <Boxes aria-hidden="true" />
               {messages.resources}
             </button>
           </nav>
         </>
       ) : (
         <>
-          <button
-            type="button"
-            className="collaboration-platform-back"
-            data-testid="collaboration-workspace-back"
-            onClick={() =>
-              host.navigate({
-                platformView: "spaces",
-                workspaceId: null,
-                workspaceView: "home",
-                projectId: null,
-                projectView: "board",
-                issueId: null,
-              })
-            }
-          >
-            ← {messages.backToSpaces}
-          </button>
-          <label className="collaboration-workspace-identity">
-            <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
-            <span>
-              <small>
-                {messages.currentWorkspace} ·{" "}
-                {workspace.location === "local"
-                  ? messages.localStorage
-                  : messages.cloudStorage}
-              </small>
-              <select
-                aria-label={messages.currentWorkspace}
-                data-testid="collaboration-workspace-switcher"
-                value={workspace.id}
-                onChange={(event) =>
-                  host.navigate({
-                    platformView: "spaces",
-                    workspaceId: event.target.value,
-                    workspaceView: "home",
-                    projectId: null,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
-              >
-                {workspaces.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {candidate.name}
-                  </option>
-                ))}
-              </select>
-            </span>
-          </label>
-          <div className="collaboration-platform-sidebar-label">
-            {messages.workspaceHome}
-          </div>
-          <nav>
-            {workspaceNav.map((item) => (
-              <button
-                type="button"
-                className={
-                  !host.location.projectId &&
-                  host.location.workspaceView === item.id
-                    ? "active"
-                    : ""
-                }
-                data-testid={`collaboration-workspace-nav-${item.id}`}
-                key={item.id}
-                onClick={() =>
-                  navigateWithin(host, {
-                    workspaceView: item.id,
-                    projectId: null,
-                    issueId: null,
-                  })
-                }
-              >
-                <span aria-hidden="true">
-                  {
-                    {
-                      home: "⌂",
-                      projects: "◆",
-                      members: "♙",
-                      agents: "✦",
-                      "execution-environments": "▣",
-                      settings: "⚙",
-                    }[item.id]
+          <div className="collaboration-workspace-context-header">
+            <button
+              type="button"
+              className="collaboration-workspace-home"
+              aria-label={messages.workspaceHome}
+              title={messages.workspaceHome}
+              data-testid="collaboration-workspace-nav-home"
+              onClick={openWorkspaceHome}
+            >
+              <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
+            </button>
+            <label className="collaboration-workspace-identity">
+              <span>
+                <select
+                  aria-label={messages.currentWorkspace}
+                  data-testid="collaboration-workspace-switcher"
+                  value={workspace.id}
+                  onChange={(event) =>
+                    host.navigate({
+                      platformView: "spaces",
+                      workspaceId: event.target.value,
+                      workspaceView: "home",
+                      projectId: null,
+                      projectView: "board",
+                      issueId: null,
+                    })
                   }
-                </span>
-                {item.label}
-              </button>
-            ))}
-          </nav>
-          <div className="collaboration-platform-sidebar-label">
-            {messages.projects}
+                >
+                  {workspaces.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.name}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  {workspace.location === "local"
+                    ? messages.localStorage
+                    : messages.cloudStorage}
+                </small>
+              </span>
+            </label>
           </div>
-          <nav>
-            {projects.map((project) => (
+          <div className="collaboration-platform-projects">
+            <div className="collaboration-platform-projects-heading">
+              <span>{messages.projects}</span>
               <button
                 type="button"
-                className={
-                  host.location.projectId === project.id ? "active" : ""
-                }
-                data-testid={`collaboration-workspace-project-${project.id}`}
-                key={project.id}
-                onClick={() =>
-                  navigateWithin(host, {
-                    projectId: project.id,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
+                data-testid="collaboration-workspace-nav-projects"
+                onClick={openAllProjects}
               >
-                <span className="collaboration-platform-project-mark">
-                  {project.project_key.slice(0, 2)}
-                </span>
-                {project.name}
+                {messages.viewAll}
               </button>
-            ))}
-          </nav>
+            </div>
+            <nav>
+              {projects.map((project) => (
+                <button
+                  type="button"
+                  className={
+                    host.location.projectId === project.id ? "active" : ""
+                  }
+                  aria-current={
+                    host.location.projectId === project.id ? "page" : undefined
+                  }
+                  title={project.name}
+                  data-testid={`collaboration-workspace-project-${project.id}`}
+                  key={project.id}
+                  onClick={() =>
+                    navigateWithin(host, {
+                      projectId: project.id,
+                      projectView: "board",
+                      issueId: null,
+                    })
+                  }
+                >
+                  <span className="collaboration-platform-project-mark">
+                    {project.project_key.slice(0, 2)}
+                  </span>
+                  <span className="collaboration-platform-nav-text">
+                    {project.name}
+                  </span>
+                </button>
+              ))}
+            </nav>
+          </div>
+          <div className="collaboration-platform-management">
+            <button
+              type="button"
+              className={managementActive ? "active" : ""}
+              aria-expanded={managementOpen}
+              data-testid="collaboration-workspace-management-toggle"
+              onClick={() => setManagementOpen((current) => !current)}
+            >
+              <ChevronRight aria-hidden="true" />
+              <span>{messages.workspaceManagement}</span>
+            </button>
+            {managementOpen ? renderManagementNav() : null}
+          </div>
         </>
       )}
       {footer ? (
@@ -705,6 +789,7 @@ export function CollaborationPlatformApp({
   onCreateTask,
   onReady,
   renderProject,
+  renderShell,
   sidebarFooter,
 }: {
   api: SharedWorkspaceApi;
@@ -720,6 +805,10 @@ export function CollaborationPlatformApp({
   renderProject?(context: {
     project: CollaborationProject;
     workspace: CollaborationWorkspace;
+  }): React.ReactNode;
+  renderShell?(shell: {
+    main: React.ReactNode;
+    sidebar: React.ReactNode;
   }): React.ReactNode;
   sidebarFooter?: React.ReactNode;
 }) {
@@ -763,9 +852,7 @@ export function CollaborationPlatformApp({
     });
   const openMyWorkIssue = async (issue: WorkspaceMyWorkItem) => {
     try {
-      const project = await api.projects.get?.(
-        String(issue.cloud_project_id),
-      );
+      const project = await api.projects.get?.(String(issue.cloud_project_id));
       if (!project?.workspace_id) {
         host.notify?.(messages.loadFailed, "error");
         return;
@@ -1193,20 +1280,32 @@ export function CollaborationPlatformApp({
     }
   }
 
+  const sidebar = (
+    <CollaborationPlatformNavigation
+      host={host}
+      messages={messages}
+      workspace={state.workspace}
+      workspaces={state.workspaces}
+      projects={state.projects}
+      footer={sidebarFooter}
+    />
+  );
+  const main = <main className="collaboration-platform-main">{content}</main>;
+
   return (
     <section
-      className="collaboration-platform-app"
+      className={renderShell ? undefined : "collaboration-platform-app"}
       data-testid="collaboration-platform-root"
+      style={renderShell ? { height: "100%", minHeight: 0 } : undefined}
     >
-      <CollaborationPlatformNavigation
-        host={host}
-        messages={messages}
-        workspace={state.workspace}
-        workspaces={state.workspaces}
-        projects={state.projects}
-        footer={sidebarFooter}
-      />
-      <main className="collaboration-platform-main">{content}</main>
+      {renderShell ? (
+        renderShell({ main, sidebar })
+      ) : (
+        <>
+          {sidebar}
+          {main}
+        </>
+      )}
       {workspaceDialogOpen ? (
         <WorkspaceCreateDialog
           messages={messages}

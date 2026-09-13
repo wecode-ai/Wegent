@@ -217,10 +217,13 @@ export function IssueDetail({
 
   return (
     <div
-      className="collaboration-dialog-backdrop"
+      className="collaboration-dialog-backdrop collaboration-issue-detail-backdrop"
       data-testid={collaborationTestIds.issueDetail}
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose();
+      }}
     >
-      <div className="collaboration-issue-detail-shared-host">
+      <div className="collaboration-issue-detail-shared-host collaboration-issue-detail-github-host">
         <SharedIssueDetailEditor
           port={port}
           mode="edit"
@@ -232,7 +235,9 @@ export function IssueDetail({
           onUpdated={(updated) => onChange(updated)}
           presentation="workspace-panel"
           workspacePanelFill
+          readFirst
           showPanelControls
+          showFullscreenControl={false}
           showAssignee={false}
           currentAssignment={currentAssignment}
           canStartWork={permissions.canStartWork}
@@ -240,12 +245,6 @@ export function IssueDetail({
           translate={editorTranslate}
           extensions={{
             ...browserDueDateExtensions,
-            onRequestAssignment: () => {
-              const target = document.querySelector<HTMLSelectElement>(
-                '[data-testid="collaboration-assignment-target"]',
-              );
-              target?.focus();
-            },
             openAttachment: async (attachmentId) => {
               const access = await api.attachments.access(attachmentId);
               window.open(access.url, "_blank", "noopener,noreferrer");

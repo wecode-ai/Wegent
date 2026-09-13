@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   CollaborationPlatformApp,
@@ -17,10 +17,18 @@ import {
 import { toast } from 'sonner'
 
 import { apiClient } from '@/apis/client'
+import TopNavigation from '@/features/layout/TopNavigation'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createWebSharedWorkspaceApi } from '@/features/collaboration/shared-api'
 import { webAutomationUiHost } from '@/features/collaboration/automation/WebAutomationHost'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
+import {
+  CollapsedSidebarButtons,
+  ResizableSidebar,
+  TaskSidebar,
+} from '@/features/tasks/components/sidebar'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -40,6 +48,69 @@ function workspaceViewFromPath(pathname: string): CollaborationWorkspaceView {
   if (pathname.endsWith('/execution-environments')) return 'execution-environments'
   if (pathname.endsWith('/settings')) return 'settings'
   return 'home'
+}
+
+function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: ReactNode }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const isMobile = useIsMobile()
+  const { selectTask } = useTaskSession()
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(false)
+
+  useEffect(() => {
+    setIsCollapsed(localStorage.getItem('task-sidebar-collapsed') === 'true')
+  }, [])
+
+  useEffect(() => {
+    setIsMobileSidebarOpen(false)
+  }, [pathname])
+
+  const handleToggleCollapsed = () => {
+    setIsCollapsed(current => {
+      const next = !current
+      localStorage.setItem('task-sidebar-collapsed', String(next))
+      return next
+    })
+  }
+
+  const handleNewTask = () => {
+    selectTask(null)
+    router.replace('/chat')
+  }
+
+  return (
+    <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {isCollapsed && !isMobile && (
+        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
+      )}
+      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
+        <TaskSidebar
+          isMobileSidebarOpen={isMobileSidebarOpen}
+          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+          pageType="collaboration"
+          isCollapsed={isCollapsed}
+          onToggleCollapsed={handleToggleCollapsed}
+          contextSection={sidebar}
+        />
+      </ResizableSidebar>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="lg:hidden">
+          <TopNavigation
+            variant="with-sidebar"
+            onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            isSidebarCollapsed={isCollapsed}
+          />
+        </div>
+        <div
+          className="min-h-0 min-w-0 flex-1 overflow-hidden"
+          data-testid="collaboration-page-main"
+        >
+          {main}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function CollaborationPage() {
@@ -70,20 +141,6 @@ export function CollaborationPage() {
       ? (rawView as CollaborationView)
       : 'board'
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
-  const location: CollaborationPlatformLocation = {
-    platformView:
-      pathname === '/collaboration/resources'
-        ? 'resources'
-        : pathname === '/collaboration/my-work'
-          ? 'my-work'
-          : 'spaces',
-    workspaceId,
-    workspaceView: workspaceViewFromPath(pathname),
-    projectId,
-    projectView,
-    issueId,
-  }
-
   useEffect(() => {
     if (!legacyProjectId) return
     let active = true
@@ -126,7 +183,19 @@ export function CollaborationPage() {
         workspaceLocations: ['cloud'],
         sidebarPresentation: 'context',
       },
-      location,
+      location: {
+        platformView:
+          pathname === '/collaboration/resources'
+            ? 'resources'
+            : pathname === '/collaboration/my-work'
+              ? 'my-work'
+              : 'spaces',
+        workspaceId,
+        workspaceView: workspaceViewFromPath(pathname),
+        projectId,
+        projectView,
+        issueId,
+      } satisfies CollaborationPlatformLocation,
       navigate(nextLocation) {
         router.push(collaborationLocationPath(nextLocation))
       },
@@ -138,25 +207,29 @@ export function CollaborationPage() {
         else toast.error(message)
       },
     }),
-    [location, router]
+    [issueId, pathname, projectId, projectView, router, workspaceId]
   )
 
-  return (
-    <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      <main className="min-w-0 flex-1 overflow-hidden" data-testid="collaboration-page-main">
-        {legacyProjectId ? (
+  if (legacyProjectId) {
+    return (
+      <CollaborationWebShell
+        sidebar={<div className="h-full" />}
+        main={
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
             正在进入协作空间…
           </div>
-        ) : (
-          <CollaborationPlatformApp
-            api={api}
-            host={platformHost}
-            locale={locale}
-            automationUiHost={webAutomationUiHost}
-          />
-        )}
-      </main>
-    </div>
+        }
+      />
+    )
+  }
+
+  return (
+    <CollaborationPlatformApp
+      api={api}
+      host={platformHost}
+      locale={locale}
+      automationUiHost={webAutomationUiHost}
+      renderShell={({ main, sidebar }) => <CollaborationWebShell main={main} sidebar={sidebar} />}
+    />
   )
 }

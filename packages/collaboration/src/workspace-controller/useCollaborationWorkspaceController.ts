@@ -581,6 +581,12 @@ function errorStatus(error: unknown): number | null {
   return typeof error.status === "number" ? error.status : null;
 }
 
+function isVersionConflict(error: unknown): boolean {
+  if (errorStatus(error) === 409) return true;
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  return error.code === "version_conflict";
+}
+
 const externalGitBoardStatuses = [
   "inbox",
   "pending",
@@ -706,6 +712,7 @@ export function createCollaborationWorkspaceControllerCommands({
   let projectLoadRevision = 0;
   let selectedIssueLoadRevision = 0;
   const projectMutationGenerations = new Map<string, number>();
+  const projectGroupChangeRevisions = new Map<string, number>();
   const externalColumnLoads = new Set<string>();
   const standardSnapshotLoads = new Map<
     string,
@@ -1180,7 +1187,7 @@ export function createCollaborationWorkspaceControllerCommands({
           }),
         });
       } catch (error) {
-        if (errorStatus(error) === 409) {
+        if (isVersionConflict(error)) {
           await loadProject(issue.cloud_project_id, false);
           reportError(messages.conflict, "conflict");
         } else {
@@ -1189,6 +1196,10 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     async changeProjectGroup({ project, groupBy, defaultStatuses }) {
+      const revision = (projectGroupChangeRevisions.get(project.id) ?? 0) + 1;
+      projectGroupChangeRevisions.set(project.id, revision);
+      const isCurrent = () =>
+        projectGroupChangeRevisions.get(project.id) === revision;
       const config = project.board_config ?? {
         group_by: "status" as const,
         processing_start_status_id: defaultStatuses[1]?.id ?? null,
@@ -1204,14 +1215,37 @@ export function createCollaborationWorkspaceControllerCommands({
           boardConfig: { ...config, group_by: groupBy },
         });
         markProjectMutated(project.id);
+        if (!isCurrent()) return;
         catalogProjects = catalogProjects.map((item) =>
           item.id === updated.id ? updated : item,
         );
         dispatch({ type: "replace-project", project: updated });
       } catch (error) {
-        if (errorStatus(error) === 409) await loadProject(project.id, false);
-        else dispatch({ type: "replace-project", project });
-        reportError(messages.saveFailed);
+        if (!isCurrent()) return;
+        if (!isVersionConflict(error)) {
+          dispatch({ type: "replace-project", project });
+          reportError(messages.saveFailed);
+          return;
+        }
+        try {
+          const latest = await api.projects.get(project.id);
+          if (!isCurrent()) return;
+          const latestConfig = latest.board_config ?? config;
+          const updated = await api.projects.update(project.id, {
+            version: latest.version,
+            boardConfig: { ...latestConfig, group_by: groupBy },
+          });
+          markProjectMutated(project.id);
+          if (!isCurrent()) return;
+          catalogProjects = catalogProjects.map((item) =>
+            item.id === updated.id ? updated : item,
+          );
+          dispatch({ type: "replace-project", project: updated });
+        } catch {
+          if (!isCurrent()) return;
+          await loadProject(project.id, false);
+          reportError(messages.conflict, "conflict");
+        }
       }
     },
     async refreshSelectedIssue() {

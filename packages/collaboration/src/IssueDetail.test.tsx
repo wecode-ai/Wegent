@@ -130,7 +130,6 @@ describe("IssueDetail browser due date boundary", () => {
 
       if (_ === "edit") {
         expect(editor.props.showAssignee).toBe(false);
-        expect(extensions.onRequestAssignment).toBeTypeOf("function");
       }
       expect(extensions.dueDateInputType).toBe("datetime-local");
       expect(extensions.dueDateFromSource(issue.due_at)).toBe(

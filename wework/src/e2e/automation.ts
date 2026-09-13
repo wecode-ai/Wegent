@@ -1240,6 +1240,33 @@ function desktopControlTextWithLineBreaks(node: Node): string {
   return Array.from(node.childNodes).map(desktopControlTextWithLineBreaks).join('')
 }
 
+function desktopControlComposerDisplayValue(element: HTMLElement, value: string): string {
+  let displayValue = value
+  let searchOffset = 0
+  const tokens = element.querySelectorAll<HTMLElement>(
+    '[data-composer-skill-reference], [data-composer-link-url]'
+  )
+  tokens.forEach(token => {
+    const reference =
+      token.getAttribute('data-composer-skill-reference') ??
+      token.getAttribute('data-composer-link-url')
+    if (!reference) return
+    const label =
+      token.getAttribute('data-composer-skill-label') ??
+      token.getAttribute('data-composer-link-label') ??
+      token.textContent ??
+      reference
+    const referenceOffset = displayValue.indexOf(reference, searchOffset)
+    if (referenceOffset < 0) return
+    displayValue =
+      displayValue.slice(0, referenceOffset) +
+      label +
+      displayValue.slice(referenceOffset + reference.length)
+    searchOffset = referenceOffset + label.length
+  })
+  return displayValue
+}
+
 function selectDesktopControlText(selector: string, value: string): string {
   const elements = findDesktopControlElements(selector)
   const wholeElement = value
@@ -2098,6 +2125,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
       if (declaredValue !== null && declaredValue !== undefined) return declaredValue
       if (element.isContentEditable) {
+        const propertyValue = (element as HTMLElement & { value?: unknown }).value
+        if (
+          typeof propertyValue === 'string' &&
+          element.classList.contains('composer-prosemirror-editor')
+        ) {
+          return desktopControlComposerDisplayValue(element, propertyValue)
+        }
         const blockValues = Array.from(
           element.querySelectorAll<HTMLElement>('.bn-block-content[data-content-type]')
         ).map(block => desktopControlTextWithLineBreaks(block).trim())

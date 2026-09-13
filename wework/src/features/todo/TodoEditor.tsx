@@ -86,7 +86,9 @@ export type TodoEditorProps = TodoEditorApiProps & {
   onClose: () => void
   presentation?: 'modal' | 'workspace-panel'
   workspacePanelFill?: boolean
+  readFirst?: boolean
   showPanelControls?: boolean
+  showFullscreenControl?: boolean
   showChildren?: boolean
   showCurrentTaskOnly?: boolean
   taskRefreshKey?: string | number
@@ -222,7 +224,9 @@ export function TodoEditor(props: TodoEditorProps) {
     onClose: props.onClose,
     presentation: props.presentation,
     workspacePanelFill: props.workspacePanelFill,
+    readFirst: props.readFirst,
     showPanelControls: props.showPanelControls,
+    showFullscreenControl: props.showFullscreenControl,
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     taskRefreshKey: props.taskRefreshKey,

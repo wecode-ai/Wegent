@@ -523,6 +523,10 @@ function WeworkSharedProject({
   } | null>(null)
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
   const [refreshProjectRequestKey, setRefreshProjectRequestKey] = useState(0)
+  const runtimeTaskLifecycleRef = useRef(runtimeTaskLifecycle)
+  useEffect(() => {
+    runtimeTaskLifecycleRef.current = runtimeTaskLifecycle
+  }, [runtimeTaskLifecycle])
   const scopedApi = useMemo<SharedWorkspaceApi>(
     () => ({
       ...api,
@@ -549,13 +553,13 @@ function WeworkSharedProject({
                 device_id: binding.deviceId,
                 task_id: binding.taskId,
               })),
-              runtimeTaskLifecycle
+              runtimeTaskLifecycleRef.current
             ) as unknown as CollaborationIssue[],
           }
         },
       },
     }),
-    [api, project.project_store, runtimeTaskLifecycle, workspace.id]
+    [api, project.project_store, workspace.id]
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
@@ -675,17 +679,22 @@ function WeworkSharedProject({
             onCreateTask,
           }) => (
             <div
-              className="collaboration-dialog-backdrop"
+              className="collaboration-dialog-backdrop collaboration-issue-detail-backdrop"
               data-testid={collaborationTestIds.issueDetail}
+              onMouseDown={event => {
+                if (event.currentTarget === event.target) onClose()
+              }}
             >
-              <div className="collaboration-issue-detail-shared-host">
+              <div className="collaboration-issue-detail-shared-host collaboration-issue-detail-github-host">
                 <TodoEditor
                   key={issue.id}
                   mode="edit"
                   sharedApi={issueApi}
                   presentation="workspace-panel"
                   workspacePanelFill
+                  readFirst
                   showPanelControls
+                  showFullscreenControl={false}
                   item={issue as unknown as CloudLoopItem}
                   project={editorProject}
                   allItems={allIssues as unknown as CloudLoopItem[]}
