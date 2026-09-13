@@ -609,6 +609,7 @@ function runtimeTranscriptRequestKey(
     afterCursor: options.afterCursor ?? null,
     refresh: options.refresh ?? null,
     includeFullContent: options.includeFullContent ?? null,
+    navigationOnly: options.navigationOnly ?? null,
   })
 }
 
