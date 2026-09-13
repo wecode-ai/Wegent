@@ -68,6 +68,19 @@ const initialLocation: CollaborationPlatformLocation = {
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 const LOCAL_PROJECT_STATUS_REFRESH_DELAYS_MS = [0, 500, 1_500] as const
 
+// eslint-disable-next-line react-refresh/only-export-components
+export function localProjectRuntimeStatusSignature(
+  runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
+): string {
+  return [...(runtimeTaskLifecycle?.tasks.entries() ?? [])]
+    .flatMap(([key, lifecycle]) => {
+      const status = runtimeTaskTrackingExecutionStatus(lifecycle)
+      return status ? [`${key}:${status}`] : []
+    })
+    .sort()
+    .join('|')
+}
+
 interface IssueRuntimeBindingPort {
   bindTask(
     issueId: string,
@@ -706,14 +719,7 @@ function WeworkSharedProject({
     return running
   }, [runtimeTaskLifecycle, runtimeWork])
   const runtimeTaskStatusSignature = useMemo(
-    () =>
-      [...(runtimeTaskLifecycle?.tasks.entries() ?? [])]
-        .flatMap(([key, lifecycle]) => {
-          const status = runtimeTaskTrackingExecutionStatus(lifecycle)
-          return status && status !== 'queued' && status !== 'running' ? [`${key}:${status}`] : []
-        })
-        .sort()
-        .join('|'),
+    () => localProjectRuntimeStatusSignature(runtimeTaskLifecycle),
     [runtimeTaskLifecycle]
   )
 

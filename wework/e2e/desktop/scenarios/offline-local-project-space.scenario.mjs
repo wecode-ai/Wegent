@@ -130,6 +130,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'click',
         scoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`)
       )
+      const localWorkspaceTree = scoped(
+        `[data-testid="collaboration-workspace-tree-${LOCAL_WORKSPACE_ID}"]`
+      )
+      const activeLocalWorkspace = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
+      await control.command('waitFor', `${activeLocalWorkspace}[aria-current="page"]`, {
+        text: '本地空间',
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'waitFor',
         scoped('[data-testid="collaboration-workspace-project-create"]'),
@@ -138,11 +146,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         }
       )
       assert.equal(
-        await control.command(
-          'getValue',
-          scoped('[data-testid="collaboration-workspace-switcher"]')
-        ),
-        LOCAL_WORKSPACE_ID,
+        await control.command('getAttribute', activeLocalWorkspace, {
+          value: 'aria-current',
+        }),
+        'page',
         'The offline flow did not enter the device-owned local workspace'
       )
 
@@ -280,15 +287,25 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
 
-      await control.command('click', scoped('[data-testid="collaboration-workspace-back"]'))
+      await control.command('click', activeLocalWorkspace)
       await control.command(
         'waitFor',
-        scoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
+        scoped('[data-testid="collaboration-workspace-project-create"]'),
         {
-          text: '本地空间',
           timeoutMs: uiTimeoutMs,
         }
       )
+      assert.equal(
+        await control.command('getAttribute', activeLocalWorkspace, {
+          value: 'aria-current',
+        }),
+        'page',
+        'The local Workspace tree lost its active state after leaving Project settings'
+      )
+      await control.command('waitFor', localWorkspaceTree, {
+        text: '本地空间',
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'waitFor',
         scoped(`[data-testid="collaboration-workspace-${CLOUD_WORKSPACE_ID}"]`),

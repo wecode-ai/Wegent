@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import type { DeliveryApi } from '@/api/deliveries'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import type { ProjectSpaceDetailServices } from '@/features/workbench/workbenchServices'
-import { createLocalWorkspaceApi, createWeworkPlatformApi } from './WeworkCollaborationPlatform'
+import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import {
+  createLocalWorkspaceApi,
+  createWeworkPlatformApi,
+  localProjectRuntimeStatusSignature,
+} from './WeworkCollaborationPlatform'
 
 function createLocalDeliveryApi() {
   return {
@@ -35,7 +41,63 @@ function createLocalDetailServices() {
   } as unknown as ProjectSpaceDetailServices
 }
 
+function runtimeTask(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
+  return {
+    taskId: 'runtime-task',
+    workspacePath: '/tmp/project',
+    title: 'Runtime task',
+    runtime: 'codex',
+    ...overrides,
+  }
+}
+
+function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
+  return {
+    projects: [
+      {
+        project: { id: 1, key: 'project', name: 'Project' },
+        deviceWorkspaces: [
+          {
+            deviceId: 'local-device',
+            workspacePath: '/tmp/project',
+            available: true,
+            tasks,
+          },
+        ],
+      },
+    ],
+    chats: [],
+    totalTasks: tasks.length,
+  }
+}
+
 describe('Wework collaboration workspace API', () => {
+  it('refreshes local project boards for running as well as terminal Runtime states', () => {
+    const lifecycleStore = new RuntimeTaskLifecycleStore('wework-collaboration-status-refresh')
+    lifecycleStore.syncRuntimeWork(
+      runtimeWork([
+        runtimeTask({
+          running: false,
+          status: 'done',
+          completedAt: 1_700_000_000,
+        }),
+      ])
+    )
+    const terminalSignature = localProjectRuntimeStatusSignature(lifecycleStore.getSnapshot())
+
+    lifecycleStore.executorStarted({
+      deviceId: 'local-device',
+      taskId: 'runtime-task',
+      runtime: 'codex',
+      workspacePath: '/tmp/project',
+    })
+    const runningSignature = localProjectRuntimeStatusSignature(lifecycleStore.getSnapshot())
+
+    expect(terminalSignature).toContain(':succeeded')
+    expect(runningSignature).toContain(':running')
+    expect(runningSignature).not.toBe(terminalSignature)
+  })
+
   it('exposes local project execution environments through the shared project contract', async () => {
     const api = createLocalWorkspaceApi(
       createLocalDeliveryApi(),

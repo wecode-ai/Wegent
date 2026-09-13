@@ -170,10 +170,10 @@ async function createProjectByUi(
   )
 
   await page.getByTestId('collaboration-workspace-nav-projects').click()
-  await expect(page.getByTestId(`collaboration-project-card-${project.id}`)).toContainText(
+  await expect(page.getByTestId(`collaboration-workspace-project-${project.id}`)).toContainText(
     project.name
   )
-  await page.getByTestId(`collaboration-project-card-${project.id}`).click()
+  await page.getByTestId(`collaboration-workspace-project-${project.id}`).click()
   await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
 
   return { project, workspace }
@@ -392,7 +392,6 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId(`collaboration-workspace-${workspace.id}`)).toContainText(
         workspace.name
       )
-      await page.getByTestId(`collaboration-workspace-${workspace.id}`).click()
       await expect(page.getByTestId(`collaboration-project-card-${project.id}`)).toContainText(
         project.name
       )
@@ -784,6 +783,7 @@ test.describe('Collaboration cloud capabilities', () => {
       })
 
       await page.goto(collaborationProjectPath(workspace.id, project.id, { issueId: created.id }))
+      await page.getByTestId('cloud-todo-toggle-tasks').click()
       await expect(page.getByTestId('cloud-todo-workflow-dag')).toBeVisible()
       await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
       await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toBeVisible()
@@ -811,6 +811,7 @@ test.describe('Collaboration cloud capabilities', () => {
         .toBe('completed')
 
       await page.reload()
+      await page.getByTestId('cloud-todo-toggle-tasks').click()
       await expect(page.getByTestId('cloud-todo-workflow-dag')).toBeVisible()
       await page.getByTestId(`cloud-todo-workflow-node-${stageId}`).click()
       await expect(page.getByTestId(`cloud-todo-approve-workflow-node-${stageId}`)).toHaveCount(0)
@@ -921,7 +922,12 @@ test.describe('Collaboration cloud capabilities', () => {
       await captureEvidence(page, 'web-10-project-manage')
 
       await page.getByTestId('collaboration-tab-board').click()
-      await expect(page.getByTestId('collaboration-board')).toBeVisible()
+      await expect(page).toHaveURL(
+        new RegExp(
+          `${collaborationProjectPath(workspace.id, project.id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`
+        )
+      )
+      await expect(page.getByTestId('collaboration-empty-project')).toBeVisible()
       await captureEvidence(page, 'web-13-board-return')
 
       await webApi(

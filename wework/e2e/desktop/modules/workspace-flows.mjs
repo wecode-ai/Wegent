@@ -66,35 +66,18 @@ async function waitForNativeCollaborationPlatform(
 
 async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
-  const workspaceBackSelector = `${contentSelector} [data-testid="collaboration-workspace-back"]`
-  const allSpacesSelector = `${contentSelector} [data-testid="collaboration-nav-all-spaces"]`
-  const localWorkspaceSelector = `${contentSelector} [data-testid="collaboration-workspace-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
-  const currentSnapshot = JSON.parse(await control.command('snapshot', contentSelector))
-
-  if (currentSnapshot.testIds.includes('collaboration-workspace-back')) {
-    await control.command('click', workspaceBackSelector)
-  } else if (
-    !currentSnapshot.testIds.includes(`collaboration-workspace-${LOCAL_COLLABORATION_WORKSPACE_ID}`)
-  ) {
-    await control.command('click', allSpacesSelector)
-  }
-
-  await control.command('waitFor', localWorkspaceSelector, {
+  const localWorkspaceTree = `${contentSelector} [data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+  const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
+  await control.command('waitFor', localWorkspaceIdentity, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', localWorkspaceSelector)
-  const workspaceSwitcher = `${contentSelector} [data-testid="collaboration-workspace-switcher"]`
-  await control.command('waitFor', workspaceSwitcher, {
+  await control.command('click', localWorkspaceIdentity)
+  const activeWorkspaceHome = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
+  await control.command('waitFor', `${activeWorkspaceHome}[aria-current="page"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await waitForControlValue(
-    control,
-    workspaceSwitcher,
-    LOCAL_COLLABORATION_WORKSPACE_ID,
-    'The collaboration tab did not enter the local workspace'
-  )
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid="collaboration-workspace-project-create"]`,
@@ -997,6 +980,18 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  await control.command(
+    'click',
+    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="cloud-todo-toggle-tasks"]'
+  )
+  await control.command(
+    'waitFor',
+    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid^="cloud-todo-open-task-conversation-"]',
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
   const contextSnapshot = await waitForSnapshot(
     control,
@@ -1423,6 +1418,24 @@ async function verifyWorkspaceTabIsolation(control) {
     boardTabTestId: firstBoardTestId,
   } = await openProjectWorkspaceTab(control, initialBoardIds)
   await enterLocalCollaborationWorkspace(control, firstBoardContent)
+  const firstWorkspaceTree = `${firstBoardContent} [data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+  await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-row`)
+  await control.command(
+    'click',
+    `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
+  )
+  await control.command(
+    'click',
+    `${firstWorkspaceTree} [data-testid="collaboration-workspace-nav-settings"]`
+  )
+  await control.command(
+    'waitFor',
+    `${firstBoardContent} [data-testid="workspace-settings-shell"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   const firstWorkspaceAgents = `${firstBoardContent} [data-testid="collaboration-workspace-nav-agents"]`
   await control.command('click', firstWorkspaceAgents)
   await waitForAttribute(
@@ -1437,7 +1450,7 @@ async function verifyWorkspaceTabIsolation(control) {
     ...initialBoardIds,
     firstBoardTestId,
   ])
-  const secondLocalWorkspace = `${secondBoardContent} [data-testid="collaboration-workspace-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
+  const secondLocalWorkspace = `${secondBoardContent} [data-testid="collaboration-workspace-home-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
   await control.command('waitFor', secondLocalWorkspace, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1446,11 +1459,11 @@ async function verifyWorkspaceTabIsolation(control) {
     Number(
       await control.command(
         'getElementCount',
-        `${secondBoardContent} [data-testid="collaboration-workspace-switcher"]`
+        `${secondBoardContent} [data-testid="workspace-settings-shell"]`
       )
     ),
     0,
-    'A new project-space tab inherited the first tab local-workspace navigation state'
+    'A new project-space tab inherited the first tab workspace settings view'
   )
   assert.equal(
     await control.command('getAttribute', firstWorkspaceAgents, {
@@ -1460,12 +1473,12 @@ async function verifyWorkspaceTabIsolation(control) {
     'Opening a second project-space tab reset the first tab workspace section'
   )
   await enterLocalCollaborationWorkspace(control, secondBoardContent)
-  const secondWorkspaceHome = `${secondBoardContent} [data-testid="collaboration-workspace-nav-home"]`
+  const secondWorkspaceHome = `${secondBoardContent} [data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] [data-testid="collaboration-workspace-nav-projects"]`
   await waitForAttribute(
     control,
     secondWorkspaceHome,
-    'class',
-    'active',
+    'aria-current',
+    'page',
     'The second project-space tab did not enter the local workspace home independently'
   )
   await control.command('click', `[data-testid="workspace-tab-select-${firstBoardId}"]`)

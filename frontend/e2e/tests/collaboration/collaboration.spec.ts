@@ -102,15 +102,8 @@ test.describe('Collaboration module', () => {
     await page.goto('/collaboration')
     await expect(page).toHaveURL(/\/collaboration$/)
     await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
-    await expect(page.getByTestId('collaboration-nav-all-spaces')).toBeVisible()
-
-    await page.getByTestId('collaboration-nav-resources').click()
-    await expect(page).toHaveURL(/\/collaboration\/resources$/)
-    await expect(page.getByTestId('collaboration-nav-resources')).toHaveClass(/active/)
-    await capture(page, testInfo, '01-resources')
-
-    await page.getByTestId('collaboration-nav-all-spaces').click()
-    await expect(page).toHaveURL(/\/collaboration$/)
+    await expect(page.getByTestId('collaboration-workspaces-section-toggle')).toBeVisible()
+    await expect(page.getByTestId('collaboration-workspace-sidebar-create')).toBeVisible()
 
     await page.getByTestId('collaboration-workspace-create').click()
     await page.getByTestId('collaboration-workspace-name-input').fill(workspaceName)
@@ -122,18 +115,29 @@ test.describe('Collaboration module', () => {
     await expect(page).toHaveURL(/\/collaboration\/workspaces\/[^/?]+$/)
     workspaceId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
     expect(workspaceId).not.toBe('')
-    await expect(page.getByTestId('collaboration-workspace-back')).toBeVisible()
-    await expect(page.getByTestId('collaboration-workspace-switcher')).toHaveValue(workspaceId)
-    await expect(
-      page.getByTestId('collaboration-workspace-switcher').locator('option:checked')
-    ).toHaveText(workspaceName)
-
-    await page.getByTestId('collaboration-workspace-back').click()
-    await expect(page).toHaveURL(/\/collaboration$/)
-    await expect(page.getByTestId(`collaboration-workspace-${workspaceId}`)).toContainText(
+    await expect(page.getByTestId('collaboration-workspace-nav-projects')).toContainText(
       workspaceName
     )
-    await page.getByTestId(`collaboration-workspace-${workspaceId}`).click()
+    await expect(page.getByTestId(`collaboration-workspace-tree-${workspaceId}`)).toBeVisible()
+
+    await page
+      .getByTestId(`collaboration-workspace-tree-${workspaceId}`)
+      .locator('.collaboration-workspace-row')
+      .hover()
+    await page.getByTestId('collaboration-workspace-actions').click()
+    await page.getByTestId('collaboration-workspace-nav-settings').click()
+    await expect(page).toHaveURL(
+      new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}/settings$`)
+    )
+    await expect(page.getByTestId('workspace-settings-shell')).toBeVisible()
+    await expect(page.getByTestId('collaboration-workspace-settings-save')).toBeVisible()
+    await page.getByTestId('collaboration-workspace-nav-members').click()
+    await expect(page).toHaveURL(
+      new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}/members$`)
+    )
+    await capture(page, testInfo, '01-workspace-resources')
+
+    await page.getByTestId('collaboration-workspace-nav-projects').click()
     await expect(page).toHaveURL(
       new RegExp(`/collaboration/workspaces/${escaped(encodeURIComponent(workspaceId))}$`)
     )
@@ -194,6 +198,7 @@ test.describe('Collaboration module', () => {
     const assignedMember = memberList.items[0]
     const assignedMemberName = assignedMember?.user_name
     if (!assignedMember || !assignedMemberName) throw new Error('Workspace owner member is missing')
+    await page.getByTestId('collaboration-issue-comment').click()
     await page.getByTestId('collaboration-issue-mention-trigger').click()
     await page.getByTestId(`collaboration-issue-mention-member-${assignedMember.user_id}`).click()
     await page.getByTestId('collaboration-issue-comment').pressSequentially(assignmentComment)

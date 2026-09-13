@@ -303,6 +303,7 @@ test.describe('Collaboration agent execution', () => {
     await expect(page.getByTestId('collaboration-issue-detail')).toBeVisible()
     await capture(page, testInfo, `wegent-${agentCase.label.toLowerCase()}-02-issue-created`)
     const assignmentComment = `Assign ${agentCase.label} through the collaboration execution path.`
+    await page.getByTestId('collaboration-issue-comment').click()
     await page.getByTestId('collaboration-issue-mention-trigger').click()
     await page.getByTestId(`collaboration-issue-mention-agent-${agentCase.agent.id}`).click()
     await page.getByTestId('collaboration-issue-comment').pressSequentially(assignmentComment)

@@ -715,6 +715,7 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, workspac
         'completed',
         'The completed Runtime Task status was not reflected in the open Issue detail'
       )
+      await control.command('click', `${activeSurface} [data-testid="cloud-todo-toggle-tasks"]`)
       await control.command('waitFor', `${activeSurface} [data-testid="todo-detail-deliveries"]`, {
         text: '1 个附件',
         timeoutMs: uiTimeoutMs,
