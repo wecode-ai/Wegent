@@ -26,6 +26,8 @@ Scheduled automations have a **Run** button on both their list card and detail v
 
 The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
 
+The Task-page sidebar names this destination **Board**. After it opens, the system-managed personal board is still titled **My tasks**, distinguishing the top-level product area from the specific board being viewed. **My tasks** exposes only board-oriented task tracking, including search, creation, filters, and task details. It does not show the table, files, automation, management, or project-action menus; those advanced capabilities remain available only in ordinary project spaces.
+
 Selecting the fixed top-level **Workspace** tab from another page opens **My tasks**; selecting it again while it is active preserves the current board. Even when both local and cloud storage contain a system-generated `default-work-items` space, the sidebar presents a single logical **My tasks** entry instead of two identically named destinations.
 
 Selecting **New Issue** in a workspace opens a lightweight composer instead of a task form. Choose the destination board and describe the outcome in natural language; the first non-empty line becomes the title and the remaining text becomes the description. The issue is created directly in the selected status column and opens immediately for follow-up details such as participants and execution steps. The board header and every status column expose the same creation flow.
