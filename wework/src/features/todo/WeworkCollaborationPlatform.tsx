@@ -76,7 +76,7 @@ export interface WeworkCollaborationPlatformProps {
 }
 
 function localWorkspaceApi(
-  deliveryApi: NonNullable<ProjectSpaceApis['local']>,
+  deliveryApi: ProjectSpaceApis['local'] | undefined,
   userId: number,
   userName: string,
   userEmail: string | null,
@@ -155,8 +155,24 @@ function localWorkspaceApi(
 
   return {
     ...(delivery as unknown as SharedWorkspaceApi),
-    ...(automation.automations ? { automations: automation.automations } : {}),
-    ...(automation.incomingHooks ? { incomingHooks: automation.incomingHooks } : {}),
+    ...(automation.automations
+      ? {
+          automations: {
+            ...automation.automations,
+            runWorkflowNode: unavailable,
+            cancelRun: unavailable,
+            retryRun: unavailable,
+          },
+        }
+      : {}),
+    ...(automation.incomingHooks
+      ? {
+          incomingHooks: {
+            ...automation.incomingHooks,
+            listEvents: unavailable,
+          },
+        }
+      : {}),
     workspaces: {
       list: async () => [await workspace()],
       get: workspace,
@@ -222,18 +238,21 @@ function localWorkspaceApi(
         },
     agents: projectAgentApi
       ? {
-          list: projectId => projectAgentApi.list(projectId),
-          create: (projectId, input) =>
-            projectAgentApi.create(
+          list: async projectId =>
+            (await projectAgentApi.list(projectId)).map(agent => ({ ...agent })),
+          create: async (projectId, input) => ({
+            ...(await projectAgentApi.create(
               projectId,
               input as Parameters<typeof projectAgentApi.create>[1]
-            ),
-          update: (projectId, agentId, input) =>
-            projectAgentApi.update(
+            )),
+          }),
+          update: async (projectId, agentId, input) => ({
+            ...(await projectAgentApi.update(
               projectId,
               agentId,
               input as Parameters<typeof projectAgentApi.update>[2]
-            ),
+            )),
+          }),
         }
       : {
           list: async () => [],
@@ -269,7 +288,7 @@ function localWorkspaceApi(
 
 function weworkPlatformApi(
   cloudApi: SharedWorkspaceApi | undefined,
-  localDeliveryApi: NonNullable<ProjectSpaceApis['local']>,
+  localDeliveryApi: ProjectSpaceApis['local'] | undefined,
   userId: number,
   userName: string,
   userEmail: string | null,

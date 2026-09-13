@@ -106,9 +106,8 @@ const project: CollaborationProject = {
 }
 
 describe('CollaborationApp shared automation', () => {
-  it('mounts the shared rules view and shared workflow canvas on Web', async () => {
-    const listAutomations = jest.fn().mockResolvedValue([])
-    const api = {
+  function projectApi(automationOverrides: Record<string, unknown> = {}) {
+    return {
       projects: {
         get: jest.fn().mockResolvedValue(project),
         update: jest.fn().mockResolvedValue(project),
@@ -120,15 +119,27 @@ describe('CollaborationApp shared automation', () => {
           agents: [],
           taskBindings: [],
         }),
+        update: jest.fn(),
       },
-      automations: {
-        list: listAutomations,
+      members: {
+        list: jest.fn().mockResolvedValue([]),
+        searchUsers: jest.fn().mockResolvedValue([]),
+        add: jest.fn(),
+        update: jest.fn(),
+        remove: jest.fn(),
       },
+      agents: {
+        list: jest.fn().mockResolvedValue([]),
+      },
+      automations: automationOverrides,
       incomingHooks: {
         catalog: jest.fn().mockResolvedValue([]),
       },
     } as unknown as SharedWorkspaceApi
-    const host: CollaborationHostAdapter = {
+  }
+
+  function automationHost(): CollaborationHostAdapter {
+    return {
       capabilities: {
         automation: true,
         dingtalkAitable: false,
@@ -140,26 +151,32 @@ describe('CollaborationApp shared automation', () => {
       },
       navigate: jest.fn(),
     }
+  }
+
+  it('mounts the shared dispatch-policy view on Web', async () => {
+    const listAutomations = jest.fn().mockResolvedValue([])
+    const api = projectApi({ list: listAutomations })
 
     render(
       <CollaborationApp
         api={api}
-        host={host}
+        host={automationHost()}
         locale="zh-CN"
         pollIntervalMs={0}
         automationUiHost={webAutomationUiHost}
       />
     )
 
-    expect(await screen.findByTestId('automation-create-rule')).toBeInTheDocument()
+    fireEvent.click(await screen.findByTestId('collaboration-project-settings-dispatch'))
+    expect(await screen.findByTestId('project-automation-policy')).toBeInTheDocument()
     await waitFor(() => expect(listAutomations).toHaveBeenCalledWith(project.id))
 
-    fireEvent.click(screen.getByTestId('automation-create-rule'))
+    fireEvent.click(screen.getByTestId('automation-welcome-create-policy'))
 
-    expect(await screen.findByTestId('automation-workflow-canvas')).toBeInTheDocument()
+    expect(await screen.findByTestId('automation-policy-name')).toBeInTheDocument()
   })
 
-  it('selects and persists Web runtime, model, and plugin settings through shared UI', async () => {
+  it('persists the shared natural-language dispatch policy on Web', async () => {
     const createAutomation = jest.fn().mockImplementation(async (_projectId, input) => ({
       id: 'automation-created',
       projectId: project.id,
@@ -173,162 +190,40 @@ describe('CollaborationApp shared automation', () => {
       createdAt: '2026-09-11T00:00:00Z',
       updatedAt: '2026-09-11T00:00:00Z',
     }))
-    const loadCatalog = jest.fn().mockResolvedValue({
-      environments: [
-        {
-          deviceId: 'device-cloud',
-          label: 'Cloud Runner',
-          executionEnvironment: 'cloud',
-        },
-      ],
-      models: [
-        {
-          name: 'gpt-web',
-          label: 'GPT Web',
-          type: 'public',
-          options: { reasoning_effort: 'high' },
-        },
-      ],
-      runtimeProfiles: [
-        {
-          id: 'profile-cloud',
-          name: 'Cloud GPT',
-          executionEnvironment: 'cloud',
-          executionDeviceId: 'device-cloud',
-          model: 'gpt-web',
-          modelType: 'public',
-          modelOptions: { reasoning_effort: 'medium' },
-          status: 'active',
-          version: 1,
-        },
-      ],
-      plugins: [],
+    const api = projectApi({
+      list: jest.fn().mockResolvedValue([]),
+      create: createAutomation,
     })
-    const loadPlugins = jest.fn().mockResolvedValue([
-      {
-        id: 'plugin-github',
-        label: 'GitHub',
-        reference: {
-          id: 'plugin-github',
-          pluginName: 'github',
-          marketplaceId: 'official',
-          displayName: 'GitHub',
-        },
-      },
-    ])
-    const api = {
-      projects: {
-        get: jest.fn().mockResolvedValue(project),
-        update: jest.fn().mockResolvedValue(project),
-      },
-      issues: {
-        getBoardSnapshot: jest.fn().mockResolvedValue({
-          items: [],
-          members: [],
-          agents: [],
-          taskBindings: [],
-        }),
-      },
-      automations: {
-        list: jest.fn().mockResolvedValue([]),
-        create: createAutomation,
-      },
-      incomingHooks: {
-        catalog: jest.fn().mockResolvedValue([]),
-      },
-      automationExecutionCatalog: {
-        load: loadCatalog,
-        loadPlugins,
-      },
-    } as unknown as SharedWorkspaceApi
-    const host: CollaborationHostAdapter = {
-      capabilities: {
-        automation: true,
-        dingtalkAitable: false,
-      },
-      location: {
-        projectId: project.id,
-        issueId: null,
-        view: 'automation',
-      },
-      navigate: jest.fn(),
-    }
 
     render(
       <CollaborationApp
         api={api}
-        host={host}
+        host={automationHost()}
         locale="zh-CN"
         pollIntervalMs={0}
         automationUiHost={webAutomationUiHost}
       />
     )
 
-    fireEvent.click(await screen.findByTestId('automation-create-rule'))
-    await waitFor(() => expect(loadCatalog).toHaveBeenCalledWith(project.id))
-    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
-    fireEvent.click(screen.getByTestId('automation-node-insert-after-task-trigger'))
-    fireEvent.change(await screen.findByTestId(/^execution-node-name-step-/), {
-      target: { value: 'Cloud execution' },
+    fireEvent.click(await screen.findByTestId('collaboration-project-settings-dispatch'))
+    fireEvent.click(await screen.findByTestId('automation-welcome-create-policy'))
+    fireEvent.change(screen.getByTestId('automation-policy-name'), {
+      target: { value: 'Web dispatch policy' },
     })
-    fireEvent.change(screen.getByTestId(/^execution-node-prompt-step-/), {
-      target: { value: 'Run with the selected cloud runtime' },
+    fireEvent.change(screen.getByTestId('automation-coordinator-prompt'), {
+      target: { value: 'Inspect pending Issues and create verifiable assignments.' },
     })
-    const profileSelect = await screen.findByTestId(/^execution-node-runtime-profile-step-/)
-    fireEvent.change(profileSelect, { target: { value: 'profile-cloud' } })
-    expect(screen.getByTestId(/^execution-node-model-step-/)).toHaveValue('gpt-web')
+    fireEvent.click(screen.getByTestId('automation-save-policy'))
 
-    const pluginButton = screen.getByTestId(/^execution-node-add-plugin-step-/)
-    fireEvent.click(pluginButton)
-    await waitFor(() => expect(loadPlugins).toHaveBeenCalledWith(project.id, ['device-cloud']))
-    fireEvent.click(
-      await screen.findByTestId(/^execution-node-add-plugin-step-.*-option-plugin-github$/)
+    await waitFor(() =>
+      expect(createAutomation).toHaveBeenCalledWith(project.id, expect.anything())
     )
-
-    await waitFor(() => expect(createAutomation).toHaveBeenCalled(), { timeout: 3000 })
     const savedInput = createAutomation.mock.calls.at(-1)?.[1]
-    const firstNode = savedInput.eventConfig.wework_flow.graph.nodes[0]
-    expect(firstNode).toMatchObject({
-      runtimeProfileId: 'profile-cloud',
-      executionDeviceId: 'device-cloud',
-      executionEnvironment: 'cloud',
-      model: 'gpt-web',
-      modelType: 'public',
-      modelOptions: { reasoning_effort: 'medium' },
-      plugins: expect.arrayContaining(['GitHub']),
-      projectPlugins: [
-        {
-          id: 'plugin-github',
-          pluginName: 'github',
-          marketplaceId: 'official',
-          displayName: 'GitHub',
-        },
-      ],
-    })
-    const workflowExecutionNode = savedInput.eventConfig.runtime_workflow_definition.nodes.find(
-      (node: { id: string }) => node.id === firstNode.id
-    )
-    expect(workflowExecutionNode.execution_config).toMatchObject({
-      runtime_profile_id: 'profile-cloud',
-      execution_device_id: 'device-cloud',
-      model: 'gpt-web',
-      model_type: 'public',
-      model_options: { reasoning_effort: 'medium' },
-      project_plugins: [
-        {
-          id: 'plugin-github',
-          pluginName: 'github',
-          marketplaceId: 'official',
-          displayName: 'GitHub',
-        },
-      ],
-    })
     expect(savedInput).toMatchObject({
-      runtimeSource: 'fixed_profile',
-      runtimeProfileId: 'profile-cloud',
-      model: 'gpt-web',
-      executionEnvironment: 'cloud',
-      executionDeviceId: 'device-cloud',
+      name: 'Web dispatch policy',
     })
+    expect(JSON.stringify(savedInput)).toContain(
+      'Inspect pending Issues and create verifiable assignments.'
+    )
   })
 })
