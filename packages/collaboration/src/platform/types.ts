@@ -4,7 +4,7 @@
 
 import type { CollaborationView } from "../types";
 
-export type CollaborationPlatformView = "spaces" | "my-work" | "resources";
+export type CollaborationPlatformView = "spaces" | "resources";
 
 export type CollaborationWorkspaceView =
   | "home"
@@ -33,6 +33,7 @@ export interface CollaborationPlatformHostAdapter {
     sidebarPresentation?: "full" | "context";
   };
   navigate(location: CollaborationPlatformLocation): void;
+  manageResource?(kind: "agents" | "environments", resourceId?: string): void;
   notify?(message: string, kind: "success" | "error"): void;
   openExternal?(url: string): void;
 }

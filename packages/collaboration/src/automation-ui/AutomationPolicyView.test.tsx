@@ -4,9 +4,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@xyflow/react", () => ({
+  Background: () => null,
+  MarkerType: { ArrowClosed: "arrowclosed" },
+  Position: { Left: "left", Right: "right" },
+  ReactFlow: ({
+    nodes,
+    edges,
+  }: {
+    nodes: Array<{ id: string; data: { label: ReactNode } }>;
+    edges: Array<{ id: string; source: string; target: string }>;
+  }) => (
+    <div data-testid="mock-automation-workflow-dag">
+      {nodes.map((node) => (
+        <div key={node.id}>{node.data.label}</div>
+      ))}
+      {edges.map((edge) => (
+        <span
+          data-testid={`mock-automation-workflow-edge-${edge.source}-${edge.target}`}
+          key={edge.id}
+        />
+      ))}
+    </div>
+  ),
+}));
 
 import type { AutomationUiRule, AutomationUiStep } from "../automation";
 import { AutomationPolicyView } from "./AutomationPolicyView";
@@ -80,6 +105,11 @@ const host: AutomationUiHost = {
   EventSubscriptionPicker: () => null,
 };
 
+const projectAgents = [
+  { id: "agent-claude", name: "Claude" },
+  { id: "agent-codex", name: "Codex" },
+];
+
 function element(testId: string): HTMLElement {
   const found = document.querySelector(`[data-testid="${testId}"]`);
   if (!(found instanceof HTMLElement)) {
@@ -107,11 +137,19 @@ async function change(testId: string, value: string) {
   });
 }
 
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 describe("AutomationPolicyView", () => {
   let container: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -207,6 +245,133 @@ describe("AutomationPolicyView", () => {
           },
         }),
       }),
+    );
+  });
+
+  it("adds, edits, removes, and saves executable workflow steps", async () => {
+    const onSaveRule = vi.fn(async (draft: AutomationUiRule) => ({
+      ...draft,
+      persisted: true,
+    }));
+    await render([rule("rule-1", "Dynamic policy")], {
+      onSaveRule,
+      projectAgents,
+    });
+
+    await click("automation-empty-add-workflow-step");
+    await change("automation-workflow-step-name-0", "Interaction design");
+    await change(
+      "automation-workflow-step-description-0",
+      "Deliver a verified interaction prototype",
+    );
+    await click("automation-add-workflow-step");
+    await change("automation-workflow-step-name-1", "Implementation");
+    await click("automation-workflow-step-0");
+    await click("automation-remove-workflow-step-0");
+    await click("automation-workflow-step-0");
+    await change("automation-workflow-step-agent-0", "agent-codex");
+    await click("automation-save-policy");
+
+    expect(onSaveRule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        steps: [
+          expect.objectContaining({
+            kind: "dynamic",
+            subgraph: {
+              nodes: [
+                expect.objectContaining({
+                  name: "Implementation",
+                  kind: "task",
+                  dependencies: [],
+                  dependencyContext: {},
+                  requiredAssigneeType: "agent",
+                  requiredAssigneeId: "agent-codex",
+                  executionConfig: null,
+                  executionConfigOverride: false,
+                }),
+              ],
+            },
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("saves Claude then Codex as a real linear dependency chain", async () => {
+    const onSaveRule = vi.fn(async (draft: AutomationUiRule) => ({
+      ...draft,
+      persisted: true,
+    }));
+    await render([rule("rule-1", "Two-step policy")], {
+      onSaveRule,
+      projectAgents,
+    });
+
+    await click("automation-empty-add-workflow-step");
+    await change("automation-workflow-step-name-0", "Claude");
+    await change("automation-workflow-step-agent-0", "agent-claude");
+    await click("automation-add-workflow-step");
+    await change("automation-workflow-step-name-1", "Codex");
+    await change("automation-workflow-step-agent-1", "agent-codex");
+
+    expect(
+      document.querySelector('[data-testid^="mock-automation-workflow-edge-"]'),
+    ).toBeTruthy();
+
+    await click("automation-save-policy");
+    await flush();
+
+    const savedSteps = onSaveRule.mock.calls[0]?.[0].steps[0]?.subgraph?.nodes;
+    expect(savedSteps).toHaveLength(2);
+    expect(savedSteps?.[0]).toMatchObject({
+      name: "Claude",
+      dependencies: [],
+      dependencyContext: {},
+      requiredAssigneeType: "agent",
+      requiredAssigneeId: "agent-claude",
+      executionConfig: null,
+      executionConfigOverride: false,
+    });
+    expect(savedSteps?.[1]).toMatchObject({
+      name: "Codex",
+      dependencies: [savedSteps[0]?.id],
+      dependencyContext: {
+        [savedSteps[0]!.id]: ["final_result", "deliveries"],
+      },
+      requiredAssigneeType: "agent",
+      requiredAssigneeId: "agent-codex",
+      executionConfig: null,
+      executionConfigOverride: false,
+    });
+
+    const savedRule = onSaveRule.mock.calls[0]![0];
+    await render([{ ...savedRule, persisted: true }], {
+      onSaveRule,
+      projectAgents,
+    });
+    await click("automation-workflow-step-1");
+    expect(
+      (element("automation-workflow-step-agent-1") as HTMLSelectElement).value,
+    ).toBe("agent-codex");
+    await click("automation-workflow-step-0");
+    expect(
+      (element("automation-workflow-step-agent-0") as HTMLSelectElement).value,
+    ).toBe("agent-claude");
+  });
+
+  it("requires every configured workflow step to select an agent", async () => {
+    const onSaveRule = vi.fn();
+    await render([rule("rule-1", "Incomplete policy")], {
+      onSaveRule,
+      projectAgents,
+    });
+
+    await click("automation-empty-add-workflow-step");
+    await click("automation-save-policy");
+
+    expect(onSaveRule).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Choose an execution agent for step 1",
     );
   });
 

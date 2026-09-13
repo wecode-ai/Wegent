@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { X } from "lucide-react";
+import { ArrowUp, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
@@ -111,6 +111,23 @@ export function issueActivityEntries(
   ].sort((left, right) => left.at.localeCompare(right.at));
 }
 
+export function activityDisplayBody(body: string, fallback: string): string {
+  const marker = body.trim();
+  if (!marker || !/^[A-Z0-9_]+$/.test(marker)) return body || fallback;
+  const actor = marker.includes("CLAUDE")
+    ? "Claude"
+    : marker.includes("CODEX")
+      ? "Codex"
+      : null;
+  if (actor === "Claude" && /(COMPLETED|PASSED)/.test(marker))
+    return "Claude 已完成，Codex 阶段已自动解锁";
+  if (actor === "Codex" && /(COMPLETED|PASSED)/.test(marker))
+    return "Codex 已完成，所有自动化阶段已完成";
+  if (actor && /(PLAN_SUBMITTED|ASSIGNED|STARTED)/.test(marker))
+    return `自动化规则已将当前阶段分配给 ${actor}`;
+  return "自动化流程已更新";
+}
+
 export function IssueActivityPanel({
   api,
   issue,
@@ -155,11 +172,22 @@ export function IssueActivityPanel({
   const [selectedAssignment, setSelectedAssignment] =
     useState<SelectedAssignmentTarget | null>(null);
   const commentRef = useRef<HTMLTextAreaElement>(null);
+  const mentionFocusFrameRef = useRef<number | null>(null);
   useEffect(() => {
+    if (mentionFocusFrameRef.current !== null) {
+      window.cancelAnimationFrame(mentionFocusFrameRef.current);
+      mentionFocusFrameRef.current = null;
+    }
     setBody("");
     setMentionOpen(false);
     setComposerExpanded(false);
     setSelectedAssignment(null);
+    return () => {
+      if (mentionFocusFrameRef.current !== null) {
+        window.cancelAnimationFrame(mentionFocusFrameRef.current);
+        mentionFocusFrameRef.current = null;
+      }
+    };
   }, [issue.id]);
   const entries = useMemo(
     () => issueActivityEntries(assignments, comments, executions),
@@ -198,6 +226,10 @@ export function IssueActivityPanel({
     if (!commentBody) return;
     const assignmentTarget = pendingAssignment;
     if (!assignmentTarget && !canComment) return;
+    if (mentionFocusFrameRef.current !== null) {
+      window.cancelAnimationFrame(mentionFocusFrameRef.current);
+      mentionFocusFrameRef.current = null;
+    }
     setSending(true);
     try {
       if (assignmentTarget) {
@@ -232,7 +264,8 @@ export function IssueActivityPanel({
     const textarea = commentRef.current;
     const start = textarea?.selectionStart ?? body.length;
     const end = textarea?.selectionEnd ?? start;
-    const prefix = body.slice(0, start);
+    const rawPrefix = body.slice(0, start);
+    const prefix = rawPrefix.endsWith("@") ? rawPrefix.slice(0, -1) : rawPrefix;
     const suffix = body.slice(end);
     const leadingSpace = prefix && !/\s$/.test(prefix) ? " " : "";
     const trailingSpace = suffix && /^\s/.test(suffix) ? "" : " ";
@@ -248,7 +281,11 @@ export function IssueActivityPanel({
     });
     setMentionOpen(false);
     setComposerExpanded(true);
-    window.requestAnimationFrame(() => {
+    if (mentionFocusFrameRef.current !== null) {
+      window.cancelAnimationFrame(mentionFocusFrameRef.current);
+    }
+    mentionFocusFrameRef.current = window.requestAnimationFrame(() => {
+      mentionFocusFrameRef.current = null;
       textarea?.focus();
       textarea?.setSelectionRange(nextCaret, nextCaret);
     });
@@ -336,15 +373,12 @@ export function IssueActivityPanel({
                 key={`comment:${entry.comment.id}`}
               >
                 <header>
-                  <span className="issue-comment-event-avatar">
-                    {entry.comment.author.slice(0, 1)}
-                  </span>
                   <strong>{entry.comment.author}</strong>
                   <time>
                     {entry.comment.created_at.slice(0, 16).replace("T", " ")}
                   </time>
                 </header>
-                <p>{entry.comment.body}</p>
+                <p>{activityDisplayBody(entry.comment.body, "")}</p>
               </article>
             );
           }
@@ -356,12 +390,6 @@ export function IssueActivityPanel({
                 key={`assignment:${entry.assignment.id}`}
               >
                 <header>
-                  <span className="issue-comment-event-avatar">
-                    {(
-                      entry.assignment.created_by_user_name ||
-                      translate("todo.someone", "项目成员")
-                    ).slice(0, 1)}
-                  </span>
                   <strong>
                     {entry.assignment.created_by_user_name ||
                       translate("todo.someone", "项目成员")}
@@ -371,8 +399,10 @@ export function IssueActivityPanel({
                   </time>
                 </header>
                 <p>
-                  {entry.assignment.body ||
-                    `${translate("todo.assigned_to", "分配给")} @${entry.assignment.target_name}`}
+                  {activityDisplayBody(
+                    entry.assignment.body,
+                    `${translate("todo.assigned_to", "分配给")} @${entry.assignment.target_name}`,
+                  )}
                 </p>
               </article>
             );
@@ -541,14 +571,22 @@ export function IssueActivityPanel({
           <button
             type="button"
             data-testid="collaboration-issue-comment-submit"
+            aria-label={
+              pendingAssignment
+                ? translate("todo.assign_and_comment", "分配并评论")
+                : translate("todo.send_comment", "发送")
+            }
+            title={
+              pendingAssignment
+                ? translate("todo.assign_and_comment", "分配并评论")
+                : translate("todo.send_comment", "发送")
+            }
             disabled={
               sending || !body.trim() || (!pendingAssignment && !canComment)
             }
             onClick={() => void submit()}
           >
-            {pendingAssignment
-              ? translate("todo.assign_and_comment", "分配并评论")
-              : translate("todo.send_comment", "评论")}
+            <ArrowUp aria-hidden="true" />
           </button>
         </div>
       </div>

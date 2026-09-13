@@ -70,7 +70,7 @@ import {
   type CollaborationProjectView,
   type WorkspaceTaskBinding,
 } from '@wegent/collaboration'
-import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
+import { ProjectDispatchSettings, ProjectSettingsShell } from '@wegent/collaboration/project-manage'
 import {
   createStandardCloudBoardColumns,
   executeStandardCloudBoardMutation,
@@ -161,7 +161,7 @@ import {
   type BoardCardProgressDisplay,
   type CloudTodoBoardTaskBinding,
 } from './CloudTodoBoardCard'
-import { CloudProjectManageView, LocalProjectManageView } from './CloudProjectManageView'
+import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
 import { ProjectAutomationView } from './ProjectAutomationView'
 import {
@@ -182,6 +182,7 @@ import { BoardQuickCreate } from './BoardQuickCreate'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
 import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration'
+import { createLocalWorkspaceApi } from './WeworkCollaborationPlatform'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
 import { TaskSearchPanel } from './TaskSearchPanel'
@@ -818,6 +819,7 @@ export function CloudTodoWorkspace({
         ? projectSpaceKey(activeProjectRef)
         : null
   const [projectView, setProjectView] = useState<ProjectView>('board')
+  const [projectSettingsSectionId, setProjectSettingsSectionId] = useState('project')
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const cloudWorkspaceMessages = useMemo(
@@ -860,6 +862,25 @@ export function CloudTodoWorkspace({
       defaultLocation: 'cloud' as const,
     }
   }, [services])
+  const localProjectManageApi = useMemo(
+    () =>
+      createLocalWorkspaceApi(
+        projectSpaceApis.local ?? services.projectSpaceDetailServices?.local?.deliveryApi,
+        Number(user.id),
+        user.user_name,
+        user.email ?? null,
+        services.projectSpaceDetailServices?.local,
+        i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
+      ),
+    [
+      i18n.language,
+      projectSpaceApis.local,
+      services.projectSpaceDetailServices?.local,
+      user.email,
+      user.id,
+      user.user_name,
+    ]
+  )
   const availableProjectSpaceApis = useMemo(() => {
     const available: ProjectCreateTarget[] = []
     if (projectSpaceApis.local) {
@@ -1374,6 +1395,14 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
+  const selectedProjectManagerName = selectedProject
+    ? (collaborationProjectMembers[selectedProjectKey ?? '']?.find(
+        member => member.user_id === selectedProject.created_by_user_id
+      )?.user_name ??
+      (selectedProject.created_by_user_id === user.id
+        ? user.user_name
+        : `#${selectedProject.created_by_user_id}`))
+    : user.user_name
   const activeItemTaskBindings = useMemo(() => {
     const refreshedBindings =
       itemTaskBindingsProjectKey === selectedProjectKey
@@ -4265,7 +4294,10 @@ export function CloudTodoWorkspace({
             />
           </aside>
         ) : null}
-        <main className="relative flex min-w-0 flex-1 flex-col">
+        <main
+          className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          data-testid="cloud-todo-main"
+        >
           {!embedded && !selectedProject && (
             <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
           )}
@@ -4346,7 +4378,7 @@ export function CloudTodoWorkspace({
               view={projectView}
               labels={{
                 board: t('todo.board_view', '看板'),
-                table: t('todo.issue_table', 'Issue 表格'),
+                table: t('todo.issue_table', '表格'),
                 files: t('todo.files_title', '文件'),
                 automation: t('todo.assignment_dispatch', '分配与调度'),
                 manage: t('todo.project_settings', '项目设置'),
@@ -4597,6 +4629,8 @@ export function CloudTodoWorkspace({
                 ) ? (
                   <ProjectSettingsShell
                     ariaLabel={t('todo.project_settings', '项目设置')}
+                    selectedSectionId={projectSettingsSectionId}
+                    onSectionChange={setProjectSettingsSectionId}
                     sections={[
                       {
                         id: 'project',
@@ -4613,8 +4647,8 @@ export function CloudTodoWorkspace({
                               onProjectUpdated={updated => replaceProject(selectedProject, updated)}
                             />
                           ) : (
-                            <LocalProjectManageView
-                              api={selectedProjectApi!}
+                            <CloudProjectManageView
+                              api={localProjectManageApi!}
                               aitableApi={aitableApi}
                               dwsApi={services.dwsApi}
                               project={selectedProject}
@@ -4644,66 +4678,81 @@ export function CloudTodoWorkspace({
                               label: t('todo.assignment_dispatch', '分配与调度'),
                               testId: 'cloud-project-settings-dispatch',
                               content: (
-                                <ProjectAutomationView
-                                  key={selectedProject.id}
-                                  api={
-                                    selectedProject.location === 'local'
-                                      ? selectedProjectApi
-                                      : undefined
-                                  }
-                                  workspaceApi={
-                                    selectedProject.location === 'cloud'
-                                      ? cloudWorkspaceApi
-                                      : undefined
-                                  }
-                                  projectAutomationApi={
-                                    selectedProject.location === 'local'
-                                      ? selectedProjectServices?.projectAutomationApi
-                                      : undefined
-                                  }
-                                  projectIncomingHookApi={
-                                    selectedProject.location === 'local'
-                                      ? selectedProjectServices?.projectIncomingHookApi
-                                      : undefined
-                                  }
-                                  project={selectedProject}
-                                  currentUserId={selectedProject.current_user_id}
-                                  canManageAgents={['Owner', 'Maintainer'].includes(
+                                <ProjectDispatchSettings
+                                  canManage={['Owner', 'Maintainer'].includes(
                                     selectedProject.access_role ?? 'Owner'
                                   )}
-                                  onProjectUpdated={updated =>
-                                    replaceProject(selectedProject, updated)
-                                  }
-                                  onOpenIssue={issueId => {
-                                    const existing = selectedProjectBoardItems.find(
-                                      item => item.id === issueId
-                                    )
-                                    if (existing) {
-                                      setSelectedItem(existing)
-                                      return
-                                    }
-                                    const issueRequest =
-                                      selectedProject.location === 'cloud'
-                                        ? cloudWorkspaceApi?.issues.get(issueId)
-                                        : selectedProjectApi
-                                          ? selectedProjectApi.getLoopItem(issueId)
-                                          : null
-                                    if (!issueRequest) return
-                                    void issueRequest
-                                      .then(issue =>
-                                        setSelectedItem({
-                                          ...(issue as LocatedLoopItem),
-                                          project_store: selectedProject.project_store,
-                                        })
-                                      )
-                                      .catch(cause =>
-                                        setBoardError(
-                                          cause instanceof Error
-                                            ? cause.message
-                                            : t('todo.work_item_detail_load_failed')
+                                  managerName={selectedProjectManagerName}
+                                  onConfigureAgents={() => setProjectSettingsSectionId('project')}
+                                  onContinueManualAssignment={() => setProjectView('board')}
+                                  translate={(key, fallback, options) => t(key, fallback, options)}
+                                  automationContent={
+                                    <ProjectAutomationView
+                                      key={selectedProject.id}
+                                      api={
+                                        selectedProject.location === 'local'
+                                          ? selectedProjectApi
+                                          : undefined
+                                      }
+                                      workspaceApi={
+                                        selectedProject.location === 'cloud'
+                                          ? cloudWorkspaceApi
+                                          : undefined
+                                      }
+                                      projectAutomationApi={
+                                        selectedProject.location === 'local'
+                                          ? selectedProjectServices?.projectAutomationApi
+                                          : undefined
+                                      }
+                                      projectIncomingHookApi={
+                                        selectedProject.location === 'local'
+                                          ? selectedProjectServices?.projectIncomingHookApi
+                                          : undefined
+                                      }
+                                      project={selectedProject}
+                                      projectAgents={selectedProjectAgents.map(agent => ({
+                                        id: agent.id,
+                                        name: agent.name,
+                                      }))}
+                                      currentUserId={selectedProject.current_user_id}
+                                      canManageAgents={['Owner', 'Maintainer'].includes(
+                                        selectedProject.access_role ?? 'Owner'
+                                      )}
+                                      onProjectUpdated={updated =>
+                                        replaceProject(selectedProject, updated)
+                                      }
+                                      onOpenIssue={issueId => {
+                                        const existing = selectedProjectBoardItems.find(
+                                          item => item.id === issueId
                                         )
-                                      )
-                                  }}
+                                        if (existing) {
+                                          setSelectedItem(existing)
+                                          return
+                                        }
+                                        const issueRequest =
+                                          selectedProject.location === 'cloud'
+                                            ? cloudWorkspaceApi?.issues.get(issueId)
+                                            : selectedProjectApi
+                                              ? selectedProjectApi.getLoopItem(issueId)
+                                              : null
+                                        if (!issueRequest) return
+                                        void issueRequest
+                                          .then(issue =>
+                                            setSelectedItem({
+                                              ...(issue as LocatedLoopItem),
+                                              project_store: selectedProject.project_store,
+                                            })
+                                          )
+                                          .catch(cause =>
+                                            setBoardError(
+                                              cause instanceof Error
+                                                ? cause.message
+                                                : t('todo.work_item_detail_load_failed')
+                                            )
+                                          )
+                                      }}
+                                    />
+                                  }
                                 />
                               ),
                             },
@@ -5360,6 +5409,11 @@ export function CloudTodoWorkspace({
                 project={selectedItemProject}
                 allItems={detailAllItems}
                 showChildren={false}
+                showAdditionalTaskAction={
+                  (activeItemTaskBindings[selectedItem.id]?.length ?? 0) > 0 &&
+                  selectedItem.workflow?.advancement_policy !== 'ai' &&
+                  !selectedItem.workflow?.nodes.length
+                }
                 taskRefreshKey={boardRefreshNonce}
                 onWorkflowPlanChanged={() => {
                   setBoardRefreshNonce(value => value + 1)

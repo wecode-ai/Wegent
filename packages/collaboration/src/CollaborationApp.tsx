@@ -151,9 +151,7 @@ export function CollaborationApp({
     });
   const automationPorts = useMemo(
     () =>
-      (host.location.view === "automation" ||
-        host.location.view === "manage") &&
-      api.automations
+      host.location.view === "automation" || host.location.view === "manage"
         ? createSharedWorkspaceAutomationPorts(api)
         : null,
     [api, host.location.view],
@@ -591,6 +589,9 @@ export function CollaborationApp({
                         onError={() =>
                           commands.reportError(messages.saveFailed)
                         }
+                        onAgentsChange={() =>
+                          void commands.refreshProjectAgents(project.id)
+                        }
                         translate={translate}
                         section="agents"
                       />
@@ -643,6 +644,7 @@ export function CollaborationApp({
                                 project as CollaborationProject &
                                   AutomationProject
                               }
+                              projectAgents={agents}
                               currentUserId={project.current_user_id}
                               canManage={
                                 project.access_role === "Owner" ||

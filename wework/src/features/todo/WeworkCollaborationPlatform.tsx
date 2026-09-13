@@ -98,7 +98,10 @@ export interface WeworkCollaborationPlatformProps {
   onLogout?: () => void
 }
 
-function localWorkspaceApi(
+// Shared host adapters are imported by the legacy workspace while this module
+// incrementally converges on the shared collaboration platform.
+// eslint-disable-next-line react-refresh/only-export-components
+export function createLocalWorkspaceApi(
   deliveryApi: ProjectSpaceApis['local'] | undefined,
   userId: number,
   userName: string,
@@ -127,9 +130,11 @@ function localWorkspaceApi(
       .filter(device => device.device_type === 'local' || device.device_type === 'app')
       .map(device => ({
         id: `device:${device.device_id}`,
+        device_id: device.id,
         device_key: device.device_id,
         name: device.name,
         kind: 'local_device' as const,
+        coding_tools: device.capabilities ?? [],
         owner_type: 'user' as const,
         owner_id: String(userId),
         owner_name: userName,
@@ -293,6 +298,9 @@ function localWorkspaceApi(
       ...delivery.projects,
       list: projects,
       get: async projectId => decorateProject(await delivery.projects.get(projectId)),
+      listExecutionEnvironments: executionEnvironments,
+      addExecutionEnvironment: unavailable,
+      removeExecutionEnvironment: unavailable,
       importMessages: unavailable,
     },
     issues: {
@@ -312,7 +320,8 @@ function localWorkspaceApi(
   }
 }
 
-function weworkPlatformApi(
+// eslint-disable-next-line react-refresh/only-export-components
+export function createWeworkPlatformApi(
   cloudApi: SharedWorkspaceApi | undefined,
   localDeliveryApi: ProjectSpaceApis['local'] | undefined,
   userId: number,
@@ -321,7 +330,7 @@ function weworkPlatformApi(
   localDetailServices?: ProjectSpaceDetailServices,
   locale: 'zh-CN' | 'en' = 'zh-CN'
 ): SharedWorkspaceApi | null {
-  const localApi = localWorkspaceApi(
+  const localApi = createLocalWorkspaceApi(
     localDeliveryApi,
     userId,
     userName,
@@ -424,10 +433,19 @@ function weworkPlatformApi(
     },
     projects: {
       ...cloudApi.projects,
-      list(workspaceId) {
-        return isLocalWorkspace(workspaceId)
-          ? localApi.projects.list(LOCAL_WORKSPACE_ID)
-          : cloudApi.projects.list(workspaceId)
+      async list(workspaceId) {
+        if (isLocalWorkspace(workspaceId)) {
+          return localApi.projects.list(LOCAL_WORKSPACE_ID)
+        }
+        if (workspaceId) {
+          return cloudApi.projects.list(workspaceId)
+        }
+        const localProjects = await localApi.projects.list(LOCAL_WORKSPACE_ID)
+        try {
+          return [...localProjects, ...(await cloudApi.projects.list())]
+        } catch {
+          return localProjects
+        }
       },
       async create(input) {
         if (isLocalWorkspace(input.workspaceId)) {
@@ -452,10 +470,69 @@ function weworkPlatformApi(
           ? localApi.projects.archive(projectId, version)
           : cloudApi.projects.archive(projectId, version)
       },
+      async listExecutionEnvironments(projectId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.projects.listExecutionEnvironments(projectId)
+          : cloudApi.projects.listExecutionEnvironments(projectId)
+      },
+      async addExecutionEnvironment(projectId, deviceId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.projects.addExecutionEnvironment(projectId, deviceId)
+          : cloudApi.projects.addExecutionEnvironment(projectId, deviceId)
+      },
+      async removeExecutionEnvironment(projectId, deviceId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.projects.removeExecutionEnvironment(projectId, deviceId)
+          : cloudApi.projects.removeExecutionEnvironment(projectId, deviceId)
+      },
       async importMessages(projectId, input) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.projects.importMessages(projectId, input)
           : cloudApi.projects.importMessages(projectId, input)
+      },
+    },
+    members: {
+      ...cloudApi.members,
+      list(projectId) {
+        return projectLocation(projectId).then(location =>
+          location === 'local' ? localApi.members.list(projectId) : cloudApi.members.list(projectId)
+        )
+      },
+      searchUsers(query) {
+        return cloudApi.members.searchUsers(query)
+      },
+      async add(projectId, memberUserId, role) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.members.add(projectId, memberUserId, role)
+          : cloudApi.members.add(projectId, memberUserId, role)
+      },
+      async update(projectId, memberUserId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.members.update(projectId, memberUserId, input)
+          : cloudApi.members.update(projectId, memberUserId, input)
+      },
+      async remove(projectId, memberUserId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.members.remove(projectId, memberUserId)
+          : cloudApi.members.remove(projectId, memberUserId)
+      },
+    },
+    agents: {
+      ...cloudApi.agents,
+      async list(projectId) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.agents.list(projectId)
+          : cloudApi.agents.list(projectId)
+      },
+      async create(projectId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.agents.create(projectId, input)
+          : cloudApi.agents.create(projectId, input)
+      },
+      async update(projectId, agentId, input) {
+        return (await projectLocation(projectId)) === 'local'
+          ? localApi.agents.update(projectId, agentId, input)
+          : cloudApi.agents.update(projectId, agentId, input)
       },
     },
     resources: {
@@ -859,7 +936,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
       : props.user.user_name
   const localProjectApi = useMemo(
     () =>
-      localWorkspaceApi(
+      createLocalWorkspaceApi(
         props.services.projectSpaceApis?.local,
         Number(props.user.id),
         collaborationUserName,
@@ -878,7 +955,7 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
   )
   const platformApi = useMemo(
     () =>
-      weworkPlatformApi(
+      createWeworkPlatformApi(
         api,
         props.services.projectSpaceApis?.local,
         Number(props.user.id),

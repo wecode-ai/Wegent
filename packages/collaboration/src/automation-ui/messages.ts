@@ -92,11 +92,25 @@ const zhCN: AutomationMessages = {
   "automation.policy.fixedTitle": "这是一条固定执行流程",
   "automation.policy.fixedDescription":
     "已有执行步骤会继续按原配置运行。现在改为清晰的阶段列表展示，不再用画布位置和连线表达顺序。",
-  "automation.policy.stepsTitle": "流程步骤标识",
+  "automation.policy.stepsTitle": "流程步骤",
   "automation.policy.stepsDescription":
-    "步骤用于说明 Assignment 的来源和期望结果，不改变 Task 的执行方式。",
+    "为每个阶段指定必须跟进的项目智能体，项目经理将按顺序分配并传递结果与交付物。",
   "automation.policy.stepFallback": "步骤 {{index}}",
   "automation.policy.stepNoDescription": "未填写步骤说明",
+  "automation.policy.addStep": "添加步骤",
+  "automation.policy.addFirstStep": "添加第一个步骤",
+  "automation.policy.editStep": "编辑步骤",
+  "automation.policy.deleteStep": "删除步骤",
+  "automation.policy.stepName": "步骤名称",
+  "automation.policy.stepNamePlaceholder": "例如：交互设计",
+  "automation.policy.stepDescription": "期望结果",
+  "automation.policy.stepDescriptionPlaceholder":
+    "说明完成这个步骤时应产出什么结果",
+  "automation.policy.stepAgent": "指定智能体",
+  "automation.policy.stepAgentPlaceholder": "选择项目智能体",
+  "automation.policy.stepAgentRequired": "请选择步骤 {{index}} 的执行智能体",
+  "automation.policy.stepAgentUnavailable": "原智能体已不可用（{{id}}）",
+  "automation.policy.removeStep": "删除“{{name}}”",
   "automation.policy.dynamicTitle": "无需预设步骤",
   "automation.policy.dynamicDescription":
     "项目经理智能体会根据每个 Issue 的实际情况动态拆解和分配任务。",
@@ -687,11 +701,27 @@ const en: AutomationMessages = {
   "automation.policy.fixedTitle": "This is a fixed execution flow",
   "automation.policy.fixedDescription":
     "Existing steps continue to run with their current configuration. They are now shown as a clear ordered list instead of canvas positions and connectors.",
-  "automation.policy.stepsTitle": "Workflow step labels",
+  "automation.policy.stepsTitle": "Workflow steps",
   "automation.policy.stepsDescription":
-    "Steps identify the source and expected result of an Assignment; they do not change how a Task executes.",
+    "Require a project agent for each stage; the project manager assigns them in order and passes results and deliverables forward.",
   "automation.policy.stepFallback": "Step {{index}}",
   "automation.policy.stepNoDescription": "No step description",
+  "automation.policy.addStep": "Add step",
+  "automation.policy.addFirstStep": "Add the first step",
+  "automation.policy.editStep": "Edit step",
+  "automation.policy.deleteStep": "Delete step",
+  "automation.policy.stepName": "Step name",
+  "automation.policy.stepNamePlaceholder": "For example: Interaction design",
+  "automation.policy.stepDescription": "Expected result",
+  "automation.policy.stepDescriptionPlaceholder":
+    "Describe the result expected when this step is complete",
+  "automation.policy.stepAgent": "Required agent",
+  "automation.policy.stepAgentPlaceholder": "Choose a project agent",
+  "automation.policy.stepAgentRequired":
+    "Choose an execution agent for step {{index}}",
+  "automation.policy.stepAgentUnavailable":
+    "Previous agent is unavailable ({{id}})",
+  "automation.policy.removeStep": "Remove “{{name}}”",
   "automation.policy.dynamicTitle": "No predefined steps needed",
   "automation.policy.dynamicDescription":
     "The project manager agent dynamically breaks down and assigns work based on each Issue.",

@@ -75,6 +75,11 @@ export interface AutomationUiProject extends AutomationProject {
   } | null;
 }
 
+export interface AutomationProjectAgentOption {
+  id: string;
+  name: string;
+}
+
 export interface AutomationRulesViewProps {
   rules: AutomationUiRule[];
   runs: AutomationUiRun[];
@@ -86,6 +91,7 @@ export interface AutomationRulesViewProps {
   projectIncomingHookApi?: AutomationIncomingHookUiApi;
   projectId?: string;
   project?: AutomationUiProject;
+  projectAgents?: AutomationProjectAgentOption[];
   executionCatalog?: WorkspaceAutomationExecutionCatalog;
   onReload?: () => Promise<void>;
   onLoadExecutionCatalog?: () => Promise<WorkspaceAutomationExecutionCatalog>;
@@ -99,9 +105,6 @@ export interface AutomationRulesViewProps {
   onToggleRule?: (
     rule: AutomationUiRule,
     enabled: boolean,
-  ) => Promise<AutomationUiRule | null>;
-  onDuplicateRule?: (
-    rule: AutomationUiRule,
   ) => Promise<AutomationUiRule | null>;
   onDeleteRule?: (rule: AutomationUiRule) => Promise<void>;
 }

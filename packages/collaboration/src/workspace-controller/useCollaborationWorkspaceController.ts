@@ -124,6 +124,7 @@ export interface CollaborationWorkspaceControllerCommands {
     defaultStatuses: CollaborationStatus[];
   }): Promise<void>;
   refreshSelectedIssue(): Promise<void>;
+  refreshProjectAgents(projectId: string): Promise<void>;
   replaceProject(project: CollaborationProject): void;
   appendIssue(issue: CollaborationIssue): void;
   replaceIssue(issue: CollaborationIssue): void;
@@ -160,6 +161,7 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     reorderIssue: async () => undefined,
     changeProjectGroup: async () => undefined,
     refreshSelectedIssue: async () => undefined,
+    refreshProjectAgents: async () => undefined,
     replaceProject: () => undefined,
     appendIssue: () => undefined,
     replaceIssue: () => undefined,
@@ -225,9 +227,15 @@ export type CollaborationWorkspaceControllerAction =
       assignments: CollaborationAssignment[];
       executions: CollaborationExecution[];
     }
+  | { type: "issue-selected"; issue: CollaborationIssue }
   | { type: "clear-project" }
   | { type: "clear-selected-issue" }
   | { type: "replace-project"; project: CollaborationProject }
+  | {
+      type: "replace-project-agents";
+      projectId: string;
+      agents: CollaborationAgent[];
+    }
   | { type: "remove-project"; projectId: string }
   | { type: "replace-issues"; issues: CollaborationIssue[] }
   | { type: "append-issue"; issue: CollaborationIssue }
@@ -391,6 +399,16 @@ export function collaborationWorkspaceControllerReducer(
         error: null,
         errorSource: null,
       };
+    case "replace-project-agents":
+      return {
+        ...state,
+        agents:
+          state.project?.id === action.projectId ? action.agents : state.agents,
+        projectAgents: {
+          ...state.projectAgents,
+          [action.projectId]: action.agents,
+        },
+      };
     case "external-column-loading":
       return {
         ...state,
@@ -440,6 +458,15 @@ export function collaborationWorkspaceControllerReducer(
         comments: action.comments,
         assignments: action.assignments,
         executions: action.executions,
+      };
+    case "issue-selected":
+      return {
+        ...state,
+        selectedIssue: action.issue,
+        attachments: [],
+        comments: [],
+        assignments: [],
+        executions: [],
       };
     case "clear-project":
       return {
@@ -1027,6 +1054,14 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     async loadSelectedIssue(issueId) {
       const revision = ++selectedIssueLoadRevision;
+      const cachedIssue = getExternalBoardState().issues.find(
+        (issue) => issue.id === issueId,
+      );
+      if (cachedIssue) {
+        dispatch({ type: "issue-selected", issue: cachedIssue });
+      } else {
+        dispatch({ type: "clear-selected-issue" });
+      }
       try {
         const [issue, attachments, comments] = await Promise.all([
           api.issues.get(issueId),
@@ -1261,6 +1296,17 @@ export function createCollaborationWorkspaceControllerCommands({
         reportError(messages.loadFailed, "load");
       }
     },
+    async refreshProjectAgents(projectId) {
+      try {
+        dispatch({
+          type: "replace-project-agents",
+          projectId,
+          agents: await api.agents.list(projectId),
+        });
+      } catch {
+        reportError(messages.loadFailed, "load");
+      }
+    },
     replaceProject: (project) => {
       markProjectMutated(project.id);
       catalogProjects = catalogProjects.map((item) =>
@@ -1391,21 +1437,35 @@ export function useCollaborationWorkspaceController({
 
   useEffect(() => {
     if (!commands) return;
-    commands.clearSelectedIssue();
-    if (location.issueId) void commands.loadSelectedIssue(location.issueId);
+    if (location.issueId) {
+      void commands.loadSelectedIssue(location.issueId);
+    } else {
+      commands.clearSelectedIssue();
+    }
   }, [commands, location.issueId]);
 
-  const locationState =
+  const selectedIssue =
     state.selectedIssue?.id === location.issueId
-      ? state
-      : {
-          ...state,
-          selectedIssue: null,
-          attachments: [],
-          comments: [],
-          assignments: [],
-          executions: [],
-        };
+      ? state.selectedIssue
+      : (state.issues.find((issue) => issue.id === location.issueId) ?? null);
+  const hasLoadedSelectedIssue = state.selectedIssue?.id === location.issueId;
+  const locationState = selectedIssue
+    ? {
+        ...state,
+        selectedIssue,
+        attachments: hasLoadedSelectedIssue ? state.attachments : [],
+        comments: hasLoadedSelectedIssue ? state.comments : [],
+        assignments: hasLoadedSelectedIssue ? state.assignments : [],
+        executions: hasLoadedSelectedIssue ? state.executions : [],
+      }
+    : {
+        ...state,
+        selectedIssue: null,
+        attachments: [],
+        comments: [],
+        assignments: [],
+        executions: [],
+      };
 
   return {
     state: locationState,

@@ -15,6 +15,7 @@ interface ProjectAutomationViewProps {
   api?: NonNullable<WorkbenchServices['deliveryApi']>
   workspaceApi?: SharedWorkspaceApi
   project: CloudProject
+  projectAgents?: Array<{ id: string; name: string }>
   projectAutomationApi?: WorkbenchServices['projectAutomationApi']
   projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   currentUserId?: string | number
@@ -27,6 +28,7 @@ export function ProjectAutomationView({
   api,
   workspaceApi,
   project,
+  projectAgents = [],
   projectAutomationApi,
   projectIncomingHookApi,
   currentUserId = project.current_user_id,
@@ -64,6 +66,7 @@ export function ProjectAutomationView({
       locale={i18n.language}
       uiHost={weworkAutomationUiHost}
       project={project}
+      projectAgents={projectAgents}
       currentUserId={currentUserId}
       canManage={canManageAgents}
       onProjectUpdated={onProjectUpdated}

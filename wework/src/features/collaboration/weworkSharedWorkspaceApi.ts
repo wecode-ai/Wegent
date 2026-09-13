@@ -4,6 +4,7 @@
 
 import {
   createSharedWorkspaceHttpApi,
+  mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
@@ -909,6 +910,25 @@ export function createWeworkSharedWorkspaceApi<
       },
       get(projectId) {
         return client.get<CloudProject>(`/v1/cloud-projects/${encodeURIComponent(projectId)}`)
+      },
+      async listExecutionEnvironments(projectId) {
+        const response = await client.get<{ items: Array<Record<string, unknown>> }>(
+          `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`
+        )
+        return response.items.map(mapCollaborationExecutionEnvironmentDto)
+      },
+      async addExecutionEnvironment(projectId, deviceId) {
+        return mapCollaborationExecutionEnvironmentDto(
+          await client.post<Record<string, unknown>>(
+            `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments`,
+            { device_id: deviceId }
+          )
+        )
+      },
+      removeExecutionEnvironment(projectId, deviceId) {
+        return client.delete(
+          `/v1/cloud-projects/${encodeURIComponent(projectId)}/execution-environments/${encodeURIComponent(deviceId)}`
+        )
       },
       importMessages(projectId, input) {
         return client.post<{ issue: CloudLoopItem }>(

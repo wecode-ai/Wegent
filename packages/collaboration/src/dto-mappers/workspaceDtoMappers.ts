@@ -295,6 +295,9 @@ export function mapCollaborationExecutionEnvironmentDto(
       (row.kind ?? row.environment_type ?? row.environmentType) === "cloud_host"
         ? "cloud_host"
         : "local_device",
+    coding_tools: Array.isArray(row.coding_tools ?? row.codingTools)
+      ? ((row.coding_tools ?? row.codingTools) as unknown[]).map(String)
+      : [],
     owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),

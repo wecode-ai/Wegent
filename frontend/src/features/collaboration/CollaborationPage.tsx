@@ -127,8 +127,10 @@ export function CollaborationPage() {
   const projectId = projectRoute && segments[4] ? decodeURIComponent(segments[4]) : null
   const issueId =
     projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
+  const removedMyWorkRoute = pathname === '/collaboration/my-work'
+  const removedResourcesRoute = pathname === '/collaboration/resources'
   const legacyProjectId =
-    !workspaceRoute && segments[1] && segments[1] !== 'resources' && segments[1] !== 'my-work'
+    !workspaceRoute && segments[1] && segments[1] !== 'resources' && !removedMyWorkRoute
       ? decodeURIComponent(segments[1])
       : null
   const legacyIssueId =
@@ -142,6 +144,10 @@ export function CollaborationPage() {
       : 'board'
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   useEffect(() => {
+    if (removedMyWorkRoute || removedResourcesRoute) {
+      router.replace('/collaboration')
+      return
+    }
     if (!legacyProjectId) return
     let active = true
     void api.projects
@@ -172,7 +178,15 @@ export function CollaborationPage() {
     return () => {
       active = false
     }
-  }, [api, legacyIssueId, legacyProjectId, projectView, router])
+  }, [
+    api,
+    legacyIssueId,
+    legacyProjectId,
+    projectView,
+    removedMyWorkRoute,
+    removedResourcesRoute,
+    router,
+  ])
 
   const platformHost = useMemo<CollaborationPlatformHostAdapter>(
     () => ({
@@ -184,12 +198,7 @@ export function CollaborationPage() {
         sidebarPresentation: 'context',
       },
       location: {
-        platformView:
-          pathname === '/collaboration/resources'
-            ? 'resources'
-            : pathname === '/collaboration/my-work'
-              ? 'my-work'
-              : 'spaces',
+        platformView: 'spaces',
         workspaceId,
         workspaceView: workspaceViewFromPath(pathname),
         projectId,
@@ -197,7 +206,26 @@ export function CollaborationPage() {
         issueId,
       } satisfies CollaborationPlatformLocation,
       navigate(nextLocation) {
-        router.push(collaborationLocationPath(nextLocation))
+        const nextPath = collaborationLocationPath(nextLocation)
+        const updatesCurrentIssueDrawer =
+          Boolean(projectId) &&
+          nextLocation.platformView === 'spaces' &&
+          nextLocation.workspaceId === workspaceId &&
+          nextLocation.projectId === projectId &&
+          nextLocation.projectView === projectView &&
+          nextLocation.issueId !== issueId
+        if (updatesCurrentIssueDrawer) {
+          window.history.pushState(null, '', nextPath)
+          return
+        }
+        router.push(nextPath)
+      },
+      manageResource(kind, resourceId) {
+        if (kind === 'agents') {
+          router.push('/resource-library?tab=mine&type=agent&scope=personal')
+          return
+        }
+        router.push(resourceId ? `/devices?deviceId=${encodeURIComponent(resourceId)}` : '/devices')
       },
       openExternal(url) {
         window.open(url, '_blank', 'noopener,noreferrer')

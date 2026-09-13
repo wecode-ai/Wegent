@@ -609,6 +609,129 @@ describe("automationRuleBackend", () => {
     });
   });
 
+  test("preserves a linear Claude to Codex dependency in the runtime workflow", () => {
+    const rule = uiRule();
+    const baseStep = {
+      ...rule.steps[0]!,
+      deliverables: [],
+      modelOptions: {},
+      plugins: [],
+      projectPlugins: [],
+      executionConfig: null,
+      executionConfigOverride: false,
+      automationRuleId: null,
+      subgraph: null,
+    };
+    rule.steps = [
+      {
+        ...baseStep,
+        id: "manager",
+        name: "Project manager agent",
+        kind: "dynamic",
+        dependencies: [],
+        dependencyContext: {},
+        approvalPolicy: "automatic",
+        subgraph: {
+          nodes: [
+            {
+              ...baseStep,
+              id: "claude",
+              name: "Claude",
+              dependencies: [],
+              dependencyContext: {},
+              requiredAssigneeType: "agent",
+              requiredAssigneeId: "agent-claude",
+            },
+            {
+              ...baseStep,
+              id: "codex",
+              name: "Codex",
+              dependencies: ["claude"],
+              dependencyContext: {
+                claude: ["final_result", "deliveries"],
+              },
+              requiredAssigneeType: "agent",
+              requiredAssigneeId: "agent-codex",
+            },
+          ],
+        },
+      },
+    ];
+
+    const definition = legacyWorkflowFromAutomationRule(rule);
+
+    expect(definition.nodes).toHaveLength(2);
+    expect(definition.nodes[0]).toMatchObject({
+      id: "claude",
+      depends_on: [],
+      dependency_context: {},
+      required_assignee_type: "agent",
+      required_assignee_id: "agent-claude",
+      execution_config: null,
+      execution_config_override: false,
+    });
+    expect(definition.nodes[1]).toMatchObject({
+      id: "codex",
+      depends_on: ["claude"],
+      dependency_context: {
+        claude: ["final_result", "deliveries"],
+      },
+      required_assignee_type: "agent",
+      required_assignee_id: "agent-codex",
+      execution_config: null,
+      execution_config_override: false,
+    });
+
+    const input = automationInputFromUi(rule, 7);
+    const readBack = automationRuleFromBackend(
+      backendRule({ eventConfig: input.eventConfig }),
+    );
+    expect(readBack.steps[0]?.subgraph?.nodes).toEqual([
+      expect.objectContaining({
+        name: "Claude",
+        requiredAssigneeType: "agent",
+        requiredAssigneeId: "agent-claude",
+        executionConfig: null,
+        executionConfigOverride: false,
+      }),
+      expect.objectContaining({
+        name: "Codex",
+        requiredAssigneeType: "agent",
+        requiredAssigneeId: "agent-codex",
+        executionConfig: null,
+        executionConfigOverride: false,
+      }),
+    ]);
+
+    const legacyReadBack = automationRuleFromLegacyWorkflow(
+      {
+        id: "11",
+        name: "Agent sequence",
+        version: 1,
+        tags: [],
+        updated_at: "2026-09-13T00:00:00Z",
+        workflow_definition: definition,
+      },
+      [],
+    );
+    expect(legacyReadBack?.steps[0]?.subgraph?.nodes).toEqual([
+      expect.objectContaining({
+        requiredAssigneeType: "agent",
+        requiredAssigneeId: "agent-claude",
+        executionConfig: expect.objectContaining({
+          agent_id: null,
+        }),
+      }),
+      expect.objectContaining({
+        requiredAssigneeType: "agent",
+        requiredAssigneeId: "agent-codex",
+        executionConfig: expect.objectContaining({
+          agent_id: null,
+        }),
+      }),
+    ]);
+  });
+
   test("flattens a loop into a loop node, body nodes, and branch conditions", () => {
     const rule = uiRule();
     const base = {

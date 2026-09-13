@@ -1,5 +1,3 @@
-import { useCallback } from "react";
-
 import {
   useAutomationCloudState,
   type AutomationCloudApi,
@@ -13,7 +11,10 @@ import {
   useTranslation,
   type AutomationUiHost,
 } from "./AutomationUiHost";
-import type { AutomationIncomingHookUiApi } from "./AutomationRulesView.types";
+import type {
+  AutomationIncomingHookUiApi,
+  AutomationProjectAgentOption,
+} from "./AutomationRulesView.types";
 
 export interface ProjectAutomationRulesViewProps<P extends AutomationProject> {
   automationApi?: AutomationCloudApi;
@@ -23,6 +24,7 @@ export interface ProjectAutomationRulesViewProps<P extends AutomationProject> {
   uiHost: AutomationUiHost;
   locale?: "zh-CN" | "en" | string;
   project: P;
+  projectAgents?: AutomationProjectAgentOption[];
   currentUserId?: string | number;
   canManage: boolean;
   onProjectUpdated?: (project: P) => void;
@@ -46,6 +48,7 @@ function ProjectAutomationRulesContent<P extends AutomationProject>({
   projectApi,
   incomingHooksApi,
   project,
+  projectAgents = [],
   currentUserId = project.current_user_id,
   canManage,
   onProjectUpdated,
@@ -65,10 +68,6 @@ function ProjectAutomationRulesContent<P extends AutomationProject>({
     serviceUnavailableMessage: t("automation.error.serviceUnavailable"),
     managePermissionMessage: t("automation.error.managePermission"),
     runtimeUserRequiredMessage: t("automation.error.runtimeUserRequired"),
-    duplicateName: useCallback(
-      (name: string) => t("automation.rule.copySuffix", { name }),
-      [t],
-    ),
     onProjectUpdated,
     onRunRefreshError,
   });
@@ -85,13 +84,13 @@ function ProjectAutomationRulesContent<P extends AutomationProject>({
       projectIncomingHookApi={incomingHooksApi}
       projectId={String(project.id)}
       project={project}
+      projectAgents={projectAgents}
       onReload={automation.reload}
       onLoadRuns={automation.refreshRuns}
       onOpenIssue={onOpenIssue}
       onRunRule={automation.runRule}
       onSaveRule={automation.persistRule}
       onToggleRule={automation.toggleRule}
-      onDuplicateRule={automation.duplicateRule}
       onDeleteRule={automation.deleteRule}
     />
   );

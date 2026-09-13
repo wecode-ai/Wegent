@@ -334,6 +334,17 @@ export interface SharedWorkspaceProjectsApi {
     input: WorkspaceProjectUpdateInput,
   ): Promise<CollaborationProject>;
   archive(projectId: string, version: number): Promise<void>;
+  listExecutionEnvironments(
+    projectId: string,
+  ): Promise<CollaborationExecutionEnvironment[]>;
+  addExecutionEnvironment(
+    projectId: string,
+    deviceId: number,
+  ): Promise<CollaborationExecutionEnvironment>;
+  removeExecutionEnvironment(
+    projectId: string,
+    deviceId: number,
+  ): Promise<void>;
   importMessages(
     projectId: string,
     input: WorkspaceMessageImportInput,

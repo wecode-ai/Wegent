@@ -387,49 +387,238 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
 }
 
-.automation-policy-step-list {
-  display: grid;
-  gap: 0;
-  margin: 0;
+.automation-policy-workflow-dag {
+  height: 168px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 11px;
+  background: rgb(var(--color-bg-muted) / 0.3);
+}
+
+.automation-policy-workflow-dag .react-flow__node-default {
+  overflow: hidden;
+  border: 0;
+  border-radius: 11px;
   padding: 0;
-  list-style: none;
+  background: transparent;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.07);
 }
 
-.automation-policy-step-list li {
-  position: relative;
+.automation-policy-workflow-dag .react-flow__node-default > button {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 72px;
   grid-template-columns: 28px minmax(0, 1fr);
-  gap: 12px;
-  padding-bottom: 18px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 11px;
+  padding: 11px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-surface));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
 }
 
-.automation-policy-step-list li:not(:last-child)::after {
-  position: absolute;
-  top: 28px;
-  bottom: 0;
-  left: 13px;
-  width: 1px;
-  background: rgb(var(--color-border));
-  content: "";
+.automation-policy-workflow-dag
+  .react-flow__node-default
+  > button:not(:disabled):hover {
+  border-color: rgb(var(--color-primary) / 0.35);
+  background: rgb(var(--color-primary) / 0.025);
 }
 
-.automation-policy-step-list li > span {
+.automation-policy-workflow-dag .react-flow__node-default > button.is-selected {
+  border-color: rgb(var(--color-primary) / 0.55);
+  background: rgb(var(--color-primary) / 0.05);
+  box-shadow: inset 0 0 0 1px rgb(var(--color-primary) / 0.12);
+}
+
+.automation-policy-workflow-dag
+  .react-flow__node-default
+  > button
+  > span:first-child {
   display: grid;
-  z-index: 1;
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 50%;
-  background: rgb(var(--color-bg-surface));
-  font-size: 11px;
+  border-radius: 8px;
+  color: rgb(var(--color-primary));
+  background: rgb(var(--color-primary) / 0.1);
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.automation-policy-step-list strong {
+.automation-policy-workflow-dag
+  .react-flow__node-default
+  > button
+  > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.automation-policy-workflow-dag strong {
+  overflow: hidden;
   font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.automation-policy-step-list p,
+.automation-policy-workflow-dag em {
+  overflow: hidden;
+  color: rgb(var(--color-primary));
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-policy-workflow-dag small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgb(var(--color-text-muted));
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.automation-policy-workflow-dag .react-flow__handle {
+  width: 6px;
+  height: 6px;
+  border: 0;
+  background: rgb(var(--color-text-muted));
+}
+
+.automation-policy-add-step {
+  display: inline-flex;
+  height: 32px;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-surface));
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.automation-policy-add-step:hover {
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-hover));
+}
+
+.automation-policy-step-editor {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+  padding: 14px;
+  background: rgb(var(--color-bg-muted) / 0.45);
+}
+
+.automation-policy-step-editor-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.automation-policy-step-editor-heading > span {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  color: rgb(var(--color-primary));
+  background: rgb(var(--color-primary) / 0.1);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.automation-policy-step-editor-heading > strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.automation-policy-step-editor-heading > button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 8px;
+  color: rgb(var(--color-text-muted));
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.automation-policy-step-editor-heading > button:hover {
+  color: rgb(220 38 38);
+  background: rgb(220 38 38 / 0.08);
+}
+
+.automation-policy-step-editor > label {
+  display: grid;
+  gap: 6px;
+}
+
+.automation-policy-step-editor > label > span {
+  color: rgb(var(--color-text-secondary));
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.automation-policy-step-editor input,
+.automation-policy-step-editor select,
+.automation-policy-step-editor textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  outline: 0;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-surface));
+}
+
+.automation-policy-step-editor input,
+.automation-policy-step-editor select {
+  height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.automation-policy-step-editor textarea {
+  min-height: 56px;
+  resize: vertical;
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.automation-policy-step-editor input:focus,
+.automation-policy-step-editor select:focus,
+.automation-policy-step-editor textarea:focus {
+  border-color: rgb(var(--color-primary));
+  box-shadow: 0 0 0 3px rgb(var(--color-primary) / 0.1);
+}
+
 .automation-policy-step-empty p,
 .automation-policy-legacy-note p {
   margin: 5px 0 0;
@@ -449,6 +638,30 @@
 .automation-policy-legacy-note strong {
   font-size: 13px;
   font-weight: 650;
+}
+
+.automation-policy-step-empty-action {
+  display: block;
+  width: 100%;
+  border: 1px dashed rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.automation-policy-step-empty-action:hover {
+  border-color: rgb(var(--color-primary) / 0.45);
+  background: rgb(var(--color-primary) / 0.05);
+}
+
+.automation-policy-step-empty-action > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  color: rgb(var(--color-primary));
+  font-size: 12px;
 }
 
 .automation-policy-legacy-note {

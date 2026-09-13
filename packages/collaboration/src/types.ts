@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReactNode } from "react";
+import type { SharedWorkflowNode } from "./issue-detail/workflowTypes";
 import type { ProjectCreateHostAdapter } from "./project-create/types";
 
 export type CollaborationProjectId = string;
@@ -119,7 +120,7 @@ export interface CollaborationIssue {
       | "paused"
       | "completed"
       | "failed";
-    nodes?: unknown[];
+    nodes?: SharedWorkflowNode[];
   } | null;
   execution_error?: string | null;
   source_record_id?: string | null;
@@ -166,6 +167,7 @@ export interface CollaborationExecutionEnvironment {
   device_key?: string;
   name: string;
   kind: "local_device" | "cloud_host";
+  coding_tools: string[];
   owner_type: "user" | "workspace";
   owner_id: string;
   owner_name: string;

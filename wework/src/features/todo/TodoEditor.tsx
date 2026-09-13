@@ -93,6 +93,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showCurrentTaskOnly?: boolean
   taskRefreshKey?: string | number
   headerActions?: ReactNode
+  showAdditionalTaskAction?: boolean
   selectedTaskId?: string | null
   onCreateTask?: (workflowNodeId?: string) => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
@@ -230,7 +231,22 @@ export function TodoEditor(props: TodoEditorProps) {
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     taskRefreshKey: props.taskRefreshKey,
-    headerActions: props.headerActions,
+    headerActions:
+      props.mode === 'edit' && props.showAdditionalTaskAction && props.onCreateTask ? (
+        <>
+          {props.headerActions}
+          <button
+            type="button"
+            data-testid="cloud-todo-create-task"
+            onClick={() => props.onCreateTask?.()}
+            className="task-detail-workspace-edit"
+          >
+            {t('todo.add_task', '新增任务')}
+          </button>
+        </>
+      ) : (
+        props.headerActions
+      ),
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
     onCreateTask: props.onCreateTask,

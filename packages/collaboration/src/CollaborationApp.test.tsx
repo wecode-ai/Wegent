@@ -105,10 +105,16 @@ function createHost(
   };
 }
 
-function renderApp(host: CollaborationHostAdapter) {
+function renderApp(
+  host: CollaborationHostAdapter,
+  automationUiHost?: ComponentProps<
+    typeof CollaborationApp
+  >["automationUiHost"],
+) {
   return CollaborationApp({
     api: {} as SharedWorkspaceApi,
     host,
+    automationUiHost,
   });
 }
 
@@ -281,6 +287,31 @@ describe("CollaborationApp API boundary", () => {
     expect(refreshedSettings?.props.project.version).toBe(2);
   });
 
+  it("uses the shared project settings content as the vertical scroller", () => {
+    const shell = ProjectSettingsShell({
+      ariaLabel: "项目设置",
+      sections: [
+        {
+          id: "dispatch",
+          label: "分配与调度",
+          testId: "project-settings-dispatch",
+          content: <div>dispatch</div>,
+        },
+      ],
+    });
+    const content = findByTestId(shell, "project-settings-shell-content");
+
+    expect(shell.props.className).toContain("overflow-hidden");
+    expect(content?.type).toBe("main");
+    expect(content?.props.className).toContain("h-full");
+    expect(content?.props.className.split(" ")).not.toContain("h-0");
+    expect(content?.props.className).toContain("min-h-0");
+    expect(content?.props.className).toContain("overflow-y-auto");
+    expect(content?.props.className).toContain("overscroll-y-contain");
+    expect(content?.props.className).toContain("[scrollbar-gutter:stable]");
+    expect(content?.props.className).not.toContain("overflow-hidden");
+  });
+
   it("always exposes project ownership and assignment semantics in settings", () => {
     const host = createHost(false, "home");
     host.location = {
@@ -297,7 +328,10 @@ describe("CollaborationApp API boundary", () => {
       }),
     );
 
-    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const shell = findByType(
+      renderApp(host, {} as never),
+      CollaborationProjectViewShell,
+    );
     const settingsShell = findByType(
       shell?.props.slots.manage,
       ProjectSettingsShell,
@@ -310,7 +344,7 @@ describe("CollaborationApp API boundary", () => {
     expect(dispatchSection?.content.type).toBe(ProjectDispatchSettings);
     expect(dispatchSection?.content.props.managerName).toBe("Project owner");
     expect(dispatchSection?.content.props.canManage).toBe(true);
-    expect(dispatchSection?.content.props.automationContent).toBeUndefined();
+    expect(dispatchSection?.content.props.automationContent).toBeDefined();
 
     const configureAgents = vi.fn();
     const continueManualAssignment = vi.fn();

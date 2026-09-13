@@ -26,7 +26,6 @@ from app.services.cloud_projects.access import (
     require_cloud_project_role,
     require_issue_action,
 )
-from app.services.workspaces.storage import workspace_id_for_project
 
 ASSIGNMENT_EVENT_TYPE = "assignment"
 
@@ -247,21 +246,15 @@ class IssueAssignmentService:
             )
         metadata = agent.metadata_json if isinstance(agent.metadata_json, dict) else {}
         team_id_value = metadata.get("wegent_team_id")
-        workspace_id = workspace_id_for_project(db, project.id)
-        if team_id_value is None or workspace_id is None:
+        if team_id_value is None:
             return "agent", agent.id
         try:
-            team_id = int(team_id_value)
+            int(team_id_value)
         except (TypeError, ValueError) as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Project Agent has an invalid Team binding",
             ) from exc
-        from app.services.workspaces import workspace_service
-
-        workspace_service.require_agent_authorized(
-            db, workspace_id=workspace_id, team_id=team_id
-        )
         return "agent", agent.id
 
     @staticmethod

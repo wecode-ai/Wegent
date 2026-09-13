@@ -62,6 +62,11 @@ from app.schemas.project_chat import (
     ProjectChatAgentView,
 )
 from app.schemas.work_queue import MessageContentSnapshot
+from app.schemas.workspace import (
+    WorkspaceExecutionEnvironmentCreate,
+    WorkspaceExecutionEnvironmentListResponse,
+    WorkspaceExecutionEnvironmentResponse,
+)
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
 from app.services.loop_item_events import publish_loop_item_changed
@@ -251,6 +256,58 @@ def update_cloud_project(
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
     return _project_response(db, project, current_user)
+
+
+@router.get(
+    "/{project_id}/execution-environments",
+    response_model=WorkspaceExecutionEnvironmentListResponse,
+)
+def list_project_execution_environments(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> WorkspaceExecutionEnvironmentListResponse:
+    return WorkspaceExecutionEnvironmentListResponse(
+        items=[
+            WorkspaceExecutionEnvironmentResponse.model_validate(item)
+            for item in cloud_project_service.list_execution_environments(
+                db, project_id, current_user.id
+            )
+        ]
+    )
+
+
+@router.post(
+    "/{project_id}/execution-environments",
+    response_model=WorkspaceExecutionEnvironmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_project_execution_environment(
+    project_id: int,
+    values: WorkspaceExecutionEnvironmentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> WorkspaceExecutionEnvironmentResponse:
+    return WorkspaceExecutionEnvironmentResponse.model_validate(
+        cloud_project_service.add_execution_environment(
+            db, project_id, values.device_id, current_user.id
+        )
+    )
+
+
+@router.delete(
+    "/{project_id}/execution-environments/{device_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_project_execution_environment(
+    project_id: int,
+    device_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> None:
+    cloud_project_service.remove_execution_environment(
+        db, project_id, device_id, current_user.id
+    )
 
 
 @router.get("/{project_id}/chat-agents", response_model=list[ProjectChatAgentView])

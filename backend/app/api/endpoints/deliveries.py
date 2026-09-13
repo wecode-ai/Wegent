@@ -1008,7 +1008,7 @@ async def report_loop_item_workflow_outcome(
             user_id=current_user.id,
             values=values,
         )
-        if values.verdict == "needs_rework" and plan.status == "planning":
+        if plan.status == "planning":
             await _dispatch_workflow_manager(
                 db,
                 item_id=plan.issue_id,

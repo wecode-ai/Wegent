@@ -24,9 +24,14 @@ import type {
   AutomationUiRule,
   AutomationUiRun,
   AutomationUiStep,
+  WorkflowContextSource,
 } from "../automation";
-import type { AutomationRulesViewProps } from "./AutomationRulesView.types";
+import type {
+  AutomationProjectAgentOption,
+  AutomationRulesViewProps,
+} from "./AutomationRulesView.types";
 import { useAutomationLocale, useTranslation } from "./AutomationUiHost";
+import { SimpleWorkflowDag } from "./SimpleWorkflowDag";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 type Translate = (
@@ -133,6 +138,100 @@ function dynamicCoordinator(
   };
 }
 
+function workflowLabelStep(t: Translate, index: number): AutomationUiStep {
+  return {
+    id: `workflow-step-${crypto.randomUUID()}`,
+    name: t("automation.policy.stepFallback", { index }),
+    prompt: "",
+    kind: "task",
+    dependencies: [],
+    dependencyContext: {},
+    x: 0,
+    y: 0,
+    deliverables: [],
+    executionMode: "automatic",
+    environment: "",
+    executionEnvironment: "local",
+    executionDeviceId: null,
+    runtimeProfileId: null,
+    model: "",
+    modelType: null,
+    modelOptions: {},
+    plugins: [],
+    projectPlugins: [],
+    workspacePolicy: "none",
+    required: true,
+    automationRuleId: null,
+    executionConfig: null,
+    executionConfigOverride: false,
+    nodeType: "task",
+    role: null,
+    loopId: null,
+    bodyNodeIds: [],
+    loopConfig: null,
+    branchConditions: [],
+    eventWait: null,
+    subgraph: null,
+  };
+}
+
+function workflowStepWithRequiredAssignee(
+  step: AutomationUiStep,
+  agentId: string,
+): AutomationUiStep {
+  return {
+    ...step,
+    executionMode: "automatic",
+    requiredAssigneeType: agentId ? "agent" : null,
+    requiredAssigneeId: agentId || null,
+    executionConfig: null,
+    executionConfigOverride: false,
+  };
+}
+
+const LINEAR_WORKFLOW_CONTEXT: WorkflowContextSource[] = [
+  "final_result",
+  "deliveries",
+];
+
+function linearWorkflowSteps(steps: AutomationUiStep[]): AutomationUiStep[] {
+  return steps.map((step, index) => {
+    const previous = steps[index - 1];
+    if (!previous) {
+      return {
+        ...step,
+        dependencies: [],
+        dependencyContext: {},
+      };
+    }
+    const context =
+      step.dependencyContext[previous.id] ?? LINEAR_WORKFLOW_CONTEXT;
+    return {
+      ...step,
+      dependencies: [previous.id],
+      dependencyContext: {
+        [previous.id]: [...context],
+      },
+    };
+  });
+}
+
+function linearizeCoordinatorWorkflow(rule: AutomationUiRule) {
+  const coordinator = coordinatorStep(rule);
+  if (!coordinator) return rule;
+  return {
+    ...rule,
+    steps: [
+      {
+        ...coordinator,
+        subgraph: {
+          nodes: linearWorkflowSteps(coordinator.subgraph?.nodes ?? []),
+        },
+      },
+    ],
+  };
+}
+
 function newPolicyRule(t: Translate): AutomationUiRule {
   return {
     id: `draft-${crypto.randomUUID()}`,
@@ -206,6 +305,7 @@ export function AutomationPolicyView({
   error = "",
   canManage = true,
   projectTags = [],
+  projectAgents = [],
   onReload,
   onLoadRuns,
   onOpenIssue,
@@ -307,10 +407,23 @@ export function AutomationPolicyView({
       setActionError(t("automation.policy.promptRequired"));
       return;
     }
+    const unassignedStepIndex =
+      coordinator?.subgraph?.nodes.findIndex(
+        (step) =>
+          step.requiredAssigneeType !== "agent" || !step.requiredAssigneeId,
+      ) ?? -1;
+    if (unassignedStepIndex >= 0) {
+      setActionError(
+        t("automation.policy.stepAgentRequired", {
+          index: unassignedStepIndex + 1,
+        }),
+      );
+      return;
+    }
     setSaveState("saving");
     setActionError("");
     try {
-      const saved = await onSaveRule(draft);
+      const saved = await onSaveRule(linearizeCoordinatorWorkflow(draft));
       if (!saved) {
         setSaveState("idle");
         return;
@@ -461,6 +574,7 @@ export function AutomationPolicyView({
             canManage={canManage}
             saveState={saveState}
             running={running}
+            projectAgents={projectAgents}
             t={t}
             updateDraft={updateDraft}
             onSelectRule={selectRule}
@@ -501,6 +615,7 @@ function PolicyEditor({
   canManage,
   saveState,
   running,
+  projectAgents,
   t,
   updateDraft,
   onSelectRule,
@@ -516,6 +631,7 @@ function PolicyEditor({
   canManage: boolean;
   saveState: SaveState;
   running: boolean;
+  projectAgents: AutomationProjectAgentOption[];
   t: Translate;
   updateDraft(update: (rule: AutomationUiRule) => AutomationUiRule): void;
   onSelectRule(ruleId: string): void;
@@ -527,8 +643,45 @@ function PolicyEditor({
 }) {
   const coordinator = coordinatorStep(rule);
   const fixedSteps = coordinator
-    ? (coordinator.subgraph?.nodes ?? [])
+    ? linearWorkflowSteps(coordinator.subgraph?.nodes ?? [])
     : rule.steps;
+  const [selectedWorkflowStepId, setSelectedWorkflowStepId] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    setSelectedWorkflowStepId(null);
+  }, [rule.id]);
+  const selectedWorkflowStepIndex = fixedSteps.findIndex(
+    (step) => step.id === selectedWorkflowStepId,
+  );
+  const selectedWorkflowStep =
+    selectedWorkflowStepIndex >= 0
+      ? fixedSteps[selectedWorkflowStepIndex]
+      : null;
+  const updateWorkflowLabels = (
+    update: (steps: AutomationUiStep[]) => AutomationUiStep[],
+  ) => {
+    if (!coordinator) return;
+    updateDraft((current) =>
+      replaceCoordinator(
+        current,
+        (step) => ({
+          ...step,
+          subgraph: {
+            nodes: linearWorkflowSteps(
+              update(linearWorkflowSteps(step.subgraph?.nodes ?? [])),
+            ),
+          },
+        }),
+        t("automation.policy.defaultManager"),
+      ),
+    );
+  };
+  const addWorkflowLabel = () => {
+    const next = workflowLabelStep(t, fixedSteps.length + 1);
+    updateWorkflowLabels((steps) => [...steps, next]);
+    setSelectedWorkflowStepId(next.id);
+  };
   const saveLabel = {
     idle: t("automation.policy.save"),
     dirty: t("automation.policy.saveChanges"),
@@ -994,32 +1147,163 @@ function PolicyEditor({
               <h3>{t("automation.policy.stepsTitle")}</h3>
               <p>{t("automation.policy.stepsDescription")}</p>
             </div>
+            {coordinator && canManage ? (
+              <button
+                type="button"
+                className="automation-policy-add-step"
+                data-testid="automation-add-workflow-step"
+                onClick={addWorkflowLabel}
+              >
+                <Plus size={15} />
+                {t("automation.policy.addStep")}
+              </button>
+            ) : null}
           </div>
           {fixedSteps.length ? (
-            <ol className="automation-policy-step-list">
-              {fixedSteps.map((step, index) => (
-                <li key={step.id}>
-                  <span>{index + 1}</span>
-                  <div>
-                    <strong>
-                      {step.name ||
-                        t("automation.policy.stepFallback", {
-                          index: index + 1,
-                        })}
-                    </strong>
-                    <p>
-                      {step.prompt || t("automation.policy.stepNoDescription")}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <SimpleWorkflowDag
+              steps={fixedSteps}
+              selectedStepId={selectedWorkflowStepId}
+              canManage={Boolean(coordinator && canManage)}
+              stepFallback={(index) =>
+                t("automation.policy.stepFallback", { index })
+              }
+              emptyDescription={t("automation.policy.stepNoDescription")}
+              executorName={(step) =>
+                projectAgents.find(
+                  (agent) => agent.id === step.requiredAssigneeId,
+                )?.name ?? null
+              }
+              onSelectStep={setSelectedWorkflowStepId}
+            />
+          ) : coordinator && canManage ? (
+            <button
+              type="button"
+              className="automation-policy-step-empty automation-policy-step-empty-action"
+              data-testid="automation-empty-add-workflow-step"
+              onClick={addWorkflowLabel}
+            >
+              <span>{t("automation.policy.dynamicTitle")}</span>
+              <p>{t("automation.policy.dynamicDescription")}</p>
+              <strong>
+                <Plus size={15} />
+                {t("automation.policy.addFirstStep")}
+              </strong>
+            </button>
           ) : (
             <div className="automation-policy-step-empty">
               <span>{t("automation.policy.dynamicTitle")}</span>
               <p>{t("automation.policy.dynamicDescription")}</p>
             </div>
           )}
+          {selectedWorkflowStep && coordinator && canManage ? (
+            <div
+              className="automation-policy-step-editor"
+              data-testid="automation-workflow-step-editor"
+            >
+              <div className="automation-policy-step-editor-heading">
+                <span>{selectedWorkflowStepIndex + 1}</span>
+                <strong>{t("automation.policy.editStep")}</strong>
+                <button
+                  type="button"
+                  aria-label={t("automation.policy.removeStep", {
+                    name:
+                      selectedWorkflowStep.name ||
+                      t("automation.policy.stepFallback", {
+                        index: selectedWorkflowStepIndex + 1,
+                      }),
+                  })}
+                  data-testid={`automation-remove-workflow-step-${selectedWorkflowStepIndex}`}
+                  onClick={() => {
+                    updateWorkflowLabels((steps) =>
+                      steps.filter(
+                        (candidate) => candidate.id !== selectedWorkflowStep.id,
+                      ),
+                    );
+                    setSelectedWorkflowStepId(null);
+                  }}
+                >
+                  <Trash2 size={15} />
+                  {t("automation.policy.deleteStep")}
+                </button>
+              </div>
+              <label>
+                <span>{t("automation.policy.stepName")}</span>
+                <input
+                  value={selectedWorkflowStep.name}
+                  data-testid={`automation-workflow-step-name-${selectedWorkflowStepIndex}`}
+                  placeholder={t("automation.policy.stepNamePlaceholder")}
+                  onChange={(event) =>
+                    updateWorkflowLabels((steps) =>
+                      steps.map((candidate) =>
+                        candidate.id === selectedWorkflowStep.id
+                          ? { ...candidate, name: event.target.value }
+                          : candidate,
+                      ),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                <span>{t("automation.policy.stepAgent")}</span>
+                <select
+                  value={selectedWorkflowStep.requiredAssigneeId ?? ""}
+                  data-testid={`automation-workflow-step-agent-${selectedWorkflowStepIndex}`}
+                  onChange={(event) =>
+                    updateWorkflowLabels((steps) =>
+                      steps.map((candidate) =>
+                        candidate.id === selectedWorkflowStep.id
+                          ? workflowStepWithRequiredAssignee(
+                              candidate,
+                              event.target.value,
+                            )
+                          : candidate,
+                      ),
+                    )
+                  }
+                >
+                  <option value="">
+                    {t("automation.policy.stepAgentPlaceholder")}
+                  </option>
+                  {selectedWorkflowStep.requiredAssigneeId &&
+                  !projectAgents.some(
+                    (agent) =>
+                      agent.id === selectedWorkflowStep.requiredAssigneeId,
+                  ) ? (
+                    <option value={selectedWorkflowStep.requiredAssigneeId}>
+                      {t("automation.policy.stepAgentUnavailable", {
+                        id: selectedWorkflowStep.requiredAssigneeId,
+                      })}
+                    </option>
+                  ) : null}
+                  {projectAgents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>{t("automation.policy.stepDescription")}</span>
+                <textarea
+                  value={selectedWorkflowStep.prompt}
+                  data-testid={`automation-workflow-step-description-${selectedWorkflowStepIndex}`}
+                  rows={3}
+                  placeholder={t(
+                    "automation.policy.stepDescriptionPlaceholder",
+                  )}
+                  onChange={(event) =>
+                    updateWorkflowLabels((steps) =>
+                      steps.map((candidate) =>
+                        candidate.id === selectedWorkflowStep.id
+                          ? { ...candidate, prompt: event.target.value }
+                          : candidate,
+                      ),
+                    )
+                  }
+                />
+              </label>
+            </div>
+          ) : null}
         </section>
       </div>
 

@@ -9,8 +9,6 @@ import type {
 
 export function collaborationLocationPath(location: CollaborationPlatformLocation): string {
   if (!location.workspaceId) {
-    if (location.platformView === 'resources') return '/collaboration/resources'
-    if (location.platformView === 'my-work') return '/collaboration/my-work'
     return '/collaboration'
   }
   const workspaceBase = `/collaboration/workspaces/${encodeURIComponent(location.workspaceId)}`

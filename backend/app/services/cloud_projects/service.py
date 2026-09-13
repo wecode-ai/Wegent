@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectAutomationRun, loop_datetime_is_unset
+from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -32,9 +33,11 @@ from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
 from app.services.workspaces import workspace_service
 from app.services.workspaces.access import require_workspace_role
+from app.services.workspaces.resource_mapping import execution_environment_values
 from app.services.workspaces.storage import (
     ensure_resource_grant,
     project_ids_for_workspace,
+    resource_grant,
     workspace_id_for_project,
 )
 
@@ -476,14 +479,6 @@ class CloudProjectService:
     ) -> dict[str, object]:
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
-        workspace_id = workspace_id_for_project(db, project.id)
-        if workspace_id is not None:
-            require_workspace_role(
-                db,
-                workspace_id,
-                user_id,
-                BaseRole.Maintainer,
-            )
         target = db.get(User, values.user_id)
         if target is None or not target.is_active:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
@@ -509,13 +504,6 @@ class CloudProjectService:
         else:
             member.role = values.role.value
             member.status = MemberStatus.APPROVED.value
-        if workspace_id is not None:
-            workspace_service.ensure_human_member(
-                db,
-                workspace_id=workspace_id,
-                user_id=target.id,
-                role=BaseRole.Reporter,
-            )
         self._set_member_capability(project, target.id, values.capability_description)
         db.commit()
         db.refresh(member)
@@ -587,6 +575,131 @@ class CloudProjectService:
         member, _ = self._get_member(db, cloud_project_id, member_user_id)
         self._set_member_capability(project, member_user_id, "")
         db.delete(member)
+        db.commit()
+
+    def list_execution_environments(
+        self, db: Session, cloud_project_id: int, user_id: int
+    ) -> list[dict[str, object]]:
+        require_cloud_project_role(db, cloud_project_id, user_id)
+        workspace_id = workspace_id_for_project(db, cloud_project_id)
+        if workspace_id is None:
+            return []
+        rows = (
+            db.query(ResourceMember, Kind)
+            .join(Kind, Kind.id == ResourceMember.resource_id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.DEVICE.value,
+                ResourceMember.entity_type == "project",
+                ResourceMember.entity_id == str(cloud_project_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+                Kind.kind == "Device",
+                Kind.is_active.is_(True),
+            )
+            .order_by(ResourceMember.created_at, ResourceMember.id)
+            .all()
+        )
+        return [
+            execution_environment_values(
+                db,
+                grant,
+                device,
+                workspace_id=str(workspace_id),
+            )
+            for grant, device in rows
+        ]
+
+    def add_execution_environment(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        device_id: int,
+        user_id: int,
+    ) -> dict[str, object]:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        workspace_id = workspace_id_for_project(db, cloud_project_id)
+        if workspace_id is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Project is not attached to a Workspace",
+            )
+        existing = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.DEVICE.value,
+                ResourceMember.resource_id == device_id,
+                ResourceMember.entity_type == "project",
+                ResourceMember.entity_id == str(cloud_project_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if existing is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Execution environment is already available in this Project",
+            )
+        device = db.get(Kind, device_id)
+        if device is None or device.kind != "Device" or not device.is_active:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "Execution environment not found"
+            )
+        workspace_grant = resource_grant(
+            db,
+            workspace_id=workspace_id,
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device_id,
+        )
+        owned_by_user = int(device.user_id) == user_id
+        shared_with_workspace = workspace_grant is not None
+        if not owned_by_user and not shared_with_workspace:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Execution environment is not available to this Project",
+            )
+        grant = ResourceMember.create(
+            resource_type=ResourceType.DEVICE.value,
+            resource_id=device_id,
+            entity_type="project",
+            entity_id=str(cloud_project_id),
+            role=BaseRole.Developer.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=user_id,
+        )
+        db.add(grant)
+        db.commit()
+        db.refresh(grant)
+        return execution_environment_values(
+            db,
+            grant,
+            device,
+            workspace_id=str(workspace_id),
+        )
+
+    def remove_execution_environment(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        device_id: int,
+        user_id: int,
+    ) -> None:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        grant = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.DEVICE.value,
+                ResourceMember.resource_id == device_id,
+                ResourceMember.entity_type == "project",
+                ResourceMember.entity_id == str(cloud_project_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if grant is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Project execution environment not found",
+            )
+        db.delete(grant)
         db.commit()
 
     @staticmethod

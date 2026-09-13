@@ -2,17 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot,
-  Boxes,
-  BriefcaseBusiness,
   ChevronRight,
-  LayoutGrid,
-  MonitorCog,
+  Ellipsis,
+  FolderPlus,
+  FolderOpen,
   Settings,
-  Users,
-  type LucideIcon,
 } from "lucide-react";
 
 import { CollaborationApp } from "../CollaborationApp";
@@ -21,15 +17,13 @@ import {
   type CollaborationLocale,
 } from "../i18n";
 import type { AutomationUiHost } from "../automation-ui";
-import type {
-  SharedWorkspaceApi,
-  WorkspaceMyWorkItem,
-} from "../ports/SharedWorkspaceApi";
+import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import { createWegentProjectAgentInput } from "../project-agent-config";
 import { ProjectCreateDialog, projectCreateLabels } from "../project-create";
+import { ProjectSettingsShell } from "../project-manage";
 import type {
   CollaborationExecutionEnvironment,
   CollaborationIssue,
-  CollaborationMember,
   CollaborationOwnedAgent,
   CollaborationProject,
   CollaborationWorkspace,
@@ -53,14 +47,6 @@ import {
 const platformMessages = {
   "zh-CN": {
     allSpaces: "所有空间",
-    resources: "资源",
-    myWork: "我的工作",
-    myWorkHint: "跨空间查看分配给我和我正在参与的 Issue。",
-    noWork: "还没有待处理工作",
-    noWorkHint: "当 Issue 分配给你或你主动参与后，会显示在这里。",
-    running: "执行中",
-    pending: "待处理",
-    resourcesHint: "管理我拥有的智能体和执行环境，并授权给协作空间使用。",
     workspaceHint: "空间是成员、项目、智能体和执行环境的协作边界。",
     createWorkspace: "创建云端空间",
     cloudStorageNotice:
@@ -81,6 +67,7 @@ const platformMessages = {
     agents: "智能体",
     environments: "执行环境",
     settings: "空间设置",
+    basicInformation: "基本信息",
     projects: "项目",
     workspaceManagement: "空间管理",
     createProject: "创建项目",
@@ -96,14 +83,7 @@ const platformMessages = {
     cancel: "取消",
     name: "名称",
     description: "描述",
-    workspaceSettingsHint: "管理空间基本信息。成员和资源使用独立页面管理。",
-    personalAgents: "我的智能体",
-    personalEnvironments: "我的执行环境",
-    noResources: "还没有资源",
-    available: "可用",
-    unavailable: "不可用",
-    online: "在线",
-    offline: "离线",
+    workspaceSettingsHint: "管理空间基本信息、成员和协作资源。",
     loadFailed: "加载协作空间失败",
     searchSpaces: "搜索空间",
     firstUseProgress: "开始协作",
@@ -114,19 +94,15 @@ const platformMessages = {
     inviteMembers: "邀请成员",
     workspaceResources: "空间资源",
     viewAll: "查看全部",
+    collaborationSpaces: "协作空间",
+    collaborationSettings: "协作设置",
+    manageAgents: "管理智能体资源",
+    manageEnvironments: "管理执行环境",
+    expandWorkspace: "展开空间项目",
+    collapseWorkspace: "收起空间项目",
   },
   en: {
     allSpaces: "All spaces",
-    resources: "Resources",
-    myWork: "My work",
-    myWorkHint: "See issues assigned to you or involving you across spaces.",
-    noWork: "No work yet",
-    noWorkHint:
-      "Issues appear here after they are assigned to you or you join them.",
-    running: "Running",
-    pending: "Pending",
-    resourcesHint:
-      "Manage agents and execution environments you own and share them with workspaces.",
     workspaceHint:
       "A workspace is the collaboration boundary for members, projects, agents, and execution environments.",
     createWorkspace: "Create cloud space",
@@ -149,6 +125,7 @@ const platformMessages = {
     agents: "Agents",
     environments: "Execution environments",
     settings: "Space settings",
+    basicInformation: "Basic information",
     projects: "Projects",
     workspaceManagement: "Space management",
     createProject: "Create project",
@@ -166,14 +143,7 @@ const platformMessages = {
     name: "Name",
     description: "Description",
     workspaceSettingsHint:
-      "Manage basic space information. Members and resources have dedicated pages.",
-    personalAgents: "My agents",
-    personalEnvironments: "My execution environments",
-    noResources: "No resources yet",
-    available: "Available",
-    unavailable: "Unavailable",
-    online: "Online",
-    offline: "Offline",
+      "Manage the workspace profile, members, and collaboration resources.",
     loadFailed: "Failed to load collaboration spaces",
     searchSpaces: "Search spaces",
     firstUseProgress: "Getting started",
@@ -184,6 +154,12 @@ const platformMessages = {
     inviteMembers: "Invite members",
     workspaceResources: "Workspace resources",
     viewAll: "View all",
+    collaborationSpaces: "Collaboration spaces",
+    collaborationSettings: "Collaboration settings",
+    manageAgents: "Manage agent resources",
+    manageEnvironments: "Manage execution environments",
+    expandWorkspace: "Expand workspace projects",
+    collapseWorkspace: "Collapse workspace projects",
   },
 } as const;
 
@@ -199,299 +175,316 @@ function navigateWithin(
 function CollaborationPlatformNavigation({
   host,
   messages,
-  workspace,
   workspaces,
   projects,
+  onCreateWorkspace,
   footer,
 }: {
   host: CollaborationPlatformHostAdapter;
   messages: PlatformMessages;
-  workspace: CollaborationWorkspace | null;
   workspaces: CollaborationWorkspace[];
   projects: CollaborationProject[];
+  onCreateWorkspace(): void;
   footer?: React.ReactNode;
 }) {
-  const canManageWorkspace =
-    workspace?.access_role === "Owner" ||
-    workspace?.access_role === "Maintainer";
-  const managementNav: Array<{
-    id: CollaborationWorkspaceView;
-    label: string;
-    icon: LucideIcon;
-    count?: number;
-  }> = [
-    {
-      id: "members",
-      label: messages.members,
-      icon: Users,
-      count: workspace?.member_count,
-    },
-    {
-      id: "agents",
-      label: messages.agents,
-      icon: Bot,
-      count: workspace?.agent_count,
-    },
-    {
-      id: "execution-environments",
-      label: messages.environments,
-      icon: MonitorCog,
-      count: workspace?.execution_environment_count,
-    },
-  ];
-  if (canManageWorkspace) {
-    managementNav.push({
-      id: "settings",
-      label: messages.settings,
-      icon: Settings,
-    });
-  }
-  const managementActive =
-    !host.location.projectId &&
-    managementNav.some((item) => item.id === host.location.workspaceView);
-  const [managementOpen, setManagementOpen] = useState(managementActive);
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
+    () =>
+      new Set(
+        host.location.workspaceId
+          ? [host.location.workspaceId]
+          : workspaces.slice(0, 1).map((workspace) => workspace.id),
+      ),
+  );
+  const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
+  const [collaborationMenuOpen, setCollaborationMenuOpen] = useState(false);
+  const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
+  const collaborationMenuRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (managementActive) setManagementOpen(true);
-  }, [managementActive]);
-  const openWorkspaceHome = () =>
-    navigateWithin(host, {
+    const workspaceId = host.location.workspaceId ?? workspaces[0]?.id;
+    if (!workspaceId) return;
+    setExpandedWorkspaceIds((current) => {
+      if (current.has(workspaceId)) return current;
+      return new Set([...current, workspaceId]);
+    });
+  }, [host.location.workspaceId, workspaces]);
+  useEffect(() => {
+    if (!collaborationMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!collaborationMenuRef.current?.contains(event.target as Node)) {
+        setCollaborationMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCollaborationMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [collaborationMenuOpen]);
+  useEffect(() => {
+    if (!workspaceMenuId) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) {
+        setWorkspaceMenuId(null);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setWorkspaceMenuId(null);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [workspaceMenuId]);
+  const openWorkspaceHome = (workspaceId: string) =>
+    host.navigate({
+      platformView: "spaces",
+      workspaceId,
       workspaceView: "home",
       projectId: null,
+      projectView: "board",
       issueId: null,
     });
-  const openAllProjects = () =>
-    navigateWithin(host, {
-      workspaceView: "projects",
-      projectId: null,
-      issueId: null,
+  const toggleWorkspace = (workspaceId: string) => {
+    setExpandedWorkspaceIds((current) => {
+      const next = new Set(current);
+      if (next.has(workspaceId)) next.delete(workspaceId);
+      else next.add(workspaceId);
+      return next;
     });
-  const renderManagementNav = () => (
-    <nav className="collaboration-platform-management-nav">
-      {managementNav.map((item) => {
-        const Icon = item.icon;
-        return (
-          <button
-            type="button"
-            className={
-              !host.location.projectId &&
-              host.location.workspaceView === item.id
-                ? "active"
-                : ""
-            }
-            aria-current={
-              !host.location.projectId &&
-              host.location.workspaceView === item.id
-                ? "page"
-                : undefined
-            }
-            title={item.label}
-            data-testid={`collaboration-workspace-nav-${item.id}`}
-            key={item.id}
-            onClick={() =>
-              navigateWithin(host, {
-                workspaceView: item.id,
-                projectId: null,
-                issueId: null,
-              })
-            }
-          >
-            <Icon aria-hidden="true" />
-            <span className="collaboration-platform-nav-text">
-              {item.label}
-            </span>
-            {item.count !== undefined ? (
-              <span className="collaboration-platform-nav-count">
-                {item.count}
-              </span>
-            ) : null}
-          </button>
-        );
-      })}
-    </nav>
-  );
+  };
   return (
     <aside
       className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}`}
       data-testid="collaboration-platform-sidebar"
     >
-      {!workspace ? (
-        <>
-          {host.capabilities.sidebarPresentation !== "context" ? (
-            <div className="collaboration-platform-brand">Wegent</div>
-          ) : null}
-          <nav>
-            <button
-              type="button"
-              className={
-                host.location.platformView === "spaces" ? "active" : ""
-              }
-              aria-current={
-                host.location.platformView === "spaces" ? "page" : undefined
-              }
-              data-testid="collaboration-nav-all-spaces"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <LayoutGrid aria-hidden="true" />
-              {messages.allSpaces}
-            </button>
-            <button
-              type="button"
-              className={
-                host.location.platformView === "my-work" ? "active" : ""
-              }
-              aria-current={
-                host.location.platformView === "my-work" ? "page" : undefined
-              }
-              data-testid="collaboration-nav-my-work"
-              onClick={() =>
-                host.navigate({
-                  platformView: "my-work",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <BriefcaseBusiness aria-hidden="true" />
-              {messages.myWork}
-            </button>
-            <button
-              type="button"
-              className={
-                host.location.platformView === "resources" ? "active" : ""
-              }
-              aria-current={
-                host.location.platformView === "resources" ? "page" : undefined
-              }
-              data-testid="collaboration-nav-resources"
-              onClick={() =>
-                host.navigate({
-                  platformView: "resources",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <Boxes aria-hidden="true" />
-              {messages.resources}
-            </button>
-          </nav>
-        </>
-      ) : (
-        <>
-          <div className="collaboration-workspace-context-header">
-            <button
-              type="button"
-              className="collaboration-workspace-home"
-              aria-label={messages.workspaceHome}
-              title={messages.workspaceHome}
-              data-testid="collaboration-workspace-nav-home"
-              onClick={openWorkspaceHome}
-            >
-              <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
-            </button>
-            <label className="collaboration-workspace-identity">
-              <span>
-                <select
-                  aria-label={messages.currentWorkspace}
-                  data-testid="collaboration-workspace-switcher"
-                  value={workspace.id}
-                  onChange={(event) =>
-                    host.navigate({
-                      platformView: "spaces",
-                      workspaceId: event.target.value,
-                      workspaceView: "home",
-                      projectId: null,
-                      projectView: "board",
-                      issueId: null,
-                    })
-                  }
-                >
-                  {workspaces.map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.name}
-                    </option>
-                  ))}
-                </select>
-                <small>
-                  {workspace.location === "local"
-                    ? messages.localStorage
-                    : messages.cloudStorage}
-                </small>
-              </span>
-            </label>
-          </div>
-          <div className="collaboration-platform-projects">
-            <div className="collaboration-platform-projects-heading">
-              <span>{messages.projects}</span>
-              <button
-                type="button"
-                data-testid="collaboration-workspace-nav-projects"
-                onClick={openAllProjects}
-              >
-                {messages.viewAll}
-              </button>
+      {host.capabilities.sidebarPresentation !== "context" ? (
+        <div className="collaboration-platform-brand">Wegent</div>
+      ) : null}
+      <div className="collaboration-workspace-section-heading">
+        <button
+          type="button"
+          className="collaboration-workspace-section-toggle"
+          aria-expanded={workspacesExpanded}
+          data-testid="collaboration-workspaces-section-toggle"
+          onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
+        >
+          <span>{messages.collaborationSpaces}</span>
+          <ChevronRight aria-hidden="true" />
+        </button>
+        <div
+          className="collaboration-workspace-section-actions"
+          ref={collaborationMenuRef}
+        >
+          <button
+            type="button"
+            aria-label={messages.collaborationSettings}
+            title={messages.collaborationSettings}
+            aria-expanded={collaborationMenuOpen}
+            aria-haspopup="menu"
+            data-testid="collaboration-workspace-section-actions"
+            onClick={() => setCollaborationMenuOpen((open) => !open)}
+          >
+            <Ellipsis aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label={messages.createWorkspace}
+            title={messages.createWorkspace}
+            data-testid="collaboration-workspace-sidebar-create"
+            onClick={onCreateWorkspace}
+          >
+            <FolderPlus aria-hidden="true" />
+          </button>
+          {collaborationMenuOpen ? (
+            <div role="menu">
+              {host.manageResource ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="collaboration-manage-agents"
+                    onClick={() => {
+                      setCollaborationMenuOpen(false);
+                      host.manageResource?.("agents");
+                    }}
+                  >
+                    {messages.manageAgents}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-testid="collaboration-manage-environments"
+                    onClick={() => {
+                      setCollaborationMenuOpen(false);
+                      host.manageResource?.("environments");
+                    }}
+                  >
+                    {messages.manageEnvironments}
+                  </button>
+                </>
+              ) : null}
             </div>
-            <nav>
-              {projects.map((project) => (
-                <button
-                  type="button"
-                  className={
-                    host.location.projectId === project.id ? "active" : ""
-                  }
-                  aria-current={
-                    host.location.projectId === project.id ? "page" : undefined
-                  }
-                  title={project.name}
-                  data-testid={`collaboration-workspace-project-${project.id}`}
-                  key={project.id}
-                  onClick={() =>
-                    navigateWithin(host, {
-                      projectId: project.id,
-                      projectView: "board",
-                      issueId: null,
-                    })
-                  }
+          ) : null}
+        </div>
+      </div>
+      {workspacesExpanded ? (
+        <div className="collaboration-workspace-tree">
+          {workspaces.map((candidate) => {
+            const expanded = expandedWorkspaceIds.has(candidate.id);
+            const candidateProjects = projects.filter(
+              (project) => project.workspace_id === candidate.id,
+            );
+            const workspaceActive =
+              host.location.workspaceId === candidate.id &&
+              !host.location.projectId;
+            const canManageWorkspace =
+              candidate.access_role === "Owner" ||
+              candidate.access_role === "Maintainer";
+            const menuOpen = workspaceMenuId === candidate.id;
+            return (
+              <section
+                className="collaboration-workspace-group"
+                data-testid={`collaboration-workspace-tree-${candidate.id}`}
+                key={candidate.id}
+              >
+                <div
+                  className={`collaboration-workspace-row${
+                    workspaceActive ? " active" : ""
+                  }${canManageWorkspace ? " has-actions" : ""}`}
                 >
-                  <span className="collaboration-platform-project-mark">
-                    {project.project_key.slice(0, 2)}
-                  </span>
-                  <span className="collaboration-platform-nav-text">
-                    {project.name}
-                  </span>
-                </button>
-              ))}
-            </nav>
-          </div>
-          <div className="collaboration-platform-management">
-            <button
-              type="button"
-              className={managementActive ? "active" : ""}
-              aria-expanded={managementOpen}
-              data-testid="collaboration-workspace-management-toggle"
-              onClick={() => setManagementOpen((current) => !current)}
-            >
-              <ChevronRight aria-hidden="true" />
-              <span>{messages.workspaceManagement}</span>
-            </button>
-            {managementOpen ? renderManagementNav() : null}
-          </div>
-        </>
-      )}
+                  <button
+                    type="button"
+                    className="collaboration-workspace-identity"
+                    data-testid={
+                      host.location.workspaceId === candidate.id
+                        ? "collaboration-workspace-nav-projects"
+                        : `collaboration-workspace-home-${candidate.id}`
+                    }
+                    aria-current={workspaceActive ? "page" : undefined}
+                    onClick={() => openWorkspaceHome(candidate.id)}
+                  >
+                    <span
+                      className="collaboration-workspace-folder"
+                      aria-hidden="true"
+                    >
+                      <FolderOpen />
+                    </span>
+                    <span className="collaboration-workspace-title">
+                      {candidate.name}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="collaboration-workspace-toggle"
+                    aria-expanded={expanded}
+                    aria-label={
+                      expanded
+                        ? messages.collapseWorkspace
+                        : messages.expandWorkspace
+                    }
+                    data-testid={`collaboration-workspace-toggle-${candidate.id}`}
+                    onClick={() => toggleWorkspace(candidate.id)}
+                  >
+                    <ChevronRight aria-hidden="true" />
+                  </button>
+                  {canManageWorkspace ? (
+                    <div
+                      className="collaboration-workspace-actions"
+                      ref={menuOpen ? workspaceMenuRef : undefined}
+                    >
+                      <button
+                        type="button"
+                        aria-label={messages.settings}
+                        aria-expanded={menuOpen}
+                        aria-haspopup="menu"
+                        data-testid={
+                          host.location.workspaceId === candidate.id
+                            ? "collaboration-workspace-actions"
+                            : `collaboration-workspace-actions-${candidate.id}`
+                        }
+                        onClick={() =>
+                          setWorkspaceMenuId((current) =>
+                            current === candidate.id ? null : candidate.id,
+                          )
+                        }
+                      >
+                        <Ellipsis aria-hidden="true" />
+                      </button>
+                      {menuOpen ? (
+                        <div role="menu">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            data-testid="collaboration-workspace-nav-settings"
+                            onClick={() => {
+                              setWorkspaceMenuId(null);
+                              host.navigate({
+                                platformView: "spaces",
+                                workspaceId: candidate.id,
+                                workspaceView: "settings",
+                                projectId: null,
+                                projectView: "board",
+                                issueId: null,
+                              });
+                            }}
+                          >
+                            <Settings aria-hidden="true" />
+                            {messages.settings}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                {expanded ? (
+                  <nav
+                    className="collaboration-workspace-project-list"
+                    aria-label={`${candidate.name} · ${messages.projects}`}
+                  >
+                    {candidateProjects.map((project) => (
+                      <button
+                        type="button"
+                        className={`collaboration-workspace-project${
+                          host.location.projectId === project.id
+                            ? " active"
+                            : ""
+                        }`}
+                        aria-current={
+                          host.location.projectId === project.id
+                            ? "page"
+                            : undefined
+                        }
+                        title={project.name}
+                        data-testid={`collaboration-workspace-project-${project.id}`}
+                        key={project.id}
+                        onClick={() =>
+                          host.navigate({
+                            platformView: "spaces",
+                            workspaceId: candidate.id,
+                            workspaceView: "projects",
+                            projectId: project.id,
+                            projectView: "board",
+                            issueId: null,
+                          })
+                        }
+                      >
+                        <span>{project.name}</span>
+                      </button>
+                    ))}
+                  </nav>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      ) : null}
       {footer ? (
         <div className="collaboration-platform-sidebar-footer">{footer}</div>
       ) : null}
@@ -530,7 +523,6 @@ function EmptyState({
 }) {
   return (
     <div className="collaboration-platform-empty">
-      <span className="collaboration-platform-empty-icon">◇</span>
       <strong>{title}</strong>
       <p>{description}</p>
       {action}
@@ -579,16 +571,23 @@ function ProjectCards({
   );
 }
 
-function WorkspaceCards({
+function WorkspaceProjectList({
   workspaces,
+  projects,
   messages,
   separateByLocation,
-  onOpen,
+  onOpenWorkspace,
+  onOpenProject,
 }: {
   workspaces: CollaborationWorkspace[];
+  projects: CollaborationProject[];
   messages: PlatformMessages;
   separateByLocation: boolean;
-  onOpen(workspace: CollaborationWorkspace): void;
+  onOpenWorkspace(workspace: CollaborationWorkspace): void;
+  onOpenProject(
+    workspace: CollaborationWorkspace,
+    project: CollaborationProject,
+  ): void;
 }) {
   const groups = separateByLocation
     ? ([
@@ -625,108 +624,76 @@ function WorkspaceCards({
             key={group.location}
           >
             {group.title ? <h2>{group.title}</h2> : null}
-            <div className="collaboration-workspace-card-grid">
-              {group.items.map((workspace) => (
-                <button
-                  type="button"
-                  className="collaboration-workspace-card"
-                  data-location={workspace.location}
-                  data-testid={`collaboration-workspace-${workspace.id}`}
-                  key={workspace.id}
-                  onClick={() => onOpen(workspace)}
-                >
-                  <div className="collaboration-workspace-card-heading">
-                    <span>{workspace.name.slice(0, 1).toUpperCase()}</span>
-                    <small className="collaboration-workspace-storage">
-                      {workspace.location === "local"
-                        ? messages.localStorage
-                        : messages.cloudStorage}
-                    </small>
-                  </div>
-                  <strong>{workspace.name}</strong>
-                  <p>{workspace.description}</p>
-                  <small className="collaboration-workspace-counts">
-                    {workspace.member_count} {messages.memberCount} ·{" "}
-                    {workspace.agent_count} {messages.agentCount} ·{" "}
-                    {workspace.execution_environment_count}{" "}
-                    {messages.environmentCount} · {workspace.project_count}{" "}
-                    {messages.projectCount}
-                  </small>
-                  <em>{messages.enterWorkspace} →</em>
-                </button>
-              ))}
+            <div className="collaboration-space-project-list">
+              {group.items.map((workspace) => {
+                const workspaceProjects = projects.filter(
+                  (project) => project.workspace_id === workspace.id,
+                );
+                return (
+                  <section
+                    className="collaboration-space-project-group"
+                    data-location={workspace.location}
+                    key={workspace.id}
+                  >
+                    <button
+                      type="button"
+                      className="collaboration-space-project-heading"
+                      data-location={workspace.location}
+                      data-testid={`collaboration-workspace-${workspace.id}`}
+                      onClick={() => onOpenWorkspace(workspace)}
+                    >
+                      <span className="collaboration-space-project-mark">
+                        {workspace.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="collaboration-space-project-copy">
+                        <strong>{workspace.name}</strong>
+                        <small>
+                          {workspace.location === "local"
+                            ? messages.localStorage
+                            : messages.cloudStorage}
+                        </small>
+                      </span>
+                      <span className="collaboration-space-project-count">
+                        {workspaceProjects.length} {messages.projectCount}
+                      </span>
+                      <span aria-hidden="true">›</span>
+                    </button>
+                    {workspaceProjects.length ? (
+                      <div className="collaboration-space-project-rows">
+                        {workspaceProjects.map((project) => (
+                          <button
+                            type="button"
+                            className="collaboration-space-project-row"
+                            data-testid={`collaboration-project-card-${project.id}`}
+                            key={project.id}
+                            onClick={() => onOpenProject(workspace, project)}
+                          >
+                            <span className="collaboration-platform-project-mark">
+                              {project.project_key.slice(0, 2)}
+                            </span>
+                            <span>
+                              <strong>{project.name}</strong>
+                              <small>
+                                {project.description || project.project_key}
+                              </small>
+                            </span>
+                            <span aria-hidden="true">›</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="collaboration-space-project-empty">
+                        {messages.noProjects}
+                      </p>
+                    )}
+                  </section>
+                );
+              })}
             </div>
           </section>
         ) : null,
       )}
     </div>
-  );
-}
-
-function WorkspaceResourceList({
-  title,
-  kind,
-  members,
-  agents,
-  environments,
-  messages,
-}: {
-  title: string;
-  kind: "members" | "agents" | "environments";
-  members: CollaborationMember[];
-  agents: CollaborationOwnedAgent[];
-  environments: CollaborationExecutionEnvironment[];
-  messages: PlatformMessages;
-}) {
-  const rows =
-    kind === "members"
-      ? members.map((member) => ({
-          id: String(member.user_id),
-          title: member.user_name,
-          detail: member.email ?? member.role,
-          state: member.role,
-        }))
-      : kind === "agents"
-        ? agents.map((agent) => ({
-            id: agent.id,
-            title: agent.name,
-            detail: agent.owner_name,
-            state:
-              agent.status === "available"
-                ? messages.available
-                : messages.unavailable,
-          }))
-        : environments.map((environment) => ({
-            id: environment.id,
-            title: environment.name,
-            detail: environment.owner_name,
-            state:
-              environment.status === "online"
-                ? messages.online
-                : messages.offline,
-          }));
-  return (
-    <section className="collaboration-platform-panel">
-      <h2>{title}</h2>
-      {rows.length ? (
-        <div className="collaboration-resource-list">
-          {rows.map((row) => (
-            <div key={row.id}>
-              <span className="collaboration-resource-avatar">
-                {row.title.slice(0, 1).toUpperCase()}
-              </span>
-              <span>
-                <strong>{row.title}</strong>
-                <small>{row.detail}</small>
-              </span>
-              <em>{row.state}</em>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <EmptyState title={messages.noResources} description="" />
-      )}
-    </section>
   );
 }
 
@@ -842,6 +809,25 @@ export function CollaborationPlatformApp({
       },
     };
   }, [api, host.location.workspaceId]);
+  const projectResourceAgents = useMemo(() => {
+    const agents = new Map<number, CollaborationOwnedAgent>();
+    for (const agent of [...state.resources.agents, ...state.agents]) {
+      if (agent.team_id != null) agents.set(agent.team_id, agent);
+    }
+    return [...agents.values()];
+  }, [state.agents, state.resources.agents]);
+  const projectResourceEnvironments = useMemo(() => {
+    const environments = new Map<number, CollaborationExecutionEnvironment>();
+    for (const environment of [
+      ...state.resources.execution_environments,
+      ...state.executionEnvironments,
+    ]) {
+      if (environment.device_id != null) {
+        environments.set(environment.device_id, environment);
+      }
+    }
+    return [...environments.values()];
+  }, [state.executionEnvironments, state.resources.execution_environments]);
 
   const openProject = (project: CollaborationProject) =>
     navigateWithin(host, {
@@ -850,25 +836,6 @@ export function CollaborationPlatformApp({
       projectView: "board",
       issueId: null,
     });
-  const openMyWorkIssue = async (issue: WorkspaceMyWorkItem) => {
-    try {
-      const project = await api.projects.get?.(String(issue.cloud_project_id));
-      if (!project?.workspace_id) {
-        host.notify?.(messages.loadFailed, "error");
-        return;
-      }
-      navigateWithin(host, {
-        workspaceId: project.workspace_id,
-        workspaceView: "projects",
-        projectId: String(issue.cloud_project_id),
-        projectView: "board",
-        issueId: issue.id,
-      });
-    } catch {
-      host.notify?.(messages.loadFailed, "error");
-    }
-  };
-
   let content: React.ReactNode;
   if (state.loading) {
     content = (
@@ -919,75 +886,33 @@ export function CollaborationPlatformApp({
           onCreateTask={onCreateTask}
         />
       );
-  } else if (!state.workspace && host.location.platformView === "my-work") {
-    content = (
-      <div className="collaboration-platform-page">
-        <PageHeader title={messages.myWork} subtitle={messages.myWorkHint} />
-        {state.myWork.length ? (
-          <section className="collaboration-platform-panel">
-            <div className="collaboration-my-work-list">
-              {state.myWork.map((issue) => (
-                <button
-                  type="button"
-                  data-testid={`collaboration-my-work-${issue.id}`}
-                  key={issue.id}
-                  onClick={() => void openMyWorkIssue(issue)}
-                >
-                  <span>
-                    <strong>{issue.title}</strong>
-                    <small>
-                      {issue.project_name} · {issue.status}
-                    </small>
-                  </span>
-                  <em>
-                    {issue.has_active_task
-                      ? messages.running
-                      : messages.pending}
-                  </em>
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <EmptyState
-            title={messages.noWork}
-            description={messages.noWorkHint}
-          />
-        )}
-      </div>
-    );
-  } else if (!state.workspace && host.location.platformView === "resources") {
-    content = (
-      <div className="collaboration-platform-page">
-        <PageHeader
-          title={messages.resources}
-          subtitle={messages.resourcesHint}
-        />
-        <div className="collaboration-platform-resource-grid">
-          <WorkspaceResourceList
-            title={messages.personalAgents}
-            kind="agents"
-            members={[]}
-            agents={state.resources.agents}
-            environments={[]}
-            messages={messages}
-          />
-          <WorkspaceResourceList
-            title={messages.personalEnvironments}
-            kind="environments"
-            members={[]}
-            agents={[]}
-            environments={state.resources.execution_environments}
-            messages={messages}
-          />
-        </div>
-      </div>
-    );
   } else if (!state.workspace) {
-    const workspaces = filterCollaborationWorkspaces(
-      sortCollaborationWorkspaces(state.workspaces),
-      workspaceQuery,
+    const sortedWorkspaces = sortCollaborationWorkspaces(state.workspaces);
+    const directlyMatchedWorkspaceIds = new Set(
+      filterCollaborationWorkspaces(sortedWorkspaces, workspaceQuery).map(
+        (workspace) => workspace.id,
+      ),
     );
+    const normalizedWorkspaceQuery = workspaceQuery.trim().toLowerCase();
+    const workspaces = normalizedWorkspaceQuery
+      ? sortedWorkspaces.filter(
+          (workspace) =>
+            directlyMatchedWorkspaceIds.has(workspace.id) ||
+            state.projects.some(
+              (project) =>
+                project.workspace_id === workspace.id &&
+                (project.name
+                  .toLowerCase()
+                  .includes(normalizedWorkspaceQuery) ||
+                  project.description
+                    .toLowerCase()
+                    .includes(normalizedWorkspaceQuery) ||
+                  project.project_key
+                    .toLowerCase()
+                    .includes(normalizedWorkspaceQuery)),
+            ),
+        )
+      : sortedWorkspaces;
     content = (
       <div className="collaboration-platform-page">
         <PageHeader
@@ -1024,15 +949,25 @@ export function CollaborationPlatformApp({
           />
         </label>
         {workspaces.length ? (
-          <WorkspaceCards
+          <WorkspaceProjectList
             workspaces={workspaces}
+            projects={state.projects}
             messages={messages}
             separateByLocation={showsLocalAndCloud}
-            onOpen={(workspace) =>
+            onOpenWorkspace={(workspace) =>
               navigateWithin(host, {
                 workspaceId: workspace.id,
                 workspaceView: "home",
                 projectId: null,
+                issueId: null,
+              })
+            }
+            onOpenProject={(workspace, project) =>
+              navigateWithin(host, {
+                workspaceId: workspace.id,
+                workspaceView: "projects",
+                projectId: String(project.id),
+                projectView: "board",
                 issueId: null,
               })
             }
@@ -1061,6 +996,13 @@ export function CollaborationPlatformApp({
     const canManageWorkspace =
       workspace.access_role === "Owner" ||
       workspace.access_role === "Maintainer";
+    const workspaceSettingsView =
+      host.location.workspaceView === "settings" ||
+      host.location.workspaceView === "members" ||
+      host.location.workspaceView === "agents" ||
+      host.location.workspaceView === "execution-environments"
+        ? host.location.workspaceView
+        : null;
     const createProjectAction = (
       <button
         type="button"
@@ -1071,57 +1013,107 @@ export function CollaborationPlatformApp({
         ＋ {messages.createProject}
       </button>
     );
-    if (host.location.workspaceView === "settings" && canManageWorkspace) {
+    if (workspaceSettingsView) {
+      const workspaceSettingsSections = [
+        ...(canManageWorkspace
+          ? [
+              {
+                id: "settings",
+                label: messages.basicInformation,
+                testId: "collaboration-workspace-nav-settings",
+                content: (
+                  <div className="collaboration-platform-page">
+                    <PageHeader
+                      title={messages.basicInformation}
+                      subtitle={`${messages.settings} · ${workspace.name}`}
+                    />
+                    <WorkspaceSettings
+                      workspace={workspace}
+                      messages={messages}
+                      onSave={async (input) => {
+                        await commands.updateWorkspace(input);
+                        host.notify?.(messages.save, "success");
+                      }}
+                    />
+                  </div>
+                ),
+              },
+            ]
+          : []),
+        {
+          id: "members",
+          label: messages.members,
+          testId: "collaboration-workspace-nav-members",
+          content: (
+            <div className="collaboration-platform-page">
+              <PageHeader
+                title={messages.members}
+                subtitle={`${messages.settings} · ${workspace.name}`}
+              />
+              <WorkspaceMembersConfiguration
+                workspace={workspace}
+                members={state.members}
+                locale={locale}
+                commands={commands}
+              />
+            </div>
+          ),
+        },
+        {
+          id: "agents",
+          label: messages.agents,
+          testId: "collaboration-workspace-nav-agents",
+          content: (
+            <div className="collaboration-platform-page">
+              <PageHeader
+                title={messages.agents}
+                subtitle={`${messages.settings} · ${workspace.name}`}
+              />
+              <WorkspaceAgentsConfiguration
+                workspace={workspace}
+                agents={state.agents}
+                resources={state.resources}
+                locale={locale}
+                commands={commands}
+              />
+            </div>
+          ),
+        },
+        {
+          id: "execution-environments",
+          label: messages.environments,
+          testId: "collaboration-workspace-nav-execution-environments",
+          content: (
+            <div className="collaboration-platform-page">
+              <PageHeader
+                title={messages.environments}
+                subtitle={`${messages.settings} · ${workspace.name}`}
+              />
+              <WorkspaceExecutionEnvironmentsConfiguration
+                workspace={workspace}
+                environments={state.executionEnvironments}
+                resources={state.resources}
+                locale={locale}
+                commands={commands}
+              />
+            </div>
+          ),
+        },
+      ];
       content = (
-        <div className="collaboration-platform-page">
-          <PageHeader title={messages.settings} subtitle={workspace.name} />
-          <WorkspaceSettings
-            workspace={workspace}
-            messages={messages}
-            onSave={async (input) => {
-              await commands.updateWorkspace(input);
-              host.notify?.(messages.save, "success");
-            }}
-          />
-        </div>
-      );
-    } else if (host.location.workspaceView === "members") {
-      content = (
-        <div className="collaboration-platform-page">
-          <PageHeader title={messages.members} subtitle={workspace.name} />
-          <WorkspaceMembersConfiguration
-            workspace={workspace}
-            members={state.members}
-            locale={locale}
-            commands={commands}
-          />
-        </div>
-      );
-    } else if (host.location.workspaceView === "agents") {
-      content = (
-        <div className="collaboration-platform-page">
-          <PageHeader title={messages.agents} subtitle={workspace.name} />
-          <WorkspaceAgentsConfiguration
-            workspace={workspace}
-            agents={state.agents}
-            resources={state.resources}
-            locale={locale}
-            commands={commands}
-          />
-        </div>
-      );
-    } else if (host.location.workspaceView === "execution-environments") {
-      content = (
-        <div className="collaboration-platform-page">
-          <PageHeader title={messages.environments} subtitle={workspace.name} />
-          <WorkspaceExecutionEnvironmentsConfiguration
-            workspace={workspace}
-            environments={state.executionEnvironments}
-            resources={state.resources}
-            locale={locale}
-            commands={commands}
-          />
-        </div>
+        <ProjectSettingsShell
+          ariaLabel={`${messages.settings} · ${workspace.name}`}
+          testId="workspace-settings-shell"
+          selectedSectionId={workspaceSettingsView}
+          onSectionChange={(sectionId) =>
+            navigateWithin(host, {
+              workspaceView: sectionId as CollaborationWorkspaceView,
+              projectId: null,
+              issueId: null,
+            })
+          }
+          sections={workspaceSettingsSections}
+        />
       );
     } else {
       content = (
@@ -1206,16 +1198,17 @@ export function CollaborationPlatformApp({
               </div>
             )
           ) : null}
-          <section className="collaboration-platform-panel">
-            <h2>{messages.projects}</h2>
-            <ProjectCards
-              projects={state.projects}
-              messages={messages}
-              onOpen={openProject}
-            />
-          </section>
-          {host.location.workspaceView === "home" &&
-          state.projects.length > 0 ? (
+          {host.location.workspaceView === "projects" ? (
+            <section className="collaboration-platform-panel">
+              <h2>{messages.projects}</h2>
+              <ProjectCards
+                projects={state.projects}
+                messages={messages}
+                onOpen={openProject}
+              />
+            </section>
+          ) : null}
+          {host.location.workspaceView === "home" ? (
             <section className="collaboration-platform-panel">
               <div className="collaboration-platform-panel-heading">
                 <h2>{messages.workspaceResources}</h2>
@@ -1284,9 +1277,9 @@ export function CollaborationPlatformApp({
     <CollaborationPlatformNavigation
       host={host}
       messages={messages}
-      workspace={state.workspace}
       workspaces={state.workspaces}
-      projects={state.projects}
+      projects={state.navigationProjects}
+      onCreateWorkspace={() => setWorkspaceDialogOpen(true)}
       footer={sidebarFooter}
     />
   );
@@ -1333,6 +1326,41 @@ export function CollaborationPlatformApp({
           defaultLocation={host.capabilities.projectLocation ?? "cloud"}
           allowDingTalkAITable={host.capabilities.dingtalkAitable}
           labels={projectCreateLabels[locale]}
+          resourceSetup={{
+            workspaceName: state.workspace.name,
+            members: state.members,
+            agents: projectResourceAgents,
+            executionEnvironments: projectResourceEnvironments,
+            configure: async (project, selection) => {
+              const existingMembers = await api.members.list(project.id);
+              const existingMemberIds = new Set(
+                existingMembers.map((member) => member.user_id),
+              );
+              const selectedAgents = projectResourceAgents.filter(
+                (agent) =>
+                  agent.team_id != null &&
+                  selection.agentTeamIds.includes(agent.team_id),
+              );
+              await Promise.all([
+                ...selection.memberUserIds
+                  .filter((userId) => !existingMemberIds.has(userId))
+                  .map((userId) =>
+                    api.members.add(project.id, userId, "Developer"),
+                  ),
+                ...selection.executionEnvironmentDeviceIds.map((deviceId) =>
+                  api.projects.addExecutionEnvironment(project.id, deviceId),
+                ),
+              ]);
+              await Promise.all(
+                selectedAgents.map((agent) =>
+                  api.agents.create(
+                    project.id,
+                    createWegentProjectAgentInput(agent),
+                  ),
+                ),
+              );
+            },
+          }}
           testIds={{
             name: "collaboration-project-name-input",
             description: "collaboration-project-description-input",

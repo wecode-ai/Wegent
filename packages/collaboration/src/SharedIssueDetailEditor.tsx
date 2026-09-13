@@ -39,6 +39,7 @@ import {
   IssueDetailAttachments,
   IssueDetailPrioritySelect,
   IssueDetailStatusSelect,
+  IssueAutomationExecutionSummary,
   IssueWorkflowPlanSection,
   issueAssigneeTarget,
   parseIssueAssigneeTarget,
@@ -80,7 +81,7 @@ function cn(...values: Array<string | false | null | undefined>): string {
 export interface SharedIssueWorkflow {
   advancement_policy?: "manual" | "ai";
   orchestration_status?: SharedIssueDetailWorkflowPlan["status"];
-  nodes?: unknown[];
+  nodes?: SharedWorkflowNode[];
 }
 
 export interface SharedEditorIssue extends CollaborationIssue {
@@ -823,12 +824,19 @@ export function TodoEditor(props: TodoEditorProps) {
       frameId = window.requestAnimationFrame(() => {
         frameId = null;
         const editor = container.querySelector<HTMLElement>(".bn-editor");
+        const textarea =
+          container.querySelector<HTMLTextAreaElement>("textarea");
         const editorBottom = editor?.getBoundingClientRect().bottom ?? 0;
-        const overflowing = Array.from(
-          editor?.querySelectorAll<HTMLElement>(".bn-block-outer") ?? [],
-        ).some(
-          (block) => block.getBoundingClientRect().bottom > editorBottom + 1,
-        );
+        const overflowing = editor
+          ? Array.from(
+              editor.querySelectorAll<HTMLElement>(".bn-block-outer"),
+            ).some(
+              (block) =>
+                block.getBoundingClientRect().bottom > editorBottom + 1,
+            )
+          : Boolean(
+              textarea && textarea.scrollHeight > textarea.clientHeight + 1,
+            );
         setDescriptionOverflowing((current) =>
           current === overflowing ? current : overflowing,
         );
@@ -853,7 +861,7 @@ export function TodoEditor(props: TodoEditorProps) {
       mutationObserver.disconnect();
       resizeObserver?.disconnect();
     };
-  }, [descriptionExpanded, editItemId, workspacePanel]);
+  }, [description, descriptionExpanded, editItemId, workspacePanel]);
 
   useLayoutEffect(() => {
     if (loadedEditItemIdRef.current === editItemId) return;
@@ -1050,6 +1058,21 @@ export function TodoEditor(props: TodoEditorProps) {
           : t("todo.elapsed_days", "{{count}} 天", {
               count: Math.floor(executionElapsedMinutes / 1440),
             });
+  const automationWorkflowNodes = displayedWorkflow?.nodes as
+    | SharedWorkflowNode[]
+    | undefined;
+  const hasAutomationWorkflow =
+    Boolean(automationWorkflowNodes?.length) &&
+    automationWorkflowNodes!.some(
+      (node) =>
+        node.execution_mode === "robot" ||
+        node.required_assignee_type === "agent" ||
+        Boolean(node.automation_rule_id),
+    );
+  const visibleFollowupOwner =
+    hasAutomationWorkflow === false
+      ? (props.currentAssignment?.target_name ?? currentAssignee?.name ?? null)
+      : null;
   const workflowPlanStatus =
     workflowPlan?.status ?? item?.workflow?.orchestration_status ?? "idle";
   const registerWorkflowManagerExecution = useCallback(
@@ -2532,7 +2555,8 @@ export function TodoEditor(props: TodoEditorProps) {
                       />
                     )}
                   </div>
-                  {twoColumn ? (
+                  {twoColumn &&
+                  (descriptionOverflowing || descriptionExpanded) ? (
                     <button
                       type="button"
                       onClick={() =>
@@ -2604,44 +2628,45 @@ export function TodoEditor(props: TodoEditorProps) {
                     <span className="task-detail-state-leading">
                       <span className="task-detail-state-primary relative">
                         {statusValue}
+                        {editable ? (
+                          <ChevronDown aria-hidden="true" size={13} />
+                        ) : null}
                         {statusSelect}
                       </span>
-                      <span className="task-detail-state-followup">
+                      {visibleFollowupOwner ? (
                         <span
-                          className={cn(
-                            "task-detail-state-avatar",
-                            props.currentAssignment?.target_type === "agent" &&
-                              "is-agent",
-                          )}
+                          className="task-detail-state-followup"
+                          title={t("todo.follow_up_owner", "跟进人")}
                         >
-                          {props.currentAssignment?.target_type === "agent"
-                            ? "AI"
-                            : (
-                                props.currentAssignment?.target_name ??
-                                currentAssignee?.name ??
-                                "?"
-                              )
-                                .slice(0, 1)
-                                .toUpperCase()}
+                          {props.currentAssignment?.target_type === "agent" ? (
+                            <Bot aria-hidden="true" size={15} />
+                          ) : (
+                            <CircleUserRound aria-hidden="true" size={15} />
+                          )}
+                          <strong title={visibleFollowupOwner}>
+                            {visibleFollowupOwner}
+                          </strong>
                         </span>
-                        <strong title={props.currentAssignment?.target_name}>
-                          {props.currentAssignment?.target_name ??
-                            currentAssignee?.name ??
-                            t("todo.unassigned", "尚未分配")}
-                        </strong>
-                        {t("todo.following_up", "跟进")}
-                      </span>
+                      ) : null}
                     </span>
-                    <span className="task-detail-state-metrics">
-                      <span>
-                        <strong>{executionTaskCount}</strong>{" "}
-                        {t("todo.execution_task_count", "个执行任务")}
+                    {executionTaskCount > 0 || executionStartedAt ? (
+                      <span className="task-detail-state-metrics">
+                        {executionTaskCount > 0 ? (
+                          <span title={t("todo.execution_tasks", "执行任务")}>
+                            <ListTodo aria-hidden="true" size={15} />
+                            <strong>{executionTaskCount}</strong>
+                          </span>
+                        ) : null}
+                        {executionStartedAt ? (
+                          <span
+                            title={t("todo.execution_duration", "执行时长")}
+                          >
+                            <History aria-hidden="true" size={15} />
+                            <strong>{executionElapsedLabel}</strong>
+                          </span>
+                        ) : null}
                       </span>
-                      <span>
-                        {t("todo.elapsed", "已执行")}{" "}
-                        <strong>{executionElapsedLabel}</strong>
-                      </span>
-                    </span>
+                    ) : null}
                     {hasExecutionDetails ? (
                       <button
                         type="button"
@@ -2665,6 +2690,18 @@ export function TodoEditor(props: TodoEditorProps) {
                       </button>
                     ) : null}
                   </section>
+
+                  {hasAutomationWorkflow && automationWorkflowNodes ? (
+                    <IssueAutomationExecutionSummary
+                      nodes={automationWorkflowNodes}
+                      agents={projectAgents}
+                      location={
+                        project?.project_store === "local" ? "local" : "cloud"
+                      }
+                      issueCompleted={status === "completed"}
+                      translate={t}
+                    />
+                  ) : null}
 
                   {tasksExpanded &&
                   item.workflow?.advancement_policy === "ai" ? (

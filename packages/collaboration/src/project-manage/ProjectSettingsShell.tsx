@@ -16,11 +16,13 @@ export function ProjectSettingsShell({
   onSectionChange,
   selectedSectionId,
   sections,
+  testId = "project-settings-shell",
 }: {
   ariaLabel: string;
   onSectionChange?(sectionId: string): void;
   selectedSectionId?: string;
   sections: ProjectSettingsSection[];
+  testId?: string;
 }) {
   const [internalSelectedId, setInternalSelectedId] = useState(
     sections[0]?.id ?? "",
@@ -33,8 +35,8 @@ export function ProjectSettingsShell({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-1 bg-background"
-      data-testid="project-settings-shell"
+      className="flex h-full min-h-0 flex-1 overflow-hidden bg-background"
+      data-testid={testId}
     >
       <aside className="w-48 shrink-0 border-r border-border px-3 py-5">
         <div className="px-2 pb-3 text-xs font-medium text-text-muted">
@@ -62,7 +64,12 @@ export function ProjectSettingsShell({
           ))}
         </nav>
       </aside>
-      <main className="min-h-0 min-w-0 flex-1">{selected.content}</main>
+      <main
+        className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]"
+        data-testid={`${testId}-content`}
+      >
+        {selected.content}
+      </main>
     </div>
   );
 }

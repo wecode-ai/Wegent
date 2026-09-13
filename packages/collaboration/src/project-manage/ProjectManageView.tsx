@@ -673,7 +673,7 @@ export function ProjectManageView<
             {section === "members"
               ? host.translate("todo.project_members", "项目成员")
               : section === "agents"
-                ? host.translate("todo.project_agents", "可用智能体")
+                ? host.translate("todo.project_agents", "智能体")
                 : section === "board"
                   ? host.translate("todo.board_settings", "看板设置")
                   : host.translate(

@@ -19,6 +19,7 @@ interface CollaborationSettingsProps {
   project: CollaborationProject;
   onChange(project: CollaborationProject): void;
   onError(): void;
+  onAgentsChange?(): void;
   translate: CollaborationTranslate;
   section?: "overview" | "members" | "agents" | "board";
 }
@@ -66,6 +67,7 @@ export function CollaborationSettings({
   project,
   onChange,
   onError,
+  onAgentsChange,
   translate,
   section = "overview",
 }: CollaborationSettingsProps) {
@@ -129,6 +131,7 @@ export function CollaborationSettings({
           api={api}
           project={project}
           onError={onError}
+          onAgentsChange={onAgentsChange}
           translate={translate}
         />
       )}

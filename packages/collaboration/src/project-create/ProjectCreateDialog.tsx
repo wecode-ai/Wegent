@@ -72,9 +72,61 @@ function ChoiceButton({
   );
 }
 
+function ResourceChecklist({
+  title,
+  emptyLabel,
+  items,
+  selectedIds,
+  onChange,
+}: {
+  title: string;
+  emptyLabel: string;
+  items: Array<{ id: number; label: string; description?: string }>;
+  selectedIds: number[];
+  onChange(ids: number[]): void;
+}) {
+  return (
+    <div className="collaboration-project-create-resource-group">
+      <h4>{title}</h4>
+      {items.length === 0 ? (
+        <small>{emptyLabel}</small>
+      ) : (
+        <div className="collaboration-project-create-resource-list">
+          {items.map((item) => (
+            <label key={item.id}>
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(item.id)}
+                onChange={(event) =>
+                  onChange(
+                    event.target.checked
+                      ? [...selectedIds, item.id]
+                      : selectedIds.filter((id) => id !== item.id),
+                  )
+                }
+              />
+              <span>
+                <strong>{item.label}</strong>
+                {item.description ? <small>{item.description}</small> : null}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
-  const { targets, allowDingTalkAITable, labels, testIds, host, onClose } =
-    props;
+  const {
+    targets,
+    allowDingTalkAITable,
+    labels,
+    resourceSetup,
+    testIds,
+    host,
+    onClose,
+  } = props;
   const { state, commands } = useProjectCreateController(props);
   const renderModal =
     host?.renderModal ?? ((modalProps) => <DefaultModal {...modalProps} />);
@@ -331,6 +383,72 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
               placeholder={labels.descriptionPlaceholder}
             />
           </label>
+
+          {resourceSetup && state.location === "cloud" ? (
+            <section className="collaboration-project-create-resources">
+              <header className="collaboration-project-create-section-header">
+                <span>
+                  <h3>{labels.projectResources}</h3>
+                  <small>
+                    {labels.projectResourcesDescription} ·{" "}
+                    {resourceSetup.workspaceName}
+                  </small>
+                </span>
+                <small>{labels.creatorIncluded}</small>
+              </header>
+              <div className="collaboration-project-create-resource-columns">
+                <ResourceChecklist
+                  title={labels.members}
+                  emptyLabel={labels.noSpaceResources}
+                  items={resourceSetup.members.map((member) => ({
+                    id: member.user_id,
+                    label: member.user_name,
+                    description: member.email ?? undefined,
+                  }))}
+                  selectedIds={state.memberUserIds}
+                  onChange={commands.setMemberUserIds}
+                />
+                <ResourceChecklist
+                  title={labels.agents}
+                  emptyLabel={labels.noSpaceResources}
+                  items={resourceSetup.agents.flatMap((agent) =>
+                    agent.team_id
+                      ? [
+                          {
+                            id: agent.team_id,
+                            label: agent.name,
+                            description: agent.owner_name || undefined,
+                          },
+                        ]
+                      : [],
+                  )}
+                  selectedIds={state.agentTeamIds}
+                  onChange={commands.setAgentTeamIds}
+                />
+                <ResourceChecklist
+                  title={labels.executionEnvironments}
+                  emptyLabel={labels.noSpaceResources}
+                  items={resourceSetup.executionEnvironments.flatMap(
+                    (environment) =>
+                      environment.device_id
+                        ? [
+                            {
+                              id: environment.device_id,
+                              label: environment.name,
+                              description:
+                                environment.kind === "local_device"
+                                  ? labels.localLocation
+                                  : labels.cloudLocation,
+                            },
+                          ]
+                        : [],
+                  )}
+                  selectedIds={state.executionEnvironmentDeviceIds}
+                  onChange={commands.setExecutionEnvironmentDeviceIds}
+                />
+              </div>
+            </section>
+          ) : null}
 
           {state.error && (
             <p className="collaboration-project-create-error" role="alert">

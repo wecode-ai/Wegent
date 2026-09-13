@@ -15,18 +15,17 @@ import type {
   CollaborationUser,
   CollaborationWorkspace,
 } from "../types";
-import type { WorkspaceMyWorkItem } from "../ports/SharedWorkspaceApi";
 import type { CollaborationPlatformLocation } from "./types";
 
 export interface CollaborationPlatformState {
   workspaces: CollaborationWorkspace[];
   workspace: CollaborationWorkspace | null;
+  navigationProjects: CollaborationProject[];
   projects: CollaborationProject[];
   members: CollaborationMember[];
   agents: CollaborationOwnedAgent[];
   executionEnvironments: CollaborationExecutionEnvironment[];
   resources: CollaborationPlatformResources;
-  myWork: WorkspaceMyWorkItem[];
   loading: boolean;
   error: string | null;
 }
@@ -67,12 +66,12 @@ export function useCollaborationPlatformController({
   const [state, setState] = useState<CollaborationPlatformState>({
     workspaces: [],
     workspace: null,
+    navigationProjects: [],
     projects: [],
     members: [],
     agents: [],
     executionEnvironments: [],
     resources: emptyResources,
-    myWork: [],
     loading: true,
     error: null,
   });
@@ -91,58 +90,47 @@ export function useCollaborationPlatformController({
     }
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const workspaces = await api.workspaces.list();
+      const [workspaces, navigationProjects] = await Promise.all([
+        api.workspaces.list(),
+        api.projects.list(),
+      ]);
       if (revision !== loadRevisionRef.current) return;
       if (!location.workspaceId) {
-        const resources =
-          location.platformView === "resources" && api.resources
-            ? await api.resources.list()
-            : emptyResources;
-        const myWork =
-          location.platformView === "my-work" && api.myWork
-            ? await api.myWork.list()
-            : [];
-        if (revision !== loadRevisionRef.current) return;
         setState((current) => ({
           ...current,
           workspaces,
           workspace: null,
-          projects: [],
+          navigationProjects,
+          projects: navigationProjects,
           members: [],
           agents: [],
           executionEnvironments: [],
-          resources,
-          myWork,
+          resources: emptyResources,
           loading: false,
         }));
         return;
       }
-      const [
-        workspace,
-        projects,
-        members,
-        agents,
-        executionEnvironments,
-        resources,
-      ] = await Promise.all([
-        api.workspaces.get(location.workspaceId),
-        api.projects.list(location.workspaceId),
-        api.workspaces.listMembers(location.workspaceId),
-        api.workspaces.listAgents(location.workspaceId),
-        api.workspaces.listExecutionEnvironments(location.workspaceId),
-        api.resources ? api.resources.list() : emptyResources,
-      ]);
+      const [workspace, members, agents, executionEnvironments, resources] =
+        await Promise.all([
+          api.workspaces.get(location.workspaceId),
+          api.workspaces.listMembers(location.workspaceId),
+          api.workspaces.listAgents(location.workspaceId),
+          api.workspaces.listExecutionEnvironments(location.workspaceId),
+          api.resources ? api.resources.list() : emptyResources,
+        ]);
       if (revision !== loadRevisionRef.current) return;
       setState((current) => ({
         ...current,
         workspaces,
         workspace,
-        projects,
+        navigationProjects,
+        projects: navigationProjects.filter(
+          (project) => project.workspace_id === location.workspaceId,
+        ),
         members,
         agents,
         executionEnvironments,
         resources,
-        myWork: [],
         loading: false,
       }));
     } catch {
@@ -153,7 +141,7 @@ export function useCollaborationPlatformController({
         error: loadFailedMessage,
       }));
     }
-  }, [api, loadFailedMessage, location.platformView, location.workspaceId]);
+  }, [api, loadFailedMessage, location.workspaceId]);
 
   useEffect(() => {
     void load();
@@ -214,6 +202,7 @@ export function useCollaborationPlatformController({
         setState((current) => ({
           ...current,
           projects: [project, ...current.projects],
+          navigationProjects: [project, ...current.navigationProjects],
           ...updateCurrentWorkspace(current, (workspace) => ({
             ...workspace,
             project_count: workspace.project_count + 1,

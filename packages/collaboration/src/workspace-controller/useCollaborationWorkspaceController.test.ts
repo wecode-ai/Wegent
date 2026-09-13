@@ -316,6 +316,29 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
+  it("selects a cached board issue before its detail snapshot finishes loading", async () => {
+    state = {
+      ...state,
+      project,
+      issues: [issue],
+    };
+    const issueResponse = deferred<CollaborationIssue>();
+    const api = createApi();
+    api.issues.get = vi.fn().mockReturnValue(issueResponse.promise);
+    const { commands } = createController(api);
+
+    const load = commands.loadSelectedIssue(issue.id);
+
+    expect(state.selectedIssue).toEqual(issue);
+    expect(state.attachments).toEqual([]);
+    expect(state.comments).toEqual([]);
+
+    issueResponse.resolve(issue);
+    await load;
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
+  });
+
   it("treats an empty assignments API response as authoritative", async () => {
     const legacyAssignedIssue = {
       ...issue,

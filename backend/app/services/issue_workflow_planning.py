@@ -114,7 +114,14 @@ class IssueWorkflowPlanningService:
             item.model_copy(update={"stage_id": stage_id}) for item in values.items
         ]
         for item in items:
-            self._validate_assignee(db, issue, user_id, item)
+            self._validate_assignee(
+                db,
+                issue,
+                user_id,
+                item,
+                workflow=workflow,
+                stage_id=stage_id,
+            )
         self._supersede_items(db, run.id)
         for order, item in enumerate(items):
             db.add(
@@ -319,6 +326,7 @@ class IssueWorkflowPlanningService:
         if child is None or not child.parent_id:
             raise ValueError("Workflow task not found")
         issue = self._issue(db, child.parent_id, user_id, for_update=True)
+        workflow = self._workflow(issue)
         plan_metadata = self._child_plan_metadata(child)
         run_id = str(plan_metadata.get("run_id") or "")
         plan_item_id = str(plan_metadata.get("plan_item_id") or "")
@@ -374,6 +382,15 @@ class IssueWorkflowPlanningService:
         current = self.get(db, issue_id=issue.id, user_id=user_id)
         if current is None:
             raise ValueError("The Issue has no active workflow plan")
+        if (
+            str(workflow.get("approval_policy") or "required") == "automatic"
+            and current.status == "awaiting_review"
+        ):
+            return self.approve_review(
+                db,
+                issue_id=issue.id,
+                user_id=user_id,
+            )
         return current
 
     def sync_from_child(
@@ -684,7 +701,27 @@ class IssueWorkflowPlanningService:
         issue: LoopItem,
         user_id: int,
         item: WorkflowPlanItemCreate,
+        *,
+        workflow: dict,
+        stage_id: str,
     ) -> None:
+        stage = next(
+            (
+                node
+                for node in workflow.get("nodes", [])
+                if isinstance(node, dict) and str(node.get("id")) == stage_id
+            ),
+            None,
+        )
+        if stage is not None:
+            required_type = str(stage.get("required_assignee_type") or "")
+            required_id = str(stage.get("required_assignee_id") or "")
+            if required_type and (
+                item.assignee_type != required_type or item.assignee_id != required_id
+            ):
+                raise ValueError(
+                    "Workflow plan assignee does not match the stage constraint"
+                )
         if item.assignee_type == "user":
             members = cloud_project_service.list_members(
                 db,

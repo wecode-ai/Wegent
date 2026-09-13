@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import {
@@ -6,6 +7,31 @@ import {
   type AutomationRulesViewProps,
 } from '@wegent/collaboration/automation-ui'
 import type { AutomationUiRule } from '@wegent/collaboration/automation'
+
+vi.mock('@xyflow/react', () => ({
+  Background: () => null,
+  MarkerType: { ArrowClosed: 'arrowclosed' },
+  Position: { Left: 'left', Right: 'right' },
+  ReactFlow: ({
+    nodes,
+    edges,
+  }: {
+    nodes: Array<{ id: string; data: { label: ReactNode } }>
+    edges: Array<{ id: string; source: string; target: string }>
+  }) => (
+    <div data-testid="mock-automation-workflow-dag">
+      {nodes.map(node => (
+        <div key={node.id}>{node.data.label}</div>
+      ))}
+      {edges.map(edge => (
+        <span
+          key={edge.id}
+          data-testid={`mock-automation-workflow-edge-${edge.source}-${edge.target}`}
+        />
+      ))}
+    </div>
+  ),
+}))
 
 function policyRule(overrides: Partial<AutomationUiRule> = {}): AutomationUiRule {
   return {
@@ -100,7 +126,8 @@ describe('project automation policy', () => {
     expect(screen.getByTestId('project-automation-policy')).toBeVisible()
     expect(screen.getByText('什么时候开始调度？')).toBeVisible()
     expect(screen.getByText('项目经理智能体如何协调？')).toBeVisible()
-    expect(screen.getByText('流程步骤标识')).toBeVisible()
+    expect(screen.getByText('流程步骤')).toBeVisible()
+    expect(screen.getByText('无需预设步骤')).toBeVisible()
     expect(screen.queryByText('编排')).not.toBeInTheDocument()
     expect(screen.queryByTestId('automation-canvas-fit-view')).not.toBeInTheDocument()
   })

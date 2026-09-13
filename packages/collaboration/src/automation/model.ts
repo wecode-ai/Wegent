@@ -55,6 +55,8 @@ export interface AutomationUiStep {
   workspacePolicy: "none" | "composer" | "inherit";
   required: boolean;
   automationRuleId: string | null;
+  requiredAssigneeType?: "user" | "agent" | "team" | null;
+  requiredAssigneeId?: string | null;
   executionConfig: WorkflowExecutionConfig | null;
   executionConfigOverride: boolean;
   approvalPolicy?: "required" | "automatic";
@@ -358,6 +360,16 @@ function normalizeStoredStep(
     required: item.required !== false,
     automationRuleId:
       typeof item.automationRuleId === "string" ? item.automationRuleId : null,
+    requiredAssigneeType:
+      item.requiredAssigneeType === "user" ||
+      item.requiredAssigneeType === "agent" ||
+      item.requiredAssigneeType === "team"
+        ? item.requiredAssigneeType
+        : null,
+    requiredAssigneeId:
+      typeof item.requiredAssigneeId === "string"
+        ? item.requiredAssigneeId
+        : null,
     executionConfig: isRecord(item.executionConfig)
       ? (item.executionConfig as unknown as WorkflowExecutionConfig)
       : null,
@@ -425,19 +437,8 @@ function normalizeStoredStep(
         const stage = normalizeStoredStep(node, childIndex);
         return {
           ...stage,
-          environment: "",
-          executionEnvironment: "local",
-          executionDeviceId: null,
-          runtimeProfileId: null,
-          model: "",
-          modelType: null,
-          modelOptions: {},
-          plugins: [],
-          projectPlugins: [],
-          workspacePolicy: "none",
           executionConfig: null,
           executionConfigOverride: false,
-          approvalPolicy: undefined,
           subgraph: null,
         };
       }),
@@ -907,6 +908,8 @@ function workflowNodesFromLegacy(
       workspacePolicy: node.workspace_policy,
       required: node.required,
       automationRuleId: node.automation_rule_id ?? null,
+      requiredAssigneeType: node.required_assignee_type ?? null,
+      requiredAssigneeId: node.required_assignee_id ?? null,
       executionConfig: config,
       executionConfigOverride: node.execution_config_override ?? false,
       subgraph: null,
@@ -1165,6 +1168,8 @@ function workflowNodeFromUi(
     })),
     workspace_policy: includeExecutionConfig ? node.workspacePolicy : "none",
     automation_rule_id: node.automationRuleId,
+    required_assignee_type: node.requiredAssigneeType ?? null,
+    required_assignee_id: node.requiredAssigneeId ?? null,
     execution_config: includeExecutionConfig
       ? executionConfigFromUiNode(node)
       : null,
@@ -1281,9 +1286,7 @@ export function legacyWorkflowFromAutomationRule(
   };
 }
 
-function storedStageConstraint(
-  node: AutomationUiStep,
-): Record<string, unknown> {
+function storedAiStageFromUi(node: AutomationUiStep): Record<string, unknown> {
   return {
     id: node.id,
     name: node.name,
@@ -1300,9 +1303,10 @@ function storedStageConstraint(
     deliverables: (node.deliverables ?? []).map((deliverable) => ({
       ...deliverable,
     })),
-    executionMode: node.executionMode,
+    executionMode: "automatic",
     required: node.required,
-    automationRuleId: node.automationRuleId,
+    requiredAssigneeType: node.requiredAssigneeType ?? null,
+    requiredAssigneeId: node.requiredAssigneeId ?? null,
   };
 }
 
@@ -1326,7 +1330,7 @@ function storedStepFromUi(node: AutomationUiStep): Record<string, unknown> {
     subgraph:
       node.kind === "dynamic"
         ? {
-            nodes: (node.subgraph?.nodes ?? []).map(storedStageConstraint),
+            nodes: (node.subgraph?.nodes ?? []).map(storedAiStageFromUi),
           }
         : node.kind === "loop"
           ? {

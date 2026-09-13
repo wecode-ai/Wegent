@@ -18,6 +18,7 @@ import type {
   CollaborationMember,
 } from "../types";
 import {
+  activityDisplayBody,
   issueActivityEntries,
   IssueActivityPanel,
   reconcileSelectedAssignmentTarget,
@@ -220,10 +221,25 @@ describe("IssueActivityPanel", () => {
       )?.textContent,
     ).toContain("将分配给 @李明");
     expect(
-      container.querySelector(
-        '[data-testid="collaboration-issue-comment-submit"]',
-      )?.textContent,
+      container
+        .querySelector('[data-testid="collaboration-issue-comment-submit"]')
+        ?.getAttribute("aria-label"),
     ).toBe("分配并评论");
+  });
+
+  it("replaces the typed mention trigger instead of inserting a second at sign", async () => {
+    render(issue);
+
+    change("collaboration-issue-comment", "@");
+    await click("collaboration-issue-mention-member-7");
+
+    expect(
+      (
+        container.querySelector(
+          '[data-testid="collaboration-issue-comment"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("@李明 ");
   });
 
   it("keeps the selected target when collaborator names share a prefix", async () => {
@@ -277,10 +293,10 @@ describe("IssueActivityPanel", () => {
       ),
     ).toBeNull();
     expect(
-      container.querySelector(
-        '[data-testid="collaboration-issue-comment-submit"]',
-      )?.textContent,
-    ).toBe("评论");
+      container
+        .querySelector('[data-testid="collaboration-issue-comment-submit"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("发送");
     expect(
       container.querySelector<HTMLElement>(".issue-comment-composer-shell")
         ?.dataset.expanded,
@@ -308,10 +324,10 @@ describe("IssueActivityPanel", () => {
       ),
     ).toBeNull();
     expect(
-      container.querySelector(
-        '[data-testid="collaboration-issue-comment-submit"]',
-      )?.textContent,
-    ).toBe("评论");
+      container
+        .querySelector('[data-testid="collaboration-issue-comment-submit"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("发送");
   });
 
   it("does not guess between a member and an agent with the same name", async () => {
@@ -441,10 +457,10 @@ describe("IssueActivityPanel", () => {
       ),
     ).toBeNull();
     expect(
-      container.querySelector(
-        '[data-testid="collaboration-issue-comment-submit"]',
-      )?.textContent,
-    ).toBe("评论");
+      container
+        .querySelector('[data-testid="collaboration-issue-comment-submit"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("发送");
   });
 
   it("renders an assignment comment event only once", () => {
@@ -465,6 +481,19 @@ describe("IssueActivityPanel", () => {
         assignment,
       },
     ]);
+  });
+
+  it("converts internal automation markers into product language", () => {
+    expect(
+      activityDisplayBody("CLAUDE_STAGE_PLAN_SUBMITTED", "分配给 @Claude"),
+    ).toBe("自动化规则已将当前阶段分配给 Claude");
+    expect(
+      activityDisplayBody("LOCAL_AUTOMATION_CLAUDE_STAGE_E2E_COMPLETED", ""),
+    ).toBe("Claude 已完成，Codex 阶段已自动解锁");
+    expect(
+      activityDisplayBody("LOCAL_AUTOMATION_CODEX_STAGE_E2E_COMPLETED", ""),
+    ).toBe("Codex 已完成，所有自动化阶段已完成");
+    expect(activityDisplayBody("正常评论", "")).toBe("正常评论");
   });
 
   it("clears only a selected mention that is edited or removed", () => {
