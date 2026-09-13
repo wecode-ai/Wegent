@@ -32,9 +32,11 @@ from app.models.delivery import (
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRule,
+    ProjectChatAgent,
     loop_datetime_is_unset,
 )
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.delivery import (
     CloudTaskContextResponse,
     DeliveryAssetAccessResponse,
@@ -62,18 +64,31 @@ from app.schemas.delivery import (
     MyWorkItemResponse,
     MyWorkListResponse,
 )
+from app.schemas.issue_assignment import (
+    IssueAssignmentCreate,
+    IssueAssignmentCreateResponse,
+    IssueAssignmentListResponse,
+    IssueAssignmentResponse,
+)
 from app.schemas.issue_workflow import (
     WorkflowNodeDecisionRequest,
     WorkflowPlanSubmit,
     WorkflowPlanView,
     WorkflowTaskOutcomeSubmit,
 )
+from app.schemas.project_chat import LoopItemAssign
 from app.schemas.project_incoming_hook import (
     ChangeRequestBindingInput,
     ChangeRequestBindingView,
 )
 from app.services.cloud_projects import cloud_project_service
+from app.services.cloud_projects.access import (
+    IssueAction,
+    require_cloud_project_role,
+    require_issue_action,
+)
 from app.services.delivery import delivery_service
+from app.services.issue_assignments import issue_assignment_service
 from app.services.issue_workflow_decision import issue_workflow_decision_service
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.issue_workflow_start import issue_workflow_start_service
@@ -1276,6 +1291,241 @@ def list_loop_item_comments(
         LoopItemCommentResponse.model_validate(comment)
         for comment in loop_item_service.list_comments(db, item_id, current_user.id)
     ]
+
+
+@router.get(
+    "/loop-items/{item_id}/assignments",
+    response_model=IssueAssignmentListResponse,
+)
+def list_issue_assignments(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> IssueAssignmentListResponse:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
+    project, _ = issue_assignment_service.project_for_issue(
+        db,
+        issue_id=item_id,
+        user_id=current_user.id,
+    )
+    rows = issue_assignment_service.list(
+        db,
+        project_id=int(project.id),
+        issue_id=item_id,
+        user_id=current_user.id,
+    )
+    return IssueAssignmentListResponse(
+        items=[
+            IssueAssignmentResponse.model_validate(
+                issue_assignment_service.response_values(db, row)
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.post(
+    "/loop-items/{item_id}/assignments",
+    response_model=IssueAssignmentCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_issue_assignment(
+    item_id: str,
+    values: IssueAssignmentCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> IssueAssignmentCreateResponse:
+    is_external = external_loop_item_provider.is_external_item(db, item_id)
+    if is_external:
+        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
+    project, item = issue_assignment_service.project_for_issue(
+        db,
+        issue_id=item_id,
+        user_id=current_user.id,
+    )
+    access = require_cloud_project_role(
+        db,
+        int(project.id),
+        current_user.id,
+        BaseRole.RestrictedAnalyst,
+    )
+    require_issue_action(
+        access,
+        action=IssueAction.ASSIGN,
+        issue_creator_user_id=item.created_by_user_id,
+        user_id=current_user.id,
+    )
+    legacy_type, legacy_id = issue_assignment_service.require_canonical_member(
+        db,
+        project=project,
+        member_type=values.target_type,
+        member_id=values.target_id,
+    )
+    existing = issue_assignment_service.active(
+        db,
+        issue_id=item_id,
+        member_type=values.target_type,
+        member_id=values.target_id,
+        workflow_step=values.workflow_step,
+    )
+    if existing is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Assignment is already active for this workflow step",
+        )
+
+    if is_external:
+        comment_values = None
+        if values.comment_body:
+            comment_values = external_loop_item_provider.add_comment(
+                db, item_id, current_user.id, values.comment_body
+            )
+        current_issue = external_loop_item_provider.get(db, item_id, current_user.id)
+        external_loop_item_provider.assign(
+            db,
+            item_id,
+            current_user.id,
+            LoopItemAssign(
+                version=int(current_issue["version"]),
+                assignee_type=legacy_type,
+                assignee_id=legacy_id,
+                workflow_step=values.workflow_step,
+                notify_assignee=values.notify_target,
+                trigger=values.trigger,
+            ),
+        )
+        issue_values = external_loop_item_provider.get(db, item_id, current_user.id)
+        assignment = issue_assignment_service.active(
+            db,
+            issue_id=item_id,
+            member_type=values.target_type,
+            member_id=values.target_id,
+            workflow_step=values.workflow_step,
+        )
+        if assignment is None:
+            raise RuntimeError("Assignment was not persisted")
+    else:
+        try:
+            comment_values = (
+                loop_item_service.add_comment(
+                    db,
+                    item_id,
+                    current_user.id,
+                    values.comment_body,
+                    commit=False,
+                )
+                if values.comment_body
+                else None
+            )
+            item = loop_item_service.assign(
+                db,
+                project_id=int(project.id),
+                item_id=item_id,
+                user_id=current_user.id,
+                values=LoopItemAssign(
+                    version=item.version,
+                    assignee_type=legacy_type,
+                    assignee_id=legacy_id,
+                    workflow_step=values.workflow_step,
+                    notify_assignee=values.notify_target,
+                    trigger=values.trigger,
+                ),
+                assignment_comment_id=(
+                    str(comment_values["id"]) if comment_values is not None else None
+                ),
+                commit=False,
+            )
+            assignment = issue_assignment_service.active(
+                db,
+                issue_id=item_id,
+                member_type=values.target_type,
+                member_id=values.target_id,
+                workflow_step=values.workflow_step,
+            )
+            if assignment is None:
+                raise RuntimeError("Assignment was not persisted")
+            db.commit()
+            db.refresh(item)
+        except Exception:
+            db.rollback()
+            raise
+        issue_values = loop_item_service.response_values(db, item, current_user.id)
+        publish_loop_item_changed(
+            db,
+            item=item,
+            reason="assignment",
+            actor_user_id=current_user.id,
+        )
+        if values.target_type == "agent":
+            agent = db.get(ProjectChatAgent, values.target_id)
+            if agent is not None and agent.created_by_user_id:
+                from app.services.loop_item_executions.wake import wake_robot_creator
+
+                wake_robot_creator(
+                    user_id=agent.created_by_user_id,
+                    project_id=str(project.id),
+                    agent_id=agent.id,
+                )
+
+    if values.target_type == "agent":
+        from app.services.board_team_execution import dispatch_board_team_assignment
+
+        indexed_item = db.get(LoopItem, item_id)
+        if indexed_item is None:
+            raise RuntimeError("Agent assignment index is unavailable")
+        await dispatch_board_team_assignment(db, item=indexed_item, user=current_user)
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        background_tasks.add_task(consume_queues_background)
+        if is_external:
+            issue_values = external_loop_item_provider.get(db, item_id, current_user.id)
+        else:
+            db.refresh(indexed_item)
+            issue_values = loop_item_service.response_values(
+                db, indexed_item, current_user.id
+            )
+
+    return IssueAssignmentCreateResponse(
+        assignment=IssueAssignmentResponse.model_validate(
+            issue_assignment_service.response_values(db, assignment)
+        ),
+        comment=(
+            LoopItemCommentResponse.model_validate(comment_values)
+            if comment_values is not None
+            else None
+        ),
+        issue=LoopItemResponse.model_validate(issue_values),
+    )
+
+
+@router.delete(
+    "/loop-items/{item_id}/assignments/{assignment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_issue_assignment(
+    item_id: str,
+    assignment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> None:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
+    project, item = issue_assignment_service.project_for_issue(
+        db,
+        issue_id=item_id,
+        user_id=current_user.id,
+    )
+    issue_assignment_service.remove(
+        db,
+        project_id=int(project.id),
+        issue_id=item_id,
+        assignment_id=assignment_id,
+        user_id=current_user.id,
+    )
+    issue_assignment_service.project_legacy_assignment(db, item=item)
+    db.commit()
 
 
 @router.get(

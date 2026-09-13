@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 
 if (typeof globalThis.structuredClone !== 'function') {
@@ -89,6 +89,7 @@ describe('shared IssueDetail', () => {
     | 'agents'
     | 'attachments'
     | 'comments'
+    | 'assignments'
     | 'collaborators'
     | 'taskBindings'
     | 'workflowPlans'
@@ -166,6 +167,10 @@ describe('shared IssueDetail', () => {
         remove: jest.fn(),
       },
       comments: {
+        create: jest.fn(),
+      },
+      assignments: {
+        list: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
       },
       collaborators: {
@@ -271,39 +276,66 @@ describe('shared IssueDetail', () => {
     expect(onCreated).toHaveBeenCalledWith(created)
   }, 30_000)
 
-  it('loads assignees and persists fields plus assignment through the shared controller', async () => {
+  it('persists editable fields and appends a non-exclusive assignment activity', async () => {
     const updated = { ...issue, version: 2, description: '新描述', priority: 'high' as const }
-    const assigned = {
-      ...updated,
-      version: 3,
-      assignee_user_id: 5,
-      assignee_name: '张三',
+    const assignment = {
+      id: 'assignment-1',
+      issue_id: issue.id,
+      target_type: 'human' as const,
+      target_id: '5',
+      target_name: '张三',
+      workflow_step: '交互设计',
+      comment_id: 'comment-1',
+      created_by_user_id: 1,
+      created_by_user_name: 'Owner',
+      status: 'active' as const,
+      created_at: '2026-09-11T00:00:00Z',
+      updated_at: '2026-09-11T00:00:00Z',
+    }
+    const assignmentComment = {
+      id: 'comment-1',
+      author: 'Owner',
+      body: '请完成交互稿',
+      web_url: null,
+      created_at: '2026-09-11T00:00:00Z',
+      updated_at: '2026-09-11T00:00:00Z',
     }
     const update = jest.fn().mockResolvedValue(updated)
-    const assign = jest.fn().mockResolvedValue(assigned)
+    const createAssignment = jest.fn().mockResolvedValue({
+      assignment,
+      comment: assignmentComment,
+      issue: updated,
+    })
     const onChange = jest.fn()
-    const api = createApi({ issues: { update, assign } })
-    renderDetail(api, { onChange })
-
-    expect(
-      await within(screen.getByTestId('cloud-todo-detail-assignee')).findByRole('option', {
-        name: '张三',
-      })
-    ).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: '代码机器人' })).toBeInTheDocument()
+    const onAssignmentsChange = jest.fn()
+    const onCommentsChange = jest.fn()
+    const api = createApi({
+      issues: { update, assign: jest.fn() },
+      assignments: {
+        list: jest.fn().mockResolvedValue([]),
+        create: createAssignment,
+      },
+    })
+    renderDetail(api, {
+      agents: [{ id: 'bot-1', name: '代码机器人' }],
+      members: [member, secondMember],
+      onAssignmentsChange,
+      onCommentsChange,
+      onChange,
+    })
 
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-tasks')).toBeInTheDocument()
     expect(screen.getByTestId('collaboration-comments')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail-assignee')).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '张三' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '代码机器人' })).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: '新描述' },
     })
     fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
       target: { value: 'high' },
-    })
-    fireEvent.change(screen.getByTestId('cloud-todo-detail-assignee'), {
-      target: { value: 'user:5' },
     })
     fireEvent.click(screen.getByTestId('cloud-todo-save'))
 
@@ -319,30 +351,49 @@ describe('shared IssueDetail', () => {
         tags: [],
       })
     )
-    expect(assign).toHaveBeenCalledWith('project-1', 'issue-1', {
-      version: 2,
-      assigneeType: 'user',
-      assigneeId: '5',
-      notifyAssignee: true,
+    fireEvent.change(screen.getByTestId('collaboration-assignment-target'), {
+      target: { value: 'human:5' },
     })
-    expect(onChange).toHaveBeenCalledWith(assigned)
+    fireEvent.change(screen.getByTestId('collaboration-assignment-workflow-step'), {
+      target: { value: '交互设计' },
+    })
+    fireEvent.change(screen.getByTestId('collaboration-issue-comment'), {
+      target: { value: assignmentComment.body },
+    })
+    fireEvent.click(screen.getByTestId('collaboration-issue-comment-submit'))
+
+    await waitFor(() =>
+      expect(createAssignment).toHaveBeenCalledWith(issue.id, {
+        targetType: 'human',
+        targetId: '5',
+        workflowStep: '交互设计',
+        commentBody: assignmentComment.body,
+        notifyTarget: true,
+      })
+    )
+    expect(onAssignmentsChange).toHaveBeenCalledWith([assignment])
+    expect(onCommentsChange).toHaveBeenCalledWith([assignmentComment])
+    expect(onChange).toHaveBeenCalledWith(updated)
+    expect(api.issues.assign).not.toHaveBeenCalled()
   })
 
-  it('fails closed for read-only Issue fields, comments, collaborators, and attachments', async () => {
+  it('keeps Issue editing, comments, assignment and starting work as separate permissions', async () => {
     const update = jest.fn()
-    const assign = jest.fn()
+    const legacyAssign = jest.fn()
     const createComment = jest.fn()
     const upload = jest.fn()
     const removeAttachment = jest.fn()
     const addCollaborator = jest.fn()
     const removeCollaborator = jest.fn()
+    const onCreateTask = jest.fn()
     const readOnlyIssue = {
       ...issue,
       can_edit: false,
+      can_view_detail: true,
       tags: ['只读'],
     }
     const api = createApi({
-      issues: { update, assign },
+      issues: { update, assign: legacyAssign },
       comments: { create: createComment },
       attachments: {
         list: jest.fn().mockResolvedValue([
@@ -372,19 +423,23 @@ describe('shared IssueDetail', () => {
     renderDetail(api, {
       issue: readOnlyIssue,
       allIssues: [readOnlyIssue],
+      members: [member],
+      onCreateTask,
     })
 
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-detail-description')).toHaveAttribute('readonly')
     expect(screen.getByTestId('cloud-todo-detail-status')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-detail-priority')).toBeDisabled()
-    expect(screen.getByTestId('cloud-todo-detail-assignee')).toBeDisabled()
+    expect(screen.queryByTestId('cloud-todo-detail-assignee')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-detail-parent')).toBeDisabled()
     expect(screen.getByTestId('cloud-todo-detail-due-date')).toBeDisabled()
     expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-tag-tag-remove-只读')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collaboration-issue-comment')).toBeDisabled()
-    expect(screen.getByTestId('collaboration-issue-comment-submit')).toBeDisabled()
+    expect(screen.getByTestId('collaboration-issue-comment')).toBeEnabled()
+    expect(screen.getByTestId('collaboration-assignment-target')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledWith()
     expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeDisabled()
     expect(screen.queryByRole('button', { name: '移除参与者 张三' })).not.toBeInTheDocument()
     expect(await screen.findByText('readonly.txt')).toBeInTheDocument()
@@ -402,12 +457,45 @@ describe('shared IssueDetail', () => {
     })
 
     expect(update).not.toHaveBeenCalled()
-    expect(assign).not.toHaveBeenCalled()
+    expect(legacyAssign).not.toHaveBeenCalled()
     expect(createComment).not.toHaveBeenCalled()
     expect(upload).not.toHaveBeenCalled()
     expect(removeAttachment).not.toHaveBeenCalled()
     expect(addCollaborator).not.toHaveBeenCalled()
     expect(removeCollaborator).not.toHaveBeenCalled()
+  })
+
+  it('allows a project member to comment and start work without assignment permission', () => {
+    const onCreateTask = jest.fn()
+
+    renderDetail(createApi(), {
+      project: { ...project, access_role: 'Reporter' },
+      issue: { ...issue, can_edit: false, can_view_detail: true },
+      allIssues: [{ ...issue, can_edit: false, can_view_detail: true }],
+      members: [member],
+      onCreateTask,
+    })
+
+    expect(screen.getByTestId('collaboration-issue-comment')).toBeEnabled()
+    expect(screen.getByTestId('collaboration-assignment-target')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledWith()
+  })
+
+  it('keeps comments and assignment closed for a restricted viewer without blocking work', () => {
+    const onCreateTask = jest.fn()
+
+    renderDetail(createApi(), {
+      project: { ...project, access_role: 'RestrictedAnalyst' },
+      issue: { ...issue, can_edit: false, can_view_detail: true },
+      allIssues: [{ ...issue, can_edit: false, can_view_detail: true }],
+      onCreateTask,
+    })
+
+    expect(screen.getByTestId('collaboration-issue-comment')).toBeDisabled()
+    expect(screen.getByTestId('collaboration-assignment-target')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledWith()
   })
 
   it('allows an explicitly editable Issue to submit a comment', async () => {
@@ -556,7 +644,22 @@ describe('shared IssueDetail', () => {
         ]),
       },
       deliveries: {
-        list: jest.fn().mockResolvedValue([delivery]),
+        list: jest.fn().mockResolvedValue([
+          {
+            ...delivery,
+            assets: [
+              {
+                id: 'asset-1',
+                kind: 'file',
+                displayName: 'report.md',
+                relativePath: 'report.md',
+                contentType: 'text/markdown',
+                sizeBytes: 128,
+                sha256: 'abc',
+              },
+            ],
+          },
+        ]),
         get: jest.fn().mockResolvedValue({
           ...delivery,
           assets: [
@@ -605,6 +708,7 @@ describe('shared IssueDetail', () => {
     await waitFor(() => expect(api.collaborators.remove).toHaveBeenCalledWith(issue.id, 5))
 
     fireEvent.click(screen.getByRole('button', { name: /交付结果/ }))
+    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
     expect(await screen.findByText('report.md')).toBeInTheDocument()
     open.mockRestore()
     anchorClick.mockRestore()

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from "./IssueDetailCore";
+export * from "./IssueActivityPanel";
 export * from "./IssueDetailControls";
 export * from "./IssueDetailDraft";
 export * from "./IssueDetailCloudSections";

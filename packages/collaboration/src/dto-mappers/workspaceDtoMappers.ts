@@ -9,7 +9,14 @@ import type {
   WorkspaceTaskBinding,
   WorkspaceWorkflowPlan,
 } from "../ports/SharedWorkspaceApi";
-import type { CollaborationExecution } from "../types";
+import type {
+  CollaborationAssignment,
+  CollaborationExecution,
+  CollaborationExecutionEnvironment,
+  CollaborationOwnedAgent,
+  CollaborationPlatformResources,
+  CollaborationWorkspace,
+} from "../types";
 
 type WorkspaceDto = object | Record<string, unknown>;
 
@@ -23,6 +30,11 @@ function nullableString(value: unknown): string | null {
 
 function nullableNumber(value: unknown): number | null {
   return value == null ? null : Number(value);
+}
+
+function finiteNullableNumber(value: unknown): number | null {
+  const number = nullableNumber(value);
+  return number != null && Number.isFinite(number) ? number : null;
 }
 
 function camelOrSnake(
@@ -233,5 +245,145 @@ export function mapCollaborationExecutionDto(
     version: Number(row.version ?? 0),
     created_at: String(camelOrSnake(row, "createdAt", "created_at") ?? ""),
     updated_at: String(camelOrSnake(row, "updatedAt", "updated_at") ?? ""),
+  };
+}
+
+export function mapCollaborationWorkspaceDto(
+  input: WorkspaceDto,
+): CollaborationWorkspace {
+  const row = asRecord(input);
+  return {
+    id: String(row.id),
+    name: String(row.name ?? ""),
+    description: String(row.description ?? ""),
+    access_role: (row.access_role ??
+      row.accessRole ??
+      "Member") as CollaborationWorkspace["access_role"],
+    member_count: Number(row.member_count ?? row.memberCount ?? 0),
+    agent_count: Number(row.agent_count ?? row.agentCount ?? 0),
+    execution_environment_count: Number(
+      row.execution_environment_count ?? row.executionEnvironmentCount ?? 0,
+    ),
+    project_count: Number(row.project_count ?? row.projectCount ?? 0),
+    created_by_user_id: Number(
+      row.created_by_user_id ?? row.createdByUserId ?? 0,
+    ),
+    version: Number(row.version ?? 0),
+    created_at: String(row.created_at ?? row.createdAt ?? ""),
+    updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
+  };
+}
+
+export function mapCollaborationExecutionEnvironmentDto(
+  input: WorkspaceDto,
+): CollaborationExecutionEnvironment {
+  const row = asRecord(input);
+  const resourceId = nullableString(row.resource_id ?? row.resourceId);
+  const deviceId = finiteNullableNumber(
+    row.device_id ?? row.deviceId ?? row.resource_id ?? row.resourceId,
+  );
+  const deviceKey = nullableString(row.device_key ?? row.deviceKey);
+  const ownerType =
+    (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
+  return {
+    id: String(resourceId ?? deviceId ?? deviceKey ?? row.id),
+    ...(deviceId == null ? {} : { device_id: deviceId }),
+    ...(deviceKey == null ? {} : { device_key: deviceKey }),
+    name: String(row.name ?? ""),
+    kind:
+      (row.kind ?? row.environment_type ?? row.environmentType) === "cloud_host"
+        ? "cloud_host"
+        : "local_device",
+    owner_type: ownerType,
+    owner_id: String(row.owner_id ?? row.ownerId ?? ""),
+    owner_name: String(row.owner_name ?? row.ownerName ?? ""),
+    status: (row.status ??
+      "offline") as CollaborationExecutionEnvironment["status"],
+    updated_at: String(row.updated_at ?? row.updatedAt ?? ""),
+  };
+}
+
+export function mapCollaborationOwnedAgentDto(
+  input: WorkspaceDto,
+): CollaborationOwnedAgent {
+  const row = asRecord(input);
+  const resourceId = nullableString(row.resource_id ?? row.resourceId);
+  const teamId = finiteNullableNumber(
+    row.team_id ?? row.teamId ?? row.resource_id ?? row.resourceId,
+  );
+  const ownerType =
+    (row.owner_type ?? row.ownerType) === "workspace" ? "workspace" : "user";
+  return {
+    id: String(resourceId ?? teamId ?? row.id),
+    name: String(row.name ?? ""),
+    ...((row.agent_id ?? row.agentId)
+      ? { agent_id: String(row.agent_id ?? row.agentId) }
+      : {}),
+    ...(teamId == null ? {} : { team_id: teamId }),
+    owner_type: ownerType,
+    owner_id: String(row.owner_id ?? row.ownerId ?? ""),
+    owner_name: String(row.owner_name ?? row.ownerName ?? ""),
+    status:
+      (row.status ?? "unavailable") === "available"
+        ? "available"
+        : "unavailable",
+    execution_environment_ids: Array.isArray(
+      row.execution_environment_ids ?? row.executionEnvironmentIds,
+    )
+      ? (
+          (row.execution_environment_ids ??
+            row.executionEnvironmentIds) as unknown[]
+        ).map(String)
+      : [],
+  };
+}
+
+export function mapCollaborationPlatformResourcesDto(
+  input: WorkspaceDto,
+): CollaborationPlatformResources {
+  const row = asRecord(input);
+  const agents = row.agents;
+  const environments = row.execution_environments ?? row.executionEnvironments;
+  return {
+    agents: Array.isArray(agents)
+      ? agents.map((agent) =>
+          mapCollaborationOwnedAgentDto(agent as WorkspaceDto),
+        )
+      : [],
+    execution_environments: Array.isArray(environments)
+      ? environments.map((environment) =>
+          mapCollaborationExecutionEnvironmentDto(environment as WorkspaceDto),
+        )
+      : [],
+  };
+}
+
+export function mapCollaborationAssignmentDto(
+  input: WorkspaceDto,
+): CollaborationAssignment {
+  const row = asRecord(input);
+  const rawType = row.target_type ?? row.targetType;
+  const createdAt = String(row.created_at ?? row.createdAt ?? "");
+  return {
+    id: String(row.id),
+    issue_id: String(row.issue_id ?? row.issueId ?? row.loop_item_id ?? ""),
+    target_type: rawType === "agent" ? "agent" : "human",
+    target_id: String(row.target_id ?? row.targetId ?? ""),
+    target_name: String(row.target_name ?? row.targetName ?? ""),
+    workflow_step: nullableString(row.workflow_step ?? row.workflowStep),
+    body: String(row.body ?? ""),
+    comment_id: nullableString(row.comment_id ?? row.commentId),
+    created_by_user_id: Number(
+      row.created_by_user_id ?? row.createdByUserId ?? 0,
+    ),
+    created_by_user_name: nullableString(
+      row.created_by_user_name ?? row.createdByUserName,
+    ),
+    status:
+      row.status === "completed" || row.status === "cancelled"
+        ? row.status
+        : "active",
+    created_at: createdAt,
+    updated_at: String(row.updated_at ?? row.updatedAt ?? createdAt),
   };
 }

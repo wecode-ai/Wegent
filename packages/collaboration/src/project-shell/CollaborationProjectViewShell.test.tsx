@@ -135,6 +135,7 @@ describe("CollaborationProjectViewShell permissions", () => {
 
     expect(options.map((option) => option.id)).toEqual([
       "board",
+      "table",
       "files",
       "automation",
       "manage",

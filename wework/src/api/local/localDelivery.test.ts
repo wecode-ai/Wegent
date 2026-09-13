@@ -187,7 +187,9 @@ describe('local delivery API', () => {
     })
     const api = createLocalDeliveryApi(request)
 
-    await expect(api.listLoopItemExecutions('project-1')).resolves.toEqual({
+    await expect(
+      api.listLoopItemExecutions('project-1', { include_terminal: true })
+    ).resolves.toEqual({
       items: [
         {
           ...execution,
@@ -202,6 +204,7 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       agent_id: null,
       status: null,
+      include_terminal: true,
     })
   })
 

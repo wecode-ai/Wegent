@@ -76,6 +76,7 @@ from app.api.endpoints import (
     wiki,
     wizard,
     work_queue,
+    workspaces,
     xiaoxin_knowledge_sync,
 )
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
@@ -181,6 +182,15 @@ api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(
     cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
+)
+api_router.include_router(
+    cloud_projects.router, prefix="/v1/projects", tags=["projects"]
+)
+api_router.include_router(
+    workspaces.router, prefix="/v1/workspaces", tags=["workspaces"]
+)
+api_router.include_router(
+    workspaces.resources_router, prefix="/v1/resources", tags=["resources"]
 )
 api_router.include_router(
     project_automations.router,

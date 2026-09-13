@@ -905,12 +905,13 @@ export function createLocalDeliveryApi(
     },
     async listLoopItemExecutions(
       projectId: CloudProjectId,
-      options: { agent_id?: string; status?: string } = {}
+      options: { agent_id?: string; status?: string; include_terminal?: boolean } = {}
     ): Promise<{ items: CloudLoopItemExecution[] }> {
       const records = await request<LocalLoopItemExecution[]>('executions.list', {
         project_id: String(projectId),
         agent_id: options.agent_id ?? null,
         status: options.status ?? null,
+        include_terminal: options.include_terminal ?? false,
       })
       return {
         items: records.map(record => ({

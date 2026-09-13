@@ -357,7 +357,15 @@ async function verifyDefaultWorkspaceStartupTab(control) {
     text: '协作',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+  await control.command(
+    'waitFor',
+    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="app-iframe-collaboration"]`,
+    {
+      visible: true,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', FIXED_BOARD_CONTENT_SELECTOR, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -395,20 +403,14 @@ async function verifyWorkspaceIssueCreation(control) {
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
-  assert.ok(boardTabs.length > 0, 'The workspace issue flow requires an existing board tab')
-  const boardTabId = boardTabs[0].slice('workspace-tab-'.length)
-  const boardTabSelector = `[data-testid="workspace-tab-select-${boardTabId}"]`
-  const boardContentSelector = `[data-testid="workspace-tab-content-${boardTabId}"]`
-
-  await control.command('click', boardTabSelector)
-  await control.command('waitFor', `${boardTabSelector}[aria-selected="true"]`, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-workspace"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  const existingBoardTabIds = workspaceTabIds(
+    JSON.parse(await control.command('snapshot', 'body')),
+    'board'
+  )
+  const { boardTabId, boardTabSelector, boardContentSelector } = await openProjectWorkspaceTab(
+    control,
+    existingBoardTabIds
+  )
 
   const projectName = 'Workspace Issue E2E'
   const issueTitle =
@@ -860,6 +862,14 @@ async function verifyWorkspaceIssueCreation(control) {
     'workspace-issue-04-on-board.png',
     boardContentSelector
   )
+  await control.command('click', `[data-testid="workspace-tab-close-${boardTabId}"]`)
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      workspaceTabIds(snapshot, 'board').length === existingBoardTabIds.length &&
+      existingBoardTabIds.every(testId => snapshot.testIds.includes(testId)),
+    'Closing the Issue creation project tab did not restore the fixed collaboration entry'
+  )
 }
 
 async function verifyDefaultTaskBoardAssociation(control) {
@@ -920,7 +930,7 @@ async function verifyDefaultTaskBoardAssociation(control) {
   }
 }
 
-async function requireActiveFixedBoardTab(control, message) {
+async function requireActiveProjectBoardTab(control, message) {
   await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -929,14 +939,21 @@ async function requireActiveFixedBoardTab(control, message) {
     '[data-tab-kind="board"][aria-selected="true"]',
     { value: 'data-testid' }
   )
-  assert.equal(activeBoardTabTestId, FIXED_BOARD_TAB_SELECT_TEST_ID, message)
-  const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
-  assert.deepEqual(
-    boardTabs,
-    [FIXED_BOARD_TAB_ID],
-    'Opening the bound project space created a duplicate board tab'
+  assert.ok(
+    activeBoardTabTestId?.startsWith('workspace-tab-select-board-'),
+    `${message}: ${activeBoardTabTestId}`
   )
-  return FIXED_BOARD_CONTENT_SELECTOR
+  const activeBoardTabId = activeBoardTabTestId.slice('workspace-tab-select-'.length)
+  const activeBoardContentSelector = `[data-testid="workspace-tab-content-${activeBoardTabId}"]`
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-workspace"]`,
+    {
+      visible: true,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  return activeBoardContentSelector
 }
 
 async function verifyTrackedTaskBoardRunningStatus(
@@ -953,9 +970,9 @@ async function verifyTrackedTaskBoardRunningStatus(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The first work-item navigation did not reuse the unresolved fixed project-space tab'
+    'The first work-item navigation did not open its project-space tab'
   )
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
@@ -1051,9 +1068,9 @@ async function verifyTrackedTaskSettledStatus(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The settled work-item navigation did not reuse the fixed project-space tab'
+    'The settled work-item navigation did not open its project-space tab'
   )
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
@@ -1078,9 +1095,9 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The default Issue context test did not reuse the fixed project-space tab'
+    'The default Issue context test did not open its project-space tab'
   )
   const boardCardSelector = [
     `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
@@ -1158,16 +1175,14 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The tracked work-item navigation did not reuse the fixed project-space tab'
+    'The tracked work-item navigation did not open its project-space tab'
   )
   await waitForStableSnapshot(
     control,
     snapshot =>
-      snapshot.location.includes(`workspaceTab=${FIXED_BOARD_ROUTE_TAB_ID}`) &&
       !snapshot.location.includes('itemId=') &&
-      snapshot.testIds.includes(FIXED_BOARD_TAB_CONTENT_TEST_ID) &&
       !snapshot.testIds.includes('cloud-todo-board-loading') &&
       snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
     'The work-item board did not settle on the tracked task awaiting confirmation'
@@ -1256,9 +1271,9 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+  const activeBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The source work-item navigation did not reuse the fixed project-space tab'
+    'The source work-item navigation did not open its project-space tab'
   )
   const targetProjectName = 'Existing Task Target Board'
   await control.command('click', `${activeBoardContentSelector} [data-testid="cloud-project-add"]`)
@@ -1358,9 +1373,9 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const movedBoardContentSelector = await requireActiveFixedBoardTab(
+  const movedBoardContentSelector = await requireActiveProjectBoardTab(
     control,
-    'The moved work-item navigation did not continue reusing the fixed project-space tab'
+    'The moved work-item navigation did not open its project-space tab'
   )
   await control.command(
     'waitFor',
@@ -1451,6 +1466,39 @@ function allWorkspaceTabIds(snapshot) {
   return ['task', 'board', 'agent', 'auxiliary'].flatMap(kind => workspaceTabIds(snapshot, kind))
 }
 
+async function openProjectWorkspaceTab(control, existingBoardTabIds) {
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-tab-add-board"]')
+  const openedSnapshot = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'board').length === existingBoardTabIds.length + 1,
+    'Adding a project-space tab did not create a distinct tab'
+  )
+  const boardTabTestId = workspaceTabIds(openedSnapshot, 'board').find(
+    testId => !existingBoardTabIds.includes(testId)
+  )
+  assert.ok(boardTabTestId, 'The newly added project-space tab could not be identified')
+  const boardTabId = boardTabTestId.slice('workspace-tab-'.length)
+  const boardTabSelector = `[data-testid="workspace-tab-select-${boardTabId}"]`
+  const boardContentSelector = `[data-testid="workspace-tab-content-${boardTabId}"]`
+  await control.command('waitFor', `${boardTabSelector}[aria-selected="true"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-workspace"]`, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  return {
+    boardContentSelector,
+    boardTabId,
+    boardTabSelector,
+    boardTabTestId,
+  }
+}
+
 async function waitForAttribute(control, selector, name, expected, message) {
   const startedAt = Date.now()
   let actual = null
@@ -1498,6 +1546,15 @@ async function verifyWorkspaceTabIsolation(control) {
     initialTaskIds.length + initialBoardIds.length + initialAgentIds.length,
     3,
     'The titlebar did not start with exactly three product tabs'
+  )
+  await control.command('click', `[data-testid="${FIXED_BOARD_TAB_SELECT_TEST_ID}"]`)
+  await control.command(
+    'waitFor',
+    `${FIXED_BOARD_CONTENT_SELECTOR} [data-testid="app-iframe-collaboration"]`,
+    {
+      visible: true,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
   )
 
   const firstTaskId = initialTaskIds[0].slice('workspace-tab-'.length)
@@ -1561,14 +1618,12 @@ async function verifyWorkspaceTabIsolation(control) {
   })
   await captureVerificationScreenshot(control, 'workspace-tabs-isolation-01-task-drafts.png')
 
-  const firstBoardId = initialBoardIds[0].slice('workspace-tab-'.length)
-  const firstBoardContent = `[data-testid="workspace-tab-content-${firstBoardId}"]`
+  const {
+    boardContentSelector: firstBoardContent,
+    boardTabId: firstBoardId,
+    boardTabTestId: firstBoardTestId,
+  } = await openProjectWorkspaceTab(control, initialBoardIds)
   const firstBoardWorkspace = `${firstBoardContent} [data-testid="cloud-todo-workspace"]`
-  await control.command('click', `[data-testid="workspace-tab-select-${firstBoardId}"]`)
-  await control.command('waitFor', firstBoardWorkspace, {
-    visible: true,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
   await waitForAttribute(
     control,
     firstBoardWorkspace,
@@ -1585,24 +1640,9 @@ async function verifyWorkspaceTabIsolation(control) {
     'The first project-space tab did not preserve its local sidebar state'
   )
 
-  await control.command('click', '[data-testid="workspace-tab-add"]')
-  await control.command('click', '[data-testid="workspace-tab-add-board"]')
-  const withSecondBoard = await waitForSnapshot(
-    control,
-    snapshot => workspaceTabIds(snapshot, 'board').length === 2,
-    'The explicit new-project-space action did not create a second tab'
-  )
-  const secondBoardTestId = workspaceTabIds(withSecondBoard, 'board').find(
-    testId => !initialBoardIds.includes(testId)
-  )
-  assert.ok(secondBoardTestId, 'The second project-space tab identity was not observable')
-  const secondBoardId = secondBoardTestId.slice('workspace-tab-'.length)
-  const secondBoardContent = `[data-testid="workspace-tab-content-${secondBoardId}"]`
+  const { boardContentSelector: secondBoardContent, boardTabId: secondBoardId } =
+    await openProjectWorkspaceTab(control, [...initialBoardIds, firstBoardTestId])
   const secondBoardWorkspace = `${secondBoardContent} [data-testid="cloud-todo-workspace"]`
-  await control.command('waitFor', secondBoardWorkspace, {
-    visible: true,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
   await waitForAttribute(
     control,
     secondBoardWorkspace,
@@ -1969,6 +2009,7 @@ export {
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   workspaceTabIds,
+  openProjectWorkspaceTab,
   allWorkspaceTabIds,
   waitForAttribute,
   verifyWorkspaceTabIsolation,

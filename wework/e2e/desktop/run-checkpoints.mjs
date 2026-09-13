@@ -104,6 +104,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'workbench-mode',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'cloud-device-lifecycle',
   'plugin-auto-update',
   'plugin-workspace-publication',
   'cloud-git-worktree',

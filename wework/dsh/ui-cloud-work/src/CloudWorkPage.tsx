@@ -1,5 +1,5 @@
 import { Cloud, FolderGit2, Menu, Plus, Settings } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
@@ -80,6 +80,10 @@ export function CloudWorkPage() {
     listDeviceDirectories,
     createDeviceDirectory,
   } = useWorkbench()
+
+  useEffect(() => {
+    void refreshDevices()
+  }, [refreshDevices])
 
   const cloudDevices = useMemo(
     () =>

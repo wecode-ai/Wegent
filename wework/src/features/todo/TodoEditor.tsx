@@ -213,8 +213,8 @@ export function TodoEditor(props: TodoEditorProps) {
   const commonProps = {
     port,
     extensions,
-    translate: (key: string, fallback?: string) =>
-      fallback === undefined ? t(key) : t(key, fallback),
+    translate: (key: string, fallback?: string, options?: Record<string, string | number>) =>
+      fallback === undefined ? t(key, options) : t(key, fallback, options),
     loadTeams: () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     allItems: props.allItems as SharedEditorIssue[],
     onClose: props.onClose,

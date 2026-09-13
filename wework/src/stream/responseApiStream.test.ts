@@ -2,6 +2,43 @@ import { describe, expect, test, vi } from 'vitest'
 import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
 
 describe('emitResponseApiEvent', () => {
+  test('releases unfinished tool parser state when a response terminates', () => {
+    const state = createResponseApiStreamState()
+
+    emitResponseApiEvent(
+      {},
+      'response.output_item.added',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: {
+          item: {
+            id: 'tool-1',
+            type: 'function_call',
+            name: 'exec_command',
+            arguments: '{"cmd":"long-running"}',
+          },
+        },
+      },
+      state
+    )
+
+    expect(state.toolContexts.size).toBe(1)
+
+    emitResponseApiEvent(
+      {},
+      'response.failed',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: { error: { message: 'cancelled' } },
+      },
+      state
+    )
+
+    expect(state.toolContexts.size).toBe(0)
+  })
+
   test('preserves a snake-case client user message id when a Codex turn starts', () => {
     const onChatStart = vi.fn()
 
@@ -313,6 +350,36 @@ describe('emitResponseApiEvent', () => {
       result: {
         itemId: 'message-1',
         text: 'Complete answer',
+      },
+    })
+  })
+
+  test('maps completed Codex refusal text to an item snapshot', () => {
+    const onChatChunk = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatChunk },
+      'response.refusal.done',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: {
+          itemId: 'message-1',
+          refusal: 'I cannot help with that.',
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatChunk).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'I cannot help with that.',
+      contentMode: 'snapshot',
+      result: {
+        itemId: 'message-1',
+        refusal: 'I cannot help with that.',
       },
     })
   })

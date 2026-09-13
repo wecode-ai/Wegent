@@ -29,6 +29,7 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
+from app.models.resource_member import ResourceMember
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -105,6 +106,56 @@ def cloud_file_storage(monkeypatch: pytest.MonkeyPatch) -> FakeCloudFileStorage:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_execution_list_can_include_terminal_history(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "history", "name": "Execution history"},
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
+    execution = LoopItemExecution(
+        loop_item_id="history-issue",
+        cloud_project_id=str(project["id"]),
+        executor_owner_user_id=test_user.id,
+        agent_id="history-agent",
+        status="completed",
+        observed_state="succeeded",
+        sync_state="in_sync",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    test_db.refresh(execution)
+
+    active_response = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(test_token),
+    )
+    history_response = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions?include_terminal=true",
+        headers=_auth(test_token),
+    )
+
+    assert active_response.status_code == 200, active_response.text
+    assert active_response.json() == {"items": [], "total": 0}
+    assert history_response.status_code == 200, history_response.text
+    assert history_response.json()["total"] == 1
+    item = history_response.json()["items"][0]
+    assert item["id"] == execution.id
+    assert item["loopItemId"] == "history-issue"
+    assert item["cloudProjectId"] == str(project["id"])
+    assert item["agentId"] == "history-agent"
+    assert item["status"] == "completed"
+    assert item["displayState"] == "succeeded"
+    assert item["observedState"] == "succeeded"
+    assert item["syncState"] == "in_sync"
 
 
 def _create_chat_message(
@@ -1782,6 +1833,182 @@ def test_cloud_project_robot_binds_default_runtime_profile(
     )
     assert cleared.status_code == 200
     assert cleared.json()["defaultRuntimeProfileId"] is None
+
+
+def test_cloud_project_codex_agent_authorizes_owned_execution_environment_once(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    device = Kind(
+        kind="Device",
+        name="personal-codex-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {"deviceType": "local"},
+            "metadata": {"name": "personal-codex-device"},
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "personalenv", "name": "Personal environment"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    agent_payload = {
+        "name": "Personal Codex",
+        "runtime": "codex",
+        "executionEnvironment": "local",
+        "executionDeviceId": device.name,
+    }
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json=agent_payload,
+    )
+    assert created.status_code == 201, created.text
+    agent = created.json()
+    assert agent["executionDeviceId"] == device.name
+
+    bindings = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
+        )
+        .all()
+    )
+    assert len(bindings) == 1
+    assert bindings[0].role == "Developer"
+    assert bindings[0].invited_by_user_id == test_user.id
+
+    listed = test_client.get(
+        f"/api/v1/workspaces/{project['workspace_id']}/execution-environments",
+        headers=_auth(test_token),
+    )
+    assert listed.status_code == 200
+    environment = next(
+        item for item in listed.json()["items"] if item["device_id"] == device.id
+    )
+    assert environment["owner_type"] == "user"
+    assert environment["owner_id"] == str(test_user.id)
+
+    created_again = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={**agent_payload, "name": "Second Personal Codex"},
+    )
+    assert created_again.status_code == 201, created_again.text
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": agent["version"],
+            "executionDeviceId": device.name,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["executionDeviceId"] == device.name
+    assert (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Device",
+            ResourceMember.resource_id == device.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
+        )
+        .count()
+        == 1
+    )
+
+
+def test_cloud_project_wegent_agent_authorizes_accessible_team_once(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    team = _create_runnable_wegent_team(
+        test_db,
+        user_id=test_user.id,
+        prefix="personal-agent",
+    )
+    project_response = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "personalagent", "name": "Personal Agent"},
+    )
+    assert project_response.status_code == 201
+    project = project_response.json()
+
+    agent_payload = {
+        "name": "Wegent Agent",
+        "runtime": "wegent",
+        "wegentTeamId": team.id,
+    }
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json=agent_payload,
+    )
+    assert created.status_code == 201, created.text
+    agent = created.json()
+    assert agent["wegentTeamId"] == team.id
+
+    bindings = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Team",
+            ResourceMember.resource_id == team.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
+        )
+        .all()
+    )
+    assert len(bindings) == 1
+    assert bindings[0].role == "Developer"
+    assert bindings[0].invited_by_user_id == test_user.id
+
+    created_again = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={**agent_payload, "name": "Second Wegent Agent"},
+    )
+    assert created_again.status_code == 201, created_again.text
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents/{agent['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": agent["version"],
+            "wegentTeamId": team.id,
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["wegentTeamId"] == team.id
+    assert (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Team",
+            ResourceMember.resource_id == team.id,
+            ResourceMember.entity_type == "workspace",
+            ResourceMember.entity_id == str(project["workspace_id"]),
+        )
+        .count()
+        == 1
+    )
 
 
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(

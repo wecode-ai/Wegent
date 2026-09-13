@@ -646,6 +646,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptTurn {
   id: string
   items: RuntimeTranscriptTurnItem[]
+  itemMerge?: 'prepend'
   messageIndex?: number | null
   status?: string
   runtimeStatus?: string | null

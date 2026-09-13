@@ -73,4 +73,41 @@ describe('runtime pane debug snapshot', () => {
 
     expect(getWorkbenchDebugSnapshot().pane?.currentRuntimeTask?.taskId).toBe('active-task')
   })
+
+  it('stores only a summary of the active assistant message', () => {
+    const snapshot = createPaneSnapshot('active-task')
+    snapshot.status = {
+      ...snapshot.status,
+      activeAssistantMessage: {
+        id: 'assistant-1',
+        role: 'assistant',
+        status: 'streaming',
+        content: 'x'.repeat(10_000),
+        createdAt: '2026-09-12T00:00:00.000Z',
+        blocks: [
+          {
+            id: 'tool-1',
+            type: 'tool',
+            toolName: 'shell',
+            toolInput: {},
+            status: 'streaming',
+            createdAt: Date.parse('2026-09-12T00:00:00.000Z'),
+          },
+        ],
+      },
+    }
+
+    updateRuntimePaneDebugSnapshot(snapshot)
+
+    expect(getWorkbenchDebugSnapshot().pane?.status.activeAssistantMessage).toEqual(
+      expect.objectContaining({
+        id: 'assistant-1',
+        contentLength: 10_000,
+        blockCount: 1,
+      })
+    )
+    expect(getWorkbenchDebugSnapshot().pane?.status.activeAssistantMessage).not.toHaveProperty(
+      'content'
+    )
+  })
 })

@@ -23,6 +23,7 @@ import {
   MEMORY_MAX_SAMPLE_RANGE_KIB,
   MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
   MEMORY_MAX_SETTLED_GROWTH_KIB,
+  MEMORY_MAX_JS_HEAP_BYTES,
   MEMORY_MAX_SETTLED_SAMPLES,
   MEMORY_MIN_BASELINE_SAMPLES,
   MEMORY_MIN_SETTLED_SAMPLES,
@@ -417,6 +418,11 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
 async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
   control.setScenario('memory')
+  await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+  await control.command('waitFor', '[data-testid="workspace-terminal-window"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const baselineSamples = await captureStableMemorySamples(
     control,
     'baseline',
@@ -476,6 +482,15 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   )
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
   const settledDomNodeGrowth = settledDomNodeCount - baselineDomNodeCount
+  const peakJSHeapBytes = Math.max(
+    ...workloadSamples.map(sample => {
+      assert.ok(
+        Number.isFinite(sample.usedJSHeapSize),
+        'The memory E2E could not read renderer JS heap usage'
+      )
+      return sample.usedJSHeapSize
+    })
+  )
 
   await writeFile(
     join(resultDir, 'memory-growth.json'),
@@ -485,6 +500,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
           maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
           maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
           maxSettledDomNodeGrowth: MEMORY_MAX_SETTLED_DOM_NODE_GROWTH,
+          maxJSHeapBytes: MEMORY_MAX_JS_HEAP_BYTES,
         },
         summary: {
           peakGrowthKiB,
@@ -494,6 +510,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
           baselineDomNodeCount,
           settledDomNodeCount,
           settledDomNodeGrowth,
+          peakJSHeapBytes,
           baselineSampleCount: baselineSamples.length,
         },
         samples,
@@ -519,6 +536,10 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.ok(
     settledRangeKiB <= MEMORY_MAX_SAMPLE_RANGE_KIB,
     `WebContent settled sample range reached ${settledRangeKiB} KiB`
+  )
+  assert.ok(
+    peakJSHeapBytes <= MEMORY_MAX_JS_HEAP_BYTES,
+    `Renderer JS heap peaked at ${peakJSHeapBytes} bytes`
   )
 }
 
