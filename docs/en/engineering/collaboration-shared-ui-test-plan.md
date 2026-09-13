@@ -5,6 +5,23 @@ sidebar_position: 25
 # Collaboration shared UI cross-host E2E and acceptance plan
 
 Audit date: 2026-09-10
+Implementation update: 2026-09-13
+
+## Implemented host boundary
+
+- Wegent Web and Wework both mount the shared `CollaborationPlatformApp` / `CollaborationApp`
+  component tree from `@wegent/collaboration` directly.
+- Wework's fixed Collaboration tab no longer opens Wegent Web through an iframe and no longer
+  registers `/collaboration` as a cloud-web app. Desktop E2E drives the native shared component.
+- The Wework host adapter combines local and cloud spaces. Local spaces use device-owned project,
+  Issue, comment, agent, and execution-environment services; cloud spaces use the shared cloud API.
+- Wegent Web injects cloud APIs only, so Web neither displays nor creates local spaces or projects.
+- The shared package renders spaces, projects, boards, Issues, members, agents, execution
+  environments, project settings, and dispatch policies. Hosts only adapt APIs, routing, account
+  chrome, and desktop execution capabilities.
+
+This is a hard boundary for future work: Collaboration must not regain an iframe integration, and
+neither host may duplicate shared business views.
 
 ## Objective
 
@@ -21,8 +38,9 @@ This plan must prove more than “both hosts appear to work”:
 5. My Work and its default board must remain available through the same shared implementation on
    both hosts.
 
-This document plans additive tests and merge gates only. Existing E2E coverage must not be edited,
-weakened, or replaced.
+This document records tests and merge gates. When an architecture migration makes an existing E2E
+assert the removed iframe, update it from concrete mount evidence to assert the native shared
+component. Do not weaken its business steps or replace real backend requests with mocks.
 
 ## Current-state audit
 
