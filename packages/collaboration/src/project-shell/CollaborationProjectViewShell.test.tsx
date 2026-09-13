@@ -14,6 +14,7 @@ import {
 
 const labels = {
   board: "Board",
+  table: "Table",
   files: "Files",
   automation: "Automation",
   manage: "Manage",
@@ -21,6 +22,7 @@ const labels = {
 
 const testIds = {
   board: "board",
+  table: "table",
   files: "files",
   automation: "automation",
   manage: "manage",
@@ -28,6 +30,7 @@ const testIds = {
 
 const slots: CollaborationProjectViewSlots = {
   board: "board-content",
+  table: "table-content",
   files: "files-content",
   automation: "automation-content",
   manage: "manage-content",
@@ -69,6 +72,30 @@ describe("CollaborationProjectViewShell permissions", () => {
       automationSupported: false,
     });
 
+    expect(
+      resolveCollaborationProjectView({
+        extensions,
+        options,
+        slots,
+        view: "automation",
+      }),
+    ).toEqual({
+      content: "board-content",
+      view: "board",
+      viewChanged: true,
+    });
+  });
+
+  it("limits a system board to its explicitly enabled standard views", () => {
+    const options = buildCollaborationProjectViewOptions({
+      project: { access_role: "Owner" },
+      labels,
+      testIds,
+      automationSupported: true,
+      enabledStandardViews: ["board"],
+    });
+
+    expect(options.map((option) => option.id)).toEqual(["board"]);
     expect(
       resolveCollaborationProjectView({
         extensions,

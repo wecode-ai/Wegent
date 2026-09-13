@@ -106,17 +106,22 @@ export function buildCollaborationProjectViewOptions({
   labels,
   testIds,
   automationSupported,
+  enabledStandardViews = collaborationProjectViewIds,
   extensions = [],
 }: {
   project: Pick<CollaborationProject, "access_role" | "project_store">;
   labels: CollaborationProjectViewLabels;
   testIds: CollaborationProjectViewTestIds;
   automationSupported: boolean;
+  enabledStandardViews?: readonly StandardCollaborationProjectView[];
   extensions?: CollaborationProjectViewExtension[];
 }): CollaborationProjectViewOption[] {
+  const enabledStandardViewIds = new Set(enabledStandardViews);
   const standardOptions = collaborationProjectViewIds
-    .filter((view) =>
-      canAccessCollaborationProjectView(project, view, automationSupported),
+    .filter(
+      (view) =>
+        enabledStandardViewIds.has(view) &&
+        canAccessCollaborationProjectView(project, view, automationSupported),
     )
     .map((view) => ({
       id: view,
@@ -150,6 +155,7 @@ export interface CollaborationProjectViewShellProps extends Omit<
   testIds: CollaborationProjectViewTestIds;
   slots: CollaborationProjectViewSlots;
   automationSupported?: boolean;
+  enabledStandardViews?: readonly StandardCollaborationProjectView[];
   extensions?: CollaborationProjectViewExtension[];
   switcherAriaLabel?: string;
   compactSwitcherIcon?: ReactNode;
@@ -163,6 +169,7 @@ export function CollaborationProjectViewShell({
   testIds,
   slots,
   automationSupported = true,
+  enabledStandardViews,
   extensions = [],
   switcherAriaLabel,
   compactSwitcherIcon,
@@ -174,6 +181,7 @@ export function CollaborationProjectViewShell({
     labels,
     testIds,
     automationSupported,
+    enabledStandardViews,
     extensions,
   });
   const resolved = resolveCollaborationProjectView({
@@ -191,17 +199,19 @@ export function CollaborationProjectViewShell({
     <ProjectShell
       {...shellProps}
       boardView={resolved.view === "board"}
-      renderViewSwitcher={({ compact, containerRef }) => (
-        <ProjectViewSwitcher
-          ariaLabel={switcherAriaLabel}
-          compact={compact}
-          compactIcon={compactSwitcherIcon}
-          containerRef={containerRef}
-          value={resolved.view}
-          options={options}
-          onChange={onViewChange}
-        />
-      )}
+      renderViewSwitcher={({ compact, containerRef }) =>
+        options.length > 1 ? (
+          <ProjectViewSwitcher
+            ariaLabel={switcherAriaLabel}
+            compact={compact}
+            compactIcon={compactSwitcherIcon}
+            containerRef={containerRef}
+            value={resolved.view}
+            options={options}
+            onChange={onViewChange}
+          />
+        ) : null
+      }
     >
       {resolved.content}
     </ProjectShell>

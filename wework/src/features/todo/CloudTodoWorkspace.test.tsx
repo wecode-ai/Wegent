@@ -1048,6 +1048,14 @@ describe('CloudTodoWorkspace', () => {
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
     expect(screen.getAllByTestId('cloud-sidebar-project-default-work-items')).toHaveLength(1)
+    expect(screen.queryByTestId('cloud-project-board-view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-table-view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-files-view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-automation-view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-manage-view')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('cloud-sidebar-project-more-default-work-items')
+    ).not.toBeInTheDocument()
     await waitFor(() => {
       expect(onActiveProjectChange).toHaveBeenCalledWith(
         expect.objectContaining({
