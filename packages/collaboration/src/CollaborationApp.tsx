@@ -758,8 +758,9 @@ export function CollaborationApp({
           onError={() => commands.reportError(messages.saveFailed)}
         />
       )}
-      {selectedIssue && project
-        ? (renderIssueDetail?.({
+      {selectedIssue && project ? (
+        renderIssueDetail ? (
+          renderIssueDetail({
             api,
             project,
             issue: selectedIssue,
@@ -778,44 +779,45 @@ export function CollaborationApp({
               ? (workflowStep) =>
                   onCreateTask(project, selectedIssue, workflowStep)
               : undefined,
-          }) ?? (
-            <IssueDetail
-              api={api}
-              project={project}
-              issue={selectedIssue}
-              allIssues={issues}
-              comments={comments}
-              assignments={assignments}
-              executions={executions}
-              members={members}
-              agents={agents}
-              messages={messages}
-              translate={translate}
-              onClose={() => {
-                commands.clearSelectedIssue();
-                host.navigate({
-                  projectId: project.id,
-                  issueId: null,
-                  view: host.location.view,
-                });
-              }}
-              onChange={commands.replaceIssue}
-              onCommentsChange={commands.replaceComments}
-              onAssignmentsChange={(nextAssignments) => {
-                commands.replaceAssignments(nextAssignments);
-                replaceIssueAssignments(selectedIssue.id, nextAssignments);
-              }}
-              onCreateTask={
-                onCreateTask
-                  ? (workflowStep) =>
-                      onCreateTask(project, selectedIssue, workflowStep)
-                  : undefined
-              }
-              onConflict={commands.refreshSelectedIssue}
-              onError={() => commands.reportError(messages.saveFailed)}
-            />
-          ))
-        : null}
+          })
+        ) : (
+          <IssueDetail
+            api={api}
+            project={project}
+            issue={selectedIssue}
+            allIssues={issues}
+            comments={comments}
+            assignments={assignments}
+            executions={executions}
+            members={members}
+            agents={agents}
+            messages={messages}
+            translate={translate}
+            onClose={() => {
+              commands.clearSelectedIssue();
+              host.navigate({
+                projectId: project.id,
+                issueId: null,
+                view: host.location.view,
+              });
+            }}
+            onChange={commands.replaceIssue}
+            onCommentsChange={commands.replaceComments}
+            onAssignmentsChange={(nextAssignments) => {
+              commands.replaceAssignments(nextAssignments);
+              replaceIssueAssignments(selectedIssue.id, nextAssignments);
+            }}
+            onCreateTask={
+              onCreateTask
+                ? (workflowStep) =>
+                    onCreateTask(project, selectedIssue, workflowStep)
+                : undefined
+            }
+            onConflict={commands.refreshSelectedIssue}
+            onError={() => commands.reportError(messages.saveFailed)}
+          />
+        )
+      ) : null}
     </section>
   );
 }

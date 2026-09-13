@@ -311,6 +311,10 @@ export function AutomationPolicyView({
     setActionError("");
     try {
       const saved = await onSaveRule(draft);
+      if (!saved) {
+        setSaveState("idle");
+        return;
+      }
       setDraft(cloneRule(saved));
       setSelectedId(saved.id);
       setSaveState("saved");
@@ -329,6 +333,7 @@ export function AutomationPolicyView({
     setActionError("");
     try {
       const saved = await onToggleRule(draft, !draft.enabled);
+      if (!saved) return;
       setDraft(cloneRule(saved));
       setSelectedId(saved.id);
     } catch (toggleError) {

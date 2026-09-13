@@ -456,20 +456,20 @@ export function ProjectBoardAdapter({
               }
             />
           );
-          return (
-            renderIssueCard?.({
-              column,
-              defaultCard,
-              display: issueDisplay,
-              focused: controller.state.focusExecutionColumns,
-              issue,
-              nativeContainerProps,
-              onOpen: () => onOpen(issue),
-              taskBindings: taskBindings.filter(
-                (binding) => binding.issueId === issue.id,
-              ),
-            }) ?? defaultCard
-          );
+          return renderIssueCard
+            ? renderIssueCard({
+                column,
+                defaultCard,
+                display: issueDisplay,
+                focused: controller.state.focusExecutionColumns,
+                issue,
+                nativeContainerProps,
+                onOpen: () => onOpen(issue),
+                taskBindings: taskBindings.filter(
+                  (binding) => binding.issueId === issue.id,
+                ),
+              })
+            : defaultCard;
         }}
         renderSearchIcon={() => <span aria-hidden="true">⌕</span>}
         renderSkeleton={() => null}

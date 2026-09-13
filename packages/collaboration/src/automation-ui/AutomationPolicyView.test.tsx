@@ -210,6 +210,31 @@ describe("AutomationPolicyView", () => {
     );
   });
 
+  it("ignores a save result invalidated by an automation scope change", async () => {
+    let resolveSave: ((value: AutomationUiRule | null) => void) | undefined;
+    const onSaveRule = vi.fn(
+      () =>
+        new Promise<AutomationUiRule | null>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    await render([rule("rule-1", "Scoped policy")], { onSaveRule });
+
+    await change("automation-policy-name", "Unsaved scope");
+    act(() => {
+      element("automation-save-policy").click();
+    });
+    await render([rule("rule-2", "Current scope")], { onSaveRule });
+    await act(async () => {
+      resolveSave?.(null);
+    });
+
+    expect(onSaveRule).toHaveBeenCalledOnce();
+    expect((element("automation-policy-name") as HTMLInputElement).value).toBe(
+      "Current scope",
+    );
+  });
+
   it("keeps the current policy and reports an error when deletion fails", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const onDeleteRule = vi.fn(async () => {

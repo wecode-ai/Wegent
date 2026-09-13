@@ -185,6 +185,13 @@ describe('CollaborationPage platform routing', () => {
     expect(
       collaborationLocationPath({
         ...base,
+        platformView: 'my-work',
+        workspaceId: null,
+      })
+    ).toBe('/collaboration/my-work')
+    expect(
+      collaborationLocationPath({
+        ...base,
         workspaceView: 'home',
         projectId: 'project/1',
         projectView: 'table',
@@ -193,5 +200,14 @@ describe('CollaborationPage platform routing', () => {
     ).toBe(
       '/collaboration/workspaces/workspace%201/projects/project%2F1/issues/issue%201?view=table'
     )
+  })
+
+  it('parses the canonical My Work route without treating it as a legacy project', () => {
+    mockPathname = '/collaboration/my-work'
+
+    render(<CollaborationPage />)
+
+    expect(capturedHost?.location.platformView).toBe('my-work')
+    expect(mockGetProject).not.toHaveBeenCalled()
   })
 })

@@ -57,7 +57,7 @@ export function CollaborationPage() {
   const issueId =
     projectRoute && segments[5] === 'issues' && segments[6] ? decodeURIComponent(segments[6]) : null
   const legacyProjectId =
-    !workspaceRoute && segments[1] && segments[1] !== 'resources'
+    !workspaceRoute && segments[1] && segments[1] !== 'resources' && segments[1] !== 'my-work'
       ? decodeURIComponent(segments[1])
       : null
   const legacyIssueId =
@@ -71,7 +71,12 @@ export function CollaborationPage() {
       : 'board'
   const locale: CollaborationLocale = getCurrentLanguage().startsWith('zh') ? 'zh-CN' : 'en'
   const location: CollaborationPlatformLocation = {
-    platformView: pathname === '/collaboration/resources' ? 'resources' : 'spaces',
+    platformView:
+      pathname === '/collaboration/resources'
+        ? 'resources'
+        : pathname === '/collaboration/my-work'
+          ? 'my-work'
+          : 'spaces',
     workspaceId,
     workspaceView: workspaceViewFromPath(pathname),
     projectId,

@@ -78,20 +78,19 @@ export function SendToCollaborationDialog({
       })
       const project =
         projects.find(candidate => candidate.id === projectId) ??
-        (await api.projects.get(projectId))
-      if (!project.workspace_id) {
-        throw new Error('Project is not linked to a collaboration workspace')
-      }
+        (await api.projects.get(projectId).catch(() => undefined))
       toast.success(t('collaboration.success'))
       onOpenChange(false)
-      window.location.href = collaborationLocationPath({
-        platformView: 'spaces',
-        workspaceId: project.workspace_id,
-        workspaceView: 'projects',
-        projectId,
-        projectView: 'board',
-        issueId: response.issue.id,
-      })
+      window.location.href = project?.workspace_id
+        ? collaborationLocationPath({
+            platformView: 'spaces',
+            workspaceId: project.workspace_id,
+            workspaceView: 'projects',
+            projectId,
+            projectView: 'board',
+            issueId: response.issue.id,
+          })
+        : '/collaboration'
     } catch {
       toast.error(t('collaboration.failed'))
     } finally {

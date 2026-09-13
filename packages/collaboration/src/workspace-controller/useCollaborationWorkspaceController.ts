@@ -306,7 +306,7 @@ export function collaborationWorkspaceControllerReducer(
           state.selectedIssue && state.project?.id === action.projectId
             ? (action.snapshot.items.find(
                 (item) => item.id === state.selectedIssue?.id,
-              ) ?? state.selectedIssue)
+              ) ?? null)
             : state.selectedIssue,
         issues:
           state.project?.id === action.projectId
@@ -379,7 +379,7 @@ export function collaborationWorkspaceControllerReducer(
         selectedIssue: state.selectedIssue
           ? (action.snapshot.items.find(
               (item) => item.id === state.selectedIssue?.id,
-            ) ?? state.selectedIssue)
+            ) ?? null)
           : null,
         members: action.snapshot.members,
         agents: action.snapshot.agents,

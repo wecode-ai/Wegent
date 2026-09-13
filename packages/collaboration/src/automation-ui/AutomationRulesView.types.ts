@@ -95,11 +95,13 @@ export interface AutomationRulesViewProps {
   onLoadRuns?: () => Promise<AutomationUiRun[]>;
   onOpenIssue?: (issueId: string) => void;
   onRunRule?: (rule: AutomationUiRule) => Promise<void>;
-  onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>;
+  onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule | null>;
   onToggleRule?: (
     rule: AutomationUiRule,
     enabled: boolean,
-  ) => Promise<AutomationUiRule>;
-  onDuplicateRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>;
+  ) => Promise<AutomationUiRule | null>;
+  onDuplicateRule?: (
+    rule: AutomationUiRule,
+  ) => Promise<AutomationUiRule | null>;
   onDeleteRule?: (rule: AutomationUiRule) => Promise<void>;
 }

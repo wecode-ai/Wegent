@@ -635,6 +635,28 @@ describe("collaboration workspace controller", () => {
     expect(state.selectedIssue).toEqual(completedIssue);
   });
 
+  it("clears an open Issue that is absent from the loaded project snapshot", async () => {
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+    };
+    const api = createApi();
+    api.issues.getBoardSnapshot = vi.fn().mockResolvedValue({
+      items: [],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    const { commands } = createController(api);
+
+    await commands.loadProjectSnapshot(project.id);
+
+    expect(state.selectedIssue).toBeNull();
+  });
+
   it("ignores a project response that finishes after a newer project load", async () => {
     const newerProject = {
       ...project,

@@ -515,7 +515,7 @@ export function useAutomationCloudState<P extends AutomationProject>({
           version: result.projectVersion,
         };
         const mapped = automationRuleFromBackend(result.automation);
-        if (scopeRef.current !== scope) return mapped;
+        if (scopeRef.current !== scope) return null;
         publishProject(updatedProject);
         setRules((current) =>
           current.map((candidate) =>
@@ -540,7 +540,7 @@ export function useAutomationCloudState<P extends AutomationProject>({
           })
         : await cloudApi.create(projectId, input);
       const mapped = automationRuleFromBackend(saved);
-      if (scopeRef.current !== scope) return mapped;
+      if (scopeRef.current !== scope) return null;
       setRules((current) => {
         const exists = current.some((candidate) => candidate.id === mapped.id);
         return exists
@@ -578,7 +578,7 @@ export function useAutomationCloudState<P extends AutomationProject>({
           enabled,
         }),
       );
-      if (scopeRef.current !== scope) return mapped;
+      if (scopeRef.current !== scope) return null;
       setRules((current) =>
         current.map((candidate) =>
           candidate.id === mapped.id ? mapped : candidate,

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { CollaborationAssignment, CollaborationIssue } from "../types";
 
@@ -84,6 +84,26 @@ export function ProjectIssueTable({
     }),
     [currentAssignmentByIssueId, issues],
   );
+  useEffect(() => {
+    setQuery("");
+    setStatusFilter("");
+    setAssigneeFilter("");
+    setTagFilter("");
+  }, [projectKey]);
+  useEffect(() => {
+    if (statusFilter && !filterOptions.statuses.includes(statusFilter)) {
+      setStatusFilter("");
+    }
+    if (
+      assigneeFilter &&
+      !filterOptions.assignees.some(([id]) => id === assigneeFilter)
+    ) {
+      setAssigneeFilter("");
+    }
+    if (tagFilter && !filterOptions.tags.includes(tagFilter)) {
+      setTagFilter("");
+    }
+  }, [assigneeFilter, filterOptions, statusFilter, tagFilter]);
   const visibleIssues = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return issues.filter((issue) => {

@@ -85,6 +85,7 @@ describe("ProjectIssueTable", () => {
     assignmentsByIssueId: Record<string, CollaborationAssignment[]>,
     onOpen = vi.fn(),
     issues: CollaborationIssue[] = [issue],
+    projectKey?: string,
   ) {
     act(() => {
       root.render(
@@ -96,6 +97,7 @@ describe("ProjectIssueTable", () => {
           statusLabel="Status"
           assignmentsLabel="Assignments"
           updatedLabel="Updated"
+          projectKey={projectKey}
           onOpen={onOpen}
         />,
       );
@@ -169,5 +171,33 @@ describe("ProjectIssueTable", () => {
     change("collaboration-issue-table-tag-filter", "backend");
     expect(rows()).toHaveLength(1);
     expect(container.textContent).toContain(secondIssue.title);
+  });
+
+  it("clears unavailable filters when the project issue set changes", () => {
+    render(
+      {
+        [issue.id]: [assignment],
+        [secondIssue.id]: [secondAssignment],
+      },
+      vi.fn(),
+      [issue, secondIssue],
+      "PROJ",
+    );
+    const status = container.querySelector(
+      '[data-testid="collaboration-issue-table-status-filter"]',
+    ) as HTMLSelectElement;
+    act(() => {
+      status.value = "in_progress";
+      status.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    render({ [issue.id]: [assignment] }, vi.fn(), [issue], "PROJ");
+
+    expect(status.value).toBe("");
+    expect(
+      container.querySelectorAll(
+        '[data-testid^="collaboration-issue-table-row-"]',
+      ),
+    ).toHaveLength(1);
   });
 });
