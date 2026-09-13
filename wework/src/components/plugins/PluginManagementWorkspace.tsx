@@ -49,6 +49,7 @@ import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
+import { buildPluginMcpHeadersUpdate } from './pluginMcpHeaders'
 
 function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   const labels = item.metadata['labels']
@@ -366,11 +367,10 @@ export function PluginManagementWorkspace({
   ) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) throw new Error('Installed plugin not found')
-    const updated = await updateInstalledPlugin(id, {
-      componentConfig: {
-        [componentKey]: headers ? { headers } : {},
-      },
-    })
+    const updated = await updateInstalledPlugin(
+      id,
+      buildPluginMcpHeadersUpdate(componentKey, headers)
+    )
     setInstalledPlugins(previous =>
       previous.map(item => (String(item.id) === String(id) ? toInstalledPluginItem(updated) : item))
     )

@@ -2532,6 +2532,7 @@
     "plugin_mcp_headers_save": "Save",
     "plugin_mcp_headers_saving": "Saving…",
     "plugin_mcp_headers_overridden": "Default overridden",
+    "plugin_mcp_headers_limit": "You can configure up to 32 custom headers",
     "plugin_mcp_headers_invalid_json": "Enter a JSON object, for example {\"Authorization\":\"Bearer ${{task_token}}\"}",
     "plugin_mcp_headers_save_failed": "Failed to save headers",
     "plugin_detail_get_started": "Try these tasks",

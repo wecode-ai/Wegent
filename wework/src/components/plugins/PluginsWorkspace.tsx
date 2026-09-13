@@ -98,6 +98,7 @@ import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketpla
 import { retainMarketplaceInstalledState } from './retainMarketplaceInstallHints'
 import { type InstalledPluginItem } from './PluginManagementRows'
 import { PluginCreateMenu } from './PluginCreateMenu'
+import { buildPluginMcpHeadersUpdate } from './pluginMcpHeaders'
 import { PluginImportDialog } from './PluginImportDialog'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
@@ -1308,15 +1309,7 @@ export function PluginsWorkspace({
   ) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) throw new Error('Installed plugin not found')
-    const request = {
-      componentConfig: {} as Record<string, unknown>,
-    }
-    if (headers) {
-      request.componentConfig[componentKey] = { headers }
-    } else {
-      // The update contract treats null values as explicit deletions.
-      request.componentConfig[componentKey] = null
-    }
+    const request = buildPluginMcpHeadersUpdate(componentKey, headers)
     const updateApi =
       plugin.origin === 'created' || !plugin.raw.spec.pluginId
         ? localPluginApi.updateInstalledPlugin(id, request)

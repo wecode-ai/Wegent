@@ -2681,6 +2681,7 @@ fn codex_task_mcp_followup_reconfigures_the_existing_thread() {
         }
         _ => panic!("task MCP routes must be refreshed before a follow-up"),
     }
+    assert!(plan.resume_requested);
 }
 
 #[test]

@@ -5,7 +5,7 @@ mod package;
 mod sse;
 
 pub(crate) use package::{
-    materialize_native_plugin_with_config, requires_native_proxy_with_config,
+    materialize_native_plugin_with_config, requires_native_materialization_with_config,
 };
 
 use crate::{mcp_utils::replace_mcp_server_variables, protocol::ExecutionRequest};

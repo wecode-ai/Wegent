@@ -10,6 +10,7 @@ import { navigateTo } from '@/lib/navigation'
 import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
+import { buildPluginMcpHeadersUpdate } from './pluginMcpHeaders'
 import type { PluginMarketplaceItem } from '@/types/api'
 
 vi.mock('@/lib/navigation', () => ({
@@ -74,6 +75,12 @@ describe('PluginManagementWorkspace cache', () => {
     clearPluginMarketplaceCache()
     vi.mocked(navigateTo).mockReset()
     window.localStorage.clear()
+  })
+
+  test('uses an explicit deletion when custom MCP headers are cleared', () => {
+    expect(buildPluginMcpHeadersUpdate('mcp:business', null)).toEqual({
+      componentConfig: { 'mcp:business': null },
+    })
   })
 
   test('renders cached installed plugins immediately without the loading state', async () => {

@@ -2530,6 +2530,7 @@
     "plugin_mcp_headers_save": "保存",
     "plugin_mcp_headers_saving": "保存中…",
     "plugin_mcp_headers_overridden": "已覆盖默认值",
+    "plugin_mcp_headers_limit": "最多支持 32 个自定义 Header",
     "plugin_mcp_headers_invalid_json": "请输入 JSON 对象，例如 {\"Authorization\":\"Bearer ${{task_token}}\"}",
     "plugin_mcp_headers_save_failed": "保存 Headers 失败",
     "plugin_detail_get_started": "试试这些任务",

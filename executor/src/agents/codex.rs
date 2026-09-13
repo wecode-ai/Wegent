@@ -1514,9 +1514,17 @@ fn codex_thread_plan(
             params: thread_start_params(request, launch_config),
         }
     };
+    let resume_requested = resume_thread_id.is_some()
+        || matches!(
+            &start,
+            CodexThreadStart::Request {
+                operation: "thread/resume",
+                ..
+            }
+        );
     CodexThreadPlan {
         start,
-        resume_requested: resume_thread_id.is_some(),
+        resume_requested,
         fork_requested: fork_thread_id.is_some(),
     }
 }

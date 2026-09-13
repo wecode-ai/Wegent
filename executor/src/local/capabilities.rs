@@ -452,11 +452,15 @@ fn prepare_native_marketplace_plugin(
     let component_config = component_config.as_object().ok_or_else(|| {
         CapabilitySyncError::invalid_payload("Plugin component config must be an object")
     })?;
-    if crate::plugin_task_token::requires_native_proxy_with_config(source, claude, component_config)
-        .map_err(CapabilitySyncError::invalid_payload)?
+    if crate::plugin_task_token::requires_native_materialization_with_config(
+        source,
+        claude,
+        component_config,
+    )
+    .map_err(CapabilitySyncError::invalid_payload)?
     {
         // Native local marketplaces can load their source directly. Keep the
-        // immutable package intact and expose a filtered runtime copy there too.
+        // immutable package intact and expose a configured runtime copy there too.
         copy_dir_atomic_prepared(source, destination, |temporary| {
             crate::plugin_task_token::materialize_native_plugin_with_config(
                 temporary,

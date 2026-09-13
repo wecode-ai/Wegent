@@ -2,6 +2,7 @@
 //! declarations are retained in the cache while native auto-loading is filtered.
 
 use crate::{mcp_utils::extract_mcp_servers_config, protocol::ExecutionRequest};
+use axum::http::HeaderValue;
 use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeMap,
@@ -141,18 +142,36 @@ fn default_source(root: &Path, runtime: &str) -> Result<Map<String, Value>, Stri
     }
 }
 
-pub(crate) fn requires_native_proxy_with_config(
+struct ConfiguredDeclarations {
+    servers: BTreeMap<String, Value>,
+    requires_materialization: bool,
+}
+
+fn configured_declarations(
+    root: &Path,
+    claude: bool,
+    component_config: &Map<String, Value>,
+) -> Result<ConfiguredDeclarations, String> {
+    let mut servers = BTreeMap::new();
+    let mut requires_materialization = false;
+    for (name, source_server) in declarations(root, claude)? {
+        let source_uses_task_token = declared(&source_server);
+        let configured = apply_component_config(&name, source_server.clone(), component_config)?;
+        requires_materialization |= source_uses_task_token || configured != source_server;
+        servers.insert(name, configured);
+    }
+    Ok(ConfiguredDeclarations {
+        servers,
+        requires_materialization,
+    })
+}
+
+pub(crate) fn requires_native_materialization_with_config(
     root: &Path,
     claude: bool,
     component_config: &Map<String, Value>,
 ) -> Result<bool, String> {
-    Ok(declarations(root, claude)?
-        .into_iter()
-        .any(|(name, server)| {
-            apply_component_config(&name, server, component_config)
-                .as_ref()
-                .is_ok_and(declared)
-        }))
+    Ok(configured_declarations(root, claude, component_config)?.requires_materialization)
 }
 
 pub(crate) fn materialize_native_plugin_with_config(
@@ -173,18 +192,14 @@ pub(super) fn materialize_with_config(
     claude: bool,
     component_config: &Map<String, Value>,
 ) -> Result<BTreeMap<String, Value>, String> {
-    let declared_servers = declarations(root, claude)?;
-    let mut all = BTreeMap::<String, Value>::new();
-    for (name, server) in declared_servers.into_iter() {
-        let server = apply_component_config(&name, server, component_config)?;
-        all.insert(name, server);
-    }
+    let configured = configured_declarations(root, claude, component_config)?;
+    let all = configured.servers;
     let authenticated: BTreeMap<_, _> = all
         .iter()
         .filter(|(_, server)| declared(server))
         .map(|(name, server)| (name.clone(), server.clone()))
         .collect();
-    if authenticated.is_empty() {
+    if !configured.requires_materialization {
         return Ok(authenticated);
     }
     let runtime = if claude { "claude" } else { "codex" };
@@ -193,12 +208,12 @@ pub(super) fn materialize_with_config(
     let native = format!("./.wegent-native-mcp-{runtime}.json");
     let mut manifest = read(&path)?;
     if root.is_symlink() || path.is_symlink() || path.parent().is_some_and(Path::is_symlink) {
-        return Err("TaskToken plugins require a copied native cache, not a source link".into());
+        return Err("Configured plugins require a copied native cache, not a source link".into());
     }
     write(&source_path, &json!({"mcpServers": all}))?;
     if claude && root.join(".mcp.json").is_file() {
         if root.join(".mcp.json").is_symlink() {
-            return Err("TaskToken MCP configuration must be copied into the native cache".into());
+            return Err("Configured MCP settings must be copied into the native cache".into());
         }
         let default = servers(root, &json!("./.mcp.json"))?;
         write(&root.join(DEFAULT_SOURCE), &json!({"mcpServers": default}))?;
@@ -409,7 +424,7 @@ fn apply_component_config(
             || !name
                 .chars()
                 .all(|character| character.is_ascii_alphanumeric() || "-_".contains(character))
-            || value.contains(['\r', '\n'])
+            || HeaderValue::try_from(value).is_err()
         {
             return Err("Invalid plugin MCP custom header".into());
         }

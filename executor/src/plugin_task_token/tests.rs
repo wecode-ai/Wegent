@@ -461,7 +461,20 @@ fn custom_component_headers_merge_and_validate_remote_mcp_servers() {
         "mcp:business".into(),
         json!({"headers": {"Bad Header": "value"}}),
     )]);
-    assert!(package::apply_component_config_for_tests("business", server, &invalid).is_err());
+    assert!(
+        package::apply_component_config_for_tests("business", server.clone(), &invalid).is_err()
+    );
+
+    for invalid_value in ["nul\0value", "delete\u{7f}value"] {
+        let invalid = serde_json::Map::from_iter([(
+            "mcp:business".into(),
+            json!({"headers": {"X-Custom": invalid_value}}),
+        )]);
+        assert!(
+            package::apply_component_config_for_tests("business", server.clone(), &invalid)
+                .is_err()
+        );
+    }
 
     let mut local = json!({"command": "server"});
     let local_config = serde_json::Map::from_iter([(

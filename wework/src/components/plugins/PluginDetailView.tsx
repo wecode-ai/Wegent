@@ -786,6 +786,11 @@ export function PluginDetailView({
     ) : null
 
   const capabilityItems = componentItems.filter(item => item.type !== 'connector')
+  const isValidHeaderValue = (value: string) =>
+    Array.from(value).every(character => {
+      const code = character.charCodeAt(0)
+      return code === 0x09 || (code >= 0x20 && code !== 0x7f)
+    })
   const saveMcpHeaders = async (componentKey: string) => {
     if (!onMcpHeadersSave) return
     let parsed: Record<string, string> | null = null
@@ -806,8 +811,7 @@ export function PluginDetailView({
             !/^[A-Za-z0-9_-]+$/.test(name) ||
             typeof headerValue !== 'string' ||
             !headerValue ||
-            headerValue.includes('\n') ||
-            headerValue.includes('\r')
+            !isValidHeaderValue(headerValue)
           ) {
             throw new Error('invalid header')
           }
