@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
-import type { CloudLoopItem, CloudProject, WorkflowPlan } from '@/api/deliveries'
+import type {
+  CloudLoopItem,
+  CloudProject,
+  LoopItemTaskBinding,
+  WorkflowPlan,
+} from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 
@@ -278,7 +283,7 @@ describe('TodoEditor external item sync', () => {
   })
 
   it('keeps same-item data during refresh and clears it when switching items', async () => {
-    const never = new Promise<never>(() => undefined)
+    const staleRefresh = deferred<LoopItemTaskBinding[]>()
     const switchingApi = {
       listDeliveries: vi.fn(async () => ({ items: [] })),
       listTaskBindings: vi
@@ -291,7 +296,15 @@ describe('TodoEditor external item sync', () => {
             task_title: '第一个 Issue 的任务',
           },
         ])
-        .mockImplementation(() => never),
+        .mockImplementationOnce(() => staleRefresh.promise)
+        .mockResolvedValueOnce([
+          {
+            id: 9,
+            device_id: 'local-device',
+            task_id: 'second-task',
+            task_title: '第二个 Issue 的任务',
+          },
+        ]),
       listLoopItemAttachments: vi.fn(async () => []),
       listLoopItemCollaborators: vi.fn(async () => []),
       listCloudProjectMembers: vi.fn(async () => []),
@@ -325,7 +338,23 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByText('第一个 Issue 的任务')).toBeInTheDocument()
 
     view.rerender(renderEditor(secondItem, 1))
+    await userEvent.click(await screen.findByTestId('cloud-todo-toggle-tasks'))
+    expect(await screen.findByText('第二个 Issue 的任务')).toBeInTheDocument()
     expect(screen.queryByText('第一个 Issue 的任务')).not.toBeInTheDocument()
+
+    await act(async () => {
+      staleRefresh.resolve([
+        {
+          id: 10,
+          device_id: 'local-device',
+          task_id: 'stale-task',
+          task_title: '过期刷新结果',
+        },
+      ])
+      await staleRefresh.promise
+    })
+
+    expect(screen.queryByText('过期刷新结果')).not.toBeInTheDocument()
   })
 
   it('shows the automation provenance on a generated task', () => {

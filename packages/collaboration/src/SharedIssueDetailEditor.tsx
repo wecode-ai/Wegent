@@ -786,6 +786,9 @@ export function TodoEditor(props: TodoEditorProps) {
       ? workflowPlanErrorState.error
       : null;
   const loadedEditItemIdRef = useRef(editItemId);
+  const taskBindingsRequestIdRef = useRef(0);
+  const deliveriesRequestIdRef = useRef(0);
+  const selectedDeliveryRequestIdRef = useRef(0);
   const visibleAttachments = useMemo(() => {
     const merged = new Map<string, AttachmentRow>();
     markdownAttachmentRows(description).forEach((attachment) =>
@@ -804,8 +807,55 @@ export function TodoEditor(props: TodoEditorProps) {
   );
   const refreshTaskBindings = useCallback(async () => {
     if (editItemId == null) return;
-    setTasks(await editorPort.taskBindings.list(editItemId, editProjectId));
+    const requestId = ++taskBindingsRequestIdRef.current;
+    try {
+      const nextTasks = await editorPort.taskBindings.list(
+        editItemId,
+        editProjectId,
+      );
+      if (
+        requestId !== taskBindingsRequestIdRef.current ||
+        loadedEditItemIdRef.current !== editItemId
+      )
+        return;
+      setTasks(nextTasks);
+    } catch {
+      // Independent detail sources fail closed without hiding available data.
+    }
   }, [editItemId, editProjectId, editorPort]);
+  const refreshDeliveries = useCallback(async () => {
+    if (editItemId == null) return;
+    const requestId = ++deliveriesRequestIdRef.current;
+    try {
+      const nextDeliveries = await editorPort.deliveries.list(editItemId);
+      if (
+        requestId !== deliveriesRequestIdRef.current ||
+        loadedEditItemIdRef.current !== editItemId
+      )
+        return;
+      setDeliveries(nextDeliveries);
+    } catch {
+      // Independent detail sources fail closed without hiding available data.
+    }
+  }, [editItemId, editorPort]);
+  const openDelivery = useCallback(
+    async (deliveryId: string) => {
+      if (editItemId == null) return;
+      const requestId = ++selectedDeliveryRequestIdRef.current;
+      try {
+        const delivery = await editorPort.deliveries.get(deliveryId);
+        if (
+          requestId !== selectedDeliveryRequestIdRef.current ||
+          loadedEditItemIdRef.current !== editItemId
+        )
+          return;
+        setSelectedDelivery(delivery);
+      } catch {
+        // Keep the current Issue visible when an individual delivery is unavailable.
+      }
+    },
+    [editItemId, editorPort],
+  );
 
   useEffect(() => {
     const node = detailScrollRef.current;
@@ -866,6 +916,9 @@ export function TodoEditor(props: TodoEditorProps) {
   useLayoutEffect(() => {
     if (loadedEditItemIdRef.current === editItemId) return;
     loadedEditItemIdRef.current = editItemId;
+    taskBindingsRequestIdRef.current += 1;
+    deliveriesRequestIdRef.current += 1;
+    selectedDeliveryRequestIdRef.current += 1;
     setDeliveries([]);
     setSelectedDelivery(null);
     setTasks([]);
@@ -893,11 +946,8 @@ export function TodoEditor(props: TodoEditorProps) {
       );
     };
 
-    applyResult(editorPort.deliveries.list(editItemId), setDeliveries);
-    applyResult(
-      editorPort.taskBindings.list(editItemId, editProjectId),
-      setTasks,
-    );
+    void refreshDeliveries();
+    void refreshTaskBindings();
     applyResult(editorPort.attachments.list(editItemId), setAttachments);
     applyResult(editorPort.collaborators.list(editItemId), setCollaborators);
     applyResult(editorPort.members.list(editProjectId), setProjectMembers);
@@ -917,6 +967,8 @@ export function TodoEditor(props: TodoEditorProps) {
     editProjectId,
     props.loadTeams,
     props.taskRefreshKey,
+    refreshDeliveries,
+    refreshTaskBindings,
   ]);
 
   const refreshWorkflowPlan = useCallback(() => {
@@ -2876,9 +2928,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           executionError={item.execution_error}
                           selectedTaskId={props.selectedTaskId}
                           onOpenDelivery={(delivery) =>
-                            void editorPort.deliveries
-                              .get(delivery.id)
-                              .then(setSelectedDelivery)
+                            void openDelivery(delivery.id)
                           }
                           onCreateTask={
                             canStartWork ? props.onCreateTask : undefined
@@ -2923,9 +2973,7 @@ export function TodoEditor(props: TodoEditorProps) {
                                       values,
                                     );
                                   editProps?.onUpdated(updated);
-                                  void editorPort.deliveries
-                                    .list(item.id)
-                                    .then(setDeliveries);
+                                  void refreshDeliveries();
                                 }
                               : undefined
                           }
@@ -3118,11 +3166,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           <button
                             key={delivery.id}
                             type="button"
-                            onClick={() =>
-                              void editorPort.deliveries
-                                .get(delivery.id)
-                                .then(setSelectedDelivery)
-                            }
+                            onClick={() => void openDelivery(delivery.id)}
                             className="task-detail-workspace-sub-row w-full text-left"
                           >
                             <Package className="h-4 w-4 shrink-0 text-text-muted" />
@@ -3435,11 +3479,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             <button
                               key={delivery.id}
                               type="button"
-                              onClick={() =>
-                                void editorPort.deliveries
-                                  .get(delivery.id)
-                                  .then(setSelectedDelivery)
-                              }
+                              onClick={() => void openDelivery(delivery.id)}
                               className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-xs transition-colors hover:bg-muted/60"
                             >
                               <FileText className="h-4 w-4 shrink-0 text-text-muted" />

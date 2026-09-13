@@ -326,7 +326,8 @@ describe('shared IssueDetail', () => {
 
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-tasks')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-state-summary')).toHaveTextContent('0 个执行任务')
+    expect(screen.getByTestId('cloud-todo-state-summary')).toHaveTextContent('待开始')
+    expect(screen.getByTestId('cloud-todo-state-summary')).not.toHaveTextContent('执行任务')
     expect(screen.getByTestId('collaboration-comments')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-assignee')).not.toBeInTheDocument()
     expect(screen.queryByTestId('collaboration-assignment-target')).not.toBeInTheDocument()
