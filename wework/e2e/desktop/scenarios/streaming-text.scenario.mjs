@@ -1128,6 +1128,13 @@ export function createDesktopScenario({
       text: SUBAGENT_CHILD_PARTIAL,
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      (await control.command('getText', ASSISTANT_CONTENT_SELECTOR)).includes(
+        SUBAGENT_CHILD_PARTIAL
+      ),
+      false,
+      'The rendered child agent stream leaked into the root conversation'
+    )
     await capture(control, 'streaming-text-subagent-02-streaming-conversation.png')
     releaseSubagentCompletion()
     await control.command('waitFor', '[data-testid="subagent-conversation-scroll"]', {
